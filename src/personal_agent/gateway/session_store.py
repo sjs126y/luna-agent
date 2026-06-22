@@ -14,13 +14,25 @@ logger = logging.getLogger(__name__)
 
 
 class SessionStore:
-    def __init__(self, db, data_dir: Path) -> None:
+    def __init__(self, db, data_dir: Path, chain=None) -> None:
         self._db = db
         self._index_path = data_dir / "sessions.json"
         self._index: dict[str, SessionEntry] = {}
+        self._chain = chain  # CompressionChain, optional
 
     async def initialize(self) -> None:
         self._load_index()
+
+    # ── chain-aware session resolution ────────────────
+
+    def resolve_session_id(self, session_key: str) -> str | None:
+        """Walk the chain to find the latest session_id for this key."""
+        entry = self._index.get(session_key)
+        if entry is None:
+            return None
+        if self._chain:
+            return self._chain.resolve(entry.session_id)
+        return entry.session_id
 
     # ── CRUD ──────────────────────────────────────────
 
@@ -87,8 +99,67 @@ class SessionStore:
             return new_id
         return None
 
+    async def create_compressed_session(self, session_key: str, source,
+                                         compressed_messages: list[dict]) -> str:
+        """Create a new session holding compressed messages, link to old via chain."""
+        old_entry = self._index.get(session_key)
+        if old_entry is None:
+            return ""
+
+        new_id = str(uuid.uuid4())
+        entry = SessionEntry(
+            session_id=new_id,
+            session_key=session_key,
+            platform=old_entry.platform,
+            user_id=old_entry.user_id,
+            user_name=old_entry.user_name,
+            chat_id=old_entry.chat_id,
+            chat_type=old_entry.chat_type,
+            message_count=len(compressed_messages),
+        )
+        await self._db.create_session(entry)
+
+        # Persist compressed messages to new session
+        for msg in compressed_messages:
+            role = msg.get("role", "user")
+            content = ""
+            tool_calls = None
+            tool_name = None
+            tool_call_id = None
+            if isinstance(msg.get("content"), list):
+                for block in msg["content"]:
+                    if block.get("type") == "text":
+                        content += block.get("text", "")
+                    elif block.get("type") == "tool_use":
+                        tool_calls = tool_calls or []
+                        tool_calls.append({"id": block.get("id", ""), "name": block.get("name", ""), "input": block.get("input", {})})
+                        tool_name = block.get("name")
+                    elif block.get("type") == "tool_result":
+                        content = str(block.get("content", ""))
+                        tool_call_id = block.get("tool_use_id", "")
+            elif isinstance(msg.get("content"), str):
+                content = msg["content"]
+            await self._db.save_message(new_id, role, content, tool_calls, tool_name, tool_call_id)
+
+        # Link chain
+        if self._chain:
+            self._chain.link(old_entry.session_id, new_id)
+
+        logger.info("Compressed session: %s → %s (%d messages)",
+                     old_entry.session_id[:8], new_id[:8], len(compressed_messages))
+        return new_id
+
     def get(self, session_key: str) -> SessionEntry | None:
         return self._index.get(session_key)
+
+    def get_current_session_id(self, session_key: str) -> str | None:
+        """Return the latest (uncompressed) session_id for this key."""
+        entry = self._index.get(session_key)
+        if entry is None:
+            return None
+        if self._chain:
+            return self._chain.resolve(entry.session_id)
+        return entry.session_id
 
     # ── persistence ───────────────────────────────────
 

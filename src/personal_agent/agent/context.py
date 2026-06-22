@@ -26,6 +26,8 @@ class TurnContext:
     turn_id: str = ""
     current_turn_user_idx: int = 0
     should_review_memory: bool = False
+    was_compressed: bool = False            # True if compression ran this turn
+    pre_compress_message_count: int = 0     # message count before compression
 
 
 def build_turn_context(
@@ -62,7 +64,9 @@ def build_turn_context(
     user_idx = len(messages) - 1
 
     # Token check + compression
+    pre_count = len(messages)
     messages = _check_and_compress(agent, messages)
+    was_compressed = len(messages) != pre_count
 
     turn_id = f"{uuid.uuid4().hex[:8]}"
 
@@ -74,6 +78,8 @@ def build_turn_context(
         active_system_prompt=agent._cached_system_prompt or "",
         turn_id=turn_id,
         current_turn_user_idx=user_idx,
+        was_compressed=was_compressed,
+        pre_compress_message_count=pre_count,
     )
 
 

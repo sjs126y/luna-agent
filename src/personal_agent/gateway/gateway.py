@@ -20,7 +20,9 @@ class Gateway:
         self.db = db
         self._memory_manager = memory_manager
         self._system_prompt_template = system_prompt_template
-        self._session_store = SessionStore(db, config.agent_data_dir)
+        from personal_agent.gateway.compression_chain import CompressionChain
+        self._compression_chain = CompressionChain(config.agent_data_dir / "compression_chain.json")
+        self._session_store = SessionStore(db, config.agent_data_dir, chain=self._compression_chain)
         self._adapters: list = []
         self._running_agents: dict[str, bool] = {}
         self._agent_cache: OrderedDict[str, object] = OrderedDict()
@@ -30,6 +32,7 @@ class Gateway:
     # ── lifecycle ─────────────────────────────────────
 
     async def start(self) -> None:
+        self._compression_chain.load()
         await self._session_store.initialize()
 
         for entry in platform_registry.list():
@@ -97,7 +100,10 @@ class Gateway:
 
     async def _handle_message_with_agent(self, event, session_key: str) -> str:
         session = await self._session_store.get_or_create(session_key, event.source)
-        history = await self._session_store.load_history(session.session_id)
+
+        # Walk chain to find the latest (uncompressed) session
+        current_id = self._compression_chain.resolve(session.session_id)
+        history = await self._session_store.load_history(current_id)
         previous_count = len(history)
 
         agent = self._get_or_create_agent(session_key)
@@ -108,10 +114,15 @@ class Gateway:
         ctx = build_turn_context(agent, event.text, history)
         result = await run_conversation(agent, ctx)
 
-        # Persist
-        if not result.get("context_overflow"):
+        # If compression ran, create new session for compressed messages
+        target_session_id = current_id
+        if ctx.was_compressed and not result.get("context_overflow"):
+            target_session_id = await self._session_store.create_compressed_session(
+                session_key, event.source, result["messages"]
+            )
+        elif not result.get("context_overflow"):
             await self._session_store.save_transcript(
-                session.session_id, result["messages"], previous_count
+                target_session_id, result["messages"], previous_count
             )
 
         # Hook: on_before_send

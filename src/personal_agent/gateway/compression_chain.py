@@ -1,0 +1,66 @@
+"""Compression chain — tracks session_id lineage after compression.
+
+When a session is compressed, a new session_id is created to hold the
+compressed messages. The old session retains its full history for audit.
+The chain maps old → new so get_current_session_id() can walk to the latest.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class CompressionChain:
+    """Persisted chain of old_session_id → new_session_id mappings."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._chain: dict[str, str] = {}
+
+    def load(self) -> None:
+        if not self._path.exists():
+            return
+        try:
+            self._chain = json.loads(self._path.read_text())
+            logger.info("Loaded compression chain: %d entries", len(self._chain))
+        except Exception:
+            logger.exception("Failed to load compression chain")
+
+    def save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(self._chain, indent=2, ensure_ascii=False))
+
+    def link(self, old_session_id: str, new_session_id: str) -> None:
+        """Record that old_session was compressed into new_session."""
+        self._chain[old_session_id] = new_session_id
+        self.save()
+        logger.info("Compression chain: %s → %s", old_session_id[:8], new_session_id[:8])
+
+    def resolve(self, session_id: str) -> str:
+        """Walk the chain to find the latest session_id."""
+        seen = {session_id}
+        current = session_id
+        while current in self._chain:
+            current = self._chain[current]
+            if current in seen:
+                logger.error("Cycle detected in compression chain at %s", current[:8])
+                return session_id
+            seen.add(current)
+        return current
+
+    def get_chain(self, session_id: str) -> list[str]:
+        """Return full lineage from session_id to latest (including all intermediate)."""
+        result = [session_id]
+        seen = {session_id}
+        current = session_id
+        while current in self._chain:
+            current = self._chain[current]
+            if current in seen:
+                break
+            seen.add(current)
+            result.append(current)
+        return result
