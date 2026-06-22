@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     # ── Strategy engines ──
     compressor_engine: str = "simple"
+    compressor_model: str = ""        # empty = use main model; set = cheap model for compression
+    compressor_max_tokens: int = 500  # max tokens for generated summary
+    tail_token_budget: int = 20000    # tail protection token budget
     memory_provider: str = "file"
 
     # ── Cron ──

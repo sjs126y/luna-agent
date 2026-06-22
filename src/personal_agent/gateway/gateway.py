@@ -139,7 +139,7 @@ class Gateway:
         from personal_agent.agent.agent import init_agent
         from personal_agent.llm.provider import provider_registry
         from personal_agent.llm.transport_registry import transport_registry
-        from personal_agent.compression.simple import SimpleCompressor
+        from personal_agent.compression.simple import ContextCompressor
 
         # Resolve provider via registry
         provider_name = self.config.llm_provider
@@ -152,7 +152,29 @@ class Gateway:
         transport = transport_registry.get(api_mode, provider)
         logger.debug("Agent transport: provider=%s api_mode=%s", provider_name, api_mode)
 
-        compressor = SimpleCompressor() if self.config.compressor_engine == "simple" else None
+        # Compressor: optionally use a separate cheap model for compression
+        compressor = None
+        if self.config.compressor_engine in ("simple", "compressor"):
+            compressor_transport = None
+            if self.config.compressor_model:
+                from personal_agent.llm.provider import ProviderProfile
+                from personal_agent.llm.anthropic import AnthropicMessagesTransport as AMT
+                comp_provider = ProviderProfile(
+                    name="compressor",
+                    base_url=self.config.llm_base_url,
+                    api_key=self.config.llm_api_key,
+                    model=self.config.compressor_model,
+                    max_tokens=512,
+                )
+                compressor_transport = AMT(comp_provider)
+
+            compressor = ContextCompressor(
+                context_length=64000,
+                threshold_ratio=0.6,
+                tail_token_budget=self.config.tail_token_budget,
+                max_summary_tokens=self.config.compressor_max_tokens,
+                compressor_transport=compressor_transport,
+            )
 
         agent = init_agent(
             transport, provider,

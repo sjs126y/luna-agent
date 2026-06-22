@@ -78,7 +78,7 @@ def build_turn_context(
 
 
 def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
-    """If estimated tokens exceed threshold, compress old messages."""
+    """If estimated tokens exceed threshold, compress via ContextEngine."""
     if agent._compressor is None:
         return messages
 
@@ -87,29 +87,25 @@ def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
         + count_messages_tokens([], agent._cached_system_prompt or "")
         + count_tools_tokens(agent.tools)
     )
-    if total < CONTEXT_LIMIT * THRESHOLD:
+
+    if not agent._compressor.should_compress(total, messages):
         return messages
 
-    if len(messages) <= PROTECT_FIRST + PROTECT_LAST + 2:
-        return messages  # too few to compress
-
-    logger.info("Compressing: %d tokens > %d limit", total, int(CONTEXT_LIMIT * THRESHOLD))
+    logger.info("Compressing: %d tokens > %d limit", total, agent._compressor.threshold_tokens)
     try:
-        return agent._compressor.compress(
-            messages, agent._cached_system_prompt or "",
+        result = agent._compressor.compress(
+            messages,
+            agent._cached_system_prompt or "",
             agent._transport,
-            protect_head=PROTECT_FIRST, protect_tail=PROTECT_LAST,
         )
+        return result
     except Exception:
         logger.exception("Compression failed, falling back to truncation")
-        return _truncate(messages)
+        return _truncate(messages, agent._compressor.protect_head, agent._compressor.protect_tail)
 
 
-def _truncate(messages: list[dict]) -> list[dict]:
+def _truncate(messages: list[dict], head: int = 2, tail: int = 6) -> list[dict]:
     """Fallback: drop oldest messages except protected ones."""
-    if len(messages) <= PROTECT_FIRST + PROTECT_LAST:
+    if len(messages) <= head + tail:
         return messages
-    return (
-        messages[:PROTECT_FIRST]
-        + messages[-(PROTECT_LAST):]
-    )
+    return messages[:head] + messages[-tail:]

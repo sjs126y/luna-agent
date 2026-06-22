@@ -124,7 +124,7 @@ def _run_cli(message: str) -> None:
     from personal_agent.agent.agent import init_agent
     from personal_agent.agent.context import build_turn_context
     from personal_agent.agent.loop import run_conversation
-    from personal_agent.compression.simple import SimpleCompressor
+    from personal_agent.compression.simple import ContextCompressor
     from personal_agent.tools.builtin import calculator, datetime_tool, todo, web_search, web_fetch  # noqa
     from personal_agent.memory.file_store import FileMemoryProvider
     from personal_agent.memory.manager import MemoryManager
@@ -140,7 +140,7 @@ def _run_cli(message: str) -> None:
         memory = FileMemoryProvider(settings.agent_data_dir / "memory" / "MEMORY.md")
         memory_manager = MemoryManager(builtin=memory)
         agent = init_agent(transport, provider, memory_manager=memory_manager,
-                          compressor=SimpleCompressor(), max_iterations=settings.max_iterations,
+                          compressor=ContextCompressor(), max_iterations=settings.max_iterations,
                           system_prompt_template='你是一个智能助手。优先使用工具获取实时信息和执行操作，不要凭记忆编造。用中文回复。')
 
         ctx = build_turn_context(agent, message)
