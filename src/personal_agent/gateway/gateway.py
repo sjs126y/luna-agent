@@ -216,6 +216,7 @@ class Gateway:
             compressor=compressor,
             max_iterations=self.config.max_iterations,
             system_prompt_template=self._system_prompt_template,
+            enabled_toolsets=self.config.enabled_toolsets,
         )
         # LRU eviction if cache too large
         if len(self._agent_cache) >= 128:

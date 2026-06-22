@@ -28,7 +28,7 @@ async def _timer(action: str = "sleep", seconds: int = 5, message: str = "") -> 
 tool_registry.register(ToolEntry(
     name="timer",
     description="Sleep/wait for a specified duration (max 5 min), get timestamps, or measure durations.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "action": {

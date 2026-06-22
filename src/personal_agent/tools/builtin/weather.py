@@ -20,7 +20,7 @@ async def _weather(city: str, format: str = "3") -> str:
 tool_registry.register(ToolEntry(
     name="weather",
     description="Get current weather for a city. Uses wttr.in (free, no API key). City can be name or pinyin (e.g., 'Beijing', 'guangzhou').",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "city": {"type": "string", "description": "City name or pinyin, e.g. 'Beijing', 'shanghai'"},

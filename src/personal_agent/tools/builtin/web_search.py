@@ -30,7 +30,7 @@ async def _web_search(query: str, max_results: int = 5) -> str:
 tool_registry.register(ToolEntry(
     name="web_search",
     description="Search the web using DuckDuckGo. Returns titles, URLs, and snippets.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search query"},

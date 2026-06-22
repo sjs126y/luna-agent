@@ -36,7 +36,7 @@ async def _file_read(path: str) -> str:
 tool_registry.register(ToolEntry(
     name="file_read",
     description="Read a file from the agent's data directory. Path is relative to data dir. Use for reading saved notes, code, or data files.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "Relative path to file, e.g. 'notes/ideas.txt'"},

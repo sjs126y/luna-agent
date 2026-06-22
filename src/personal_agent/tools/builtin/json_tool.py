@@ -54,7 +54,7 @@ async def _json_tool(action: str = "format", input: str = "", query: str = "",
 tool_registry.register(ToolEntry(
     name="json",
     description="Parse, format, validate, or query JSON data. Use 'get' with dot-notation to extract nested fields (e.g., 'data.users.0.name').",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "action": {

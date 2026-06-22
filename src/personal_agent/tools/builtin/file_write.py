@@ -29,7 +29,7 @@ async def _file_write(path: str, content: str) -> str:
 tool_registry.register(ToolEntry(
     name="file_write",
     description="Write content to a file in the agent's data directory. Path is relative. Creates parent directories as needed.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "Relative path to file, e.g. 'output/report.md'"},

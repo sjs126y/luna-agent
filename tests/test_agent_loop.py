@@ -94,7 +94,7 @@ async def test_tool_use_loop(provider):
         return f"Echo: {msg}"
 
     tool_registry.register(ToolEntry(
-        name="echo", description="Echo", parameters={
+        name="echo", description="Echo", schema={
             "type": "object", "properties": {"msg": {"type": "string"}}
         }, handler=_echo,
     ))

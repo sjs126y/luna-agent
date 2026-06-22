@@ -22,8 +22,9 @@ class Agent:
     _provider: ProviderProfile | None = None
 
     # ── tools ──
-    tools: list[dict] = field(default_factory=list)     # Anthropic tool schemas
-    _tools_generation: int = -1                         # detect staleness
+    tools: list[dict] = field(default_factory=list)
+    enabled_toolsets: list[str] | None = None   # None = all tools
+    _tools_generation: int = -1
 
     # ── system prompt ──
     _cached_system_prompt: str | None = None  # None=not built, ""=empty, str=present
@@ -60,6 +61,7 @@ def init_agent(
     compressor=None,
     max_iterations: int = 30,
     system_prompt_template: str = "",
+    enabled_toolsets: list[str] | None = None,
 ) -> Agent:
     """Wire an Agent instance. Flat initialization — no 1700-line magic."""
     from concurrent.futures import ThreadPoolExecutor
@@ -71,6 +73,7 @@ def init_agent(
         _provider=provider,
         _memory_manager=memory_manager,
         _compressor=compressor,
+        enabled_toolsets=enabled_toolsets,
         _llm_pool=pool,
         _tool_pool=pool,  # shared pool for MVP, separate later
     )
@@ -80,10 +83,13 @@ def init_agent(
 
 
 def _refresh_tools(agent: Agent) -> None:
-    """Sync agent.tools with current registry state."""
+    """Sync agent.tools with current registry state, respecting enabled_toolsets."""
     gen = tool_registry.generation
     if agent._tools_generation != gen:
-        agent.tools = tool_registry.get_definitions()
+        agent.tools = tool_registry.get_definitions(
+            enabled_toolsets=agent.enabled_toolsets,
+            quiet_mode=True,
+        )
         agent._tools_generation = gen
         agent._cached_system_prompt = None  # invalidate
 

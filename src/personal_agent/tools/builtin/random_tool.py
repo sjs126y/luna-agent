@@ -47,7 +47,7 @@ async def _random(action: str = "number", min_val: int = 1, max_val: int = 100,
 tool_registry.register(ToolEntry(
     name="random",
     description="Generate random numbers, pick random choices from a list, shuffle items, or generate secure passwords.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "action": {

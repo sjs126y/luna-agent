@@ -57,7 +57,7 @@ async def _shell(command: str, timeout: int = 30) -> str:
 tool_registry.register(ToolEntry(
     name="bash",
     description="Execute a shell command in a restricted sandbox (data dir, timeout, banned dangerous commands). Use for file ops, git, pip, etc.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "command": {"type": "string", "description": "Shell command to run, e.g. 'ls -la' or 'python --version'"},

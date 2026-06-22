@@ -31,7 +31,7 @@ async def _datetime(action: str = "now", timezone_offset: int = 8, format: str =
 tool_registry.register(ToolEntry(
     name="datetime",
     description="Get current date/time, weekday, or timestamp. Supports timezone offset.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "action": {

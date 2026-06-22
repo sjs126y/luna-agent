@@ -71,7 +71,7 @@ async def _todo(action: str, title: str = "", id: int = 0, status: str = "pendin
 tool_registry.register(ToolEntry(
     name="todo",
     description="Manage a todo list. Actions: add (create), list (show all), update (modify title/status), delete (remove). Status can be 'pending', 'done', or 'cancelled'.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "action": {

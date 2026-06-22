@@ -50,6 +50,7 @@ async def boot() -> None:
     import personal_agent.tools.builtin.random_tool       # noqa
     import personal_agent.tools.builtin.timer             # noqa
     import personal_agent.tools.builtin.json_tool         # noqa
+    import personal_agent.tools.bridge                    # noqa: bridge tools (tool_search/describe/call)
     # memory tool is auto-registered in file_store.py
 
     import personal_agent.llm                # noqa: trigger transport/provider registration
@@ -146,6 +147,7 @@ def _run_cli(message: str) -> None:
         memory_manager = MemoryManager(builtin=memory)
         agent = init_agent(transport, provider, memory_manager=memory_manager,
                           compressor=ContextCompressor(), max_iterations=settings.max_iterations,
+                          enabled_toolsets=settings.enabled_toolsets,
                           system_prompt_template='你是一个智能助手。优先使用工具获取实时信息和执行操作，不要凭记忆编造。用中文回复。')
 
         ctx = build_turn_context(agent, message)

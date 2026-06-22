@@ -27,7 +27,7 @@ async def _web_fetch(url: str) -> str:
 tool_registry.register(ToolEntry(
     name="web_fetch",
     description="Fetch a URL and convert the HTML page to Markdown text.",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "The URL to fetch"},

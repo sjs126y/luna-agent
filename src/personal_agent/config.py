@@ -47,6 +47,10 @@ class Settings:
         self.agent_data_dir: Path = Path(storage.get("data_dir", "./data"))
         self.log_level: str = storage.get("log_level", "INFO")
 
+        # ── Toolsets (from config.yaml) ──
+        toolsets = yaml_cfg.get("toolsets", {})
+        self.enabled_toolsets: list[str] | None = toolsets.get("enabled", ["all"])
+
         # ── Compression (from config.yaml) ──
         comp = yaml_cfg.get("compression", {})
         self.compressor_engine: str = comp.get("engine", "compressor")

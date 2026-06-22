@@ -59,7 +59,7 @@ async def _calculator(expression: str) -> str:
 tool_registry.register(ToolEntry(
     name="calculator",
     description="Safely evaluate a mathematical expression. Supports +, -, *, /, **, %, //, (), and math functions (sqrt, sin, cos, log, etc.).",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "expression": {

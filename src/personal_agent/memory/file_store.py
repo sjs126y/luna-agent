@@ -93,7 +93,7 @@ async def _memory_tool(action: str, content: str = "", query: str = "") -> str:
 tool_registry.register(ToolEntry(
     name="memory",
     description="Manage persistent user memories. Actions: add (save a fact), search (find by keyword), list (show all).",
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": ["add", "search", "list"]},

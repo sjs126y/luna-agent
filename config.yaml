@@ -15,6 +15,9 @@ compression:
   tail_token_budget: 20000
   threshold_ratio: 0.6
 
+toolsets:
+  enabled: ["all"]            # ["all"] | ["web","terminal","utility"] | etc.
+
 memory:
   provider: "file"           # file | rag (future)
 
