@@ -45,6 +45,11 @@ async def boot() -> None:
     import personal_agent.tools.builtin.file_read         # noqa
     import personal_agent.tools.builtin.file_write        # noqa
     import personal_agent.tools.builtin.todo              # noqa
+    import personal_agent.tools.builtin.weather           # noqa
+    import personal_agent.tools.builtin.shell             # noqa
+    import personal_agent.tools.builtin.random_tool       # noqa
+    import personal_agent.tools.builtin.timer             # noqa
+    import personal_agent.tools.builtin.json_tool         # noqa
     # memory tool is auto-registered in file_store.py
 
     import personal_agent.llm                # noqa: trigger transport/provider registration
