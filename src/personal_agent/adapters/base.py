@@ -1,0 +1,188 @@
+"""Base platform adapter — ABC + pipeline + PlatformRegistry."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import random
+import time
+from abc import ABC, abstractmethod
+from collections import OrderedDict
+from collections.abc import Callable, Awaitable
+from dataclasses import dataclass, field
+
+from personal_agent.agent.hooks import Hooks
+from personal_agent.models.messages import MessageEvent
+
+logger = logging.getLogger(__name__)
+
+CHAT_LOCKS_MAXSIZE = 64
+
+
+# ── result types ─────────────────────────────────────
+
+@dataclass
+class SendResult:
+    success: bool
+    message_id: str | None = None
+    error: str | None = None
+
+
+@dataclass
+class ChatInfo:
+    chat_id: str
+    chat_type: str = "dm"
+    chat_name: str = ""
+    member_count: int = 0
+
+
+# ── PlatformEntry & PlatformRegistry ─────────────────
+
+@dataclass
+class PlatformEntry:
+    name: str
+    factory: Callable[..., "BasePlatformAdapter"]
+    check_fn: Callable[[object], bool]  # config → bool
+
+
+class PlatformRegistry:
+    def __init__(self) -> None:
+        self._entries: dict[str, PlatformEntry] = {}
+
+    def register(self, entry: PlatformEntry) -> None:
+        self._entries[entry.name] = entry
+
+    def list(self) -> list[PlatformEntry]:
+        return list(self._entries.values())
+
+    def create_adapter(self, name: str, config, db) -> BasePlatformAdapter:
+        return self._entries[name].factory(config, db)
+
+    def is_available(self, name: str, config) -> bool:
+        entry = self._entries.get(name)
+        return entry is not None and entry.check_fn(config)
+
+
+platform_registry = PlatformRegistry()
+
+
+# ── BasePlatformAdapter ──────────────────────────────
+
+class BasePlatformAdapter(ABC):
+    """Subclass implements connect/disconnect/send/get_chat_info.
+    Base implements handle_message pipeline + retry + queue draining.
+    """
+
+    def __init__(self, config, db) -> None:
+        self.config = config
+        self.db = db
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._message_handler: Callable[[MessageEvent], Awaitable[str | None]] | None = None
+        self._active_sessions: dict[str, bool] = {}
+        self._pending_messages: dict[str, list[MessageEvent]] = {}
+        self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        self.hooks = Hooks()
+
+    # ── abstract methods (subclass MUST implement) ───
+
+    @abstractmethod
+    async def connect(self) -> None:
+        """Start connection. MUST capture self._loop = asyncio.get_running_loop()."""
+
+    @abstractmethod
+    async def disconnect(self) -> None:
+        """Close connection. Idempotent — repeat calls safe."""
+
+    @abstractmethod
+    async def send(self, chat_id: str, content: str) -> SendResult:
+        """Send message to chat. Subclass handles platform-specific formatting."""
+
+    @abstractmethod
+    async def get_chat_info(self, chat_id: str) -> ChatInfo:
+        """Return chat metadata for system prompt & logging."""
+
+    # ── Gateway injection ─────────────────────────────
+
+    def set_message_handler(self, handler: Callable[[MessageEvent], Awaitable[str | None]]) -> None:
+        self._message_handler = handler
+
+    # ── message pipeline (subclass should NOT override) ──
+
+    def handle_message(self, event: MessageEvent) -> None:
+        """Entry point. Returns in ~200us. Schedules background processing."""
+        session_key = self._make_session_key(event.source)
+        if session_key in self._active_sessions:
+            self._pending_messages.setdefault(session_key, []).append(event)
+            return
+        self._active_sessions[session_key] = True
+        asyncio.create_task(self._process_message_background(event, session_key))
+
+    async def _process_message_background(self, event: MessageEvent, session_key: str) -> None:
+        """Background task: typing → Gateway → send → drain queue."""
+        try:
+            # per-chat serialization lock
+            chat_id = event.source.chat_id or session_key
+            lock = self._get_chat_lock(chat_id)
+            async with lock:
+                await self._send_typing(event.source.chat_id)
+                response = None
+                if self._message_handler:
+                    response = await self._message_handler(event)
+                if response:
+                    await self._send_with_retry(event.source.chat_id, response)
+        except Exception:
+            logger.exception("Background processing failed for session %s", session_key)
+        finally:
+            self._active_sessions.pop(session_key, None)
+            # Drain pending — NEW task, NOT recursion (prevents C stack overflow)
+            pending = self._pending_messages.pop(session_key, [])
+            if pending:
+                asyncio.create_task(self._process_message_background(pending[0], session_key))
+
+    # ── retry logic ───────────────────────────────────
+
+    async def _send_with_retry(self, chat_id: str, content: str, max_retries: int = 2) -> None:
+        for attempt in range(max_retries + 1):
+            try:
+                result = await self.send(chat_id, content)
+                if result.success:
+                    return
+                if attempt < max_retries:
+                    delay = (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning("Send failed (attempt %d): %s, retrying in %.1fs", attempt + 1, result.error, delay)
+                    await asyncio.sleep(delay)
+                    # Strip formatting on format errors
+                    if result.error and "parse" in result.error.lower():
+                        content = _strip_formatting(content)
+                else:
+                    logger.error("Send failed after %d retries: %s", max_retries, result.error)
+            except Exception as exc:
+                logger.exception("Send exception (attempt %d)", attempt + 1)
+                if attempt < max_retries:
+                    await asyncio.sleep((2 ** attempt) + random.uniform(0, 1))
+
+    # ── helpers ───────────────────────────────────────
+
+    def _make_session_key(self, source) -> str:
+        return f"{source.platform}:{source.chat_id}:{source.user_id}"
+
+    def _get_chat_lock(self, chat_id: str) -> asyncio.Lock:
+        if chat_id not in self._chat_locks:
+            if len(self._chat_locks) >= CHAT_LOCKS_MAXSIZE:
+                self._chat_locks.popitem(last=False)
+            self._chat_locks[chat_id] = asyncio.Lock()
+        return self._chat_locks[chat_id]
+
+    async def _send_typing(self, chat_id: str) -> None:
+        """Optional typing indicator — override in subclass if platform supports it."""
+        pass
+
+
+def _strip_formatting(text: str) -> str:
+    """Remove common Markdown formatting characters."""
+    import re
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+    return text
