@@ -127,7 +127,8 @@ def _run_cli(message: str) -> None:
         memory = FileMemoryProvider(settings.agent_data_dir / "memory" / "MEMORY.md")
         memory_manager = MemoryManager(builtin=memory)
         agent = init_agent(transport, provider, memory_manager=memory_manager,
-                          compressor=SimpleCompressor(), max_iterations=settings.max_iterations)
+                          compressor=SimpleCompressor(), max_iterations=settings.max_iterations,
+                          system_prompt_template='你是一个智能助手。优先使用工具获取实时信息和执行操作，不要凭记忆编造。用中文回复。')
 
         ctx = build_turn_context(agent, message)
         result = await run_conversation(agent, ctx)
