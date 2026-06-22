@@ -94,10 +94,10 @@ def _build_system_prompt(agent: Agent, template: str = "") -> str:
     if template:
         parts.append(template)
 
-    # Tool list
+    # Tool list (sorted for deterministic byte stream → cache hits)
     if agent.tools:
         tool_lines = ["可用工具："]
-        for t in agent.tools:
+        for t in sorted(agent.tools, key=lambda t: t["name"]):
             tool_lines.append(f"- {t['name']}: {t['description']}")
         parts.append("\n".join(tool_lines))
 

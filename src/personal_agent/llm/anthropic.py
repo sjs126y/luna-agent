@@ -31,13 +31,28 @@ class AnthropicMessagesTransport(BaseTransport):
         tools: list[dict],
         max_tokens: int,
     ) -> dict:
+        converted = self.convert_messages(messages)
+
+        # Add cache_control to last message (Anthropic prefix caching)
+        if converted:
+            last_content = converted[-1].get("content")
+            if isinstance(last_content, list) and last_content:
+                last_content[-1]["cache_control"] = {"type": "ephemeral"}
+            elif isinstance(last_content, str) and last_content:
+                converted[-1]["content"] = [
+                    {"type": "text", "text": last_content, "cache_control": {"type": "ephemeral"}}
+                ]
+
         body: dict = {
             "model": self._provider.model,
             "max_tokens": max_tokens or self._provider.max_tokens,
-            "messages": self.convert_messages(messages),
+            "messages": converted,
         }
         if system_prompt:
-            body["system"] = system_prompt
+            # Wrap system prompt as content block list with cache_control on last block
+            body["system"] = [
+                {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+            ]
         if tools:
             body["tools"] = self.convert_tool_definitions(tools)
 

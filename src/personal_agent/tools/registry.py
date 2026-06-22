@@ -34,14 +34,15 @@ class ToolRegistry:
     # ── definitions (for LLM system prompt / tool schema) ──
 
     def get_definitions(self, names: list[str] | None = None) -> list[dict]:
-        """Return Anthropic-format tool schemas."""
+        """Return Anthropic-format tool schemas, sorted by name (deterministic)."""
         result = []
         targets = (
             [self._entries[n] for n in names if n in self._entries]
             if names is not None
             else list(self._entries.values())
         )
-        for entry in targets:
+        # Sort by name for deterministic byte stream → cache hits
+        for entry in sorted(targets, key=lambda e: e.name):
             result.append({
                 "name": entry.name,
                 "description": entry.description,
