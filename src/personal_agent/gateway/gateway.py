@@ -34,9 +34,15 @@ class Gateway:
             if entry.check_fn(self.config):
                 adapter = entry.factory(self.config, self.db)
                 adapter.set_message_handler(self._handle_message)
-                await adapter.connect()
+                try:
+                    await adapter.connect()
+                except Exception:
+                    logger.exception("Platform '%s' connect failed", entry.name)
+                    continue
                 self._adapters.append(adapter)
                 logger.info("Platform '%s' connected", entry.name)
+            else:
+                logger.warning("Platform '%s' skipped: check_fn returned False", entry.name)
 
         logger.info("Gateway started with %d platform(s)", len(self._adapters))
 
@@ -57,12 +63,13 @@ class Gateway:
         """Gateway callback from adapter. Returns response text."""
         session_key = f"{event.source.platform}:{event.source.chat_id}:{event.source.user_id}"
 
-        # 1. Hook: on_message_received
-        hook_result = await self.hooks.fire("on_message_received", event)
-        if hook_result is None:
-            return None  # dropped
-        if hook_result is not event:
-            event = hook_result
+        # 1. Hook: on_message_received (only if hooks registered)
+        if self.hooks.on_message_received:
+            hook_result = await self.hooks.fire("on_message_received", event)
+            if hook_result is None:
+                return None  # dropped
+            if hook_result is not event:
+                event = hook_result
 
         # 2. Authorization (skip internal events)
         if not event.internal:

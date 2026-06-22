@@ -40,8 +40,9 @@ class FeishuAdapter(BasePlatformAdapter):
         self._ws_ready = threading.Event()
 
         def _run_ws():
-            # WS client module captures loop at import time — give it a fresh event
-            # loop for this daemon thread (avoids "event loop already running" error)
+            # WS client module captures the event loop at import time.
+            # Give it a fresh event loop for this daemon thread (avoids
+            # "event loop already running" / cross-thread event loop errors).
             import lark_oapi.ws.client as ws_client_module
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
@@ -51,22 +52,13 @@ class FeishuAdapter(BasePlatformAdapter):
             from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 
             def on_message(event_data):
+                logger.debug("Feishu WS raw event received: type=%s", type(event_data).__name__)
                 try:
                     asyncio.run_coroutine_threadsafe(
                         self._handle_feishu_event(event_data), self._loop
                     )
                 except Exception:
-                    logger.exception("Feishu WS message parse failed")
-
-            # Set Lark SDK logger to DEBUG to see raw event payloads.
-            # Need a dedicated handler because root logger is INFO-only.
-            lark_logger = logging.getLogger("Lark")
-            lark_logger.setLevel(logging.DEBUG)
-            if not lark_logger.handlers:
-                h = logging.StreamHandler()
-                h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-                lark_logger.addHandler(h)
-                lark_logger.propagate = False  # don't go to root, which blocks DEBUG
+                    logger.exception("Feishu WS run_coroutine_threadsafe failed")
 
             handler = EventDispatcherHandlerBuilder("", "") \
                 .register_p2_im_message_receive_v1(on_message) \
@@ -79,17 +71,16 @@ class FeishuAdapter(BasePlatformAdapter):
                     event_handler=handler,
                 )
                 self._ws_client = client
-                self._ws_ready.set()  # Signal: WS client created OK
-                logger.info("Feishu WS client starting")
+                self._ws_ready.set()
+                logger.info("Feishu WS client starting (v2 SDK)")
                 client.start()
             except Exception:
                 logger.exception("Feishu WS client failed to start")
-                self._ws_ready.set()  # Signal failure too, so connect() doesn't hang
+                self._ws_ready.set()
 
         self._ws_thread = threading.Thread(target=_run_ws, daemon=True, name="feishu-ws")
         self._ws_thread.start()
 
-        # Wait for WS thread to signal ready (or fail), with timeout
         if not self._ws_ready.wait(timeout=10):
             logger.warning("Feishu WS connection timed out after 10s")
         else:
@@ -165,13 +156,14 @@ class FeishuAdapter(BasePlatformAdapter):
     async def _handle_feishu_event(self, event_data) -> None:
         """Parse Feishu v2 event (P2ImMessageReceiveV1) → MessageEvent → pipeline."""
         try:
-            # v2: event_data.event is P2ImMessageReceiveV1Data (sender + message objects)
             inner = event_data.event
             if inner is None:
+                logger.debug("Feishu event dropped: inner is None, event_data=%s", type(event_data).__name__)
                 return
 
             msg = inner.message
             if msg is None:
+                logger.debug("Feishu event dropped: msg is None, inner=%s", type(inner).__name__)
                 return
 
             content_raw = msg.content or "{}"
@@ -182,6 +174,8 @@ class FeishuAdapter(BasePlatformAdapter):
                 text = str(content_raw)
 
             if not text:
+                logger.debug("Feishu event dropped: empty text, msg_type=%s chat_id=%s",
+                           getattr(msg, "message_type", "?"), getattr(msg, "chat_id", "?"))
                 return
 
             # sender_id is a UserId object with open_id/union_id/user_id attrs
@@ -191,12 +185,18 @@ class FeishuAdapter(BasePlatformAdapter):
                 uid = sender.sender_id
                 user_id = uid.open_id or uid.union_id or uid.user_id or ""
 
+            chat_type = msg.chat_type or "dm"
+            logger.info("Feishu inbound: user=%s chat=%s type=%s text=%s",
+                       user_id[:12] if user_id else "?",
+                       (msg.chat_id or "")[:16], chat_type,
+                       text[:60])
+
             source = SessionSource(
                 platform="feishu",
                 user_id=user_id,
                 user_name="",
                 chat_id=msg.chat_id or "",
-                chat_type=msg.chat_type or "dm",
+                chat_type=chat_type,
             )
 
             event = MessageEvent(
