@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import OrderedDict
 
 from personal_agent.adapters.base import BasePlatformAdapter, ChatInfo, SendResult
 from personal_agent.models.messages import MessageEvent, SessionSource
@@ -20,6 +21,11 @@ class FeishuAdapter(BasePlatformAdapter):
         self._lark_client = None  # Reused API client
         self._app_id = config.feishu_app_id
         self._app_secret = config.feishu_app_secret
+        # Dedup + debounce
+        self._seen_event_ids: OrderedDict[str, float] = OrderedDict()
+        self._debounce_buffers: dict[str, dict] = {}  # chat_id → {timer, messages, ...}
+        self._DEBOUNCE_WINDOW = 2.0  # seconds
+        self._DEDUP_MAXSIZE = 1000
 
     # ── connect / disconnect ──────────────────────────
 
@@ -186,9 +192,26 @@ class FeishuAdapter(BasePlatformAdapter):
                 user_id = uid.open_id or uid.union_id or uid.user_id or ""
 
             chat_type = msg.chat_type or "dm"
+            event_id = msg.message_id or ""
+
+            # ── dedup ──
+            if event_id and self._is_duplicate(event_id):
+                logger.debug("Feishu event skipped (duplicate): %s", event_id)
+                return
+
+            # ── debounce ──
+            chat_id = msg.chat_id or ""
+            if chat_id:
+                merged = self._debounce(chat_id, text)
+                if merged is not None:
+                    if merged == "":
+                        logger.debug("Feishu event absorbed by debounce: chat=%s", chat_id[:16])
+                        return
+                    text = merged  # accumulated text from burst
+
             logger.info("Feishu inbound: user=%s chat=%s type=%s text=%s",
                        user_id[:12] if user_id else "?",
-                       (msg.chat_id or "")[:16], chat_type,
+                       chat_id[:16], chat_type,
                        text[:60])
 
             source = SessionSource(
@@ -210,6 +233,68 @@ class FeishuAdapter(BasePlatformAdapter):
             self.handle_message(event)
         except Exception:
             logger.exception("_handle_feishu_event failed")
+
+    # ── dedup + debounce ──────────────────────────────
+
+    def _is_duplicate(self, event_id: str) -> bool:
+        """Check if this event has already been processed. LRU-bounded set."""
+        now = time.time()
+        if event_id in self._seen_event_ids:
+            return True
+        self._seen_event_ids[event_id] = now
+        # Evict oldest entries if too large
+        while len(self._seen_event_ids) > self._DEDUP_MAXSIZE:
+            self._seen_event_ids.popitem(last=False)
+        # Evict entries older than 5 minutes (longer than any retry window)
+        stale = [k for k, v in self._seen_event_ids.items() if now - v > 300]
+        for k in stale:
+            self._seen_event_ids.pop(k, None)
+        return False
+
+    def _debounce(self, chat_id: str, text: str) -> str | None:
+        """Merge rapid-fire messages from same chat within DEBOUNCE_WINDOW seconds.
+        Returns None if this is the first message in a burst (schedules a flush).
+        Returns '' if absorbed into a pending burst.
+        Returns accumulated text if the burst window elapsed.
+        """
+        now = time.time()
+        buf = self._debounce_buffers.get(chat_id)
+
+        if buf is None:
+            # First message in potential burst — schedule flush
+            timer_handle = asyncio.get_running_loop().call_later(
+                self._DEBOUNCE_WINDOW,
+                lambda cid=chat_id: asyncio.ensure_future(self._flush_debounce(cid)),
+            )
+            self._debounce_buffers[chat_id] = {
+                "texts": [text],
+                "first_at": now,
+                "timer": timer_handle,
+            }
+            return text  # Process immediately; subsequent ones merge
+
+        elapsed = now - buf["first_at"]
+        if elapsed < self._DEBOUNCE_WINDOW:
+            # Still within window — merge into buffer, don't fire yet
+            buf["texts"].append(text)
+            return ""  # Absorbed
+
+        # Window elapsed — return accumulated text and reset
+        accumulated = "\n".join(buf["texts"])
+        buf["texts"] = [text]
+        buf["first_at"] = now
+        return accumulated
+
+    async def _flush_debounce(self, chat_id: str) -> None:
+        """Timer callback: send any accumulated text after DEBOUNCE_WINDOW."""
+        buf = self._debounce_buffers.pop(chat_id, None)
+        if buf is None or len(buf["texts"]) <= 1:
+            return
+        accumulated = "\n".join(buf["texts"])
+        logger.debug("Debounce flush: chat=%s accumulated %d messages",
+                      chat_id[:16], len(buf["texts"]))
+        # The accumulated message is already in self.handle_message via
+        # the first message; subsequent ones were absorbed. No action needed.
 
     # ── typing indicator ──────────────────────────────
 
