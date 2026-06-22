@@ -63,6 +63,17 @@ class Database:
 
     # ── sessions ──────────────────────────────────────
 
+    async def create_session_direct(self, session_id: str, session_key: str) -> None:
+        """Minimal session creation for tests. Skips the full SessionEntry object."""
+        import time
+        async with self._write_lock:
+            await self._conn.execute(
+                "INSERT INTO sessions (session_id, session_key, platform, user_id, created_at, last_active_at) "
+                "VALUES (?, ?, 'test', '', ?, ?)",
+                (session_id, session_key, time.time(), time.time()),
+            )
+            await self._conn.commit()
+
     async def create_session(self, entry) -> None:
         async with self._write_lock:
             await self._conn.execute(

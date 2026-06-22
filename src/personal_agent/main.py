@@ -49,6 +49,7 @@ async def boot() -> None:
 
     import personal_agent.adapters.feishu     # noqa
     import personal_agent.adapters.telegram   # noqa
+    import personal_agent.skills.builtin      # noqa: triggers skill registration
 
     # ── 4. Database ────────────────────────────────────
     db = Database(data_dir / "state.db")
