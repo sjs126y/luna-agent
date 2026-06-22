@@ -1,0 +1,143 @@
+"""Entry point — bootstrap and run the agent system."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import signal
+import sys
+
+from personal_agent.config import Settings
+from personal_agent.db.database import Database
+from personal_agent.gateway.gateway import Gateway
+from personal_agent.memory.file_store import FileMemoryProvider, set_memory_path
+from personal_agent.memory.manager import MemoryManager
+from personal_agent.tools.builtin.file_read import set_allowed_base as set_file_base
+from personal_agent.tools.builtin.file_write import set_allowed_base as set_file_write_base
+from personal_agent.tools.builtin.todo import set_todos_path
+
+logger = logging.getLogger("personal_agent")
+
+
+def setup_logging(level: str = "INFO") -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+async def boot() -> None:
+    # ── 1. Config ─────────────────────────────────────
+    settings = Settings()
+    setup_logging(settings.log_level)
+    logger.info("Personal Agent starting...")
+
+    # ── 2. Data dirs ──────────────────────────────────
+    data_dir = settings.agent_data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 3. Import triggers (self-registration) ────────
+    import personal_agent.tools.builtin.calculator       # noqa
+    import personal_agent.tools.builtin.web_search        # noqa
+    import personal_agent.tools.builtin.web_fetch         # noqa
+    import personal_agent.tools.builtin.datetime_tool     # noqa
+    import personal_agent.tools.builtin.file_read         # noqa
+    import personal_agent.tools.builtin.file_write        # noqa
+    import personal_agent.tools.builtin.todo              # noqa
+    # memory tool is auto-registered in file_store.py
+
+    import personal_agent.adapters.feishu     # noqa
+    import personal_agent.adapters.telegram   # noqa
+
+    # ── 4. Database ────────────────────────────────────
+    db = Database(data_dir / "state.db")
+    await db.initialize()
+
+    # ── 5. Memory ──────────────────────────────────────
+    memory_path = data_dir / "memory" / "MEMORY.md"
+    set_memory_path(memory_path)
+    memory_store = FileMemoryProvider(memory_path)
+    memory_manager = MemoryManager(builtin=memory_store)
+
+    # ── 6. File tool sandbox ───────────────────────────
+    set_file_base(data_dir)
+    set_file_write_base(data_dir)
+    set_todos_path(data_dir / "todos.json")
+
+    # ── 7. Gateway ─────────────────────────────────────
+    system_prompt = (
+        "你是一个智能个人助理。你可以使用工具来帮助用户完成任务。\n"
+        "用中文回复，保持简洁有条理。"
+    )
+    gateway = Gateway(settings, db, memory_manager, system_prompt_template=system_prompt)
+
+    # ── 8. Start ───────────────────────────────────────
+    await gateway.start()
+
+    # ── 9. Wait for shutdown ──────────────────────────
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown(gateway)))
+        except NotImplementedError:
+            pass  # Windows doesn't support add_signal_handler
+
+    logger.info("Personal Agent running. Press Ctrl+C to stop.")
+    try:
+        await gateway.wait_for_shutdown()
+    except asyncio.CancelledError:
+        pass
+
+
+async def _shutdown(gateway: Gateway) -> None:
+    logger.info("Shutting down...")
+    await gateway.stop()
+
+
+def main() -> None:
+    """CLI entry: python -m personal_agent"""
+    if len(sys.argv) > 1 and sys.argv[1] == "--cli":
+        _run_cli(sys.argv[2] if len(sys.argv) > 2 else "Hello")
+    else:
+        asyncio.run(boot())
+
+
+def _run_cli(message: str) -> None:
+    """Interactive CLI mode for debugging without a platform."""
+    import asyncio
+    from personal_agent.llm.provider import ProviderProfile
+    from personal_agent.llm.anthropic import AnthropicMessagesTransport
+    from personal_agent.agent.agent import init_agent
+    from personal_agent.agent.context import build_turn_context
+    from personal_agent.agent.loop import run_conversation
+    from personal_agent.compression.simple import SimpleCompressor
+    from personal_agent.tools.builtin import calculator, datetime_tool, todo, web_search, web_fetch  # noqa
+    from personal_agent.memory.file_store import FileMemoryProvider
+    from personal_agent.memory.manager import MemoryManager
+
+    async def _run():
+        settings = Settings()
+        provider = ProviderProfile(
+            name=settings.llm_provider, base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key, model=settings.llm_model,
+            max_tokens=settings.llm_max_tokens,
+        )
+        transport = AnthropicMessagesTransport(provider)
+        memory = FileMemoryProvider(settings.agent_data_dir / "memory" / "MEMORY.md")
+        memory_manager = MemoryManager(builtin=memory)
+        agent = init_agent(transport, provider, memory_manager=memory_manager,
+                          compressor=SimpleCompressor(), max_iterations=settings.max_iterations)
+
+        ctx = build_turn_context(agent, message)
+        result = await run_conversation(agent, ctx)
+        # Use sys.stdout with encoding fix for Windows console
+        import sys
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        print(result["final_response"])
+
+    asyncio.run(_run())
+
+
+if __name__ == "__main__":
+    main()
