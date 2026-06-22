@@ -76,17 +76,18 @@ async def boot() -> None:
     await gateway.start()
 
     # ── 9. Wait for shutdown ──────────────────────────
+    # Try POSIX signal handlers first; fall back to KeyboardInterrupt for Windows
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown(gateway)))
         except NotImplementedError:
-            pass  # Windows doesn't support add_signal_handler
+            pass
 
     logger.info("Personal Agent running. Press Ctrl+C to stop.")
     try:
         await gateway.wait_for_shutdown()
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, KeyboardInterrupt):
         pass
 
 
@@ -100,7 +101,10 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
         _run_cli(sys.argv[2] if len(sys.argv) > 2 else "Hello")
     else:
-        asyncio.run(boot())
+        try:
+            asyncio.run(boot())
+        except KeyboardInterrupt:
+            pass
 
 
 def _run_cli(message: str) -> None:
