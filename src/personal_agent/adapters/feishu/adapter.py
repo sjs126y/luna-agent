@@ -40,6 +40,13 @@ class FeishuAdapter(BasePlatformAdapter):
         self._ws_ready = threading.Event()
 
         def _run_ws():
+            # WS client module captures loop at import time — give it a fresh event
+            # loop for this daemon thread (avoids "event loop already running" error)
+            import lark_oapi.ws.client as ws_client_module
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            ws_client_module.loop = new_loop
+
             from lark_oapi.ws import Client as WsClient
             from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 
@@ -51,8 +58,11 @@ class FeishuAdapter(BasePlatformAdapter):
                 except Exception:
                     logger.exception("Feishu WS message parse failed")
 
+            # Register for both v1 and v2 message events (in case SDK
+            # routes events differently from what we expect)
             handler = EventDispatcherHandlerBuilder("", "") \
                 .register_p2_im_message_receive_v1(on_message) \
+                .register_p1_customized_event("im.message.receive_v1", on_message) \
                 .build()
 
             try:
