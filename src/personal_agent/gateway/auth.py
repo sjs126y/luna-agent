@@ -122,13 +122,13 @@ class AuthManager:
         pending["attempts"] += 1
 
         if reply == pending["code"]:
-            # Success!
+            # Success! Return greeting instead of letting code through to Agent
             del self._pending[user_id]
             self._allowlist.add(user_id)
             self._save_allowlist()
             self._save_pending()
             logger.info("Auth: user %s verified via pairing", user_id[:12])
-            return True, None  # Let the original message through to Agent
+            return True, "✅ 验证通过！你好，我是个人助理。有什么可以帮你的？"
 
         # Wrong code
         remaining = MAX_ATTEMPTS - pending["attempts"]

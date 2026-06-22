@@ -95,11 +95,14 @@ class Gateway:
 
         # 2. Authorization (skip internal/cron events)
         if not event.internal and event.source.user_id != "cron":
-            allowed, challenge = self._auth_manager.check(
+            allowed, response = self._auth_manager.check(
                 event.source.user_id, event.text
             )
             if not allowed:
-                return challenge or "抱歉，你没有权限使用此服务。"
+                return response or "抱歉，你没有权限使用此服务。"
+            # Auth passed with a message (e.g. pairing success greeting)
+            if allowed and response is not None:
+                return response
 
         # 3. Command detection
         if event.text.startswith("/"):
