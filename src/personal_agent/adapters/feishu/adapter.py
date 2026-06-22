@@ -17,6 +17,7 @@ class FeishuAdapter(BasePlatformAdapter):
     def __init__(self, config, db) -> None:
         super().__init__(config, db)
         self._ws_client = None
+        self._lark_client = None  # Reused API client
         self._app_id = config.feishu_app_id
         self._app_secret = config.feishu_app_secret
 
@@ -26,42 +27,56 @@ class FeishuAdapter(BasePlatformAdapter):
         self._loop = asyncio.get_running_loop()
         logger.info("Feishu adapter connecting (app_id=%s...)", self._app_id[:8])
 
-        # Start WS client in a background thread
+        # Create reusable API client (used by send / get_chat_info)
+        import lark_oapi as lark
+        self._lark_client = lark.Client.builder() \
+            .app_id(self._app_id) \
+            .app_secret(self._app_secret) \
+            .build()
+
+        # Event to signal WS thread status
         import threading
         self._stop_event = threading.Event()
+        self._ws_ready = threading.Event()
 
         def _run_ws():
             from lark_oapi.ws import Client as WsClient
             from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 
             def on_message(event_data):
-                # event_data is a CustomizedEvent with the message payload
                 try:
-                    msg = event_data.event
                     asyncio.run_coroutine_threadsafe(
-                        self._handle_feishu_event(msg), self._loop
+                        self._handle_feishu_event(event_data), self._loop
                     )
                 except Exception:
                     logger.exception("Feishu WS message parse failed")
 
-            # encrypt_key and verification_token can be empty strings for WS mode
             handler = EventDispatcherHandlerBuilder("", "") \
-                .register_p1_customized_event("im.message.receive_v1", on_message) \
+                .register_p2_im_message_receive_v1(on_message) \
                 .build()
 
-            client = WsClient(
-                app_id=self._app_id,
-                app_secret=self._app_secret,
-                event_handler=handler,
-            )
-            self._ws_client = client
-            logger.info("Feishu WS client starting")
-            client.start()
+            try:
+                client = WsClient(
+                    app_id=self._app_id,
+                    app_secret=self._app_secret,
+                    event_handler=handler,
+                )
+                self._ws_client = client
+                self._ws_ready.set()  # Signal: WS client created OK
+                logger.info("Feishu WS client starting")
+                client.start()
+            except Exception:
+                logger.exception("Feishu WS client failed to start")
+                self._ws_ready.set()  # Signal failure too, so connect() doesn't hang
 
         self._ws_thread = threading.Thread(target=_run_ws, daemon=True, name="feishu-ws")
         self._ws_thread.start()
-        await asyncio.sleep(1)  # Give WS time to connect
-        logger.info("Feishu adapter connected")
+
+        # Wait for WS thread to signal ready (or fail), with timeout
+        if not self._ws_ready.wait(timeout=10):
+            logger.warning("Feishu WS connection timed out after 10s")
+        else:
+            logger.info("Feishu adapter connected")
 
     async def disconnect(self) -> None:
         if self._ws_client:
@@ -70,6 +85,7 @@ class FeishuAdapter(BasePlatformAdapter):
             except Exception:
                 pass
             self._ws_client = None
+        self._lark_client = None
         if hasattr(self, '_stop_event'):
             self._stop_event.set()
         logger.info("Feishu adapter disconnected")
@@ -79,9 +95,7 @@ class FeishuAdapter(BasePlatformAdapter):
     async def send(self, chat_id: str, content: str) -> SendResult:
         try:
             import lark_oapi as lark
-            client = lark.Client.builder().app_id(self._app_id).app_secret(self._app_secret).build()
 
-            # Parse chat_id to determine message type
             if chat_id.startswith("oc_"):
                 req = lark.im.v1.CreateMessageRequest.builder() \
                     .receive_id_type("chat_id") \
@@ -103,7 +117,7 @@ class FeishuAdapter(BasePlatformAdapter):
                         .build()
                     ).build()
 
-            resp = client.im.v1.message.create(req)
+            resp = self._lark_client.im.v1.message.create(req)
             if resp.success():
                 return SendResult(success=True, message_id=resp.data.message_id)
             return SendResult(success=False, error=f"Feishu API error: {resp.code} {resp.msg}")
@@ -114,12 +128,10 @@ class FeishuAdapter(BasePlatformAdapter):
 
     async def get_chat_info(self, chat_id: str) -> ChatInfo:
         try:
-            import lark_oapi as lark
-            client = lark.Client.builder().app_id(self._app_id).app_secret(self._app_secret).build()
-
             if chat_id.startswith("oc_"):
+                import lark_oapi as lark
                 req = lark.im.v1.GetChatRequest.builder().chat_id(chat_id).build()
-                resp = client.im.v1.chat.get(req)
+                resp = self._lark_client.im.v1.chat.get(req)
                 if resp.success():
                     return ChatInfo(
                         chat_id=chat_id,
@@ -133,41 +145,51 @@ class FeishuAdapter(BasePlatformAdapter):
 
     # ── message parsing ───────────────────────────────
 
-    async def _handle_feishu_event(self, event_data: dict) -> None:
-        """Parse Feishu event → MessageEvent → pipeline."""
+    async def _handle_feishu_event(self, event_data) -> None:
+        """Parse Feishu v2 event (P2ImMessageReceiveV1) → MessageEvent → pipeline."""
         try:
-            event_type = event_data.get("type", "")
-            if event_type == "message":
-                msg_data = event_data.get("message", event_data)
-                content_raw = msg_data.get("content", "{}")
+            # event_data is P2ImMessageReceiveV1
+            inner = event_data.event  # P2ImMessageReceiveV1Data
+            if inner is None or inner.message is None:
+                return
 
-                # Parse message content (JSON string in Feishu)
-                try:
-                    content_obj = json.loads(content_raw)
-                    text = content_obj.get("text", "")
-                except (json.JSONDecodeError, TypeError):
-                    text = str(content_raw)
+            msg = inner.message
+            content_raw = msg.content or "{}"
 
-                if not text:
-                    return
+            # Feishu message content is a JSON string
+            try:
+                content_obj = json.loads(content_raw)
+                text = content_obj.get("text", "")
+            except (json.JSONDecodeError, TypeError):
+                text = str(content_raw)
 
-                source = SessionSource(
-                    platform="feishu",
-                    user_id=msg_data.get("open_id", ""),
-                    user_name=msg_data.get("sender_name", ""),
-                    chat_id=msg_data.get("chat_id", ""),
-                    chat_type=msg_data.get("chat_type", "dm"),
-                )
+            if not text:
+                return
 
-                event = MessageEvent(
-                    text=text,
-                    message_type="command" if text.startswith("/") else "text",
-                    source=source,
-                    raw_message=event_data,
-                    message_id=msg_data.get("message_id"),
-                    timestamp=msg_data.get("create_time", time.time()),
-                )
-                self.handle_message(event)
+            # Extract sender id from UserId object
+            sender = inner.sender
+            user_id = ""
+            if sender and sender.sender_id:
+                uid = sender.sender_id
+                user_id = uid.open_id or uid.union_id or uid.user_id or ""
+
+            source = SessionSource(
+                platform="feishu",
+                user_id=user_id,
+                user_name="",
+                chat_id=msg.chat_id or "",
+                chat_type=msg.chat_type or "dm",
+            )
+
+            event = MessageEvent(
+                text=text,
+                message_type="command" if text.startswith("/") else "text",
+                source=source,
+                raw_message=event_data,
+                message_id=msg.message_id,
+                timestamp=float(msg.create_time or time.time()),
+            )
+            self.handle_message(event)
         except Exception:
             logger.exception("_handle_feishu_event failed")
 
