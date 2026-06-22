@@ -147,18 +147,38 @@ class BasePlatformAdapter(ABC):
                 result = await self.send(chat_id, content)
                 if result.success:
                     return
+
+                error_lower = (result.error or "").lower()
+
+                # Timeout → never retry (message may have been delivered)
+                if "timeout" in error_lower or "timed out" in error_lower:
+                    logger.error("Send timed out (attempt %d): %s", attempt + 1, result.error)
+                    return
+
                 if attempt < max_retries:
-                    delay = (2 ** attempt) + random.uniform(0, 1)
-                    logger.warning("Send failed (attempt %d): %s, retrying in %.1fs", attempt + 1, result.error, delay)
-                    await asyncio.sleep(delay)
-                    # Strip formatting on format errors
-                    if result.error and "parse" in result.error.lower():
+                    # Format error → strip Markdown, retry with plain text
+                    if "parse" in error_lower or "format" in error_lower or "markdown" in error_lower:
                         content = _strip_formatting(content)
+                        delay = 0.5  # short delay for format fix
+                    else:
+                        delay = (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning("Send failed (attempt %d/%d): %s, retrying in %.1fs",
+                                   attempt + 1, max_retries, result.error, delay)
+                    await asyncio.sleep(delay)
                 else:
                     logger.error("Send failed after %d retries: %s", max_retries, result.error)
+
+            except asyncio.TimeoutError:
+                logger.error("Send timeout (attempt %d) — not retrying", attempt + 1)
+                return
             except Exception as exc:
-                logger.exception("Send exception (attempt %d)", attempt + 1)
+                error_msg = str(exc).lower()
+                # Timeout in exception → don't retry
+                if "timeout" in error_msg or "timed out" in error_msg:
+                    logger.error("Send timeout exception (attempt %d)", attempt + 1)
+                    return
                 if attempt < max_retries:
+                    logger.warning("Send exception (attempt %d/%d): %s", attempt + 1, max_retries, exc)
                     await asyncio.sleep((2 ** attempt) + random.uniform(0, 1))
 
     # ── helpers ───────────────────────────────────────

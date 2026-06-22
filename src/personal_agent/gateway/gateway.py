@@ -235,9 +235,11 @@ class Gateway:
             return "会话已重置。开始新的对话吧。"
 
         if text.startswith("/stop"):
-            # Interrupt running agent (if any in _running_agents)
-            # For now, just clear pending
-            return "已停止。有新消息时重新开始。"
+            # Set interrupt flag on all cached agents
+            for agent in self._agent_cache.values():
+                if hasattr(agent, '_interrupt_requested'):
+                    agent._interrupt_requested = True
+            return "已停止。"
 
         if text.startswith("/help"):
             return (

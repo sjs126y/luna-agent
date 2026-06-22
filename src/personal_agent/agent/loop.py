@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from personal_agent.tools.executor import execute_tool_calls
@@ -31,14 +32,37 @@ async def run_conversation(agent, ctx) -> dict:
             api_messages = hook_result.get("messages", api_messages)
             system_prompt = hook_result.get("system_prompt", system_prompt)
 
-        # ── LLM call ──
+        # ── LLM call (interruptible — polls _interrupt_requested every 5s) ──
         try:
-            response = await agent._transport.call(
-                messages=api_messages,
-                system_prompt=system_prompt,
-                tools=agent.tools,
-                max_tokens=agent._provider.max_tokens,
+            llm_task = asyncio.create_task(
+                agent._transport.call(
+                    messages=api_messages,
+                    system_prompt=system_prompt,
+                    tools=agent.tools,
+                    max_tokens=agent._provider.max_tokens,
+                )
             )
+            while not llm_task.done():
+                done, _ = await asyncio.wait([llm_task], timeout=5.0)
+                if llm_task.done():
+                    break
+                if agent._interrupt_requested:
+                    llm_task.cancel()
+                    logger.info("LLM call interrupted by /stop")
+                    return {
+                        "final_response": "已停止。",
+                        "messages": ctx.messages,
+                        "api_calls": agent.session_api_calls,
+                        "completed": False,
+                    }
+            response = await llm_task
+        except asyncio.CancelledError:
+            return {
+                "final_response": "已停止。",
+                "messages": ctx.messages,
+                "api_calls": agent.session_api_calls,
+                "completed": False,
+            }
         except Exception as exc:
             logger.exception("LLM call failed")
             return {
