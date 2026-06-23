@@ -117,8 +117,19 @@ async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
 
 
 def _exec_one_sync(tc: dict, agent: Any = None, hooks: Any = None) -> str:
-    """Synchronous wrapper for thread-pool execution. Runs async _exec_one in a new loop."""
-    return asyncio.run(_exec_one(tc, agent=agent, hooks=hooks))
+    """Synchronous wrapper for thread-pool execution. Fresh event loop per thread.
+    Handles Windows ProactorEventLoop quirks gracefully."""
+    try:
+        return asyncio.run(_exec_one(tc, agent=agent, hooks=hooks))
+    except RuntimeError as e:
+        if "event loop" in str(e).lower():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_exec_one(tc, agent=agent, hooks=hooks))
+            finally:
+                loop.close()
+        raise
 
 
 # ── scope gate ────────────────────────────────────────

@@ -53,7 +53,7 @@ def build_turn_context(
     from personal_agent.agent.agent import _refresh_tools, _build_system_prompt
     _refresh_tools(agent)
     if agent._cached_system_prompt is None:
-        _build_system_prompt(agent)
+        _build_system_prompt(agent, agent._system_prompt_template)
 
     # Memory review nudge — every N turns
     should_review = False

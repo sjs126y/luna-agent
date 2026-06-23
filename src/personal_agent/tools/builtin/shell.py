@@ -127,11 +127,11 @@ def _check_command(cmd_line: str) -> str | None:
             f"Set bash_allow_network: true in config.yaml to enable."
         )
 
-    # Check dangerous patterns
+    # Check dangerous patterns (case-insensitive matching)
     cmd_normalized = cmd_stripped.lower()
     for pattern in _DANGEROUS_PATTERNS:
-        if re.search(pattern, cmd_normalized):
-            return f"Error: dangerous pattern detected ({pattern})"
+        if re.search(pattern, cmd_normalized, re.IGNORECASE):
+            return f"Error: dangerous pattern detected"
 
     return None
 

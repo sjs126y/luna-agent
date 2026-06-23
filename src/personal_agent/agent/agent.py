@@ -28,6 +28,7 @@ class Agent:
 
     # ── system prompt ──
     _cached_system_prompt: str | None = None  # None=not built, ""=empty, str=present
+    _system_prompt_template: str = ""          # preserved for rebuild after invalidation
 
     # ── memory ──
     _memory_manager: Any = None
@@ -89,6 +90,7 @@ def init_agent(
         _llm_pool=pool,
         _tool_pool=pool,  # shared pool for MVP, separate later
     )
+    agent._system_prompt_template = system_prompt_template
     _refresh_tools(agent)
     _build_system_prompt(agent, system_prompt_template)
     _register_default_hooks(agent)
