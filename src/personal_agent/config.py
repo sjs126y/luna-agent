@@ -78,6 +78,7 @@ class Settings:
         # ── Security (from config.yaml) ──
         security = yaml_cfg.get("security", {})
         self.bash_allow_network: bool = security.get("bash_allow_network", False)
+        self.bash_restrict_paths: bool = security.get("bash_restrict_paths", True)
         self.file_max_write_bytes: int = security.get("file_max_write_bytes", 100000)
         self.audit_enabled: bool = security.get("audit_enabled", True)
 

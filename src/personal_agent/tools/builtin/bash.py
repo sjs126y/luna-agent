@@ -25,12 +25,18 @@ logger = logging.getLogger(__name__)
 
 _work_dir: Path = Path("./data").resolve()
 _allow_network: bool = False
+_restrict_paths: bool = True
 _MAX_OUTPUT = 4000
 
 
 def set_work_dir(path: Path) -> None:
     global _work_dir
     _work_dir = path.resolve()
+
+
+def set_restrict_paths(restrict: bool) -> None:
+    global _restrict_paths
+    _restrict_paths = restrict
 
 
 def set_allow_network(allowed: bool) -> None:
@@ -201,18 +207,40 @@ _PATH_ALLOWLIST: list[str] = [
 ]
 
 
+# Files/paths that are ALWAYS blocked, regardless of config
+_PROTECTED_FILES: list[str] = [
+    r'\.env\b', r'config\.ya?ml\b', r'pyproject\.toml\b',
+    r'\.git/', r'\.ssh/', r'id_rsa\b', r'\.netrc\b',
+    r'data/auth/', r'data/system/', r'audit\.log\b',
+    r'\.claude/', r'\.venv/', r'\.pytest_cache/',
+]
+
+
 def _check_path_sandbox(cmd_line: str) -> str | None:
     """Block commands that access files outside the sandbox via absolute paths.
 
-    Catches: /etc/passwd, C:/Windows, ~/.ssh, ../../../etc/passwd
-    Allows:  relative paths like ./data/file.txt
+    Always blocked: .env, config.yaml, .git/, .ssh/, data/auth/, .venv/
+    When _restrict_paths=true (default): also blocks /etc, C:/Windows, ~/, ..
     """
+    # ── Protected files — NEVER allowed ──
+    for pattern in _PROTECTED_FILES:
+        if re.search(pattern, cmd_line, re.IGNORECASE):
+            return (
+                f"Error: access to protected path blocked ({pattern}). "
+                f"Config and credential files are never readable via bash."
+            )
+
+    # ── Absolute/traversal paths — configurable ──
+    if not _restrict_paths:
+        return None  # sandbox disabled, allow everything except protected files
+
     for pattern in _PATH_ESCAPE_PATTERNS:
         if re.search(pattern, cmd_line, re.IGNORECASE):
             return (
                 f"Error: path sandbox blocked — absolute system path or "
                 f"parent traversal detected. Use only relative paths within "
-                f"the working directory."
+                f"the working directory. Set bash_restrict_paths: false "
+                f"in config.yaml to enable."
             )
     return None
 

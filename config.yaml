@@ -6,7 +6,7 @@ agent:
   max_tool_calls_per_turn: 20
 
 storage:
-  data_dir: "./data"
+  data_dir: "C:/Users/MR/Desktop"
   log_level: "INFO"
 
 compression:
@@ -32,9 +32,10 @@ session:
   override: {}               # {"wechat:o9cq80:o9cq80": "wechat:custom:o9cq80"}
 
 security:
-  bash_allow_network: false     # true = allow curl/pip/wget in bash tool
-  file_max_write_bytes: 100000  # max file_write size
-  audit_enabled: true           # log to data/audit.log
+  bash_allow_network: false        # true = allow curl/pip/wget in bash tool
+  bash_restrict_paths: true   # false = allow absolute paths outside sandbox
+  file_max_write_bytes: 100000     # max file_write size
+  audit_enabled: true              # log to data/audit.log
 
 auth:
   enabled: true               # true = enable auth (static + pairing)
