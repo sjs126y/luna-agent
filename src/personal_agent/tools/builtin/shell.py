@@ -106,6 +106,11 @@ def _check_command(cmd_line: str) -> str | None:
     if not parts:
         return "Error: empty command"
 
+    # Block command chaining — one command per call
+    _CHAIN_TOKENS = ("&&", "||", "|", ";")
+    if any(tok in cmd_stripped for tok in _CHAIN_TOKENS):
+        return "Error: command chaining (&& || | ;) is not allowed. Use one command per call."
+
     base = parts[0].lower().replace("\\", "/").split("/")[-1]  # strip path
 
     # Check whitelist

@@ -50,6 +50,7 @@ class Agent:
     _tool_calls_this_turn: int = 0
     _destructive_allowed: set[str] = field(default_factory=set)  # {"write", "shell", "all"}
     _max_tool_calls_per_turn: int = 20
+    _pending_skill_injection: str | None = None  # set by Gateway, consumed by context
 
     # ── pool split (same pool for MVP, separate later) ──
     _llm_pool: Any = None

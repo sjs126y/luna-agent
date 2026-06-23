@@ -9,6 +9,7 @@ _CORE_TOOLS: set[str] = {
     "calculator", "datetime", "web_search", "web_fetch",
     "bash", "memory", "todo", "file_read", "file_write",
     "weather", "random", "timer", "json",
+    "skill_search", "skill_load",
 }
 
 # Toolset groups — name → list of tool names

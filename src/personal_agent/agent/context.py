@@ -28,6 +28,7 @@ class TurnContext:
     should_review_memory: bool = False
     was_compressed: bool = False            # True if compression ran this turn
     pre_compress_message_count: int = 0     # message count before compression
+    skill_injection: str | None = None      # from /skill-name, injected to api_messages
 
 
 def build_turn_context(
@@ -70,6 +71,12 @@ def build_turn_context(
     messages = _check_and_compress(agent, messages)
     was_compressed = len(messages) != pre_count
 
+    # Consume pending skill injection (set by Gateway /skill-name)
+    skill_injection = None
+    if agent._pending_skill_injection:
+        skill_injection = agent._pending_skill_injection
+        agent._pending_skill_injection = None  # consumed, won't leak to next turn
+
     turn_id = f"{uuid.uuid4().hex[:8]}"
 
     return TurnContext(
@@ -82,6 +89,7 @@ def build_turn_context(
         current_turn_user_idx=user_idx,
         was_compressed=was_compressed,
         pre_compress_message_count=pre_count,
+        skill_injection=skill_injection,
     )
 
 

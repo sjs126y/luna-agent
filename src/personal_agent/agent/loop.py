@@ -167,6 +167,14 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
     """Build messages for LLM: messages + injections. NOT persisted."""
     msgs = list(ctx.messages)
 
+    # Skill injection: /skill-name content, injected ONCE then consumed
+    if ctx.skill_injection:
+        msgs.insert(0, {
+            "role": "user",
+            "content": [{"type": "text", "text": ctx.skill_injection}],
+        })
+        ctx.skill_injection = None  # consumed — won't inject again this turn
+
     # Memory prefetch: external provider results injected as prefix
     if agent._memory_manager:
         try:

@@ -52,6 +52,7 @@ async def boot() -> None:
     import personal_agent.tools.builtin.random_tool       # noqa
     import personal_agent.tools.builtin.timer             # noqa
     import personal_agent.tools.builtin.json_tool         # noqa
+    import personal_agent.tools.builtin.skill_tools       # noqa: skill_search, skill_load
     import personal_agent.tools.bridge                    # noqa: bridge tools (tool_search/describe/call)
     # memory tool is auto-registered in file_store.py
 

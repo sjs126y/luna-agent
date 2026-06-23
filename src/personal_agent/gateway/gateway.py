@@ -106,7 +106,10 @@ class Gateway:
 
         # 3. Command detection
         if event.text.startswith("/"):
-            return await self._handle_command(event, session_key)
+            cmd_result = await self._handle_command(event, session_key)
+            if cmd_result is not None:
+                return cmd_result
+            # cmd_result is None → continue to agent (skill injection, etc.)
 
         # 4. Busy check
         if session_key in self._running_agents:
@@ -192,7 +195,6 @@ class Gateway:
             compressor_transport = None
             if self.config.compressor_model:
                 from personal_agent.llm.provider import ProviderProfile
-                from personal_agent.llm.anthropic import AnthropicMessagesTransport as AMT
                 comp_provider = ProviderProfile(
                     name="compressor",
                     base_url=self.config.llm_base_url,
@@ -200,7 +202,7 @@ class Gateway:
                     model=self.config.compressor_model,
                     max_tokens=512,
                 )
-                compressor_transport = AMT(comp_provider)
+                compressor_transport = transport_registry.get(api_mode, comp_provider)
 
             compressor = ContextCompressor(
                 context_length=64000,
@@ -272,15 +274,15 @@ class Gateway:
                 from personal_agent.skills.registry import skill_registry
                 content = skill_registry.load(skill_name)
                 if content:
-                    # Extract remaining text after /skill-name
-                    parts = text.split(None, 1)
-                    remaining = parts[1] if len(parts) > 1 else ""
-                    # Inject skill as prefix to user's message, flow to agent
-                    event.text = (
-                        f"[技能: {skill_name}]\n\n{content}\n\n"
-                        f"---\n用户消息: {remaining or '你好'}"
+                    # Inject skill via agent field → TurnContext → api_messages
+                    # NOT into ctx.messages (not persisted)
+                    agent = self._get_or_create_agent(session_key)
+                    agent._pending_skill_injection = (
+                        f"[技能: {skill_name}]\n\n{content}"
                     )
-                    return None  # pass to agent, NOT a direct reply
+                    parts = text.split(None, 1)
+                    event.text = parts[1] if len(parts) > 1 else "你好"
+                    return None  # flow to agent with clean user message
             except Exception:
                 pass
                 pass

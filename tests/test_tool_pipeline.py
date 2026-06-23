@@ -32,16 +32,19 @@ def test_shell_allowed_commands():
 
 
 def test_shell_command_chaining_bypass():
-    """KNOWN ISSUE: whitelist only checks base command. 'whoami && evil' passes
-    because '&&' isn't caught by dangerous patterns. Note: ';' with dangerous
-    payload IS caught because the dangerous pattern matches the payload."""
+    """Command chaining (&& || | ;) is now blocked — one command per call."""
     from personal_agent.tools.builtin.shell import _check_command
 
-    # Passes because base command is whitelisted and '&&' isn't caught
-    assert _check_command("whoami && ls") is None  # SECURITY GAP
+    # All chain operators are blocked
+    assert _check_command("whoami && ls") is not None     # blocked
+    assert _check_command("whoami && rm -rf /") is not None  # blocked
+    assert _check_command("ls || echo fail") is not None  # blocked
+    assert _check_command("cat file | grep x") is not None  # blocked
+    assert _check_command("echo hello; ls") is not None   # blocked
 
-    # This one IS caught — ';' payload still matches the rm -rf / pattern
-    assert _check_command("echo hello; rm -rf /") is not None  # Caught correctly
+    # Single commands still work
+    assert _check_command("whoami") is None               # allowed
+    assert _check_command("ls -la") is None               # allowed
 
 
 def test_shell_network_blocked():
