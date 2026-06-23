@@ -55,7 +55,7 @@ class ProviderRegistry:
         url_lower = base_url.lower()
         if "anthropic" in url_lower:
             return "anthropic_messages"
-        if "openai" in url_lower:
+        if "openai" in url_lower or "openrouter" in url_lower:
             return "chat_completions"
         if provider_name == "deepseek" and "anthropic" in url_lower:
             return "anthropic_messages"
@@ -86,6 +86,22 @@ def _anthropic_factory(config) -> ProviderProfile:
         model=config.llm_model, max_tokens=config.llm_max_tokens,
     )
 
+def _openrouter_factory(config) -> ProviderProfile:
+    return ProviderProfile(
+        name="openrouter",
+        base_url=config.llm_base_url if "openrouter" in (config.llm_base_url or "").lower()
+                 else "https://openrouter.ai/api/v1",
+        api_key=config.llm_api_key,
+        model=config.llm_model,
+        max_tokens=config.llm_max_tokens,
+        extra_headers={
+            "HTTP-Referer": "http://localhost",
+            "X-Title": "Personal Agent",
+        },
+    )
+
+
 provider_registry.register("deepseek", _deepseek_factory)
 provider_registry.register("openai", _openai_factory)
 provider_registry.register("anthropic", _anthropic_factory)
+provider_registry.register("openrouter", _openrouter_factory)
