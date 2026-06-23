@@ -230,12 +230,20 @@ async def test_execute_code_no_output():
 
 
 @pytest.mark.asyncio
-async def test_delegate_not_initialized():
-    """Without setup, delegate should return a clear error."""
-    from personal_agent.tools.builtin.delegate import _delegate_task
+async def test_sub_agent_not_initialized():
+    """Without setup, sub_agent should return a clear error."""
+    from personal_agent.tools.builtin.delegate import _sub_agent
 
-    result = await _delegate_task("test prompt")
+    result = await _sub_agent("test prompt")
     assert "not initialized" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_sub_parallel_bad_json():
+    from personal_agent.tools.builtin.delegate import _sub_parallel
+
+    result = await _sub_parallel("not json")
+    assert "invalid" in result.lower()
 
 
 # ── tools are registered ────────────────────────────────
@@ -245,7 +253,8 @@ def test_all_new_tools_registered():
     from personal_agent.tools.registry import tool_registry
 
     expected = [
-        "clarify", "execute_code", "delegate_task",
+        "clarify", "execute_code",
+        "sub_agent", "sub_parallel", "sub_pipeline",
         "process_list", "process_kill", "process_wait",
     ]
     for name in expected:
