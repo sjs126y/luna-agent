@@ -324,7 +324,7 @@ def _run_cli(message: str) -> None:
                           enabled_toolsets=settings.enabled_toolsets,
                           system_prompt_template='你是一个智能助手。优先使用工具获取实时信息和执行操作，不要凭记忆编造。用中文回复。')
 
-        ctx = build_turn_context(agent, message)
+        ctx = await build_turn_context(agent, message)
         result = await run_conversation(agent, ctx)
         # Use sys.stdout with encoding fix for Windows console
         import sys

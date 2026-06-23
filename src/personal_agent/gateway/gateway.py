@@ -160,7 +160,7 @@ class Gateway:
         from personal_agent.agent.context import build_turn_context
         from personal_agent.agent.loop import run_conversation
 
-        ctx = build_turn_context(agent, event.text, history)
+        ctx = await build_turn_context(agent, event.text, history)
         result = await run_conversation(agent, ctx)
 
         # Only save transcript if the conversation completed cleanly.
@@ -234,7 +234,7 @@ class Gateway:
                 compressor_transport = transport_registry.get(api_mode, comp_provider)
 
             compressor = ContextCompressor(
-                context_length=64000,
+                context_length=provider.context_window or 64_000,
                 threshold_ratio=0.6,
                 tail_token_budget=self.config.tail_token_budget,
                 max_summary_tokens=self.config.compressor_max_tokens,

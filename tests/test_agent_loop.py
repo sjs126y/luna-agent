@@ -47,7 +47,7 @@ async def test_simple_response(provider):
                           usage={"input_tokens": 5, "output_tokens": 3}),
     ])
     agent = init_agent(transport, provider)
-    ctx = build_turn_context(agent, "Hi")
+    ctx = await build_turn_context(agent,"Hi")
     result = await run_conversation(agent, ctx)
 
     assert result["completed"]
@@ -64,7 +64,7 @@ async def test_empty_response_retry(provider):
                           usage={"input_tokens": 5, "output_tokens": 2}),
     ])
     agent = init_agent(transport, provider)
-    ctx = build_turn_context(agent, "Hi")
+    ctx = await build_turn_context(agent,"Hi")
     result = await run_conversation(agent, ctx)
 
     assert result["completed"]
@@ -99,7 +99,7 @@ async def test_tool_use_loop(provider):
         }, handler=_echo,
     ))
 
-    ctx = build_turn_context(agent, "Test")
+    ctx = await build_turn_context(agent,"Test")
     result = await run_conversation(agent, ctx)
 
     assert result["completed"]

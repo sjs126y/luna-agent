@@ -31,7 +31,7 @@ class TurnContext:
     skill_injection: str | None = None      # from /skill-name, injected to api_messages
 
 
-def build_turn_context(
+async def build_turn_context(
     agent,
     user_message: str,
     history: list[dict] | None = None,
@@ -77,7 +77,7 @@ def build_turn_context(
 
     # Token check + compression
     pre_count = len(messages)
-    messages = _check_and_compress(agent, messages)
+    messages = await _check_and_compress(agent, messages)
     was_compressed = len(messages) != pre_count
 
     # Consume pending skill injection (set by Gateway /skill-name)
@@ -103,7 +103,7 @@ def build_turn_context(
     )
 
 
-def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
+async def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
     """If estimated tokens exceed threshold, compress via ContextEngine."""
     if agent._compressor is None:
         return messages
@@ -119,7 +119,7 @@ def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
 
     logger.info("Compressing: %d tokens > %d limit", total, agent._compressor.threshold_tokens)
     try:
-        result = agent._compressor.compress(
+        result = await agent._compressor.compress(
             messages,
             agent._cached_system_prompt or "",
             agent._transport,
