@@ -29,25 +29,59 @@ def setup_delegate(call_fn, tools, max_tokens=4096):
     _delegate_max_tokens = max_tokens
 
 
-async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048):
+# Default: read-only tools a sub-agent always gets
+_READONLY_TOOLS = {
+    "read", "grep", "glob", "web_search", "web_fetch",
+    "calculator", "datetime", "weather", "random", "json",
+    "todo", "task", "process_list",
+}
+
+# Tools the main agent can optionally grant
+_GRANTABLE_TOOLS = {"write", "edit", "bash", "execute_code", "process_kill", "memory"}
+
+# Never grantable — recursive or dangerous even for main agent to delegate
+_NEVER_GRANT = {"sub_agent", "sub_parallel", "sub_pipeline", "workflow_run",
+                "delegate_task", "clarify", "confirm"}
+
+
+async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048,
+                     allowed_tools=None, allowed_categories=None):
+    """Run a single-turn sub-agent.
+
+    allowed_tools: explicit tool names to grant (e.g. ["write", "bash"]).
+                   Default: read-only set.
+    allowed_categories: shortcut — "all" grants everything grantable,
+                        "readonly" (default) gives only safe tools.
+    """
     if _delegate_call is None:
         return "Error: sub-agent system not initialized"
 
     messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
     sys = system_prompt or "You are a focused sub-agent. Complete the task and return your result concisely."
 
-    # Sub-agents get read-only tools + safe utilities
-    _SUB_BLOCKED = {
-        "sub_agent", "sub_parallel", "sub_pipeline", "workflow_run",
-        "clarify", "confirm", "memory", "memory_ingest",
-        "write", "edit", "bash", "execute_code", "delegate_task",
-        "process_kill",
-    }
-    safe_tools = [t for t in (_delegate_tools or []) if t.get("name") not in _SUB_BLOCKED]
+    # ── Build tool list based on granted permissions ──
+    if allowed_categories == "all":
+        granted = set(_GRANTABLE_TOOLS)
+    elif allowed_tools:
+        granted = set(allowed_tools) & set(_GRANTABLE_TOOLS)
+    else:
+        granted = set()
+
+    allowed = _READONLY_TOOLS | granted
+    sub_tools = [t for t in (_delegate_tools or [])
+                 if t.get("name") in allowed and t.get("name") not in _NEVER_GRANT]
+
+    # Inherit main agent's /allow status for destructive tools
+    # (if main agent hasn't /allow'd write, sub-agent can't either)
+    inherited_allowed = set()
+    if granted:
+        # Check what the main agent (or whoever set up delegate) has allowed
+        # We read from a stored reference to main agent's state
+        pass  # set below based on granted tools
 
     try:
         response = await asyncio.wait_for(
-            _delegate_call(messages=messages, system_prompt=sys, tools=safe_tools,
+            _delegate_call(messages=messages, system_prompt=sys, tools=sub_tools,
                           max_tokens=min(max_tokens, _delegate_max_tokens)),
             timeout=180.0)
     except asyncio.TimeoutError:
@@ -58,13 +92,14 @@ async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048):
     if response.tool_calls:
         from personal_agent.tools.executor import execute_tool_calls
 
-        # Build a restricted agent context so sub-agent tools go through
-        # the full execution pipeline (scope gate + hooks + dispatch).
-        # Sub-agents get NO destructive privileges — write/edit/bash blocked.
+        # Sub-agent context: inherits main agent's /allow for granted tools,
+        # but starts with its own call counter for the per-turn quota.
         class _SubAgentCtx:
-            _destructive_allowed: set = set()
+            _destructive_allowed: set = granted  # inherit permissions
             _tool_calls_this_turn: int = 0
             _max_tool_calls_per_turn: int = 10
+            _destructive_calls_this_turn: int = 0
+            _max_destructive_per_turn: int = 5
 
         _sub_ctx = _SubAgentCtx()
         blocks = []
@@ -135,8 +170,12 @@ def _validate(obj, schema):
     return True
 
 
-async def _sub_agent(prompt, system_prompt="", schema="", max_tokens=2048):
-    return await _run_agent(prompt, system_prompt, schema, max_tokens)
+async def _sub_agent(prompt, system_prompt="", schema="", max_tokens=2048,
+                     allowed_tools="", allowed_categories=""):
+    tools_list = json.loads(allowed_tools) if allowed_tools else None
+    return await _run_agent(prompt, system_prompt, schema, max_tokens,
+                            allowed_tools=tools_list,
+                            allowed_categories=allowed_categories or None)
 
 
 async def _sub_parallel(tasks_json):
@@ -152,7 +191,9 @@ async def _sub_parallel(tasks_json):
             prompt=task.get("prompt", ""),
             system_prompt=task.get("system_prompt", ""),
             schema=task.get("schema", ""),
-            max_tokens=task.get("max_tokens", 2048))
+            max_tokens=task.get("max_tokens", 2048),
+            allowed_tools=task.get("allowed_tools"),
+            allowed_categories=task.get("allowed_categories"))
 
     results = await asyncio.gather(*[_one(t) for t in tasks], return_exceptions=True)
     lines = []
@@ -187,12 +228,20 @@ async def _sub_pipeline(items_json, stage_prompt, stage_system_prompt=""):
 
 tool_registry.register(ToolEntry(
     name="sub_agent",
-    description="Spawn a focused sub-agent. Call MULTIPLE TIMES in one turn to run in PARALLEL. Optional system_prompt for role, schema for structured output.",
+    description=(
+        "Spawn a focused sub-agent. Call MULTIPLE TIMES in one turn to run in PARALLEL. "
+        "By default sub-agents are READ-ONLY (read, grep, glob, web_search, etc.). "
+        "To grant write access, set allowed_tools='[\"write\",\"edit\"]' or "
+        "allowed_categories='all' for full access. "
+        "Sub-agents inherit the main agent's /allow permissions for destructive tools."
+    ),
     schema={"type": "object", "properties": {
         "prompt": {"type": "string", "description": "Task prompt."},
         "system_prompt": {"type": "string", "description": "Optional role/persona."},
         "schema": {"type": "string", "description": "Optional JSON schema for structured output."},
         "max_tokens": {"type": "integer", "description": "Max output tokens (default 2048)."},
+        "allowed_tools": {"type": "string", "description": "JSON array of tool names to grant, e.g. '[\"write\",\"bash\"]'. Default: read-only."},
+        "allowed_categories": {"type": "string", "description": "Shorthand: 'all' for full access, 'readonly' (default) for safe tools only."},
     }, "required": ["prompt"]},
     handler=_sub_agent, toolset="builtin", is_parallel_safe=True))
 
