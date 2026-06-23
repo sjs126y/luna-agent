@@ -56,6 +56,7 @@ def _headers(token: str | None, body: str) -> dict[str, str]:
 
 class WeChatAdapter(BasePlatformAdapter):
     supports_code_blocks = True
+    MAX_MESSAGE_LENGTH = 2000
 
     def __init__(self, config, db) -> None:
         super().__init__(config, db)
@@ -132,6 +133,51 @@ class WeChatAdapter(BasePlatformAdapter):
 
     async def get_chat_info(self, chat_id: str) -> ChatInfo:
         return ChatInfo(chat_id=chat_id, chat_type="dm")
+
+    # ── typing indicator ──────────────────────────────
+
+    async def _send_typing(self, chat_id: str) -> None:
+        """Start typing indicator (best-effort)."""
+        if not self._send_session:
+            return
+        try:
+            await self._api("ilink/bot/sendtyping", {
+                "base_info": {"channel_version": CHANNEL_VERSION},
+                "ilink_user_id": chat_id,
+                "typing_ticket": "",
+                "status": "start",
+            }, self._send_session, API_TIMEOUT_MS)
+        except Exception:
+            pass
+
+    # ── text chunking ─────────────────────────────────
+
+    def _split_text(self, text: str) -> list[str]:
+        """Split long text at paragraph boundaries, keeping code fences intact."""
+        if len(text) <= self.MAX_MESSAGE_LENGTH:
+            return [text]
+        chunks = []
+        current = ""
+        in_fence = False
+        for line in text.split("\n"):
+            line = line.rstrip()
+            if line.startswith("```"):
+                in_fence = not in_fence
+            if len(current) + len(line) >= self.MAX_MESSAGE_LENGTH and not in_fence:
+                if current:
+                    chunks.append(current.strip())
+                current = line
+            else:
+                current = (current + "\n" + line).strip() if current else line
+        if current:
+            chunks.append(current.strip())
+        return chunks if chunks else [text[:self.MAX_MESSAGE_LENGTH]]
+
+    async def send_chunked(self, chat_id: str, content: str) -> None:
+        """Send content, splitting if needed."""
+        chunks = self._split_text(content)
+        for chunk in chunks:
+            await self.send(chat_id, chunk)
 
     # ── long-poll loop ────────────────────────────────
 
@@ -290,6 +336,34 @@ class WeChatAdapter(BasePlatformAdapter):
             json.dumps({"get_updates_buf": self._sync_buf}))
 
 
+# ── QR Helpers ──────────────────────────────────────
+
+async def _fetch_qr(session, base_url: str) -> dict | None:
+    """Fetch a new QR code. Returns {value, scan} or None."""
+    async with session.get(
+        f"{base_url}/ilink/bot/get_bot_qrcode?bot_type=3",
+        headers={"iLink-App-Id": ILINK_APP_ID, "iLink-App-ClientVersion": str(ILINK_APP_CLIENT_VERSION)},
+    ) as resp:
+        data = json.loads(await resp.text())
+    value = str(data.get("qrcode") or "")
+    url = str(data.get("qrcode_img_content") or "")
+    if not value:
+        return None
+    return {"value": value, "scan": url or value}
+
+
+def _print_qr(data: str) -> None:
+    print("\n请用微信扫描以下二维码登录：\n")
+    try:
+        import qrcode
+        qr = qrcode.QRCode()
+        qr.add_data(data)
+        qr.make(fit=True)
+        qr.print_ascii(invert=True)
+    except Exception:
+        print(f"链接: {data}")
+
+
 # ── QR Login (CLI) ────────────────────────────────────
 
 async def wechat_qr_login(state_dir: Path, base_url: str = API_BASE) -> dict | None:
@@ -298,31 +372,14 @@ async def wechat_qr_login(state_dir: Path, base_url: str = API_BASE) -> dict | N
     t = aiohttp.ClientTimeout(total=None, connect=None, sock_connect=None, sock_read=None)
 
     async with aiohttp.ClientSession(trust_env=True, timeout=t) as session:
-        # 1. Get QR (GET, not POST)
-        async with session.get(
-            f"{base_url}/ilink/bot/get_bot_qrcode?bot_type=3",
-            headers={"iLink-App-Id": ILINK_APP_ID, "iLink-App-ClientVersion": str(ILINK_APP_CLIENT_VERSION)},
-        ) as resp:
-            qr_data = json.loads(await resp.text())
-
-        qr_value = str(qr_data.get("qrcode") or "")
-        qr_url = str(qr_data.get("qrcode_img_content") or "")
-        qr_scan = qr_url or qr_value
-        if not qr_value:
+        qr = await _fetch_qr(session, base_url)
+        if not qr:
             print("❌ 获取二维码失败。")
             return None
+        qr_value, qr_scan = qr["value"], qr["scan"]
+        _print_qr(qr_scan)
+        refresh_count = 0
 
-        print("\n请用微信扫描以下二维码登录：\n")
-        try:
-            import qrcode
-            qr = qrcode.QRCode()
-            qr.add_data(qr_scan)
-            qr.make(fit=True)
-            qr.print_ascii(invert=True)
-        except Exception as e:
-            print(f"链接: {qr_url or qr_value}\n(渲染失败: {e})")
-
-        # 2. Poll
         for _ in range(480):
             await asyncio.sleep(1)
             async with session.get(
@@ -345,7 +402,17 @@ async def wechat_qr_login(state_dir: Path, base_url: str = API_BASE) -> dict | N
                 print(f"\n✅ 登录成功！Account: {creds['account_id'][:12]}...")
                 return creds
             elif state == "expired":
-                print("\n❌ 二维码已过期，请重试。")
+                qr_data = await _fetch_qr(session, base_url)
+                if qr_data:
+                    qr_value = qr_data["value"]
+                    qr_scan = qr_data["scan"]
+                    refresh_count += 1
+                    if refresh_count > 3:
+                        print("\n❌ 二维码多次过期，请重新运行 --wechat-login。")
+                        return None
+                    print(f"\n二维码已过期，正在刷新... ({refresh_count}/3)")
+                    _print_qr(qr_scan)
+                    continue
                 return None
             elif state == "scaned":
                 print("  已扫描，请在手机上确认...")
