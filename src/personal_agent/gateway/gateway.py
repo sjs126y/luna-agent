@@ -234,6 +234,20 @@ class Gateway:
     async def _handle_command(self, event, session_key: str) -> str | None:
         text = event.text.strip()
 
+        if text.startswith("/session"):
+            parts = text.split()
+            if len(parts) < 2:
+                return f"用法: /session <name>。当前会话: {session_key}"
+            new_name = parts[1]
+            # Only allow switching chat_id — platform and user_id stay fixed
+            key_parts = session_key.split(":", 2)
+            platform = key_parts[0]
+            user_id = key_parts[2] if len(key_parts) > 2 else ""
+            new_key = f"{platform}:{new_name}:{user_id}"
+            await self._session_store.get_or_create(new_key, event.source)
+            await self._session_store.delete_session(session_key)
+            return f"会话已切换到: {new_key}"
+
         if text.startswith("/new"):
             await self._session_store.delete_session(session_key)
             return "会话已重置。开始新的对话吧。"
