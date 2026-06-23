@@ -179,21 +179,26 @@ class MCPClient:
     async def disconnect(self) -> None:
         """Gracefully terminate the subprocess."""
         self._connected = False
-        if self._process is not None:
-            try:
-                self._process.stdin.close()
-            except Exception:
-                pass
-            try:
-                self._process.terminate()
-                await asyncio.wait_for(self._process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                self._process.kill()
-                await self._process.wait()
-            except Exception:
-                pass
-            self._process = None
+        proc = self._process
+        self._process = None
         self._tools.clear()
+        if proc is None:
+            return
+        # Close all pipes first to avoid "closed pipe" errors on Windows
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+        try:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
 
     # ── JSON-RPC internals ──────────────────────────────
 
