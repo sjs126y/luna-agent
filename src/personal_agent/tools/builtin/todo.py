@@ -1,110 +1,144 @@
-"""Todo list management — persisted to SQLite for cross-session durability."""
+"""Todo list — CC-style, in-memory, session-scoped.
+
+Pass the FULL list every call (replaces previous state). No persistence —
+this tracks what the agent is doing right now. For durable cross-session
+tasks, use the cron/task system instead.
+
+Pattern:
+  - One array → full state → one call
+  - Only ONE item in_progress at a time
+  - List order = priority (higher = more important)
+  - Mark completed IMMEDIATELY when done
+  - Cancel failed items + add revised item
+  - activeForm: present-tense label shown while working (e.g. "Fixing login")
+"""
 
 from __future__ import annotations
 
-import aiosqlite
-import logging
-import time
-from pathlib import Path
+import json
 
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 
-logger = logging.getLogger(__name__)
-
-_db_path: Path = Path("./data/todos.db")
-
-
-def set_todos_path(path: Path) -> None:
-    global _db_path
-    _db_path = path
+# In-memory state — one per process, lost on restart
+_items: list[dict] = []
+_MAX_ITEMS = 100
 
 
-async def _get_db() -> aiosqlite.Connection:
-    db = await aiosqlite.connect(str(_db_path))
-    await db.execute(
-        "CREATE TABLE IF NOT EXISTS todos ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  title TEXT NOT NULL,"
-        "  status TEXT DEFAULT 'pending',"
-        "  created_at REAL"
-        ")"
+def _format(items: list[dict]) -> str:
+    if not items:
+        return "No todos."
+
+    lines = []
+    for i, t in enumerate(items):
+        content = t.get("content", "")
+        status = t.get("status", "pending")
+        active = t.get("activeForm", "")
+
+        if status == "in_progress":
+            lines.append(f"  [{i}] {active or content}")
+        elif status == "completed":
+            lines.append(f"  [{i}] ~~{content}~~")
+        elif status == "cancelled":
+            lines.append(f"  [{i}] ~~{content}~~ (cancelled)")
+        else:
+            lines.append(f"  [{i}] {content}")
+
+    counts = {
+        "total": len(items),
+        "pending": sum(1 for t in items if t.get("status") == "pending"),
+        "in_progress": sum(1 for t in items if t.get("status") == "in_progress"),
+        "completed": sum(1 for t in items if t.get("status") == "completed"),
+    }
+    header = (
+        f"{counts['total']} todos ({counts['pending']} pending"
+        + (f", {counts['in_progress']} in progress" if counts["in_progress"] else "")
+        + (f", {counts['completed']} done" if counts["completed"] else "")
+        + "):"
     )
-    await db.commit()
-    return db
+    return header + "\n" + "\n".join(lines)
 
 
-async def _todo(action: str, title: str = "", id: int = 0, status: str = "pending") -> str:
-    db = await _get_db()
+async def _todo(todos: str = "[]") -> str:
+    """Manage your task list. Pass the FULL list every call.
+
+    Args:
+        todos: JSON string of ALL todo items.
+            [{"content": "...", "status": "pending|in_progress|completed|cancelled",
+              "activeForm": "present-tense label while in progress"}]
+
+    Rules:
+        - List order = priority (most important first)
+        - Only ONE item in_progress at a time
+        - Mark done immediately, don't batch
+        - Cancel failed items, add a revised one
+        - Remove items no longer relevant
+        - Max {_MAX_ITEMS} items
+    """
+    global _items
+
     try:
-        if action == "add":
-            await db.execute(
-                "INSERT INTO todos (title, status, created_at) VALUES (?, 'pending', ?)",
-                (title, time.time()),
-            )
-            await db.commit()
-            cursor = await db.execute("SELECT last_insert_rowid()")
-            row = await cursor.fetchone()
-            new_id = row[0] if row else 0
-            return f"Todo #{new_id} added: {title}"
+        new_items = json.loads(todos)
+    except json.JSONDecodeError as e:
+        return f"Error: invalid todos JSON: {e}"
 
-        if action == "list":
-            cursor = await db.execute(
-                "SELECT id, title, status FROM todos ORDER BY id"
-            )
-            rows = await cursor.fetchall()
-            if not rows:
-                return "No todos."
-            lines = []
-            for r in rows:
-                mark = "[x]" if r[2] == "done" else "[ ]"
-                lines.append(f"#{r[0]} {mark} {r[1]}")
-            return "\n".join(lines)
+    if not isinstance(new_items, list):
+        return "Error: todos must be a JSON array"
 
-        if action == "update":
-            updates = []
-            params = []
-            if title:
-                updates.append("title = ?")
-                params.append(title)
-            if status in ("pending", "done", "cancelled"):
-                updates.append("status = ?")
-                params.append(status)
-            if not updates:
-                return "Error: nothing to update (provide title or status)"
-            params.append(id)
-            cursor = await db.execute(
-                f"UPDATE todos SET {', '.join(updates)} WHERE id = ?", params
-            )
-            await db.commit()
-            if cursor.rowcount == 0:
-                return f"Todo #{id} not found."
-            return f"Todo #{id} updated."
+    # ── Validate ──
+    in_progress = [t for t in new_items if t.get("status") == "in_progress"]
+    if len(in_progress) > 1:
+        return (
+            f"Error: {len(in_progress)} items marked in_progress. "
+            f"Only ONE at a time. Mark the others as pending."
+        )
 
-        if action == "delete":
-            cursor = await db.execute("DELETE FROM todos WHERE id = ?", (id,))
-            await db.commit()
-            if cursor.rowcount == 0:
-                return f"Todo #{id} not found."
-            return f"Todo #{id} deleted."
+    if len(new_items) > _MAX_ITEMS:
+        return f"Error: too many items ({len(new_items)}, max {_MAX_ITEMS})"
 
-        return f"Unknown action: {action}"
-    finally:
-        await db.close()
+    # ── Normalize ──
+    cleaned = []
+    for t in new_items:
+        if not isinstance(t, dict):
+            continue
+        content = str(t.get("content", "")).strip()
+        if not content:
+            continue
+        status = t.get("status", "pending")
+        if status not in ("pending", "in_progress", "completed", "cancelled"):
+            status = "pending"
+        active = str(t.get("activeForm", ""))[:200]
+        cleaned.append({"content": content, "status": status, "activeForm": active})
+
+    _items = cleaned
+    return _format(_items)
 
 
 tool_registry.register(ToolEntry(
     name="todo",
-    description="Manage a todo list (persisted cross-session). Actions: add (create), list (show all), update (modify title/status), delete (remove). Status: pending, done, cancelled.",
+    description=(
+        "Track your current task list. Send the FULL list every call — "
+        "this replaces the previous state. List order is priority. "
+        "Only ONE item in_progress at a time. Mark completed immediately. "
+        "Cancel failed items and add revised ones. "
+        "Each item: {content, status, activeForm}. "
+        "status: pending|in_progress|completed|cancelled. "
+        "activeForm: short present-tense label while working on it."
+    ),
     schema={
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["add", "list", "update", "delete"]},
-            "title": {"type": "string", "description": "Todo title (for add/update)"},
-            "id": {"type": "integer", "description": "Todo ID (for update/delete)"},
-            "status": {"type": "string", "description": "New status: pending, done, cancelled"},
+            "todos": {
+                "type": "string",
+                "description": (
+                    "JSON array of ALL todo items. Pass the complete list — "
+                    "existing items will be replaced. "
+                    "[{content: string, status: pending|in_progress|completed|cancelled, "
+                    "activeForm: string}]"
+                ),
+            },
         },
-        "required": ["action"],
+        "required": ["todos"],
     },
     handler=_todo,
     toolset="builtin",
