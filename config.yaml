@@ -6,7 +6,7 @@ agent:
   max_tool_calls_per_turn: 20
 
 storage:
-  data_dir: "C:/Users/MR/Desktop"
+  data_dir: "./data"
   log_level: "INFO"
 
 compression:
