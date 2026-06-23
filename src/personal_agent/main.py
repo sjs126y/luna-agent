@@ -17,7 +17,6 @@ from personal_agent.tools.builtin.file_edit import set_allowed_base as set_file_
 from personal_agent.tools.builtin.file_write import set_allowed_base as set_file_write_base, set_max_write_bytes
 from personal_agent.tools.builtin.grep_tool import set_workspace as set_grep_workspace
 from personal_agent.tools.builtin.glob_tool import set_workspace as set_glob_workspace
-from personal_agent.tools.builtin.todo import set_todos_path
 from personal_agent.tools.builtin.bash import set_allow_network
 from personal_agent.tools.audit import set_audit_path
 
@@ -162,7 +161,6 @@ async def boot() -> None:
     set_max_write_bytes(settings.file_max_write_bytes)
     set_grep_workspace(data_dir)
     set_glob_workspace(data_dir)
-    set_todos_path(data_dir / "todos.json")
     set_allow_network(settings.bash_allow_network)
     if settings.audit_enabled:
         set_audit_path(data_dir / "audit.log")
