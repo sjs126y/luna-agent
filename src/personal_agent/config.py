@@ -97,9 +97,17 @@ class Settings:
         self.auth_admins: list[str] = auth.get("admins", [])
         self.auth_allowed_users: list[str] = auth.get("allowed_users", [])
 
-        # ── Profiles (from config.yaml) ──
+        # ── Profiles (from config.yaml + .env override) ──
         profiles = yaml_cfg.get("profiles", {})
         self.profile_map: dict[str, str] = {
             k: v for k, v in profiles.items()
             if k not in ("__comment__",)
         }
+        # .env override: PROFILES={"wechat:xxx:xxx":"girlfriend"}
+        profiles_env = env.get("PROFILES", "")
+        if profiles_env:
+            try:
+                import json
+                self.profile_map.update(json.loads(profiles_env))
+            except json.JSONDecodeError:
+                pass
