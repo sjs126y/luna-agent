@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # ── sandbox config (set at startup) ──────────────────
 
-_work_dir: Path = Path("./data")
+_work_dir: Path = Path("./data").resolve()
 _allow_network: bool = False
 _MAX_OUTPUT = 4000
 

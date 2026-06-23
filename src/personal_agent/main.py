@@ -10,10 +10,13 @@ import sys
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
 from personal_agent.gateway.gateway import Gateway
-from personal_agent.memory.file_store import FileMemoryProvider, set_memory_path
+from personal_agent.memory.file_store import FileMemoryProvider, set_system_dir
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.tools.builtin.file_read import set_allowed_base as set_file_base
+from personal_agent.tools.builtin.file_edit import set_allowed_base as set_file_edit_base
 from personal_agent.tools.builtin.file_write import set_allowed_base as set_file_write_base, set_max_write_bytes
+from personal_agent.tools.builtin.grep_tool import set_workspace as set_grep_workspace
+from personal_agent.tools.builtin.glob_tool import set_workspace as set_glob_workspace
 from personal_agent.tools.builtin.todo import set_todos_path
 from personal_agent.tools.builtin.shell import set_allow_network
 from personal_agent.tools.audit import set_audit_path
@@ -27,6 +30,21 @@ def setup_logging(level: str = "INFO") -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+
+
+def _ensure_system_files(system_dir: Path) -> None:
+    """Create default system prompt files if they don't exist."""
+    system_dir.mkdir(parents=True, exist_ok=True)
+    defaults = {
+        "SOUL.md": "# 角色与人格\n\n- 你是一个智能个人助理，名字叫小助\n- 你擅长编程、问题分析和技术支持\n- 回复风格：简洁、直接、有条理\n",
+        "AGENT.md": "# 行为规则\n\n- 涉及实时数据时必须调用工具，不要凭记忆回答\n- 使用中文回复\n- 工具返回的结果要如实转述，不要编造\n- 优先使用工具而不是猜测\n",
+        "USER.md": "# 用户偏好\n\n- 用户偏好从这里开始记录\n",
+        "MEMORY.md": "# 用户画像\n\n- 从这里开始记录用户的重要信息\n",
+    }
+    for name, content in defaults.items():
+        f = system_dir / name
+        if not f.exists():
+            f.write_text(content, encoding="utf-8")
 
 
 async def boot() -> None:
@@ -46,6 +64,9 @@ async def boot() -> None:
     import personal_agent.tools.builtin.datetime_tool     # noqa
     import personal_agent.tools.builtin.file_read         # noqa
     import personal_agent.tools.builtin.file_write        # noqa
+    import personal_agent.tools.builtin.file_edit         # noqa
+    import personal_agent.tools.builtin.grep_tool         # noqa
+    import personal_agent.tools.builtin.glob_tool         # noqa
     import personal_agent.tools.builtin.todo              # noqa
     import personal_agent.tools.builtin.weather           # noqa
     import personal_agent.tools.builtin.shell             # noqa
@@ -66,9 +87,10 @@ async def boot() -> None:
     await db.initialize()
 
     # ── 5. Memory ──────────────────────────────────────
-    memory_path = data_dir / "memory" / "SYSTEM.md"
-    set_memory_path(memory_path)
-    memory_store = FileMemoryProvider(memory_path)   # system prompt material
+    system_dir = data_dir / "system"
+    set_system_dir(system_dir)
+    _ensure_system_files(system_dir)
+    memory_store = FileMemoryProvider(system_dir)   # system prompt material
 
     external_store = None
     if settings.memory_external_provider == "embedding":
@@ -82,7 +104,10 @@ async def boot() -> None:
     # ── 6. File tool sandbox ───────────────────────────
     set_file_base(data_dir)
     set_file_write_base(data_dir)
+    set_file_edit_base(data_dir)
     set_max_write_bytes(settings.file_max_write_bytes)
+    set_grep_workspace(data_dir)
+    set_glob_workspace(data_dir)
     set_todos_path(data_dir / "todos.json")
     set_allow_network(settings.bash_allow_network)
     if settings.audit_enabled:
@@ -147,7 +172,8 @@ def _run_cli(message: str) -> None:
     from personal_agent.agent.context import build_turn_context
     from personal_agent.agent.loop import run_conversation
     from personal_agent.compression.simple import ContextCompressor
-    from personal_agent.tools.builtin import calculator, datetime_tool, todo, web_search, web_fetch  # noqa
+    from personal_agent.tools.builtin import calculator, datetime_tool, todo, web_search, web_fetch, file_edit  # noqa
+    from personal_agent.tools.builtin import grep_tool, glob_tool  # noqa
     from personal_agent.memory.file_store import FileMemoryProvider
     from personal_agent.memory.manager import MemoryManager
 
@@ -158,7 +184,7 @@ def _run_cli(message: str) -> None:
         provider = provider_registry.get(settings.llm_provider, settings)
         api_mode = provider_registry.detect_api_mode(settings.llm_base_url, settings.llm_provider)
         transport = transport_registry.get(api_mode, provider)
-        memory = FileMemoryProvider(settings.agent_data_dir / "memory" / "MEMORY.md")
+        memory = FileMemoryProvider(settings.agent_data_dir / "system")
         memory_manager = MemoryManager(builtin=memory)
         agent = init_agent(transport, provider, memory_manager=memory_manager,
                           compressor=ContextCompressor(), max_iterations=settings.max_iterations,

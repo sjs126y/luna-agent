@@ -1,0 +1,109 @@
+"""grep — content search with regex over files in workspace."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from personal_agent.tools.entry import ToolEntry
+from personal_agent.tools.registry import tool_registry
+
+_workspace: Path = Path("./data").resolve()
+_MAX_MATCHES = 50
+_MAX_FILE_SIZE = 500_000  # skip files > 500KB
+
+
+def set_workspace(path: Path) -> None:
+    global _workspace
+    _workspace = path.resolve()
+
+
+async def _grep(pattern: str, path: str = ".", glob: str = "",
+                output_mode: str = "content", head_limit: int = 40) -> str:
+    """Search file contents with regex."""
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"Error: invalid regex pattern: {e}"
+
+    search_dir = (_workspace / path).resolve()
+    if not str(search_dir).startswith(str(_workspace)):
+        return f"Error: path '{path}' is outside workspace"
+
+    if not search_dir.exists():
+        return f"Error: path not found: {path}"
+
+    # Build glob filter
+    import fnmatch
+    glob_parts = glob.split(",") if glob else ["*"]
+
+    results: list[str] = []
+    file_count = 0
+    match_count = 0
+
+    try:
+        for f in sorted(search_dir.rglob("*")):
+            if not f.is_file():
+                continue
+            if f.stat().st_size > _MAX_FILE_SIZE:
+                continue
+            # Check glob filters
+            rel = str(f.relative_to(search_dir))
+            if not any(fnmatch.fnmatch(rel, g.strip()) for g in glob_parts):
+                continue
+            if any(p.startswith(".") for p in f.parts):  # skip hidden
+                continue
+            if any(p in ("node_modules", "__pycache__", ".venv", ".git")
+                   for p in f.parts):
+                continue
+
+            file_count += 1
+            try:
+                for lineno, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                    if regex.search(line):
+                        match_count += 1
+                        if match_count > _MAX_MATCHES:
+                            results.append(f"...({match_count - _MAX_MATCHES} more matches truncated)")
+                            return "\n".join(results)
+                        if output_mode == "content":
+                            results.append(f"{rel}:{lineno}: {line[:200]}")
+                        elif output_mode == "files_with_matches":
+                            if not results or results[-1] != rel:
+                                results.append(rel)
+                        elif output_mode == "count":
+                            pass  # handled below
+            except Exception:
+                continue
+
+        if output_mode == "count":
+            results.insert(0, f"{match_count} matches across {file_count} files")
+        if not results:
+            return f"No matches found for '{pattern}' in {file_count} files."
+        if head_limit and len(results) > head_limit:
+            results = results[:head_limit]
+            results.append(f"...({len(results) - head_limit} more lines)")
+        return "\n".join(results)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+tool_registry.register(ToolEntry(
+    name="grep",
+    description="Search file contents with regex. Returns matching lines with file:line format. "
+                "Modes: 'content' (matching lines), 'files_with_matches' (file paths only), 'count' (match count).",
+    schema={
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string", "description": "Regex pattern to search for"},
+            "path": {"type": "string", "description": "Directory to search, relative to workspace. Default '.'"},
+            "glob": {"type": "string", "description": "Glob filter, e.g. '*.py' or '*.{js,ts}'. Comma-separated."},
+            "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"],
+                            "description": "Output mode. Default 'content'."},
+            "head_limit": {"type": "integer", "description": "Max output lines. Default 40."},
+        },
+        "required": ["pattern"],
+    },
+    handler=_grep,
+    toolset="builtin",
+    is_parallel_safe=True,
+))

@@ -13,7 +13,7 @@ from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 
 # Shared with file_read — set at startup
-_allowed_base: Path = Path("./data")
+_allowed_base: Path = Path("./data").resolve()
 
 # Only these extensions are writable (and their uppercase variants)
 _ALLOWED_EXTENSIONS: set[str] = {
@@ -71,7 +71,7 @@ async def _file_write(path: str, content: str) -> str:
 
 
 tool_registry.register(ToolEntry(
-    name="file_write",
+    name="write",
     description="Write content to a file in the agent's data directory. Path is relative. "
                 f"Allowed extensions: {', '.join(sorted(_ALLOWED_EXTENSIONS))}. Max {_MAX_WRITE_BYTES // 1000}KB.",
     schema={

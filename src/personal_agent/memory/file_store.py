@@ -1,4 +1,8 @@
-"""FileMemoryProvider — reads/writes data/memory/MEMORY.md, auto-registers as tool."""
+"""FileMemoryProvider — reads data/system/*.md into system prompt.
+
+Memory tool (Hermes-style): write to internal (MEMORY.md / USER.md) + external (embedding) simultaneously.
+Entries use § separator for multi-line safety.
+"""
 
 from __future__ import annotations
 
@@ -9,73 +13,101 @@ from personal_agent.memory.base import MemoryProvider
 
 logger = logging.getLogger(__name__)
 
-_MEMORY_FILE = Path("./data/memory/SYSTEM.md")
+_SYSTEM_DIR = Path("./data/system")
+_SEPARATOR = "\n§\n"
 
 
-def set_memory_path(path: Path) -> None:
-    global _MEMORY_FILE
-    _MEMORY_FILE = path
+def set_system_dir(path: Path) -> None:
+    global _SYSTEM_DIR
+    _SYSTEM_DIR = path
 
 
 class FileMemoryProvider(MemoryProvider):
-    """Memory backed by a single Markdown file. Also registers as 'memory' tool."""
+    """System prompt from data/system/*.md. Also handles internal memory writes."""
 
-    def __init__(self, path: Path | None = None) -> None:
-        self._path = path or _MEMORY_FILE
+    def __init__(self, system_dir: Path | None = None) -> None:
+        self._dir = system_dir or _SYSTEM_DIR
 
     # ── MemoryProvider interface ─────────────────────
 
     async def prefetch(self, user_message: str) -> list[dict]:
-        """File-based: no prefetch needed (all memories in system prompt)."""
-        return []
+        return []  # system prompt material, no prefetch
 
     async def save(self, content: str) -> None:
-        self._ensure_file()
-        with open(self._path, "a", encoding="utf-8") as f:
-            f.write(f"\n- {content}\n")
-        logger.info("Memory saved: %s", content[:80])
+        """Save to MEMORY.md. For USER.md, use save_user()."""
+        self._append("MEMORY.md", content)
+
+    async def save_user(self, content: str) -> None:
+        """Save to USER.md."""
+        self._append("USER.md", content)
 
     async def search(self, query: str) -> list[str]:
-        entries = self._read_entries()
+        entries = self._read_entries("MEMORY.md") + self._read_entries("USER.md")
         query_lower = query.lower()
         return [e for e in entries if query_lower in e.lower()]
 
     async def load_all(self) -> list[str]:
-        return self._read_entries()
+        return self._read_entries("MEMORY.md") + self._read_entries("USER.md")
 
     def get_system_prompt_text(self) -> str:
-        """Hand-curated system material injected into system prompt. Stable, small."""
-        entries = self._read_entries()
-        if not entries:
+        """Combine all .md files from data/system/ into system prompt."""
+        if not self._dir.exists():
             return ""
-        lines = ["系统提示补充："]
-        for e in entries:
-            lines.append(f"- {e}")
-        return "\n".join(lines)
+
+        parts = []
+        for f in sorted(self._dir.glob("*.md")):
+            try:
+                text = f.read_text(encoding="utf-8").strip()
+                if text:
+                    title = _file_title(f.stem)
+                    parts.append(f"## {title}\n\n{text}")
+            except Exception:
+                logger.exception("Failed to read system file: %s", f)
+
+        return "\n\n".join(parts) if parts else ""
 
     # ── internals ────────────────────────────────────
 
-    def _read_entries(self) -> list[str]:
-        if not self._path.exists():
+    def _append(self, filename: str, content: str) -> None:
+        path = self._dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        text = text.strip()
+        if text:
+            text += _SEPARATOR + content
+        else:
+            text = content
+        path.write_text(text + "\n", encoding="utf-8")
+        logger.debug("Appended to %s: %s", filename, content[:60])
+
+    def _read_entries(self, filename: str) -> list[str]:
+        path = self._dir / filename
+        if not path.exists():
             return []
-        entries: list[str] = []
-        for line in self._path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("- "):
-                entries.append(line[2:])
+        text = path.read_text(encoding="utf-8")
+        entries = []
+        for part in text.split(_SEPARATOR):
+            part = part.strip()
+            if part:
+                entries.append(part)
         return entries
 
-    def _ensure_file(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._path.exists():
-            self._path.write_text("# Memory\n", encoding="utf-8")
+
+def _file_title(stem: str) -> str:
+    TITLES = {
+        "SOUL": "角色与人格",
+        "AGENT": "行为规则",
+        "SYSTEM": "系统补充",
+        "MEMORY": "用户画像",
+        "USER": "用户偏好",
+    }
+    return TITLES.get(stem.upper(), stem)
 
 
-# Register as tool
+# ── memory tool ──────────────────────────────────────
+
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
-
-_default_store = FileMemoryProvider()
 
 
 def _get_ext_store():
@@ -86,33 +118,47 @@ def _get_ext_store():
         return None
 
 
-async def _memory_tool(action: str, content: str = "", query: str = "") -> str:
-    # External provider is the primary store (semantic, scalable).
-    # Builtin MEMORY.md is hand-curated system material — never auto-written.
+async def _memory_tool(action: str, content: str = "", query: str = "",
+                       old_text: str = "", target: str = "memory") -> str:
+    """Hermes-style memory tool: internal + external simultaneous write."""
     ext = _get_ext_store()
-    store = ext if ext else _default_store
+    internal = FileMemoryProvider()  # always available
 
     if action == "add":
-        await store.save(content)
-        return f"Memory saved: {content}"
+        if target == "user":
+            await internal.save_user(content)
+        else:
+            await internal.save(content)
+        if ext:
+            await ext.save(content)
+        return f"Memory saved to {target}: {content}"
+    elif action == "remove":
+        return "For now, manage memories via data/system/MEMORY.md or USER.md directly."
     elif action == "search":
-        results = await store.search(query)
+        results = await internal.search(query)
+        if ext:
+            results = await ext.search(query) + results
         return "\n".join(results) if results else "No matching memories."
     elif action == "list":
-        entries = await store.load_all()
+        entries = await internal.load_all()
+        if ext:
+            entries = await ext.load_all() + entries
         return "\n".join(entries) if entries else "No memories yet."
-    return f"Unknown action: {action}"
+    return f"Unknown action: {action}. Use 'add', 'search', 'list'."
 
 
 tool_registry.register(ToolEntry(
     name="memory",
-    description="Manage persistent user memories. Actions: add (save a fact), search (find by keyword), list (show all).",
+    description="Manage persistent memories. Actions: add (save a fact), search (keyword), list (all). "
+                "Use target='user' for user preferences, target='memory' (default) for general memories.",
     schema={
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": ["add", "search", "list"]},
             "content": {"type": "string", "description": "Memory content to save (for 'add')"},
             "query": {"type": "string", "description": "Search keyword (for 'search')"},
+            "target": {"type": "string", "enum": ["memory", "user"],
+                       "description": "Target: 'memory' (MEMORY.md) or 'user' (USER.md). Default 'memory'."},
         },
         "required": ["action"],
     },

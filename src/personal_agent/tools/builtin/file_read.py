@@ -6,7 +6,7 @@ from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 
 # Set at startup — overwritten by main.py
-_allowed_base: Path = Path("./data")
+_allowed_base: Path = Path("./data").resolve()
 
 MAX_READ_BYTES = 50_000
 
@@ -38,7 +38,7 @@ async def _file_read(path: str) -> str:
 
 
 tool_registry.register(ToolEntry(
-    name="file_read",
+    name="read",
     description="Read a file from the agent's data directory. Path is relative to data dir. Use for reading saved notes, code, or data files.",
     schema={
         "type": "object",

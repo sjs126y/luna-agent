@@ -7,8 +7,9 @@ list decides which tools get full schemas vs get deferred via bridge tools.
 # Tools that always get full schemas (never deferred)
 _CORE_TOOLS: set[str] = {
     "calculator", "datetime", "web_search", "web_fetch",
-    "bash", "memory", "todo", "file_read", "file_write",
+    "bash", "memory", "todo", "read", "write", "edit",
     "weather", "random", "timer", "json",
+    "grep", "glob",
     "skill_search", "skill_load",
 }
 
@@ -17,7 +18,7 @@ _CORE_TOOLS: set[str] = {
 TOOLSETS: dict[str, set[str]] = {
     "web":      {"web_search", "web_fetch"},
     "terminal": {"bash"},
-    "file":     {"file_read", "file_write"},
+    "file":     {"read", "write", "edit", "grep", "glob"},
     "utility":  {"calculator", "datetime", "random", "timer", "json"},
     "memory":   {"memory", "todo"},
     "info":     {"weather"},

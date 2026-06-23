@@ -120,7 +120,7 @@ async def test_bridge_tool_call_blocks_destructive():
     from personal_agent.tools.bridge import _tool_call
 
     # file_write is destructive — should be blocked via tool_call
-    result = await _tool_call("file_write", {"path": "test.txt", "content": "hello"})
+    result = await _tool_call("write", {"path": "test.txt", "content": "hello"})
     assert "destructive" in result.lower() or "cannot be called" in result.lower()
 
 
@@ -137,9 +137,10 @@ async def test_bridge_tool_call_allows_safe():
 
 
 class MockAgent:
-    _destructive_allowed: set[str] = set()
-    _tool_calls_this_turn: int = 0
-    _max_tool_calls_per_turn: int = 20
+    def __init__(self):
+        self._destructive_allowed: set[str] = set()
+        self._tool_calls_this_turn: int = 0
+        self._max_tool_calls_per_turn: int = 20
 
 
 def test_scope_gate_destructive_blocked_by_default():
@@ -147,9 +148,9 @@ def test_scope_gate_destructive_blocked_by_default():
     from personal_agent.tools.entry import ToolEntry
 
     agent = MockAgent()
-    tc = {"name": "file_write", "input": {"path": "x.txt", "content": "hi"}}
+    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
     entry = ToolEntry(
-        name="file_write",
+        name="write",
         description="Write file",
         schema={},
         handler=lambda **kw: "ok",
@@ -169,9 +170,9 @@ def test_scope_gate_destructive_allowed_after_allow():
     agent = MockAgent()
     agent._destructive_allowed.add("write")
 
-    tc = {"name": "file_write", "input": {"path": "x.txt", "content": "hi"}}
+    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
     entry = ToolEntry(
-        name="file_write",
+        name="write",
         description="Write",
         schema={},
         handler=lambda **kw: "ok",
@@ -190,9 +191,9 @@ def test_scope_gate_allow_all():
     agent = MockAgent()
     agent._destructive_allowed.add("all")
 
-    tc = {"name": "file_write", "input": {"path": "x.txt", "content": "hi"}}
+    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
     entry = ToolEntry(
-        name="file_write",
+        name="write",
         description="Write",
         schema={},
         handler=lambda **kw: "ok",
@@ -254,7 +255,7 @@ async def test_exec_one_blocks_destructive_without_allow():
     from personal_agent.tools.executor import _exec_one
 
     agent = MockAgent()
-    tc = {"name": "file_write", "input": {"path": "test.txt", "content": "hello"}}
+    tc = {"name": "write", "input": {"path": "test.txt", "content": "hello"}}
 
     result = await _exec_one(tc, agent=agent)
     assert "authorization" in result.lower() or "allow" in result.lower()
@@ -319,7 +320,7 @@ def test_checkpoint_creates_backup(tmp_path: Path):
         target = tmp_path / "test.txt"
         target.write_text("original content")
 
-        tc = {"name": "file_write", "input": {"path": "test.txt", "content": "new"}}
+        tc = {"name": "write", "input": {"path": "test.txt", "content": "new"}}
         _checkpoint_file_write(tc)
 
         # Verify backup exists
@@ -337,7 +338,7 @@ def test_checkpoint_noop_for_new_file(tmp_path: Path):
     from personal_agent.tools.executor import _checkpoint_file_write
 
     set_allowed_base(tmp_path)
-    tc = {"name": "file_write", "input": {"path": "new_file.txt", "content": "new"}}
+    tc = {"name": "write", "input": {"path": "new_file.txt", "content": "new"}}
     _checkpoint_file_write(tc)
 
     # No backup should be created for new file

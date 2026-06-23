@@ -84,8 +84,8 @@ async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
     if gate_error:
         return gate_error
 
-    # ── 0.5. checkpoint (file_write only) ────────────
-    if tc["name"] == "file_write":
+    # ── 0.5. checkpoint (write tool only) ────────────
+    if tc["name"] == "write":
         _checkpoint_file_write(tc)
 
     # ── 1. pre-hook ──────────────────────────────────
@@ -126,7 +126,8 @@ def _exec_one_sync(tc: dict, agent: Any = None, hooks: Any = None) -> str:
 def _tool_category(name: str) -> str:
     """Map tool name → destructive category for granular /allow."""
     _CATEGORY_MAP: dict[str, str] = {
-        "file_write": "write",
+        "write": "write",
+        "edit": "write",
         "bash": "shell",
     }
     return _CATEGORY_MAP.get(name, "write")
