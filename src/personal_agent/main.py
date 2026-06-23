@@ -25,11 +25,50 @@ logger = logging.getLogger("personal_agent")
 
 
 def setup_logging(level: str = "INFO") -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    class ColorFormatter(logging.Formatter):
+        """Colorize log level + highlight key events."""
+
+        COLORS = {
+            "DEBUG": "\033[90m",     # grey
+            "INFO": "\033[37m",      # white
+            "WARNING": "\033[93m",   # yellow
+            "ERROR": "\033[91m",     # red
+            "CRITICAL": "\033[91;1m",  # bold red
+        }
+        RESET = "\033[0m"
+        GREEN = "\033[92m"
+        CYAN = "\033[96m"
+
+        def format(self, record):
+            msg = super().format(record)
+            color = self.COLORS.get(record.levelname, "")
+            if color:
+                msg = msg.replace(f"[{record.levelname}]", f"{color}[{record.levelname}]{self.RESET}", 1)
+
+            # Highlight key events
+            if record.levelname in ("WARNING", "ERROR"):
+                return msg
+            text = record.getMessage()
+            if "connected" in text and ("Platform" in text or "connected" in text):
+                msg = msg.replace(text, f"{self.GREEN}{text}{self.RESET}")
+            elif "inbound" in text and "user=" in text:
+                msg = msg.replace(text, f"{self.CYAN}{text}{self.RESET}")
+            elif "Auth:" in text:
+                msg = msg.replace(text, f"{self.CYAN}{text}{self.RESET}")
+            elif "HTTP Request:" in text and "200" in text:
+                msg = msg.replace(text, f"{self.GREEN}{text}{self.RESET}")
+            elif "HTTP Request:" in text and ("4" in text or "5" in text):
+                msg = msg.replace(text, f"{self.COLORS['ERROR']}{text}{self.RESET}")
+            return msg
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(ColorFormatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
-    )
+    ))
+    logging.root.handlers = []
+    logging.root.addHandler(handler)
+    logging.root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
 
 def _ensure_system_files(system_dir: Path) -> None:
