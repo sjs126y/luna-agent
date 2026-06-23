@@ -33,7 +33,8 @@ session:
 
 sandbox:
   roots:                           # allowed directories (boundary for all file tools + bash)
-    - "C:/Users/MR/Desktop"
+    - "C:/Users/MR/Desktop/Personal Agent"
+    - "C:/Users/MR/Desktop/SJS-AGENT"
   blocked:                         # never accessible — glob patterns, applies to all tools
     - "**/.env"
     - "**/.env.*"
