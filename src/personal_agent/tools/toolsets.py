@@ -14,6 +14,7 @@ _CORE_TOOLS: set[str] = {
     "clarify", "execute_code", "delegate_task",
     "process_list", "process_kill", "process_wait",
     "confirm", "task",
+    "workflow_run", "workflow_list",
 }
 
 # Toolset groups — name → list of tool names

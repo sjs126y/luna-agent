@@ -247,6 +247,14 @@ class Gateway:
             max_tokens=provider.max_tokens,
         )
 
+        # Wire workflow engine (so workflow_run tool can call LLM)
+        from personal_agent.workflow.engine import setup_engine
+        setup_engine(
+            call_fn=transport.call,
+            tools=agent.tools,
+            max_tokens=provider.max_tokens,
+        )
+
         # LRU eviction if cache too large
         if len(self._agent_cache) >= 128:
             from collections import OrderedDict
