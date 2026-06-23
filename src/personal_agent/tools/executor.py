@@ -112,18 +112,30 @@ async def execute_tool_calls(
 
 
 async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
-    """Execute a single tool call through: scope gate → pre-hook → dispatch → post-process."""
+    """Execute a single tool call through the security pipeline.
+
+    Order matters — hard rejections first, then user-facing gates:
+      ① pre-check — hard blocks (never ask user): bash whitelist, ext, SSRF...
+      ② scope gate — may ask user: /allow for destructive tools
+      ③ checkpoint — backup before destructive write
+      ④ pre-hook → dispatch → post-process
+    """
 
     entry = tool_registry.get(tc["name"])
     if entry is None:
         return f"Error: unknown tool '{tc['name']}'"
 
-    # ── 0. scope gate ────────────────────────────────
+    # ── ① pre-check: hard rejections, NEVER ask user ──
+    pre_error = _pre_check(tc, entry)
+    if pre_error:
+        return pre_error
+
+    # ── ② scope gate: may ask user (/allow) ────────────
     gate_error = _scope_gate(tc, entry, agent)
     if gate_error:
         return gate_error
 
-    # ── 0.5. checkpoint (destructive file tools) ─────
+    # ── ③ checkpoint (destructive file tools) ──────────
     if tc["name"] in ("write", "edit"):
         _checkpoint_file_write(tc)
 
@@ -180,6 +192,75 @@ def _exec_one_sync(tc: dict, agent: Any = None, hooks: Any = None) -> str:
             finally:
                 loop.close()
         raise
+
+
+# ── pre-check: hard blocks (NEVER ask user) ─────────
+
+
+def _pre_check(tc: dict, entry) -> str | None:
+    """Hard security checks that NEVER result in user interaction.
+
+    Run BEFORE scope gate — these are unconditional rejections
+    that no amount of /allow can override.
+    """
+    name = tc["name"]
+    inp = tc.get("input", {})
+
+    # ── bash: hard blacklist + whitelist + dangerous patterns + chaining + network ──
+    if name == "bash":
+        from personal_agent.tools.builtin.bash import _check_command
+        cmd = inp.get("command", "")
+        if cmd:
+            err = _check_command(cmd)
+            if err:
+                return err
+
+    # ── write: extension whitelist + path traversal ──
+    elif name == "write":
+        path = inp.get("path", "")
+        if path:
+            from personal_agent.tools.builtin.file_write import _check_extension, _allowed_base
+            ext_err = _check_extension(path)
+            if ext_err:
+                return ext_err
+            full = (_allowed_base / path).resolve()
+            if not str(full).startswith(str(_allowed_base)):
+                return f"Error: path traversal denied — '{path}' is outside allowed directory"
+            content = inp.get("content", "")
+            if len(content) > 100_000:
+                return f"Error: content too large ({len(content)} bytes, max 100000)"
+
+    # ── edit: same path check as write ──
+    elif name == "edit":
+        path = inp.get("path", "")
+        if path:
+            from personal_agent.tools.builtin.file_write import _allowed_base
+            full = (_allowed_base / path).resolve()
+            if not str(full).startswith(str(_allowed_base)):
+                return f"Error: path traversal denied — '{path}' is outside allowed directory"
+
+    # ── read: sensitive file blocklist ──
+    elif name == "read":
+        path = inp.get("path", "")
+        if path:
+            from personal_agent.tools.builtin.file_read import _allowed_base as _read_base, _check_sensitive
+            full = (_read_base / path).resolve()
+            if not str(full).startswith(str(_read_base)):
+                return f"Error: path traversal denied — '{path}' is outside allowed directory"
+            sensitive_err = _check_sensitive(full)
+            if sensitive_err:
+                return sensitive_err
+
+    # ── web_fetch: SSRF prevention ──
+    elif name == "web_fetch":
+        url = inp.get("url", "")
+        if url:
+            from personal_agent.tools.url_safety import check_url
+            ssrf_err = check_url(url)
+            if ssrf_err:
+                return ssrf_err
+
+    return None
 
 
 # ── scope gate ────────────────────────────────────────
