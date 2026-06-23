@@ -48,44 +48,46 @@ def test_text_roundtrip(db):
 
 
 def test_tool_use_roundtrip(db):
-    """Tool messages are stored but excluded from loaded history."""
+    """Assistant message with tool_use: text kept, tool_use stripped."""
     sid = str(uuid.uuid4())
     _run(db.create_session_direct(sid, "test:1:1"))
     _run(db.save_message(sid, "assistant", content="ok",
                          tool_calls=[{"id": "c1", "name": "calc", "input": {"expr": "1+1"}}],
                          tool_name="calc"))
 
-    # History should NOT include tool messages
     history = _run(db.load_history(sid))
-    assert len(history) == 0  # tool message filtered out
+    assert len(history) == 1  # text kept, tool_use stripped
+    assert history[0]["content"][0]["text"] == "ok"
 
 
 def test_tool_result_roundtrip(db):
-    """Tool result messages are stored but excluded from loaded history."""
+    """Tool result converted to plain user text."""
     sid = str(uuid.uuid4())
     _run(db.create_session_direct(sid, "test:1:1"))
     _run(db.save_message(sid, "user", content="2", tool_call_id="c1"))
 
     history = _run(db.load_history(sid))
-    assert len(history) == 0  # tool message filtered out
+    assert len(history) == 1
+    assert history[0]["content"][0]["text"] == "2"
 
 
 def test_full_conversation_roundtrip(db):
-    """Only text messages appear in loaded history, tool messages excluded."""
+    """Full conversation: tool messages converted to text, no orphan blocks."""
     sid = str(uuid.uuid4())
     _run(db.create_session_direct(sid, "test:1:1"))
     _run(db.save_message(sid, "user", content="what is 1+1?"))
-    _run(db.save_message(sid, "assistant", content="",
+    _run(db.save_message(sid, "assistant", content="let me check",
                          tool_calls=[{"id": "c1", "name": "calc", "input": {"expr": "1+1"}}],
                          tool_name="calc"))
     _run(db.save_message(sid, "user", content="2", tool_call_id="c1"))
     _run(db.save_message(sid, "assistant", content="1+1 = 2"))
 
-    # Only 2 text messages in history (user question + final answer)
     history = _run(db.load_history(sid))
-    assert len(history) == 2
+    assert len(history) == 4  # all messages loaded as text
     assert history[0]["content"][0]["text"] == "what is 1+1?"
-    assert history[1]["content"][0]["text"] == "1+1 = 2"
+    assert history[1]["content"][0]["text"] == "let me check"  # tool_use stripped
+    assert history[2]["content"][0]["text"] == "2"             # tool_result → text
+    assert history[3]["content"][0]["text"] == "1+1 = 2"
 
 
 def test_delete_cleans_messages(db):

@@ -153,6 +153,11 @@ def _check_command(cmd_line: str) -> str | None:
     if any(tok in cmd_stripped for tok in _CHAIN_TOKENS):
         return "Error: command chaining (&& || | ;) is not allowed. Use one command per call."
 
+    # ── 1.5. Path sandbox — no absolute paths, no traversal ──
+    path_error = _check_path_sandbox(cmd_stripped)
+    if path_error:
+        return path_error
+
     base = parts[0].lower().replace("\\", "/").split("/")[-1]  # strip path
 
     # ── 2. Whitelist check ──
@@ -175,6 +180,40 @@ def _check_command(cmd_line: str) -> str | None:
         if re.search(pattern, cmd_normalized, re.IGNORECASE):
             return f"Error: dangerous pattern detected"
 
+    return None
+
+
+# ── path sandbox ─────────────────────────────────────
+
+
+# Patterns that indicate filesystem escape attempts via command arguments
+_PATH_ESCAPE_PATTERNS: list[str] = [
+    r'(?:^|\s)/(?:etc|var|tmp|home|root|proc|sys|dev|opt|usr|bin|sbin|boot)/',  # Unix system paths
+    r'(?:^|\s)[A-Za-z]:[\\\\/](?:Windows|Program|Users|WINDOWS)',  # Windows system paths
+    r'(?:^|\s)~[/\s]',           # ~/ home dir
+    r'(?<![a-zA-Z0-9_-])\.\.(?![a-zA-Z0-9_-])',  # parent dir traversal
+]
+
+# Allowed absolute paths — explicitly whitelisted
+_PATH_ALLOWLIST: list[str] = [
+    r'^\./',   # relative paths are fine
+    r'^\.\./', # relative parent from within sandbox (checked against cwd)
+]
+
+
+def _check_path_sandbox(cmd_line: str) -> str | None:
+    """Block commands that access files outside the sandbox via absolute paths.
+
+    Catches: /etc/passwd, C:/Windows, ~/.ssh, ../../../etc/passwd
+    Allows:  relative paths like ./data/file.txt
+    """
+    for pattern in _PATH_ESCAPE_PATTERNS:
+        if re.search(pattern, cmd_line, re.IGNORECASE):
+            return (
+                f"Error: path sandbox blocked — absolute system path or "
+                f"parent traversal detected. Use only relative paths within "
+                f"the working directory."
+            )
     return None
 
 

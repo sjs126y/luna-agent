@@ -126,24 +126,49 @@ class Database:
             await self._conn.commit()
 
     async def load_history(self, session_id: str) -> list[dict]:
-        """Load conversation history as text-only messages.
+        """Load conversation history. Tool messages are converted to plain text.
 
-        Tool use/result messages are NOT included in history — they are
-        ephemeral and their content is summarized in the assistant's text.
-        Including them causes orphan tool_use errors with the Anthropic API.
+        Anthropic API requires tool_use blocks in assistant messages to be
+        immediately followed by tool_result blocks in a user message. If stored
+        history were replayed as-is, missing or misordered tool_results cause
+        400 errors. Instead, we convert tool interactions to natural text.
         """
         rows = await self._conn.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? AND tool_name IS NULL AND tool_call_id IS NULL ORDER BY id",
+            "SELECT role, content, tool_name, tool_call_id "
+            "FROM messages WHERE session_id = ? ORDER BY id",
             (session_id,),
         )
         messages: list[dict] = []
         async for row in rows:
             role = row["role"]
-            text = row["content"] or ""
-            messages.append({
-                "role": role,
-                "content": [{"type": "text", "text": text}],
-            })
+            text = (row["content"] or "").strip()
+
+            if row["tool_name"]:
+                # Assistant message with tool_use — keep text, skip tool_use block
+                if text:
+                    messages.append({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": text}],
+                    })
+                # Pure tool_use (no text) → skip entirely
+                continue
+
+            if row["tool_call_id"]:
+                # Tool_result → convert to plain user text
+                if text:
+                    messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": text}],
+                    })
+                continue
+
+            # Normal text message
+            if text:
+                messages.append({
+                    "role": role,
+                    "content": [{"type": "text", "text": text}],
+                })
+
         return messages
 
     async def get_message_count(self, session_id: str) -> int:
