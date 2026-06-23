@@ -134,10 +134,14 @@ class BasePlatformAdapter(ABC):
             logger.exception("Background processing failed for session %s", session_key)
         finally:
             self._active_sessions.pop(session_key, None)
-            # Drain pending — NEW task, NOT recursion (prevents C stack overflow)
-            pending = self._pending_messages.pop(session_key, [])
-            if pending:
-                asyncio.create_task(self._process_message_background(pending[0], session_key))
+            # Drain pending one-at-a-time via NEW task (not recursion — C stack safety)
+            queue = self._pending_messages.get(session_key)
+            if queue:
+                next_event = queue.pop(0)
+                if not queue:
+                    del self._pending_messages[session_key]
+                self._active_sessions[session_key] = True
+                asyncio.create_task(self._process_message_background(next_event, session_key))
 
     # ── retry logic ───────────────────────────────────
 

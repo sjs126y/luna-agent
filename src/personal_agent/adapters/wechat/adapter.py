@@ -121,7 +121,8 @@ class WeChatAdapter(BasePlatformAdapter):
                 },
             }
             result = await self._api("ilink/bot/sendmessage", payload, self._send_session, API_TIMEOUT_MS)
-            logger.debug("WeChat send result: %s", {k: result.get(k) for k in ("ret", "errcode", "errmsg") if k in result})
+            logger.info("WeChat send result: ret=%s errcode=%s errmsg=%s",
+                        result.get("ret"), result.get("errcode"), result.get("errmsg", ""))
             if result.get("errcode") in (0, None) and result.get("ret") in (0, None):
                 return SendResult(success=True, message_id=client_id)
             return SendResult(success=False,
