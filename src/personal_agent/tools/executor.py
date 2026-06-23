@@ -214,41 +214,42 @@ def _pre_check(tc: dict, entry) -> str | None:
             if err:
                 return err
 
-    # ── write: extension whitelist + path traversal ──
+    # ── write: extension whitelist + sandbox path check ──
     elif name == "write":
         path = inp.get("path", "")
         if path:
-            from personal_agent.tools.builtin.file_write import _check_extension, _allowed_base
+            from personal_agent.tools.builtin.file_write import _check_extension
+            from personal_agent.tools.sandbox import get_sandbox
             ext_err = _check_extension(path)
             if ext_err:
                 return ext_err
-            full = (_allowed_base / path).resolve()
-            if not str(full).startswith(str(_allowed_base)):
-                return f"Error: path traversal denied — '{path}' is outside allowed directory"
+            full = get_sandbox().resolve(path)
+            sandbox_err = get_sandbox().check_path(full)
+            if sandbox_err:
+                return sandbox_err
             content = inp.get("content", "")
             if len(content) > 100_000:
                 return f"Error: content too large ({len(content)} bytes, max 100000)"
 
-    # ── edit: same path check as write ──
+    # ── edit: sandbox path check ──
     elif name == "edit":
         path = inp.get("path", "")
         if path:
-            from personal_agent.tools.builtin.file_write import _allowed_base
-            full = (_allowed_base / path).resolve()
-            if not str(full).startswith(str(_allowed_base)):
-                return f"Error: path traversal denied — '{path}' is outside allowed directory"
+            from personal_agent.tools.sandbox import get_sandbox
+            full = get_sandbox().resolve(path)
+            sandbox_err = get_sandbox().check_path(full)
+            if sandbox_err:
+                return sandbox_err
 
-    # ── read: sensitive file blocklist ──
+    # ── read: sandbox path check (blocked patterns + roots) ──
     elif name == "read":
         path = inp.get("path", "")
         if path:
-            from personal_agent.tools.builtin.file_read import _allowed_base as _read_base, _check_sensitive
-            full = (_read_base / path).resolve()
-            if not str(full).startswith(str(_read_base)):
-                return f"Error: path traversal denied — '{path}' is outside allowed directory"
-            sensitive_err = _check_sensitive(full)
-            if sensitive_err:
-                return sensitive_err
+            from personal_agent.tools.sandbox import get_sandbox
+            full = get_sandbox().resolve(path)
+            sandbox_err = get_sandbox().check_path(full)
+            if sandbox_err:
+                return sandbox_err
 
     # ── web_fetch: SSRF prevention ──
     elif name == "web_fetch":
@@ -320,17 +321,19 @@ def _scope_gate(tc: dict, entry, agent: Any) -> str | None:
 def _checkpoint_file_write(tc: dict) -> None:
     """Backup target file before a file_write dispatch. Best-effort — never blocks execution."""
     try:
-        from personal_agent.tools.builtin.file_write import _allowed_base  # noqa: F401
+        from personal_agent.tools.sandbox import get_sandbox
 
         path = tc.get("input", {}).get("path", "")
         if not path:
             return
 
-        full = (_allowed_base / path).resolve()
+        sandbox = get_sandbox()
+        full = sandbox.resolve(path)
         if not full.exists():
             return  # new file, nothing to backup
 
-        backup_dir = _allowed_base / "checkpoints"
+        base = sandbox.roots[0] if sandbox.roots else Path(full).parent
+        backup_dir = base / "checkpoints"
         backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = _time_module.strftime("%Y%m%d_%H%M%S")
         backup_path = backup_dir / f"{full.name}.{timestamp}.bak"

@@ -75,12 +75,26 @@ class Settings:
         self.enable_cron: bool = cron.get("enabled", False)
         self.cron_jobs_path: Path = Path("data/cron")
 
-        # ── Security (from config.yaml) ──
-        security = yaml_cfg.get("security", {})
-        self.bash_allow_network: bool = security.get("bash_allow_network", False)
-        self.bash_restrict_paths: bool = security.get("bash_restrict_paths", True)
-        self.file_max_write_bytes: int = security.get("file_max_write_bytes", 100000)
-        self.audit_enabled: bool = security.get("audit_enabled", True)
+        # ── Sandbox (from config.yaml) ──
+        sandbox = yaml_cfg.get("sandbox", {})
+
+        # roots: list or comma-separated string
+        raw_roots = sandbox.get("roots", ["./data"])
+        if isinstance(raw_roots, str):
+            self.sandbox_roots: list[Path] = [Path(p.strip()) for p in raw_roots.split(",") if p.strip()]
+        elif isinstance(raw_roots, list):
+            self.sandbox_roots: list[Path] = [Path(p) for p in raw_roots]
+        else:
+            self.sandbox_roots: list[Path] = [Path("./data")]
+
+        # blocked: list of glob patterns
+        self.sandbox_blocked: list[str] = sandbox.get("blocked", [])
+
+        self.bash_work_dir: Path = Path(sandbox.get("bash_work_dir", "./data"))
+        self.bash_restrict_paths: bool = sandbox.get("bash_restrict_paths", True)
+        self.bash_allow_network: bool = sandbox.get("bash_allow_network", False)
+        self.file_max_write_bytes: int = sandbox.get("file_max_write_bytes", 100000)
+        self.audit_enabled: bool = sandbox.get("audit_enabled", True)
 
         # ── Session (from config.yaml) ──
         session = yaml_cfg.get("session", {})

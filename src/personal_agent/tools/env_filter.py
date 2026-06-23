@@ -52,6 +52,12 @@ def filter_env(env: dict[str, str] | None = None) -> dict[str, str]:
             continue
         filtered[key] = value
 
+    # Force UTF-8 to avoid GBK/cp936 garbled output on Windows
+    filtered.setdefault("LANG", "en_US.UTF-8")
+    filtered.setdefault("LC_ALL", "en_US.UTF-8")
+    filtered["PYTHONUTF8"] = "1"
+    filtered["PYTHONIOENCODING"] = "utf-8"
+
     return filtered
 
 

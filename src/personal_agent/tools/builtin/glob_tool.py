@@ -1,27 +1,23 @@
-"""glob — file pattern matching in workspace."""
+"""glob — file pattern matching within sandbox."""
 
 from __future__ import annotations
 
-import fnmatch
 from pathlib import Path
 
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
+from personal_agent.tools.sandbox import get_sandbox
 
-_workspace: Path = Path("./data").resolve()
 _MAX_RESULTS = 100
-
-
-def set_workspace(path: Path) -> None:
-    global _workspace
-    _workspace = path.resolve()
 
 
 async def _glob(pattern: str, path: str = ".") -> str:
     """Find files matching glob pattern."""
-    search_dir = (_workspace / path).resolve()
-    if not str(search_dir).startswith(str(_workspace)):
-        return f"Error: path '{path}' is outside workspace"
+    sandbox = get_sandbox()
+    search_dir = sandbox.resolve(path)
+    error = sandbox.check_path(search_dir)
+    if error:
+        return error
 
     if not search_dir.exists():
         return f"Error: path not found: {path}"
@@ -51,17 +47,15 @@ async def _glob(pattern: str, path: str = ".") -> str:
 
 tool_registry.register(ToolEntry(
     name="glob",
-    description="Find files matching a glob pattern. Like 'ls **/*.py' but faster. "
-                "Returns relative file paths sorted by modification time.",
+    description="Find files matching a glob pattern. Supports *, **, ?, [chars].",
     schema={
         "type": "object",
         "properties": {
-            "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.py' or 'src/**/*.ts'"},
-            "path": {"type": "string", "description": "Directory to search, relative to workspace. Default '.'"},
+            "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.py' or '*.md'"},
+            "path": {"type": "string", "description": "Directory to search in (relative or absolute), default '.'"},
         },
         "required": ["pattern"],
     },
     handler=_glob,
     toolset="builtin",
-    is_parallel_safe=True,
 ))

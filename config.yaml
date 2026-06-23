@@ -31,9 +31,27 @@ session:
   expire_days: 30
   override: {}               # {"wechat:o9cq80:o9cq80": "wechat:custom:o9cq80"}
 
-security:
+sandbox:
+  roots:                           # allowed directories (boundary for all file tools + bash)
+    - "C:/Users/MR/Desktop"
+  blocked:                         # never accessible — glob patterns, applies to all tools
+    - "**/.env"
+    - "**/.env.*"
+    - "**/.git/**"
+    - "**/.ssh/**"
+    - "**/id_rsa*"
+    - "**/.netrc"
+    - "**/data/auth/**"
+    - "**/node_modules/**"
+    - "**/__pycache__/**"
+    - "**/.venv/**"
+    - "**/.claude/**"
+    - "**/audit.log"
+    - "**/pyproject.toml"
+    - "**/config.yaml"
+  bash_work_dir: "./data"          # bash cwd (relative paths resolved from here)
+  bash_restrict_paths: true        # false = bash can access paths outside sandbox roots
   bash_allow_network: false        # true = allow curl/pip/wget in bash tool
-  bash_restrict_paths: true   # false = allow absolute paths outside sandbox
   file_max_write_bytes: 100000     # max file_write size
   audit_enabled: true              # log to data/audit.log
 

@@ -1,9 +1,9 @@
-"""Write files within allowed data directory — destructive tool.
+"""Write files within sandbox boundaries — destructive tool.
 
 Safety:
+  - Sandbox roots + blocked patterns (unified)
   - Extension whitelist (no .exe/.bat/.sh etc.)
-  - Max file size (default 100KB)
-  - Path traversal prevention
+  - Max file size
   - Audit logging
 """
 
@@ -11,9 +11,7 @@ from pathlib import Path
 
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
-
-# Shared with file_read — set at startup
-_allowed_base: Path = Path("./data").resolve()
+from personal_agent.tools.sandbox import get_sandbox
 
 # Only these extensions are writable (and their uppercase variants)
 _ALLOWED_EXTENSIONS: set[str] = {
@@ -23,11 +21,6 @@ _ALLOWED_EXTENSIONS: set[str] = {
     ".sh", ".bat", ".ps1", ".env", ".gitignore", ".dockerignore",
 }
 _MAX_WRITE_BYTES = 100_000
-
-
-def set_allowed_base(path: Path) -> None:
-    global _allowed_base
-    _allowed_base = path.resolve()
 
 
 def set_max_write_bytes(max_bytes: int) -> None:
@@ -54,9 +47,12 @@ async def _file_write(path: str, content: str) -> str:
         return f"Error: content too large ({len(content)} bytes, max {_MAX_WRITE_BYTES})"
 
     try:
-        full = (_allowed_base / path).resolve()
-        if not str(full).startswith(str(_allowed_base)):
-            return f"Error: path traversal denied — '{path}' is outside allowed directory"
+        sandbox = get_sandbox()
+        full = sandbox.resolve(path)
+        error = sandbox.check_path(full)
+        if error:
+            return error
+
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
         msg = f"Written {len(content)} bytes to {path}"
@@ -72,12 +68,12 @@ async def _file_write(path: str, content: str) -> str:
 
 tool_registry.register(ToolEntry(
     name="write",
-    description="Write content to a file in the agent's data directory. Path is relative. "
+    description="Write content to a file in the agent's allowed directories. "
                 f"Allowed extensions: {', '.join(sorted(_ALLOWED_EXTENSIONS))}. Max {_MAX_WRITE_BYTES // 1000}KB.",
     schema={
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Relative path to file, e.g. 'output/report.md'"},
+            "path": {"type": "string", "description": "Path to file (relative or absolute)"},
             "content": {"type": "string", "description": "Content to write"},
         },
         "required": ["path", "content"],

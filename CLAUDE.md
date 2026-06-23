@@ -78,6 +78,12 @@ data/
 
 4 个 Provider（deepseek/openai/anthropic/openrouter），2 种 Transport（AnthropicMessages / ChatCompletions），自动检测 api_mode。HTTP 层指数退避重试（429/5xx/连接错误）。
 
+## 工作流
+
+- **改代码前先开分支**：`git checkout -b feature/<描述>`，不在 main 上直接改
+- **改完记得 commit**：确认改动没问题后 `git commit -m "feat/fix: <描述>"`，别攒一堆才提交
+- 提交前跑 `uv run pytest tests/ -q` 确保 161 全过
+
 ## 编码约定
 
 - Python 类型标注

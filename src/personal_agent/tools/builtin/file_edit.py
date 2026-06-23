@@ -1,25 +1,22 @@
-"""Edit files within allowed directory — append or replace text."""
+"""Edit files within sandbox boundaries — append or replace text."""
 
 from pathlib import Path
 
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
+from personal_agent.tools.sandbox import get_sandbox
 
-_allowed_base: Path = Path("./data").resolve()
 _MAX_WRITE_BYTES = 100_000
-
-
-def set_allowed_base(path: Path) -> None:
-    global _allowed_base
-    _allowed_base = path.resolve()
 
 
 async def _file_edit(action: str, path: str, content: str = "",
                      old_text: str = "", new_text: str = "") -> str:
     try:
-        full = (_allowed_base / path).resolve()
-        if not str(full).startswith(str(_allowed_base)):
-            return f"Error: path traversal denied — '{path}' is outside allowed directory"
+        sandbox = get_sandbox()
+        full = sandbox.resolve(path)
+        error = sandbox.check_path(full)
+        if error:
+            return error
 
         if action == "append":
             full.parent.mkdir(parents=True, exist_ok=True)
@@ -68,7 +65,7 @@ tool_registry.register(ToolEntry(
         "properties": {
             "action": {"type": "string", "enum": ["append", "replace"],
                        "description": "append: add content to end. replace: find old_text and replace with new_text."},
-            "path": {"type": "string", "description": "Relative path to file"},
+            "path": {"type": "string", "description": "Path to file (relative or absolute)"},
             "content": {"type": "string", "description": "Content to append (for append action)"},
             "old_text": {"type": "string", "description": "Text to find (for replace action)"},
             "new_text": {"type": "string", "description": "Replacement text (for replace action)"},

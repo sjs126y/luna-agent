@@ -191,57 +191,66 @@ def _check_command(cmd_line: str) -> str | None:
 
 # ── path sandbox ─────────────────────────────────────
 
-
-# Patterns that indicate filesystem escape attempts via command arguments
+# System-level escape patterns — paths that should never be accessible
+# These go beyond sandbox roots: /etc, C:\Windows, ~, .. are dangerous
+# regardless of configured roots.
 _PATH_ESCAPE_PATTERNS: list[str] = [
     r'(?:^|\s)/(?:etc|var|tmp|home|root|proc|sys|dev|opt|usr|bin|sbin|boot)/',  # Unix system paths
     r'(?:^|\s)[A-Za-z]:[\\\\/](?:Windows|Program|Users|WINDOWS)',  # Windows system paths
-    r'(?:^|\s)~[/\s]',           # ~/ home dir
-    r'(?<![a-zA-Z0-9_-])\.\.(?![a-zA-Z0-9_-])',  # parent dir traversal
-]
-
-# Allowed absolute paths — explicitly whitelisted
-_PATH_ALLOWLIST: list[str] = [
-    r'^\./',   # relative paths are fine
-    r'^\.\./', # relative parent from within sandbox (checked against cwd)
+    r'(?:^|\s)~(?:[/\s]|$)',     # ~/ home dir or bare ~
+    r'(?:^|\s)\.\.(?:\s|$|/|\\)',  # parent dir traversal
 ]
 
 
-# Files/paths that are ALWAYS blocked, regardless of config
-_PROTECTED_FILES: list[str] = [
-    r'\.env\b', r'config\.ya?ml\b', r'pyproject\.toml\b',
-    r'\.git/', r'\.ssh/', r'id_rsa\b', r'\.netrc\b',
-    r'data/auth/', r'data/system/', r'audit\.log\b',
-    r'\.claude/', r'\.venv/', r'\.pytest_cache/',
-]
+def _glob_pattern_to_regex(glob_pat: str) -> str:
+    """Convert a sandbox blocked glob (e.g. '**/.env') to a simple regex for command scanning."""
+    pat = glob_pat.strip()
+    # Strip leading **/ and trailing /**
+    pat = pat.replace("**/", "").rstrip("/")
+    # Escape special regex chars in the remaining literal part
+    escaped = re.escape(pat)
+    return escaped
 
 
 def _check_path_sandbox(cmd_line: str) -> str | None:
-    """Block commands that access files outside the sandbox via absolute paths.
+    """Block commands that access files outside the sandbox.
 
-    Always blocked: .env, config.yaml, .git/, .ssh/, data/auth/, .venv/
-    When _restrict_paths=true (default): also blocks /etc, C:/Windows, ~/, ..
+    Uses the unified sandbox for blocked patterns and roots.
+    Additionally blocks system-level escape patterns when _restrict_paths is true.
     """
-    # ── Protected files — NEVER allowed ──
-    for pattern in _PROTECTED_FILES:
-        if re.search(pattern, cmd_line, re.IGNORECASE):
+    from personal_agent.tools.sandbox import get_sandbox
+    sandbox = get_sandbox()
+
+    # ── 1. Blocked patterns (from sandbox) — NEVER allowed ──
+    for pattern in sandbox.blocked:
+        regex = _glob_pattern_to_regex(pattern)
+        if re.search(regex, cmd_line, re.IGNORECASE):
             return (
-                f"Error: access to protected path blocked ({pattern}). "
-                f"Config and credential files are never readable via bash."
+                f"Error: sandbox blocked — '{pattern}' matches "
+                f"protected files. Config and credential files are never readable via bash."
             )
 
-    # ── Absolute/traversal paths — configurable ──
+    # ── 2. Restrict paths off? allow everything except blocked ──
     if not _restrict_paths:
-        return None  # sandbox disabled, allow everything except protected files
+        return None
 
+    # ── 3. Check if command references a path under a sandbox root ──
+    cmd_norm = cmd_line.replace("\\", "/")
+    for root in sandbox.roots:
+        rs = str(root).replace("\\", "/")
+        if rs in cmd_norm:
+            return None  # path is under a configured root, allow
+
+    # ── 4. Escape patterns — system paths that bypass root check ──
     for pattern in _PATH_ESCAPE_PATTERNS:
         if re.search(pattern, cmd_line, re.IGNORECASE):
             return (
                 f"Error: path sandbox blocked — absolute system path or "
                 f"parent traversal detected. Use only relative paths within "
-                f"the working directory. Set bash_restrict_paths: false "
-                f"in config.yaml to enable."
+                f"the working directory, or absolute paths under configured "
+                f"sandbox roots."
             )
+
     return None
 
 

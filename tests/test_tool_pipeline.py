@@ -106,10 +106,12 @@ async def test_file_write_large_content():
 
 @pytest.mark.asyncio
 async def test_file_write_path_traversal():
+    from personal_agent.tools.sandbox import init_sandbox
     from personal_agent.tools.builtin.file_write import _file_write
 
+    init_sandbox([Path("./data")], ["**/.env", "**/.git/**", "**/.ssh/**"])
     result = await _file_write("../../../etc/passwd", "hello")
-    assert "path traversal" in result.lower() or "outside" in result.lower()
+    assert "outside" in result.lower()
 
 
 # ── Bridge tool_call blocking destructive tools ────────
@@ -308,36 +310,32 @@ async def test_audit_writes_log():
 
 
 def test_checkpoint_creates_backup(tmp_path: Path):
-    from personal_agent.tools.builtin.file_write import set_allowed_base, _allowed_base
+    from personal_agent.tools.sandbox import init_sandbox
     from personal_agent.tools.executor import _checkpoint_file_write
 
-    # Temporarily redirect the file_write sandbox to tmp_path
-    orig = _allowed_base
-    try:
-        set_allowed_base(tmp_path)
+    # Redirect sandbox to tmp_path
+    init_sandbox([tmp_path], [])
 
-        # Create a file to be modified
-        target = tmp_path / "test.txt"
-        target.write_text("original content")
+    # Create a file to be modified
+    target = tmp_path / "test.txt"
+    target.write_text("original content")
 
-        tc = {"name": "write", "input": {"path": "test.txt", "content": "new"}}
-        _checkpoint_file_write(tc)
+    tc = {"name": "write", "input": {"path": "test.txt", "content": "new"}}
+    _checkpoint_file_write(tc)
 
-        # Verify backup exists
-        checkpoints = tmp_path / "checkpoints"
-        assert checkpoints.exists()
-        backups = list(checkpoints.glob("test.txt.*.bak"))
-        assert len(backups) == 1
-        assert backups[0].read_text() == "original content"
-    finally:
-        set_allowed_base(orig)
+    # Verify backup exists
+    checkpoints = tmp_path / "checkpoints"
+    assert checkpoints.exists()
+    backups = list(checkpoints.glob("test.txt.*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text() == "original content"
 
 
 def test_checkpoint_noop_for_new_file(tmp_path: Path):
-    from personal_agent.tools.builtin.file_write import set_allowed_base
+    from personal_agent.tools.sandbox import init_sandbox
     from personal_agent.tools.executor import _checkpoint_file_write
 
-    set_allowed_base(tmp_path)
+    init_sandbox([tmp_path], [])
     tc = {"name": "write", "input": {"path": "new_file.txt", "content": "new"}}
     _checkpoint_file_write(tc)
 
@@ -419,39 +417,47 @@ def test_bash_normal_rm_not_blocked():
 # ── File read sensitive blocking ─────────────────────────
 
 
-def test_file_read_blocks_env(tmp_path: Path):
-    """Reading .env files should be blocked."""
-    from personal_agent.tools.builtin.file_read import _check_sensitive
+def test_sandbox_blocks_env(tmp_path: Path):
+    """Blocked patterns prevent access to .env files."""
+    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
 
-    assert _check_sensitive(tmp_path / ".env") is not None
-    assert _check_sensitive(tmp_path / "project" / ".env.local") is not None
-
-
-def test_file_read_blocks_ssh_keys(tmp_path: Path):
-    """Reading SSH private keys should be blocked."""
-    from personal_agent.tools.builtin.file_read import _check_sensitive
-
-    assert _check_sensitive(tmp_path / "id_rsa") is not None
-    assert _check_sensitive(tmp_path / "id_ed25519") is not None
-    assert _check_sensitive(tmp_path / ".ssh" / "id_rsa") is not None
+    init_sandbox([tmp_path], ["**/.env", "**/.env.*"])
+    sandbox = get_sandbox()
+    assert sandbox.check_path(tmp_path / ".env") is not None
+    assert sandbox.check_path(tmp_path / "project" / ".env.local") is not None
 
 
-def test_file_read_blocks_credential_files(tmp_path: Path):
-    """Reading credential files should be blocked."""
-    from personal_agent.tools.builtin.file_read import _check_sensitive
+def test_sandbox_blocks_ssh_keys(tmp_path: Path):
+    """Blocked patterns prevent access to SSH keys."""
+    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
 
-    assert _check_sensitive(tmp_path / ".netrc") is not None
-    assert _check_sensitive(tmp_path / ".pgpass") is not None
-    assert _check_sensitive(tmp_path / "project" / ".npmrc") is not None
+    init_sandbox([tmp_path], ["**/.ssh/**", "**/id_rsa*", "**/id_ed*"])
+    sandbox = get_sandbox()
+    assert sandbox.check_path(tmp_path / "id_rsa") is not None
+    assert sandbox.check_path(tmp_path / "id_ed25519") is not None
+    assert sandbox.check_path(tmp_path / ".ssh" / "id_rsa") is not None
 
 
-def test_file_read_allows_normal_files(tmp_path: Path):
-    """Normal files should not be blocked."""
-    from personal_agent.tools.builtin.file_read import _check_sensitive
+def test_sandbox_blocks_credential_files(tmp_path: Path):
+    """Blocked patterns prevent access to credential files."""
+    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
 
-    assert _check_sensitive(tmp_path / "notes.txt") is None
-    assert _check_sensitive(tmp_path / "src" / "main.py") is None
-    assert _check_sensitive(tmp_path / "README.md") is None
+    init_sandbox([tmp_path], ["**/.netrc", "**/.pgpass", "**/.npmrc"])
+    sandbox = get_sandbox()
+    assert sandbox.check_path(tmp_path / ".netrc") is not None
+    assert sandbox.check_path(tmp_path / ".pgpass") is not None
+    assert sandbox.check_path(tmp_path / "project" / ".npmrc") is not None
+
+
+def test_sandbox_allows_normal_files(tmp_path: Path):
+    """Normal files pass sandbox check."""
+    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
+
+    init_sandbox([tmp_path], ["**/.env", "**/.git/**", "**/.ssh/**"])
+    sandbox = get_sandbox()
+    assert sandbox.check_path(tmp_path / "notes.txt") is None
+    assert sandbox.check_path(tmp_path / "src" / "main.py") is None
+    assert sandbox.check_path(tmp_path / "README.md") is None
 
 
 # ── SSRF URL safety ──────────────────────────────────────

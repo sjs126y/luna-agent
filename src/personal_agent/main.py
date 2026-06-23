@@ -12,12 +12,8 @@ from personal_agent.db.database import Database
 from personal_agent.gateway.gateway import Gateway
 from personal_agent.memory.file_store import FileMemoryProvider, set_system_dir
 from personal_agent.memory.manager import MemoryManager
-from personal_agent.tools.builtin.file_read import set_allowed_base as set_file_base
-from personal_agent.tools.builtin.file_edit import set_allowed_base as set_file_edit_base
-from personal_agent.tools.builtin.file_write import set_allowed_base as set_file_write_base, set_max_write_bytes
-from personal_agent.tools.builtin.grep_tool import set_workspace as set_grep_workspace
-from personal_agent.tools.builtin.glob_tool import set_workspace as set_glob_workspace
-from personal_agent.tools.builtin.bash import set_allow_network, set_restrict_paths
+from personal_agent.tools.sandbox import init_sandbox
+from personal_agent.tools.builtin.bash import set_allow_network, set_restrict_paths, set_work_dir as set_bash_work_dir
 from personal_agent.tools.audit import set_audit_path
 
 logger = logging.getLogger("personal_agent")
@@ -164,15 +160,11 @@ async def boot() -> None:
 
     memory_manager = MemoryManager(builtin=memory_store, external=external_store)
 
-    # ── 6. File tool sandbox ───────────────────────────
-    set_file_base(data_dir)
-    set_file_write_base(data_dir)
-    set_file_edit_base(data_dir)
-    set_max_write_bytes(settings.file_max_write_bytes)
-    set_grep_workspace(data_dir)
-    set_glob_workspace(data_dir)
+    # ── 6. Sandbox (unified — all file tools + bash) ──
+    init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
     set_allow_network(settings.bash_allow_network)
     set_restrict_paths(settings.bash_restrict_paths)
+    set_bash_work_dir(settings.bash_work_dir)
     if settings.audit_enabled:
         set_audit_path(data_dir / "audit.log")
 
