@@ -127,6 +127,20 @@ class SessionStore:
             return self._chain.resolve(entry.session_id)
         return entry.session_id
 
+    async def list_user_sessions(self, platform: str, user_id: str) -> list[dict]:
+        """Return sessions matching platform + user_id, sorted by last active."""
+        results = []
+        for key, entry in self._index.items():
+            if entry.platform == platform and entry.user_id == user_id:
+                results.append({
+                    "session_key": key,
+                    "session_id": entry.session_id[:8],
+                    "message_count": entry.message_count,
+                    "last_active": entry.last_active_at,
+                })
+        results.sort(key=lambda x: x.get("last_active", ""), reverse=True)
+        return results
+
     async def expire_sessions(self, max_age_days: int = 30) -> int:
         """Remove sessions inactive for > max_age_days. Returns count removed."""
         import time

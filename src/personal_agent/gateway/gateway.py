@@ -241,9 +241,20 @@ class Gateway:
 
         if text.startswith("/session"):
             parts = text.split()
-            if len(parts) < 2:
-                current = self._session_override.get(session_key, session_key)
-                return f"当前会话: {current}\n用法: /session <name>"
+            base_key = f"{event.source.platform}:{event.source.chat_id}:{event.source.user_id}"
+            key_parts = base_key.split(":", 2)
+            platform = key_parts[0]
+            user_id = key_parts[2] if len(key_parts) > 2 else ""
+
+            if len(parts) < 2 or parts[1] == "list":
+                current = self._session_override.get(base_key, base_key)
+                # Show all sessions belonging to this platform+user
+                sessions = await self._session_store.list_user_sessions(platform, user_id)
+                lines = [f"当前会话: {current}", "你的会话列表:"]
+                for s in sessions[:10]:
+                    marker = " ←" if s["session_key"] == current else ""
+                    lines.append(f"  {s['session_key']}{marker} ({s.get('message_count', 0)} 条消息)")
+                return "\n".join(lines)
 
             new_name = parts[1]
             # Compute base key from source (ignoring any existing override)
