@@ -15,12 +15,31 @@ class ProviderProfile:
     api_key: str
     model: str
     max_tokens: int = 4096
+    context_window: int = 0                # 0 = auto-detect from model name
 
     # Hooks to patch vendor quirks (e.g., a vendor doesn't support temperature)
     request_hook: Callable[[dict], dict] | None = None
     response_hook: Callable[[dict], dict] | None = None
 
     extra_headers: dict[str, str] = field(default_factory=dict)
+
+
+def _detect_context_window(model: str) -> int:
+    """Infer context window from model name. Conservative estimates."""
+    m = model.lower()
+    if "1m" in m or "1.0m" in m:
+        return 1_000_000
+    if "200k" in m or "claude" in m:
+        return 200_000
+    if "128k" in m or "gpt-4" in m or "gpt-4o" in m:
+        return 128_000
+    if "32k" in m:
+        return 32_000
+    if "deepseek" in m and "v4" in m:
+        return 1_000_000
+    if "deepseek" in m and ("v3" in m or "r1" in m):
+        return 128_000
+    return 64_000  # default: deepseek-chat, etc.
 
 
 # ── Provider Registry ──────────────────────────────────

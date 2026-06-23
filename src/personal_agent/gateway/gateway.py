@@ -297,7 +297,9 @@ class Gateway:
             if agent is None:
                 return "暂无会话数据。"
             from personal_agent.llm.token_counter import context_usage
-            cu = context_usage([], agent._cached_system_prompt or "", agent.tools)
+            cu = context_usage([], agent._cached_system_prompt or "", agent.tools,
+                               provider_name=agent._provider.name if agent._provider else "",
+                               model=agent.model)
             return (
                 f"📊 会话用量\n"
                 f"API 调用: {agent.session_api_calls} 次\n"

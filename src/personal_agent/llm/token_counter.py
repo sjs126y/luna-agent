@@ -45,9 +45,15 @@ def count_tools_tokens(tools: list[dict]) -> int:
 
 def context_usage(messages: list[dict], system_prompt: str = "",
                   tools: list[dict] | None = None,
-                  context_limit: int = _DEFAULT_CONTEXT_LIMIT) -> dict:
+                  context_limit: int = 0,
+                  provider_name: str = "",
+                  model: str = "") -> dict:
     """Estimate context window usage. Returns dict with keys:
-    used, limit, percent, system, messages, tools — all in tokens."""
+    used, limit, percent, system, messages, tools — all in tokens.
+    context_limit=0 → auto-detect from model name."""
+    if context_limit <= 0:
+        from personal_agent.llm.provider import _detect_context_window
+        context_limit = _detect_context_window(model)
     sys_tok = estimate_tokens(system_prompt)
     msg_tok = count_messages_tokens(messages)
     tool_tok = count_tools_tokens(tools or [])
