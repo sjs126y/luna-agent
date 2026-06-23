@@ -84,21 +84,57 @@ _WINDOWS_ALIASES: dict[str, str] = {
     "where": "where",
 }
 
+# ── Hard blacklist — catastrophic commands, NEVER allowed ──
+# These are checked BEFORE the whitelist and cannot be overridden.
+# Even /allow bash does not bypass these.
+
+_HARD_BLACKLIST: list[str] = [
+    # Filesystem destruction (root paths)
+    r'\brm\s+-rf\s+/', r'\brm\s+-rf\s+/\*',
+    r'\brm\s+-rf\s+~', r'\brm\s+-rf\s+\$HOME',
+    r'\brm\s+-rf\s+/(etc|boot|bin|sbin|lib|lib64|sys|proc|dev)\b',
+    # Block device writes
+    r'\bdd\s+.*\bof=/dev/[sh]da', r'\bdd\s+.*\bof=\\\\.\\',
+    r'\bdd\s+.*\bof=/dev/(null|zero|random)',
+    # Format / mkfs
+    r'\bmkfs\.', r'\bmkfs\s', r'\bmke2fs\b',
+    # Raw disk writes
+    r'>\s*/dev/[sh]d[a-z]', r'>\s*\\\\.\\[A-Z]',
+    # Fork bomb
+    r':\(\)\s*\{', r'\)\(\)\s*\{',
+    # System shutdown (anchored to command start, not args)
+    r'(?:^|[\s;&|])(?:sudo\s+)?(?:shutdown|reboot|halt|poweroff|init\s+[06])\b',
+    # chmod 777 on system dirs
+    r'\bchmod\s+777\s+/',
+    # Write to system config
+    r'>\s*/etc/(passwd|shadow|sudoers|hosts)',
+    r'>\s*C:\\Windows\\(System32|SysWOW64)',
+    # Kernel module / sysctl tampering
+    r'\b(modprobe|sysctl|kldload)\b.*\b(-[a-z]*r\b|write\b)',
+]
+
+
 # Dangerous argument patterns — blocked regardless of whitelist
 _DANGEROUS_PATTERNS: list[str] = [
-    r'>\s*/dev/[sh]da', r'>\s*\\\\.\\',       # write to raw devices
-    r'rm\s+-rf\s+/', r'rm\s+-rf\s+~',          # rm root/home
-    r'mkfs\.', r'dd\s+if=',                    # format / raw write
-    r':\(\)\s*\{',                              # fork bomb
-    r'chmod\s+777\s+/',                         # world-writable root
-    r'>\s*/etc/', r'>\s*C:\\Windows',           # system config overwrite
-    r'\|.*sh\b', r'`[^`]+`',                   # pipe to shell / backtick injection
-    r'\$\([^)]+\)',                              # command substitution
+    r'>\s*\\\\.\\',                              # write to raw devices (Windows)
+    r'>\s*/etc/', r'>\s*C:\\Windows',            # system config overwrite
+    r'\|.*sh\b', r'`[^`]+`',                    # pipe to shell / backtick injection
+    r'\$\([^)]+\)',                               # command substitution
+    r'\bsudo\b.*\brm\b',                         # sudo rm (any target)
+    r'\bgit\s+push\s+--force',                   # force push (potentially destructive)
 ]
 
 
 def _check_command(cmd_line: str) -> str | None:
-    """Validate command against whitelist + patterns. Returns error or None."""
+    """Validate command against hard blacklist → whitelist → patterns.
+
+    Layer order:
+      0. Hard blacklist — catastrophic, unconditional, NEVER bypassed
+      1. Command chaining detection
+      2. Whitelist check
+      3. Network isolation
+      4. Dangerous pattern detection
+    """
     cmd_stripped = cmd_line.strip()
 
     # Extract base command (first word, handling quotes)
@@ -106,14 +142,20 @@ def _check_command(cmd_line: str) -> str | None:
     if not parts:
         return "Error: empty command"
 
-    # Block command chaining — one command per call
+    # ── 0. Hard blacklist (UNCONDITIONAL, even with /allow bash) ──
+    cmd_lower = cmd_stripped.lower()
+    for pattern in _HARD_BLACKLIST:
+        if re.search(pattern, cmd_lower, re.IGNORECASE):
+            return f"Error: catastrophic command blocked by hard blacklist — this cannot be overridden"
+
+    # ── 1. Block command chaining ──
     _CHAIN_TOKENS = ("&&", "||", "|", ";")
     if any(tok in cmd_stripped for tok in _CHAIN_TOKENS):
         return "Error: command chaining (&& || | ;) is not allowed. Use one command per call."
 
     base = parts[0].lower().replace("\\", "/").split("/")[-1]  # strip path
 
-    # Check whitelist
+    # ── 2. Whitelist check ──
     if base not in WHITELIST:
         return (
             f"Error: command '{base}' is not in the allowed list. "
@@ -154,11 +196,13 @@ async def _bash(command: str, timeout: int = 30) -> str:
         return error
 
     try:
+        from personal_agent.tools.env_filter import filter_env
         proc = await asyncio.create_subprocess_bash(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_work_dir),
+            env=filter_env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(

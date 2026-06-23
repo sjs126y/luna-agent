@@ -32,6 +32,7 @@ class Gateway:
         self._cron_scheduler = None
         self.hooks = Hooks()
         self._shutdown_event = asyncio.Event()
+        self._mcp_manager = None  # set by main.py after MCPManager.start()
 
     # ── lifecycle ─────────────────────────────────────
 
@@ -71,6 +72,12 @@ class Gateway:
     async def stop(self) -> None:
         if self._cron_scheduler:
             self._cron_scheduler.stop()
+        mcp = getattr(self, '_mcp_manager', None)
+        if mcp is not None:
+            try:
+                await mcp.stop()
+            except Exception:
+                logger.exception("Error stopping MCP manager")
         for adapter in self._adapters:
             try:
                 await adapter.disconnect()

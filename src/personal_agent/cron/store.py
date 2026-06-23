@@ -19,7 +19,7 @@ class CronStore:
         if not self._path.exists():
             return []
         try:
-            data = json.loads(self._path.read_text())
+            data = json.loads(self._path.read_text(encoding="utf-8"))
             return [CronEntry(**item) for item in data]
         except Exception:
             logger.exception("Failed to load cron jobs")
@@ -31,7 +31,7 @@ class CronStore:
             {k: v for k, v in j.__dict__.items()}
             for j in jobs
         ]
-        self._path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        self._path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def seed_defaults(self) -> list[CronEntry]:
         """Create default jobs if jobs.json doesn't exist."""

@@ -40,3 +40,28 @@ auth:
   enabled: true               # true = enable auth (static + pairing)
   admins: []                  # admin user IDs (always pass, no challenge)
   allowed_users: []           # pre-approved user IDs (skip pairing)
+
+mcp:
+  enabled: true               # enable MCP client subsystem
+  servers:
+    - name: "filesystem"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\MR"]
+      enabled: true
+
+    - name: "github"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ""  # fill in your token
+      enabled: false  # enable after setting token
+
+    - name: "memory"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-memory", "--storage-path", "./data/mcp/memory.json"]
+      enabled: true
+
+    - name: "sequential-thinking"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      enabled: true

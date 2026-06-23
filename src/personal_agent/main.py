@@ -124,6 +124,13 @@ async def boot() -> None:
     from personal_agent.skills.registry import discover_skills
     discover_skills(data_dir / "skills")       # auto-discover user-provided skills
 
+    # ── 3.5. MCP servers ──────────────────────────
+    mcp_manager = None
+    if settings.mcp_enabled and settings.mcp_servers:
+        from personal_agent.mcp.manager import MCPManager
+        mcp_manager = MCPManager(settings.mcp_servers)
+        await mcp_manager.start()
+
     # ── 4. Database ────────────────────────────────────
     db = Database(data_dir / "state.db")
     await db.initialize()
@@ -168,6 +175,7 @@ async def boot() -> None:
         "4. 工具返回的结果要如实转述，不要编造"
     )
     gateway = Gateway(settings, db, memory_manager, system_prompt_template=system_prompt)
+    gateway._mcp_manager = mcp_manager  # for shutdown cleanup
 
     # ── 7.5. Default hooks — non-restrictive utility hooks ──
 

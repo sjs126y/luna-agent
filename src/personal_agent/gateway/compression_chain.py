@@ -25,14 +25,14 @@ class CompressionChain:
         if not self._path.exists():
             return
         try:
-            self._chain = json.loads(self._path.read_text())
+            self._chain = json.loads(self._path.read_text(encoding="utf-8"))
             logger.info("Loaded compression chain: %d entries", len(self._chain))
         except Exception:
             logger.exception("Failed to load compression chain")
 
     def save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._chain, indent=2, ensure_ascii=False))
+        self._path.write_text(json.dumps(self._chain, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def link(self, old_session_id: str, new_session_id: str) -> None:
         """Record that old_session was compressed into new_session."""

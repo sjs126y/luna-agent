@@ -174,7 +174,7 @@ class SessionStore:
         if not self._index_path.exists():
             return
         try:
-            data = json.loads(self._index_path.read_text())
+            data = json.loads(self._index_path.read_text(encoding="utf-8"))
             for key, val in data.items():
                 self._index[key] = SessionEntry(**val)
             logger.info("Loaded %d sessions from index", len(self._index))
@@ -190,4 +190,4 @@ class SessionStore:
             "created_at": v.created_at, "last_active_at": v.last_active_at,
             "message_count": v.message_count,
         } for k, v in self._index.items()}
-        self._index_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        self._index_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

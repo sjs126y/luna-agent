@@ -86,6 +86,11 @@ class Settings:
         self.session_expire_days: int = session.get("expire_days", 30)
         self.session_override: dict[str, str] = session.get("override", {})
 
+        # ── MCP (from config.yaml) ──
+        mcp = yaml_cfg.get("mcp", {})
+        self.mcp_enabled: bool = mcp.get("enabled", False)
+        self.mcp_servers: list[dict] = mcp.get("servers", [])
+
         # ── Auth (from config.yaml) ──
         auth = yaml_cfg.get("auth", {})
         self.auth_enabled: bool = auth.get("enabled", False)

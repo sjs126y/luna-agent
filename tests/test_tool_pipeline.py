@@ -366,3 +366,219 @@ def test_bm25_search_returns_schema():
     assert "input_schema" in results[0]
     assert results[0]["input_schema"] is not None
     assert "city" in str(results[0]["input_schema"])
+
+
+# ── Bash hard blacklist ──────────────────────────────────
+
+
+def test_bash_hard_blacklist_catastrophic():
+    """Hard blacklist blocks catastrophic commands unconditionally."""
+    from personal_agent.tools.builtin.bash import _check_command
+
+    # These must ALWAYS be blocked (even with /allow bash)
+    catastrophic = [
+        "rm -rf /",
+        "rm -rf /*",
+        "rm -rf ~",
+        "rm -rf /etc",
+        "rm -rf $HOME",
+        "dd if=/dev/zero of=/dev/sda",
+        "mkfs.ext4 /dev/sda1",
+        "mkfs /dev/sda1",
+        "shutdown -h now",
+        "reboot",
+        "poweroff",
+        "chmod 777 /",
+        "> /etc/passwd",
+        ":(){ :|:& };:",
+    ]
+    for cmd in catastrophic:
+        result = _check_command(cmd)
+        assert result is not None, f"'{cmd}' must be blocked by hard blacklist"
+        assert "hard blacklist" in result.lower()
+
+
+def test_bash_hard_blacklist_sudo_wrappers():
+    """Hard blacklist catches sudo-wrapped catastrophic commands."""
+    from personal_agent.tools.builtin.bash import _check_command
+
+    assert _check_command("sudo rm -rf /") is not None
+    assert _check_command("sudo shutdown -h now") is not None
+    assert _check_command("sudo reboot") is not None
+
+
+def test_bash_normal_rm_not_blocked():
+    """Normal rm operations (not targeting root) should pass hard blacklist."""
+    from personal_agent.tools.builtin.bash import _check_command
+
+    # Single file removal — NOT caught by hard blacklist
+    result = _check_command("rm file.txt")
+    assert result is None  # passes hard blacklist, reaches whitelist
+
+
+# ── File read sensitive blocking ─────────────────────────
+
+
+def test_file_read_blocks_env(tmp_path: Path):
+    """Reading .env files should be blocked."""
+    from personal_agent.tools.builtin.file_read import _check_sensitive
+
+    assert _check_sensitive(tmp_path / ".env") is not None
+    assert _check_sensitive(tmp_path / "project" / ".env.local") is not None
+
+
+def test_file_read_blocks_ssh_keys(tmp_path: Path):
+    """Reading SSH private keys should be blocked."""
+    from personal_agent.tools.builtin.file_read import _check_sensitive
+
+    assert _check_sensitive(tmp_path / "id_rsa") is not None
+    assert _check_sensitive(tmp_path / "id_ed25519") is not None
+    assert _check_sensitive(tmp_path / ".ssh" / "id_rsa") is not None
+
+
+def test_file_read_blocks_credential_files(tmp_path: Path):
+    """Reading credential files should be blocked."""
+    from personal_agent.tools.builtin.file_read import _check_sensitive
+
+    assert _check_sensitive(tmp_path / ".netrc") is not None
+    assert _check_sensitive(tmp_path / ".pgpass") is not None
+    assert _check_sensitive(tmp_path / "project" / ".npmrc") is not None
+
+
+def test_file_read_allows_normal_files(tmp_path: Path):
+    """Normal files should not be blocked."""
+    from personal_agent.tools.builtin.file_read import _check_sensitive
+
+    assert _check_sensitive(tmp_path / "notes.txt") is None
+    assert _check_sensitive(tmp_path / "src" / "main.py") is None
+    assert _check_sensitive(tmp_path / "README.md") is None
+
+
+# ── SSRF URL safety ──────────────────────────────────────
+
+
+def test_url_safety_blocks_private_ips():
+    from personal_agent.tools.url_safety import check_url
+
+    assert check_url("http://127.0.0.1/admin") is not None
+    assert check_url("http://localhost/api") is not None
+    assert check_url("http://10.0.0.1/") is not None
+    assert check_url("http://192.168.1.1/") is not None
+    assert check_url("http://172.16.0.1/") is not None
+
+
+def test_url_safety_blocks_metadata_endpoints():
+    from personal_agent.tools.url_safety import check_url
+
+    assert check_url("http://169.254.169.254/latest/meta-data") is not None
+    assert check_url("http://metadata.google.internal/") is not None
+
+
+def test_url_safety_allows_public_ips():
+    from personal_agent.tools.url_safety import check_url
+
+    # Use IPs that are definitely public (not DNS-dependent)
+    assert check_url("https://1.1.1.1") is None
+    assert check_url("https://8.8.8.8") is None
+    assert check_url("https://93.184.216.34") is None  # example.com IP
+
+
+def test_url_safety_blocks_multicast_linklocal():
+    from personal_agent.tools.url_safety import check_url
+
+    assert check_url("http://224.0.0.1/") is not None  # multicast
+    assert check_url("http://169.254.1.1/") is not None  # link-local
+    assert check_url("http://0.0.0.0/") is not None  # unspecified
+
+
+# ── Credential env filtering ────────────────────────────
+
+
+def test_env_filter_blocks_api_keys():
+    from personal_agent.tools.env_filter import filter_env
+
+    env = {
+        "PATH": "/usr/bin",
+        "HOME": "/home/user",
+        "LLM_API_KEY": "sk-secret-key-12345",
+        "OPENAI_API_KEY": "sk-openai-67890",
+        "DEEPSEEK_API_KEY": "sk-deepseek-abcde",
+        "FEISHU_APP_SECRET": "secret123",
+        "TELEGRAM_BOT_TOKEN": "123:abc",
+        "WEIXIN_TOKEN": "wx_token",
+        "GITHUB_TOKEN": "ghp_secret123",
+        "NORMAL_VAR": "hello",
+    }
+    filtered = filter_env(env)
+    assert "PATH" in filtered
+    assert "HOME" in filtered
+    assert "NORMAL_VAR" in filtered
+    assert "LLM_API_KEY" not in filtered
+    assert "OPENAI_API_KEY" not in filtered
+    assert "DEEPSEEK_API_KEY" not in filtered
+    assert "FEISHU_APP_SECRET" not in filtered
+    assert "TELEGRAM_BOT_TOKEN" not in filtered
+    assert "WEIXIN_TOKEN" not in filtered
+    assert "GITHUB_TOKEN" not in filtered
+
+
+def test_env_filter_blocks_anthropic_prefixes():
+    from personal_agent.tools.env_filter import filter_env
+
+    env = {"ANTHROPIC_API_KEY": "sk-ant-secret", "ANTHROPIC_BASE_URL": "https://..."}
+    filtered = filter_env(env)
+    assert "ANTHROPIC_API_KEY" not in filtered
+    assert "ANTHROPIC_BASE_URL" not in filtered
+
+
+# ── Log redaction ────────────────────────────────────────
+
+
+def test_redact_masks_openai_key():
+    from personal_agent.tools.redact import redact
+
+    text = "Using API key: sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+    result = redact(text)
+    assert "sk-proj-abcdefghi" not in result  # full key gone
+    assert "****" in result
+
+
+def test_redact_masks_github_token():
+    from personal_agent.tools.redact import redact
+
+    text = "Token: ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+    result = redact(text)
+    assert "ghp_abcdefghijklmnop" not in result
+    assert "****" in result
+
+
+def test_redact_masks_jwt():
+    from personal_agent.tools.redact import redact
+
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+    result = redact("Bearer " + jwt)
+    assert jwt not in result
+    assert "****" in result
+
+
+def test_redact_masks_auth_header():
+    from personal_agent.tools.redact import redact
+
+    text = "Authorization: Bearer sk-ant-api03-secret-key-here-12345"
+    result = redact(text)
+    assert "sk-ant-api03-secret" not in result
+    assert "****" in result or "*" in result
+
+
+def test_redact_preserves_normal_text():
+    from personal_agent.tools.redact import redact
+
+    text = "Hello world! The weather is nice today."
+    assert redact(text) == text
+
+
+def test_redact_empty_string():
+    from personal_agent.tools.redact import redact
+
+    assert redact("") == ""
+    assert redact(None) is None

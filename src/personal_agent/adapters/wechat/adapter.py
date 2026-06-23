@@ -311,7 +311,7 @@ class WeChatAdapter(BasePlatformAdapter):
         if not path.exists():
             return
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             self._token = data.get("token", self._token)
             self._account_id = data.get("account_id", self._account_id)
             self._user_id = data.get("user_id", self._user_id)
@@ -321,19 +321,19 @@ class WeChatAdapter(BasePlatformAdapter):
     def _save_creds(self) -> None:
         (self._state_dir / "creds.json").write_text(json.dumps({
             "token": self._token, "account_id": self._account_id, "user_id": self._user_id,
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
 
     def _load_sync_buf(self) -> None:
         path = self._state_dir / "sync.json"
         if path.exists():
             try:
-                self._sync_buf = json.loads(path.read_text()).get("get_updates_buf", "")
+                self._sync_buf = json.loads(path.read_text(encoding="utf-8")).get("get_updates_buf", "")
             except Exception:
                 pass
 
     def _save_sync_buf(self) -> None:
         (self._state_dir / "sync.json").write_text(
-            json.dumps({"get_updates_buf": self._sync_buf}))
+            json.dumps({"get_updates_buf": self._sync_buf}), encoding="utf-8")
 
 
 # ── QR Helpers ──────────────────────────────────────
@@ -398,7 +398,7 @@ async def wechat_qr_login(state_dir: Path, base_url: str = API_BASE) -> dict | N
                 if not creds["token"] or not creds["account_id"]:
                     print("\n❌ 登录失败：凭证不完整。")
                     return None
-                (state_dir / "creds.json").write_text(json.dumps(creds, indent=2))
+                (state_dir / "creds.json").write_text(json.dumps(creds, indent=2), encoding="utf-8")
                 print(f"\n✅ 登录成功！Account: {creds['account_id'][:12]}...")
                 return creds
             elif state == "expired":

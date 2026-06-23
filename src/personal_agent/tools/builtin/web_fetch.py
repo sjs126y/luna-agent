@@ -6,6 +6,12 @@ from personal_agent.tools.registry import tool_registry
 
 
 async def _web_fetch(url: str) -> str:
+    # ── SSRF check ──
+    from personal_agent.tools.url_safety import check_url
+    url_error = check_url(url)
+    if url_error:
+        return url_error
+
     try:
         import html2text
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:

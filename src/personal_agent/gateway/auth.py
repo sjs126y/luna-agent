@@ -42,7 +42,7 @@ class AuthManager:
         self._allowlist_path.parent.mkdir(parents=True, exist_ok=True)
         if self._allowlist_path.exists():
             try:
-                data = json.loads(self._allowlist_path.read_text())
+                data = json.loads(self._allowlist_path.read_text(encoding="utf-8"))
                 self._allowlist = set(data.get("users", []))
                 logger.info("Auth: loaded %d allowed users", len(self._allowlist))
             except Exception:
@@ -50,7 +50,7 @@ class AuthManager:
 
         if self._pending_path.exists():
             try:
-                data = json.loads(self._pending_path.read_text())
+                data = json.loads(self._pending_path.read_text(encoding="utf-8"))
                 self._pending = data.get("pending", {})
                 # Clean expired
                 now = time.time()
@@ -64,13 +64,13 @@ class AuthManager:
         self._allowlist_path.parent.mkdir(parents=True, exist_ok=True)
         self._allowlist_path.write_text(json.dumps(
             {"users": sorted(self._allowlist)}, indent=2, ensure_ascii=False
-        ))
+        ), encoding="utf-8")
 
     def _save_pending(self) -> None:
         self._pending_path.parent.mkdir(parents=True, exist_ok=True)
         self._pending_path.write_text(json.dumps(
             {"pending": self._pending}, indent=2, ensure_ascii=False
-        ))
+        ), encoding="utf-8")
 
     # ── main entry ────────────────────────────────────
 

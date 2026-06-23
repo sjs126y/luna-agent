@@ -22,6 +22,7 @@ TOOLSETS: dict[str, set[str]] = {
     "utility":  {"calculator", "datetime", "random", "timer", "json"},
     "memory":   {"memory", "memory_ingest", "todo"},
     "info":     {"weather"},
+    "mcp":      set(),  # MCP tools are registered dynamically at startup
 }
 
 

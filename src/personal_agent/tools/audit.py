@@ -27,13 +27,17 @@ def _get_lock():
 
 
 def audit_log(tool: str, detail: str, result_snippet: str, success: bool) -> None:
-    """Append one JSON line to the audit log. Non-blocking — errors are suppressed."""
+    """Append one JSON line to the audit log. Non-blocking — errors are suppressed.
+
+    All fields are redacted to mask API keys and tokens before writing.
+    """
     try:
+        from personal_agent.tools.redact import redact
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "tool": tool,
-            "detail": detail[:500],
-            "result": result_snippet[:200],
+            "detail": redact(detail[:500]),
+            "result": redact(result_snippet[:200]),
             "success": success,
         }
         line = json.dumps(entry, ensure_ascii=False) + "\n"

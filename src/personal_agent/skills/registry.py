@@ -101,7 +101,7 @@ class SkillRegistry:
         usage = {}
         if usage_path.exists():
             try:
-                usage = json.loads(usage_path.read_text())
+                usage = json.loads(usage_path.read_text(encoding="utf-8"))
             except Exception:
                 pass
         entry = usage.get(name, {"use_count": 0, "last_used": ""})
@@ -109,7 +109,7 @@ class SkillRegistry:
         entry["last_used"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         usage[name] = entry
         try:
-            usage_path.write_text(json.dumps(usage, indent=2, ensure_ascii=False))
+            usage_path.write_text(json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
 
