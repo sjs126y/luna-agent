@@ -1,17 +1,14 @@
-"""Delegate task — spawn a lightweight sub-agent for isolated subtasks.
+"""Sub-agent tools — CC-style multi-agent primitives.
 
-Use cases:
-  - "Research X and Y in parallel, then compare"
-  - "Check these 3 files for bugs independently"
-  - "Summarize this long text before we continue"
-
-Each delegation runs in a fresh context (no history from main conversation),
-so it's ideal for focused, independent work.
+sub_agent:     Spawn one sub-agent for a focused task (parallel-safe)
+sub_parallel:  Run multiple sub-agents concurrently, wait for all
+sub_pipeline:  Run items through stages independently (no barrier)
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Callable
 
@@ -20,190 +17,184 @@ from personal_agent.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
 
-# Set by main.py at startup — the delegate tool needs LLM access
 _delegate_call: Callable | None = None
 _delegate_tools: list[dict] | None = None
 _delegate_max_tokens: int = 4096
 
 
-def setup_delegate(
-    call_fn: Callable,
-    tools: list[dict],
-    max_tokens: int = 4096,
-) -> None:
-    """Configure delegate subsystem. Called once at startup."""
+def setup_delegate(call_fn, tools, max_tokens=4096):
     global _delegate_call, _delegate_tools, _delegate_max_tokens
     _delegate_call = call_fn
     _delegate_tools = tools
     _delegate_max_tokens = max_tokens
 
 
-async def _delegate_task(
-    prompt: str,
-    context: str = "",
-    max_tokens: int = 2048,
-    max_iterations: int = 5,
-) -> str:
-    """Spawn a sub-agent to handle an isolated task with multi-turn execution.
-
-    The sub-agent has:
-    - No access to the main conversation history
-    - Access to all the same tools as the main agent
-    - Multi-turn execution (max 5 iterations) — enough for research tasks
-    - Its own system prompt focused on task completion
-    - Empty-response retry (max 1 nudge)
-
-    Args:
-        prompt: The task for the sub-agent. Be specific about what you want.
-        context: Optional background info / data the sub-agent needs.
-        max_tokens: Max output tokens per LLM call (default 2048).
-        max_iterations: Max turns before forced summary (default 5, max 10).
-    """
+async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048):
     if _delegate_call is None:
-        return (
-            "Error: delegate subsystem not initialized. "
-            "Set up delegate transport in main.py."
-        )
+        return "Error: sub-agent system not initialized"
 
-    # ── Build seed messages ──
-    messages: list[dict] = []
+    messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+    sys = system_prompt or "You are a focused sub-agent. Complete the task and return your result concisely."
 
-    if context:
-        messages.append({
-            "role": "user",
-            "content": [{"type": "text", "text": f"Context:\n{context}"}],
-        })
+    safe_tools = [t for t in (_delegate_tools or []) if t.get("name") not in (
+        "sub_agent", "sub_parallel", "sub_pipeline", "workflow_run", "clarify", "confirm",
+    )]
 
-    messages.append({
-        "role": "user",
-        "content": [{"type": "text", "text": prompt}],
-    })
+    try:
+        response = await asyncio.wait_for(
+            _delegate_call(messages=messages, system_prompt=sys, tools=safe_tools,
+                          max_tokens=min(max_tokens, _delegate_max_tokens)),
+            timeout=180.0)
+    except asyncio.TimeoutError:
+        return "Error: sub-agent timed out"
+    except Exception as e:
+        return f"Error: sub-agent failed: {e}"
 
-    system = (
-        "You are a focused sub-agent running inside a while-loop. You have "
-        "access to tools to fetch information and perform actions. "
-        "Work step by step:\n"
-        "1. Understand the task\n"
-        "2. Use tools to gather needed information\n"
-        "3. Synthesize your findings\n"
-        "4. When done, provide your FINAL ANSWER in plain text.\n\n"
-        "IMPORTANT: Do NOT ask questions or wait for user input. The user "
-        "will NOT reply — you must complete the task autonomously. "
-        "When you have the final result, stop calling tools and just output "
-        "your answer. Be concise — no unnecessary commentary."
-    )
-
-    iterations = min(max_iterations, 10)
-    empty_retries = 0
-
-    # ── Multi-turn loop ──
-    for turn in range(iterations):
+    if response.tool_calls:
+        from personal_agent.tools.executor import execute_tool_calls
+        blocks = []
+        if response.text:
+            blocks.append({"type": "text", "text": response.text})
+        for tc in response.tool_calls:
+            blocks.append({"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": tc["input"]})
+        messages.append({"role": "assistant", "content": blocks})
+        await execute_tool_calls(response.tool_calls, messages)
+        messages.append({"role": "user", "content": [{"type": "text", "text": "Tools done. Now give your final answer."}]})
         try:
             response = await asyncio.wait_for(
-                _delegate_call(
-                    messages=messages,
-                    system_prompt=system,
-                    tools=_delegate_tools,
-                    max_tokens=min(max_tokens, _delegate_max_tokens),
-                ),
-                timeout=120.0,
-            )
-        except asyncio.TimeoutError:
-            return "Error: delegate task timed out (120s)"
-        except Exception as exc:
-            return f"Error: delegate task failed: {exc}"
+                _delegate_call(messages=messages, system_prompt=sys, tools=[], max_tokens=max_tokens),
+                timeout=120.0)
+        except Exception as e:
+            return f"Error: follow-up failed: {e}"
 
-        # ── Empty response retry ──
-        if not response.text and not response.tool_calls:
-            if empty_retries < 1:
-                empty_retries += 1
-                messages.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "text",
-                        "text": "Your last response was empty. Please continue working on the task.",
-                    }],
-                })
-                continue
-            return "Error: sub-agent returned empty response twice"
+    text = (response.text or "").strip()
 
-        # ── No tool calls → final answer ──
-        if not response.tool_calls:
-            return response.text or "(sub-agent returned no text)"
-
-        # ── Execute tools and continue ──
-        from personal_agent.tools.executor import execute_tool_calls
-        assistant_blocks = []
-        if response.text:
-            assistant_blocks.append({"type": "text", "text": response.text})
-        for tc in response.tool_calls:
-            assistant_blocks.append({
-                "type": "tool_use",
-                "id": tc["id"],
-                "name": tc["name"],
-                "input": tc["input"],
-            })
-        messages.append({"role": "assistant", "content": assistant_blocks})
-        await execute_tool_calls(response.tool_calls, messages)
-
-        # ── Last turn: force summary ──
-        if turn == iterations - 1:
-            messages.append({
-                "role": "user",
-                "content": [{
-                    "type": "text",
-                    "text": "This was your last turn. Summarize your findings as the FINAL ANSWER now. Do NOT call any more tools.",
-                }],
-            })
+    if schema:
+        try:
+            schema_obj = json.loads(schema)
+            result = _extract_json(text, schema_obj)
+            if result is not None:
+                return json.dumps(result, indent=2, ensure_ascii=False)
+            messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
+            messages.append({"role": "user", "content": [{"type": "text", "text": "Return ONLY valid JSON matching the schema."}]})
             try:
-                response = await asyncio.wait_for(
-                    _delegate_call(
-                        messages=messages,
-                        system_prompt=system,
-                        tools=[],  # no tools on forced-final turn
-                        max_tokens=min(max_tokens, _delegate_max_tokens),
-                    ),
-                    timeout=60.0,
-                )
-                return response.text or "(sub-agent returned no text)"
-            except Exception as exc:
-                return f"Error: delegate final summary failed: {exc}"
+                r2 = await asyncio.wait_for(
+                    _delegate_call(messages=messages, system_prompt=sys, tools=[], max_tokens=max_tokens),
+                    timeout=60.0)
+                result = _extract_json((r2.text or "").strip(), schema_obj)
+                if result is not None:
+                    return json.dumps(result, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+            return f"Error: could not produce valid JSON. Raw: {text[:500]}"
+        except json.JSONDecodeError:
+            pass
+    return text
 
-    return "(sub-agent exhausted all turns without result)"
+
+def _extract_json(text, schema):
+    import re
+    try:
+        obj = json.loads(text)
+        if _validate(obj, schema):
+            return obj
+    except json.JSONDecodeError:
+        pass
+    m = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            if _validate(obj, schema):
+                return obj
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _validate(obj, schema):
+    if schema.get("type") != "object":
+        return True
+    for key in schema.get("required", []):
+        if key not in obj:
+            return False
+    return True
+
+
+async def _sub_agent(prompt, system_prompt="", schema="", max_tokens=2048):
+    return await _run_agent(prompt, system_prompt, schema, max_tokens)
+
+
+async def _sub_parallel(tasks_json):
+    try:
+        tasks = json.loads(tasks_json)
+    except json.JSONDecodeError as e:
+        return f"Error: invalid tasks JSON: {e}"
+    if not isinstance(tasks, list) or not tasks:
+        return "Error: tasks must be a non-empty JSON array"
+
+    async def _one(task):
+        return await _run_agent(
+            prompt=task.get("prompt", ""),
+            system_prompt=task.get("system_prompt", ""),
+            schema=task.get("schema", ""),
+            max_tokens=task.get("max_tokens", 2048))
+
+    results = await asyncio.gather(*[_one(t) for t in tasks], return_exceptions=True)
+    lines = []
+    for i, r in enumerate(results):
+        label = tasks[i].get("prompt", f"Task {i}")[:60]
+        rt = str(r) if not isinstance(r, BaseException) else f"Error: {r}"
+        lines.append(f"## {label}\n{rt}")
+    return "\n\n".join(lines)
+
+
+async def _sub_pipeline(items_json, stage_prompt, stage_system_prompt=""):
+    try:
+        items = json.loads(items_json)
+    except json.JSONDecodeError as e:
+        return f"Error: invalid items JSON: {e}"
+    if not isinstance(items, list) or not items:
+        return "Error: items must be a non-empty JSON array"
+
+    async def _process(item, index):
+        item_str = json.dumps(item, ensure_ascii=False) if isinstance(item, dict) else str(item)
+        prompt = stage_prompt.replace("{item}", item_str)
+        return await _run_agent(prompt=prompt, system_prompt=stage_system_prompt, max_tokens=2048)
+
+    results = await asyncio.gather(*[_process(item, i) for i, item in enumerate(items)], return_exceptions=True)
+    lines = []
+    for i, r in enumerate(results):
+        label = str(items[i])[:60]
+        rt = str(r) if not isinstance(r, BaseException) else f"Error: {r}"
+        lines.append(f"## [{i}] {label}\n{rt}")
+    return "\n\n".join(lines)
 
 
 tool_registry.register(ToolEntry(
-    name="delegate_task",
-    description=(
-        "Spawn a focused sub-agent to handle an isolated task. "
-        "The sub-agent runs in a fresh context (no main conversation history), "
-        "has access to the same tools, and can execute multiple turns (max 5). "
-        "Use for: research tasks, independent code review, multi-step data "
-        "gathering, or any task that benefits from focused attention. "
-    ),
-    schema={
-        "type": "object",
-        "properties": {
-            "prompt": {
-                "type": "string",
-                "description": "The task for the sub-agent. Be specific and include all needed details.",
-            },
-            "context": {
-                "type": "string",
-                "description": "Optional background info, data, or text the sub-agent needs.",
-            },
-            "max_tokens": {
-                "type": "integer",
-                "description": "Max output tokens per turn (default 2048)",
-            },
-            "max_iterations": {
-                "type": "integer",
-                "description": "Max tool-calling turns before forced summary (default 5, max 10). Increase for complex research.",
-            },
-        },
-        "required": ["prompt"],
-    },
-    handler=_delegate_task,
-    toolset="builtin",
-    is_parallel_safe=False,
-))
+    name="sub_agent",
+    description="Spawn a focused sub-agent. Call MULTIPLE TIMES in one turn to run in PARALLEL. Optional system_prompt for role, schema for structured output.",
+    schema={"type": "object", "properties": {
+        "prompt": {"type": "string", "description": "Task prompt."},
+        "system_prompt": {"type": "string", "description": "Optional role/persona."},
+        "schema": {"type": "string", "description": "Optional JSON schema for structured output."},
+        "max_tokens": {"type": "integer", "description": "Max output tokens (default 2048)."},
+    }, "required": ["prompt"]},
+    handler=_sub_agent, toolset="builtin", is_parallel_safe=True))
+
+tool_registry.register(ToolEntry(
+    name="sub_parallel",
+    description="Run multiple sub-agents concurrently, wait for ALL. Tasks JSON: [{\"prompt\": \"...\"}, ...]. Total time = slowest.",
+    schema={"type": "object", "properties": {
+        "tasks_json": {"type": "string", "description": "JSON array of {prompt, system_prompt?, schema?}"},
+    }, "required": ["tasks_json"]},
+    handler=_sub_parallel, toolset="builtin", is_parallel_safe=False))
+
+tool_registry.register(ToolEntry(
+    name="sub_pipeline",
+    description="Process items through a stage independently. No barrier — each item flows immediately. Use {item} as placeholder in stage_prompt.",
+    schema={"type": "object", "properties": {
+        "items_json": {"type": "string", "description": "JSON array of items."},
+        "stage_prompt": {"type": "string", "description": "Prompt template with {item} placeholder."},
+        "stage_system_prompt": {"type": "string", "description": "Optional system prompt."},
+    }, "required": ["items_json", "stage_prompt"]},
+    handler=_sub_pipeline, toolset="builtin", is_parallel_safe=False))
