@@ -325,6 +325,9 @@ class Gateway:
             for agent in self._agent_cache.values():
                 if hasattr(agent, '_interrupt_requested'):
                     agent._interrupt_requested = True
+            # Also trigger tool-level interrupt for running bash/execute_code
+            from personal_agent.tools.executor import set_interrupted
+            set_interrupted()
             return "已停止。"
 
         if text.startswith("/usage"):

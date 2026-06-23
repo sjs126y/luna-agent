@@ -205,14 +205,23 @@ async def _bash(command: str, timeout: int = 30) -> str:
             env=filter_env(),
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=min(timeout, 60)
-            )
+            deadline = time.time() + min(timeout, 60)
+            stdout, stderr = b"", b""
+            while time.time() < deadline:
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=1.0
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    from personal_agent.tools.executor import is_interrupted
+                    if is_interrupted():
+                        proc.kill()
+                        await proc.wait()
+                        _audit(command, "interrupted by user", False)
+                        return "Interrupted by user."
         except asyncio.TimeoutError:
             proc.kill()
-            msg = f"Error: command timed out after {timeout}s"
-            _audit(command, msg, False)
-            return msg
 
         out = stdout.decode("utf-8", errors="replace").strip()
         err = stderr.decode("utf-8", errors="replace").strip()

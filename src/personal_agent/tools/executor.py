@@ -17,6 +17,25 @@ logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 8000
 
+# ── Interrupt support ────────────────────────────────
+# Long-running tools (bash, execute_code) check this to abort early.
+# Set by Gateway on /stop, cleared each turn.
+_interrupted: bool = False
+
+
+def set_interrupted() -> None:
+    global _interrupted
+    _interrupted = True
+
+
+def clear_interrupted() -> None:
+    global _interrupted
+    _interrupted = False
+
+
+def is_interrupted() -> bool:
+    return _interrupted
+
 
 async def execute_tool_calls(
     tool_calls: list[dict],
@@ -25,6 +44,7 @@ async def execute_tool_calls(
     agent: Any = None,
     hooks: Any = None,
 ) -> None:
+    clear_interrupted()
     """Execute all tool calls, append results to messages in original order.
 
     tool_calls: [{"id":..., "name":..., "input":{}}, ...]
@@ -84,8 +104,8 @@ async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
     if gate_error:
         return gate_error
 
-    # ── 0.5. checkpoint (write tool only) ────────────
-    if tc["name"] == "write":
+    # ── 0.5. checkpoint (destructive file tools) ─────
+    if tc["name"] in ("write", "edit"):
         _checkpoint_file_write(tc)
 
     # ── 1. pre-hook ──────────────────────────────────
@@ -169,6 +189,17 @@ def _scope_gate(tc: dict, entry, agent: Any) -> str | None:
             f"Error: tool call limit ({agent._max_tool_calls_per_turn}) reached. "
             f"Please summarize what has been done and stop."
         )
+
+    # ③b — destructive quota (stricter, default 3 per turn)
+    if entry.is_destructive:
+        max_destructive = getattr(agent, '_max_destructive_per_turn', 3)
+        destructive_count = getattr(agent, '_destructive_calls_this_turn', 0)
+        if destructive_count >= max_destructive:
+            return (
+                f"Error: destructive tool limit ({max_destructive}) reached. "
+                f"Please summarize or request /allow for more."
+            )
+        agent._destructive_calls_this_turn = destructive_count + 1
 
     agent._tool_calls_this_turn += 1
     return None

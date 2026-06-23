@@ -47,6 +47,7 @@ def build_turn_context(
     agent._retry.reset()
     agent._interrupt_requested = False
     agent._tool_calls_this_turn = 0
+    agent._destructive_calls_this_turn = 0
     agent._destructive_allowed.clear()
 
     # Refresh tools (if registry changed)
