@@ -1,63 +1,86 @@
 # Personal Agent
 
-## 这是什么
+## 概述
 
-一个类似 Hermes 的多平台通用 AI Agent 系统。用户通过 Feishu等平台发消息 → 网关路由 → Agent 循环调 LLM → 执行工具 → 返回结果。
+多平台 AI Agent 系统，参考 Hermes 架构。飞书/Telegram/微信 → Gateway → Agent 循环调 LLM → 执行工具 → 返回。
 
 ## 技术栈
 
-- Python 3.12+
-- uv 包管理
-- asyncio 异步架构
-- OpenAI 兼容 API 和 Anthropic API（多 Provider）
-- SQLite + aiosqlite 做会话持久化
-- python-telegram-bot（Telegram 适配器）
-- pydantic-settings 管理配置
-- 不依赖 LangChain、CrewAI 等重框架
+Python 3.12+ / uv / asyncio / httpx / aiohttp / aiosqlite /
+lark-oapi (飞书) / python-telegram-bot / iLink API (微信) /
+fastembed (语义记忆) / pymupdf + python-docx / pydantic-settings
 
-## 参考文档
+不依赖 LangChain、CrewAI 等重框架。
 
-我有一份详细的架构学习笔记：`Hermes源码学习总结.md`（桌面）。里面记录了 Hermes 的完整架构设计。请在开始设计前**先读完这份笔记**，理解以下关键点：
+## 架构
 
-- 消息处理链路：适配器 → 网关 → Agent → 返回
-- 线程模型：主事件循环 + ThreadPoolExecutor（Agent 和工具调用在线程池）
-- 两层并发控制：`_active_sessions`（适配器内）+ `_running_agents`（跨适配器）
-- Agent 缓存：`_agent_cache` 复用系统提示，省 Token
-- 工具系统：自注册 + 工具集解析 + BM25 渐进式披露
-- 上下文压缩：token 超阈值时用备用模型做摘要
-- 重试机制：6 种具体重试，不是笼统的出错重试
-- 排队消息用 create_task 而非递归（C 栈溢出是真实 bug）
-- 上下文溢出时不持久化（防无限循环）
+```
+平台适配器（Feishu / Telegram / WeChat）
+    │ BasePlatformAdapter 自注册 → PlatformRegistry
+    ▼
+Gateway（中央调度器）
+    ├─ Auth（白名单 + 6位配对码）/ 命令检测 / 忙检查 / Agent 调度
+    ├─ SessionStore（JSON 索引 + SQLite）/ 压缩链
+    ├─ _agent_cache LRU 128 + generation invalidation
+    └─ 6 个 Hook 挂载点
+    │
+    ▼
+Agent 引擎（while 循环）
+    ├─ system_prompt（模板 + 工具列表 + data/system/*.md）
+    ├─ LLM 调用 → 解析 tool_calls → 执行 → 继续
+    ├─ 3 层消息：history → ctx.messages → api_messages
+    ├─ 6 种重试 / 中断式 LLM / 上下文压缩
+    └─ MemoryManager（内置 system 素材 + 外部 embedding 检索）
+```
 
-## 核心功能
+## 数据目录
 
-- **多平台接入**：Telegram 优先，架构预留 Discord 等扩展。适配器通过 registry 自注册，加平台不改核心代码
-- **Agent 引擎**：while 循环调 LLM → 解析 tool_calls → 执行 → 继续
-- **工具系统**：自注册（ToolEntry dataclass）+ 工具集分组 + 执行管道（中间件 → block 检查 → execute → 后处理）。工具、MemoryProvider、适配器都走同一套 registry 模式
-- **插件/扩展系统**：registry 自注册模式，新增组件（平台、工具、记忆后端）无需改核心逻辑
-- **记忆系统**：对话历史持久化 + 用户记忆（内置 MemoryStore + 预留 MemoryProvider 接口）
-- **会话管理**：多用户多会话隔离 + 跨轮次复用 Agent 实例
-- **定时任务**：MVP 阶段预留接口，Phase 2 实现（参考 Hermes 的 tick() + jobs.json + at-most-once）
+```
+data/
+├── system/              # 系统提示素材（手写，注入 system prompt）
+│   ├── SOUL.md          # 角色与人格
+│   ├── AGENT.md         # 行为规则
+│   ├── MEMORY.md        # 用户画像（§ 分隔条目）
+│   └── USER.md          # 用户偏好
+├── memory/              # 外部语义记忆（embedding）
+│   ├── external_memories.json
+│   ├── external_embeddings.npy
+│   └── .fastembed_cache/  # ONNX 模型
+├── wechat/              # 微信凭据
+├── auth/                # 认证白名单
+├── checkpoints/         # 文件写入备份
+├── cron/                # 定时任务
+├── todos.db             # 待办（SQLite，跨 session）
+├── audit.log            # 审计日志
+└── state.db             # 会话（SQLite）
+```
 
-## 不做的事（MVP 阶段）
+## 工具系统
 
-- 不做上下文压缩（先用简单的 token 计数 + 截断）
-- 不做多 Provider 动态切换
-- 不做 BM25 渐进式披露（工具少，用不到）
-- 不做多 Gateway 进程（单进程够用）
+21 个工具，6 个分组（toolsets），config.yaml 控制启用。
 
-## 架构原则
+**执行管道**：scope gate（权限/配额）→ checkpoint（写前备份）→ pre-hook → dispatch → post-process（截断 8000）
 
-- 参考 Hermes 笔记中的设计，但 MVP 阶段一切从简
-- 适配器模式：每个平台一个适配器，产出统一消息格式
-- 自注册：工具通过 ToolEntry dataclass 注册到 registry
-- while 循环即编排，不搞复杂的 DAG / State Machine
-- 异步优先：网络 I/O 全异步，Agent 和工具在线程池执行
-- 保留扩展点：接口设计预留，但不提前实现
+**并发**：is_parallel_safe → asyncio.to_thread 并发，其余串行逐个 await。
 
-## 编码风格
+**安全**：bash 白名单（40+ 命令）+ 网络隔离 + 文件扩展名白名单 + 路径遍历防护 + 审计日志。Destructive 工具需 `/allow write`。
+
+**桥接**：tool_search 返回完整 schema → LLM 直接调真实工具，不走 tool_call 绕过。
+
+3 个桥接工具仅在 deferrable 工具存在时才注入 prompt（当前无 deferrable，桥接处于 dormant）。
+
+## 记忆
+
+- **内置**（FileMemoryProvider）：读 data/system/*.md → system prompt。memory 工具写 MEMORY.md / USER.md（type=user）+ 外部同步。
+- **外部**（EmbeddingMemoryProvider）：fastembed + bge-small-zh-v1.5（512维），cosine 检索，prefetch 注入 api_messages。文件摄取支持 .txt .md .pdf .docx（CLI + 工具）。
+
+## 多 Provider
+
+4 个 Provider（deepseek/openai/anthropic/openrouter），2 种 Transport（AnthropicMessages / ChatCompletions），自动检测 api_mode。HTTP 层指数退避重试（429/5xx/连接错误）。
+
+## 编码约定
 
 - Python 类型标注
-- 函数优先于类，除非确实需要状态（如 Agent 需要挂大量属性）
-- 日志用 logging，不 print
-- 错误处理：不要空 catch，要么处理要么让它崩
+- 日志用 logging，颜色 formatter（绿=连接，青=消息/认证，黄=警告，红=错误）
+- 自注册模式：工具/平台/skill import 即注册
+- 线程安全：per-chat asyncio.Lock + _active_sessions 排队
