@@ -47,37 +47,56 @@ async def execute_tool_calls(
     clear_interrupted()
     """Execute all tool calls, append results to messages in original order.
 
-    tool_calls: [{"id":..., "name":..., "input":{}}, ...]
+    Adjacent parallel-safe tools run concurrently; sequential tools act as
+    barriers that preserve LLM ordering. Example: [bash, grep, write] →
+    bash first (barrier), then grep+write concurrently.
     """
-    parallel_safe: list[tuple[int, dict]] = []
-    sequential: list[tuple[int, dict]] = []
-
-    for i, tc in enumerate(tool_calls):
-        entry = tool_registry.get(tc["name"])
-        if entry and entry.is_parallel_safe:
-            parallel_safe.append((i, tc))
-        else:
-            sequential.append((i, tc))
-
     results: dict[int, str] = {}
 
-    # ── parallel group: thread pool (asyncio.to_thread), single fault isolation ──
-    if parallel_safe:
-        tasks = [asyncio.to_thread(_exec_one_sync, tc, agent, hooks) for _, tc in parallel_safe]
-        gathered = await asyncio.gather(*tasks, return_exceptions=True)
-        for i, (idx, _tc) in enumerate(parallel_safe):
-            result = gathered[i]
-            if isinstance(result, Exception):
-                results[idx] = f"Error: {result}"
-            else:
-                results[idx] = result
+    i = 0
+    while i < len(tool_calls):
+        entry = tool_registry.get(tool_calls[i]["name"])
 
-    # ── sequential group: ordered, previous result may feed next ──
-    for idx, tc in sequential:
-        try:
-            results[idx] = await _exec_one(tc, agent=agent, hooks=hooks)
-        except Exception as exc:
-            results[idx] = f"Error: {exc}"
+        if entry and entry.is_parallel_safe:
+            # Collect adjacent parallel-safe tools into a batch
+            batch: list[tuple[int, dict]] = []
+            while i < len(tool_calls):
+                e = tool_registry.get(tool_calls[i]["name"])
+                if e and e.is_parallel_safe:
+                    batch.append((i, tool_calls[i]))
+                    i += 1
+                else:
+                    break
+
+            # Split batch: destructive first (write before read in same batch)
+            destructive_batch = [(idx, tc) for idx, tc in batch
+                                 if tool_registry.get(tc["name"]) and tool_registry.get(tc["name"]).is_destructive]
+            safe_batch = [(idx, tc) for idx, tc in batch
+                          if not (tool_registry.get(tc["name"]) and tool_registry.get(tc["name"]).is_destructive)]
+
+            async def _run_batch(items):
+                if len(items) == 1:
+                    idx, tc = items[0]
+                    try:
+                        results[idx] = await _exec_one(tc, agent=agent, hooks=hooks)
+                    except Exception as exc:
+                        results[idx] = f"Error: {exc}"
+                elif items:
+                    tasks = [asyncio.to_thread(_exec_one_sync, tc, agent, hooks) for _, tc in items]
+                    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+                    for j, (idx, _tc) in enumerate(items):
+                        r = gathered[j]
+                        results[idx] = f"Error: {r}" if isinstance(r, Exception) else r
+
+            await _run_batch(destructive_batch)  # writes first
+            await _run_batch(safe_batch)          # reads after
+        else:
+            idx, tc = i, tool_calls[i]
+            try:
+                results[idx] = await _exec_one(tc, agent=agent, hooks=hooks)
+            except Exception as exc:
+                results[idx] = f"Error: {exc}"
+            i += 1
 
     # ── append results in ORIGINAL order ──
     for i, tc in enumerate(tool_calls):
@@ -116,12 +135,23 @@ async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
         if isinstance(result, dict):
             tc = result
 
-    # ── 2. dispatch ──────────────────────────────────
-    try:
-        result = await entry.handler(**tc["input"])
-    except Exception as exc:
-        logger.exception("Tool dispatch failed for '%s'", tc["name"])
-        result = f"Error: {exc}"
+    # ── 2. dispatch (with retry for idempotent tools) ──
+    max_attempts = 2 if not entry.is_destructive else 1  # retry safe tools once
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            result = await entry.handler(**tc["input"])
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_attempts - 1 and _is_retryable(exc):
+                logger.warning("Tool '%s' failed (attempt %d/2): %s", tc["name"], attempt + 1, exc)
+                await asyncio.sleep(0.5 * (attempt + 1))  # brief backoff
+                continue
+            logger.exception("Tool dispatch failed for '%s'", tc["name"])
+    else:
+        # All attempts failed
+        result = f"Error: {last_exc}"
 
     # ── 3. post-process ──────────────────────────────
     if len(result) > MAX_RESULT_CHARS:
@@ -228,3 +258,13 @@ def _checkpoint_file_write(tc: dict) -> None:
         logger.info("Checkpoint saved: %s → %s", path, backup_path.name)
     except Exception:
         logger.exception("Checkpoint failed for file_write — tool execution will proceed")
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Check if an exception is likely transient (worth retrying once)."""
+    msg = str(exc).lower()
+    transient = (
+        "timeout", "connection", "reset", "refused", "temporary",
+        "network", "dns", "unreachable", "429", "503", "502", "504",
+    )
+    return any(k in msg for k in transient)
