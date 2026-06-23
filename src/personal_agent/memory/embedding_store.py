@@ -112,6 +112,23 @@ class EmbeddingMemoryProvider(MemoryProvider):
     async def load_all(self) -> list[str]:
         return [t["text"] for t in self._texts]
 
+    async def ingest_file(self, file_path: str, chunk_size: int = 800) -> int:
+        """Chunk a file and embed each chunk. Supports txt, md, pdf, docx, and more.
+        Returns number of chunks stored."""
+        from pathlib import Path
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        text = _read_file(path)
+        chunks = _chunk_text(text, chunk_size)
+        count = 0
+        for chunk in chunks:
+            await self.save(f"[{path.name}] {chunk}")
+            count += 1
+        logger.info("Ingested %s: %d chunks", path.name, count)
+        return count
+
     def get_system_prompt_text(self) -> str:
         return ""  # external memories go via prefetch → api_messages
 
@@ -127,7 +144,12 @@ class EmbeddingMemoryProvider(MemoryProvider):
         if self._model is None:
             from fastembed import TextEmbedding
             logger.info("Loading embedding model: %s", self._model_name)
-            self._model = TextEmbedding(model_name=self._model_name)
+            cache_dir = str(self._dir / ".fastembed_cache")
+            try:
+                self._model = TextEmbedding(model_name=self._model_name, cache_dir=cache_dir)
+            except Exception:
+                _fix_windows_symlinks(cache_dir)
+                self._model = TextEmbedding(model_name=self._model_name, cache_dir=cache_dir)
             logger.info("Embedding model ready")
         return self._model
 
@@ -153,3 +175,58 @@ class EmbeddingMemoryProvider(MemoryProvider):
         )
         if self._embeddings is not None:
             np.save(self._embeddings_path, self._embeddings)
+
+
+def _fix_windows_symlinks(cache_dir: str) -> None:
+    """Copy ONNX model files from flat cache to snapshot dir on Windows."""
+    from pathlib import Path as _Path
+    cache = _Path(cache_dir)
+    for snap in cache.glob("models--*/snapshots/*"):
+        if not snap.is_dir():
+            continue
+        if (snap / "model_optimized.onnx").exists():
+            return
+        for flat in cache.glob("fast-*"):
+            if not flat.is_dir():
+                continue
+            for f in flat.iterdir():
+                if f.is_file() and not (snap / f.name).exists():
+                    (snap / f.name).write_bytes(f.read_bytes())
+
+
+# ── chunking ──────────────────────────────────────────
+
+def _read_file(path: Path) -> str:
+    """Extract text from a file based on extension."""
+    suffix = path.suffix.lower()
+    if suffix in (".txt", ".md", ".json", ".yaml", ".yml", ".csv", ".log", ".py", ".rst", ".toml", ".ini", ".cfg"):
+        return path.read_text(encoding="utf-8", errors="replace")
+    elif suffix == ".pdf":
+        import fitz  # pymupdf
+        doc = fitz.open(str(path))
+        text = "\n\n".join(page.get_text() for page in doc)
+        doc.close()
+        return text
+    elif suffix == ".docx":
+        from docx import Document
+        doc = Document(str(path))
+        return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    else:
+        raise ValueError(f"Unsupported file type: {suffix}")
+
+
+def _chunk_text(text: str, max_chars: int = 800) -> list[str]:
+    """Split text into chunks by paragraph, merging short ones."""
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    chunks = []
+    current = ""
+    for p in paragraphs:
+        if len(current) + len(p) < max_chars:
+            current = (current + "\n\n" + p).strip() if current else p
+        else:
+            if current:
+                chunks.append(current[:max_chars])
+            current = p
+    if current:
+        chunks.append(current[:max_chars])
+    return chunks or [text[:max_chars]]

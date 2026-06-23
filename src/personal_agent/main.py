@@ -158,11 +158,35 @@ def main() -> None:
     """CLI entry: python -m personal_agent"""
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
         _run_cli(sys.argv[2] if len(sys.argv) > 2 else "Hello")
+    elif len(sys.argv) > 1 and sys.argv[1] == "--ingest":
+        _run_ingest(sys.argv[2] if len(sys.argv) > 2 else "")
     else:
         try:
             asyncio.run(boot())
         except KeyboardInterrupt:
             pass
+
+
+def _run_ingest(file_path: str) -> None:
+    """CLI: ingest a file into external memory."""
+    import asyncio
+    from pathlib import Path
+    from personal_agent.memory.embedding_store import EmbeddingMemoryProvider
+
+    async def _run():
+        settings = Settings()
+        path = Path(file_path)
+        if not path.exists():
+            print(f"Error: file not found: {file_path}")
+            return
+        ext = EmbeddingMemoryProvider(settings.agent_data_dir / "memory")
+        try:
+            count = await ext.ingest_file(str(path.resolve()))
+            print(f"Ingested {path.name}: {count} chunks stored.")
+        except ValueError as e:
+            print(f"Error: {e}")
+
+    asyncio.run(_run())
 
 
 def _run_cli(message: str) -> None:

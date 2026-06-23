@@ -165,3 +165,34 @@ tool_registry.register(ToolEntry(
     handler=_memory_tool,
     toolset="builtin",
 ))
+
+
+# ── ingest tool ──────────────────────────────────────
+
+async def _memory_ingest(path: str) -> str:
+    ext = _get_ext_store()
+    if ext is None:
+        return "External memory not available. Set memory.external_provider=embedding in config.yaml."
+    try:
+        count = await ext.ingest_file(path)
+        return f"Ingested {path}: {count} chunks stored as searchable memories."
+    except FileNotFoundError:
+        return f"Error: file not found: {path}"
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+tool_registry.register(ToolEntry(
+    name="memory_ingest",
+    description="Ingest a file into external memory. Splits into chunks and stores each as a searchable memory. Supports .txt, .md, .pdf, .docx, .json, .yaml, .py, .csv, .log.",
+    schema={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path to file to ingest, relative to workspace"},
+        },
+        "required": ["path"],
+    },
+    handler=_memory_ingest,
+    toolset="builtin",
+    is_parallel_safe=False,
+))

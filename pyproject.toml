@@ -18,6 +18,8 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "fastembed>=0.8.0",
     "pip-system-certs>=5.3",
+    "pymupdf>=1.27.2.3",
+    "python-docx>=1.2.0",
 ]
 
 [build-system]
