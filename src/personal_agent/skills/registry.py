@@ -11,7 +11,9 @@ Skill loading pipeline:
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,6 +83,7 @@ class SkillRegistry:
 
             # ── 4. Read ──
             content = path.read_text(encoding="utf-8")
+            self._record_usage(name)
             logger.debug("Skill loaded: %s (%d bytes)", name, len(content))
 
             # ── 5. Audit ──
@@ -92,5 +95,47 @@ class SkillRegistry:
             logger.exception("Failed to load skill: %s", name)
             return None
 
+    def _record_usage(self, name: str) -> None:
+        """Increment usage counter for this skill."""
+        usage_path = SKILLS_DIR / ".usage.json"
+        usage = {}
+        if usage_path.exists():
+            try:
+                usage = json.loads(usage_path.read_text())
+            except Exception:
+                pass
+        entry = usage.get(name, {"use_count": 0, "last_used": ""})
+        entry["use_count"] = entry.get("use_count", 0) + 1
+        entry["last_used"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        usage[name] = entry
+        try:
+            usage_path.write_text(json.dumps(usage, indent=2, ensure_ascii=False))
+        except Exception:
+            pass
+
 
 skill_registry = SkillRegistry()
+
+
+def discover_skills(skills_dir: Path | None = None) -> int:
+    """Auto-register .md files from a directory. Returns count added."""
+    from personal_agent.skills.entry import SkillEntry
+    target = Path(skills_dir) if skills_dir else SKILLS_DIR
+    if not target.exists():
+        return 0
+    count = 0
+    for f in sorted(target.glob("*.md")):
+        name = f.stem.lower().replace(" ", "-")
+        existing = skill_registry.get(name)
+        if existing is not None:
+            continue  # don't overwrite explicitly registered skills
+        text = f.read_text(encoding="utf-8").strip()
+        desc = text.split("\n")[0].lstrip("#").strip() if text else name
+        skill_registry.register(SkillEntry(
+            name=name,
+            description=desc[:100],
+            path=str(f),
+        ))
+        count += 1
+        logger.info("Auto-discovered skill: %s", name)
+    return count

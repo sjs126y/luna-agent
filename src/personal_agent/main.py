@@ -121,6 +121,8 @@ async def boot() -> None:
     import personal_agent.adapters.telegram   # noqa
     import personal_agent.adapters.wechat     # noqa
     import personal_agent.skills.builtin      # noqa: triggers skill registration
+    from personal_agent.skills.registry import discover_skills
+    discover_skills(data_dir / "skills")       # auto-discover user-provided skills
 
     # ── 4. Database ────────────────────────────────────
     db = Database(data_dir / "state.db")
