@@ -98,11 +98,8 @@ class Settings:
         self.auth_allowed_users: list[str] = auth.get("allowed_users", [])
 
         # ── Profiles (from config.yaml + .env override) ──
-        profiles = yaml_cfg.get("profiles", {})
-        self.profile_map: dict[str, str] = {
-            k: v for k, v in profiles.items()
-            if k not in ("__comment__",)
-        }
+        profiles = yaml_cfg.get("profiles") or {}
+        self.profile_map: dict[str, str] = dict(profiles)
         # .env override: PROFILES={"wechat:xxx:xxx":"girlfriend"}
         profiles_env = env.get("PROFILES", "")
         if profiles_env:

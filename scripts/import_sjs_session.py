@@ -143,6 +143,29 @@ async def import_session(
     await db.commit()
     await db.close()
 
+    # Update sessions.json index so Gateway finds the right session_id
+    db_dir = Path(db_path).parent
+    index_path = db_dir / "sessions.json"
+    index = {}
+    if index_path.exists():
+        try:
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    index[session_key] = {
+        "session_id": session_id,
+        "session_key": session_key,
+        "platform": platform,
+        "user_id": user_id,
+        "user_name": "",
+        "chat_id": chat_id,
+        "chat_type": "dm",
+        "created_at": now,
+        "last_active_at": now,
+        "message_count": len(messages),
+    }
+    index_path.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
+
     print(f"Imported {len(messages)} messages → session '{session_id}' "
           f"(key: {session_key})")
 

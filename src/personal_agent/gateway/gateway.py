@@ -163,16 +163,18 @@ class Gateway:
         ctx = build_turn_context(agent, event.text, history)
         result = await run_conversation(agent, ctx)
 
-        # If compression ran, create new session for compressed messages
-        target_session_id = current_id
-        if ctx.was_compressed and not result.get("context_overflow"):
-            target_session_id = await self._session_store.create_compressed_session(
-                session_key, event.source, result["messages"]
-            )
-        elif not result.get("context_overflow"):
-            await self._session_store.save_transcript(
-                target_session_id, result["messages"], previous_count
-            )
+        # Only save transcript if the conversation completed cleanly.
+        # On error (completed=False), messages may be corrupted (orphan tool_use).
+        if result.get("completed") and not result.get("context_overflow"):
+            target_session_id = current_id
+            if ctx.was_compressed:
+                target_session_id = await self._session_store.create_compressed_session(
+                    session_key, event.source, result["messages"]
+                )
+            else:
+                await self._session_store.save_transcript(
+                    target_session_id, result["messages"], previous_count
+                )
 
         # Hook: on_before_send
         final = result.get("final_response", "")
