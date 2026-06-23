@@ -122,6 +122,7 @@ async def boot() -> None:
     import personal_agent.tools.builtin.confirm           # noqa
     import personal_agent.tools.builtin.workflow_tool    # noqa: workflow_run/list
     import personal_agent.workflow.builtin.review         # noqa: register built-in workflows
+    import personal_agent.tools.builtin.worktree_tool    # noqa: worktree_create/merge/cleanup/list
     import personal_agent.tools.bridge                    # noqa: bridge tools (tool_search/describe/call)
     # memory tool is auto-registered in file_store.py
 

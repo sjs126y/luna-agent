@@ -16,6 +16,7 @@ _CORE_TOOLS: set[str] = {
     "process_list", "process_kill", "process_wait",
     "confirm", "task",
     "workflow_run", "workflow_list",
+    "worktree_create", "worktree_merge", "worktree_cleanup", "worktree_list",
 }
 
 # Toolset groups — name → list of tool names
