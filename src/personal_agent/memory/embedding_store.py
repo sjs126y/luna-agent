@@ -178,20 +178,34 @@ class EmbeddingMemoryProvider(MemoryProvider):
 
 
 def _fix_windows_symlinks(cache_dir: str) -> None:
-    """Copy ONNX model files from flat cache to snapshot dir on Windows."""
+    """On Windows, copy files from flat cache to snapshot dir.
+    Checks file sizes — broken symlinks are 0 bytes but still .exists()."""
     from pathlib import Path as _Path
     cache = _Path(cache_dir)
+    flat_dirs = list(cache.glob("fast-*"))
+    if not flat_dirs:
+        return
     for snap in cache.glob("models--*/snapshots/*"):
         if not snap.is_dir():
             continue
-        if (snap / "model_optimized.onnx").exists():
-            return
-        for flat in cache.glob("fast-*"):
+        needs_fix = False
+        for f in snap.iterdir():
+            if f.is_file() and f.stat().st_size == 0:
+                f.unlink()  # remove broken symlink
+                needs_fix = True
+            elif not f.is_file():
+                pass
+        if (snap / "model_optimized.onnx").exists() and not needs_fix:
+            continue  # all good
+        # Copy from flat cache
+        for flat in flat_dirs:
             if not flat.is_dir():
                 continue
             for f in flat.iterdir():
-                if f.is_file() and not (snap / f.name).exists():
-                    (snap / f.name).write_bytes(f.read_bytes())
+                if f.is_file():
+                    dst = snap / f.name
+                    if not dst.exists() or dst.stat().st_size == 0:
+                        dst.write_bytes(f.read_bytes())
 
 
 # ── chunking ──────────────────────────────────────────
