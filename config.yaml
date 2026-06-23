@@ -22,6 +22,7 @@ toolsets:
 memory:
   provider: "file"           # built-in memory provider
   external_provider: "embedding"  # external: "none" | "embedding"
+  review_interval: 10               # auto-review every N turns, 0=disabled
 
 cron:
   enabled: false

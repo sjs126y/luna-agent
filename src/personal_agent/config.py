@@ -68,6 +68,7 @@ class Settings:
         memory = yaml_cfg.get("memory", {})
         self.memory_provider: str = memory.get("provider", "file")
         self.memory_external_provider: str = memory.get("external_provider", "none")
+        self.memory_review_interval: int = memory.get("review_interval", 10)
 
         # ── Cron (from config.yaml) ──
         cron = yaml_cfg.get("cron", {})

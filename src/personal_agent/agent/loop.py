@@ -198,6 +198,7 @@ async def run_conversation(agent, ctx) -> dict:
         "messages": ctx.messages,
         "api_calls": agent.session_api_calls,
         "completed": True,
+        "should_review_memory": ctx.should_review_memory,
     }
 
 

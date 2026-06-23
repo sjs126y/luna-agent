@@ -55,6 +55,14 @@ def build_turn_context(
     if agent._cached_system_prompt is None:
         _build_system_prompt(agent)
 
+    # Memory review nudge — every N turns
+    should_review = False
+    if agent._memory_review_interval > 0:
+        agent._turns_since_memory += 1
+        if agent._turns_since_memory >= agent._memory_review_interval:
+            should_review = True
+            agent._turns_since_memory = 0
+
     # Copy history
     conversation_history = list(history or [])
     messages = copy.deepcopy(conversation_history)
@@ -90,6 +98,7 @@ def build_turn_context(
         was_compressed=was_compressed,
         pre_compress_message_count=pre_count,
         skill_injection=skill_injection,
+        should_review_memory=should_review,
     )
 
 

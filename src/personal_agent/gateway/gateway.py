@@ -163,6 +163,10 @@ class Gateway:
         if isinstance(hook_result, str):
             final = hook_result
 
+        # Background memory review (Hermes-style nudge)
+        if result.get("should_review_memory") and final:
+            self._spawn_memory_review(agent, ctx.messages)
+
         return final or "..."
 
     def _get_or_create_agent(self, session_key: str):
@@ -224,6 +228,7 @@ class Gateway:
             compressor=compressor,
             max_iterations=self.config.max_iterations,
             max_tool_calls_per_turn=self.config.max_tool_calls_per_turn,
+            memory_review_interval=self.config.memory_review_interval,
             system_prompt_template=self._system_prompt_template,
             enabled_toolsets=self.config.enabled_toolsets,
         )
@@ -345,6 +350,51 @@ class Gateway:
                 pass
 
         return None  # unknown command → pass to agent
+
+    # ── memory review ────────────────────────────────
+
+    _MEMORY_REVIEW_PROMPT = (
+        "Review this conversation and save anything worth remembering.\n\n"
+        "Focus on:\n"
+        "1. Has the user revealed personal details, preferences, or facts worth keeping?\n"
+        "2. Has the user expressed expectations about how you should behave?\n\n"
+        "If something stands out, call the memory tool to save it. "
+        "Use target='user' for preferences, target='memory' for facts.\n"
+        "If nothing is worth saving, just reply 'Nothing to save.' and stop."
+    )
+
+    def _spawn_memory_review(self, agent, messages: list[dict]) -> None:
+        """Spawn a lightweight background review to extract memories."""
+        import threading
+
+        def _run():
+            import asyncio as _asyncio
+            _asyncio.run(self._do_memory_review(agent, list(messages)))
+
+        t = threading.Thread(target=_run, daemon=True, name="mem-review")
+        t.start()
+        logger.debug("Memory review spawned")
+
+    async def _do_memory_review(self, agent, messages: list[dict]) -> None:
+        """Run a quick LLM call to review conversation and save memories."""
+        try:
+            review_messages = list(messages[-12:])  # last 12 messages only
+            review_messages.append({
+                "role": "user",
+                "content": [{"type": "text", "text": self._MEMORY_REVIEW_PROMPT}],
+            })
+            response = await agent._transport.call(
+                messages=review_messages,
+                system_prompt="你是一个记忆管理助手。判断对话中是否有值得保存的信息。",
+                tools=agent.tools,
+                max_tokens=512,
+            )
+            if response.tool_calls:
+                from personal_agent.tools.executor import execute_tool_calls
+                await execute_tool_calls(response.tool_calls, review_messages, agent=agent)
+                logger.info("Memory review: %d memories saved", len(response.tool_calls))
+        except Exception:
+            pass  # best-effort, never block the turn
 
     # ── auth ──────────────────────────────────────────
     # Auth is now handled by AuthManager — see gateway/auth.py
