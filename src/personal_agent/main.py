@@ -60,11 +60,13 @@ def setup_logging(level: str = "INFO") -> None:
                 msg = msg.replace(text, f"{self.COLORS['ERROR']}{text}{self.RESET}")
             return msg
 
+    from personal_agent.trace import TraceFilter
     handler = logging.StreamHandler()
     handler.setFormatter(ColorFormatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        "%(asctime)s [%(levelname)s] [%(trace_id)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     ))
+    handler.addFilter(TraceFilter())
     logging.root.handlers = []
     logging.root.addHandler(handler)
     logging.root.setLevel(getattr(logging, level.upper(), logging.INFO))
@@ -293,8 +295,16 @@ def _run_cli(message: str) -> None:
     from personal_agent.memory.manager import MemoryManager
 
     async def _run():
+        from personal_agent.trace import trace_id, set_trace
+        token = set_trace("cli")
+        try:
+            return await _run_cli_inner()
+        finally:
+            trace_id.reset(token)
+
+    async def _run_cli_inner():
         settings = Settings()
-        from personal_agent.llm.provider import ProviderProfile, provider_registry
+        from personal_agent.llm.provider import provider_registry
         from personal_agent.llm.transport_registry import transport_registry
         provider = provider_registry.get(settings.llm_provider, settings)
         api_mode = provider_registry.detect_api_mode(settings.llm_base_url, settings.llm_provider)

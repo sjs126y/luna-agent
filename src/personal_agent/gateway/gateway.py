@@ -92,6 +92,14 @@ class Gateway:
 
     async def _handle_message(self, event) -> str | None:
         """Gateway callback from adapter. Returns response text."""
+        from personal_agent.trace import trace_id, set_trace
+        token = set_trace(f"{event.source.platform}:{event.source.user_id[:8]}")
+        try:
+            return await self._handle_message_inner(event)
+        finally:
+            trace_id.reset(token)
+
+    async def _handle_message_inner(self, event) -> str | None:
         session_key = f"{event.source.platform}:{event.source.chat_id}:{event.source.user_id}"
         # Apply session override if set (via /session command)
         override = self._session_override.get(session_key)
