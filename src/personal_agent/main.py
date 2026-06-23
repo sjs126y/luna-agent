@@ -167,6 +167,20 @@ async def boot() -> None:
     )
     gateway = Gateway(settings, db, memory_manager, system_prompt_template=system_prompt)
 
+    # ── 7.5. Default hooks — safe, non-restrictive ──────
+
+    async def _truncate_long_response(text, source):
+        """Truncate excessively long responses with a hint."""
+        max_len = 4000
+        if len(text) > max_len:
+            return text[:max_len] + f"\n\n...(已截断 {len(text) - max_len} 字符)"
+        return text
+
+    async def _log_connect():
+        logger.info("Platform connected: %s", "adapter")
+
+    gateway.hooks.on_before_send.append(_truncate_long_response)
+
     # ── 8. Start ───────────────────────────────────────
     await gateway.start()
 
