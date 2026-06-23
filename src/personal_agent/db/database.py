@@ -126,39 +126,24 @@ class Database:
             await self._conn.commit()
 
     async def load_history(self, session_id: str) -> list[dict]:
-        """Load conversation history as a list of Anthropic-format message dicts."""
+        """Load conversation history as text-only messages.
+
+        Tool use/result messages are NOT included in history — they are
+        ephemeral and their content is summarized in the assistant's text.
+        Including them causes orphan tool_use errors with the Anthropic API.
+        """
         rows = await self._conn.execute(
-            "SELECT role, content, tool_calls, tool_name, tool_call_id FROM messages WHERE session_id = ? ORDER BY id",
+            "SELECT role, content FROM messages WHERE session_id = ? AND tool_name IS NULL AND tool_call_id IS NULL ORDER BY id",
             (session_id,),
         )
         messages: list[dict] = []
         async for row in rows:
             role = row["role"]
-            if role == "user":
-                if row["tool_call_id"]:
-                    # This is a tool_result message
-                    messages.append({
-                        "role": "user",
-                        "content": [{"type": "tool_result", "tool_use_id": row["tool_call_id"], "content": row["content"]}],
-                    })
-                else:
-                    messages.append({
-                        "role": "user",
-                        "content": [{"type": "text", "text": row["content"]}],
-                    })
-            elif role == "assistant":
-                content_blocks = []
-                if row["content"]:
-                    content_blocks.append({"type": "text", "text": row["content"]})
-                if row["tool_calls"]:
-                    for tc in json.loads(row["tool_calls"]):
-                        content_blocks.append({
-                            "type": "tool_use",
-                            "id": tc.get("id", ""),
-                            "name": tc.get("name", ""),
-                            "input": tc.get("input", {}),
-                        })
-                messages.append({"role": "assistant", "content": content_blocks})
+            text = row["content"] or ""
+            messages.append({
+                "role": role,
+                "content": [{"type": "text", "text": text}],
+            })
         return messages
 
     async def get_message_count(self, session_id: str) -> int:

@@ -12,8 +12,9 @@ def unpack_message(msg: dict) -> tuple[str, str, list | None, str | None, str | 
 
     Returns: (role, content, tool_calls, tool_name, tool_call_id)
 
-    Used by finalize_turn, session_store.save_transcript, and
-    session_store.create_compressed_session — single source of truth.
+    Tool messages are flattened: tool_use/tool_result blocks are NOT stored
+    in the content column — only text goes there. This prevents orphan
+    tool_use errors when loading history for subsequent turns.
     """
     role = msg.get("role", "user")
     content = ""
@@ -22,9 +23,10 @@ def unpack_message(msg: dict) -> tuple[str, str, list | None, str | None, str | 
     tool_call_id = None
 
     if isinstance(msg.get("content"), list):
+        text_parts = []
         for block in msg["content"]:
             if block.get("type") == "text":
-                content += block.get("text", "")
+                text_parts.append(block.get("text", ""))
             elif block.get("type") == "tool_use":
                 tool_calls = tool_calls or []
                 tool_calls.append({
@@ -34,8 +36,16 @@ def unpack_message(msg: dict) -> tuple[str, str, list | None, str | None, str | 
                 })
                 tool_name = block.get("name")
             elif block.get("type") == "tool_result":
-                content = str(block.get("content", ""))
+                # Extract text from tool_result, discard block metadata
+                result = block.get("content", "")
+                if isinstance(result, str):
+                    text_parts.append(result)
+                elif isinstance(result, list):
+                    for r in result:
+                        if isinstance(r, dict) and r.get("type") == "text":
+                            text_parts.append(r.get("text", ""))
                 tool_call_id = block.get("tool_use_id", "")
+        content = " ".join(text_parts)
     elif isinstance(msg.get("content"), str):
         content = msg["content"]
 
