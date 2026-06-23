@@ -37,6 +37,7 @@ class Gateway:
 
     async def start(self) -> None:
         self._compression_chain.load()
+        self._session_override.update(self.config.session_override)  # config defaults
         await self._session_store.initialize()
         await self._session_store.expire_sessions(self.config.session_expire_days)
 

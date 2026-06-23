@@ -83,6 +83,7 @@ class Settings:
         # ── Session (from config.yaml) ──
         session = yaml_cfg.get("session", {})
         self.session_expire_days: int = session.get("expire_days", 30)
+        self.session_override: dict[str, str] = session.get("override", {})
 
         # ── Auth (from config.yaml) ──
         auth = yaml_cfg.get("auth", {})

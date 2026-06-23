@@ -28,6 +28,7 @@ cron:
 
 session:
   expire_days: 30
+  override: {}               # {"wechat:o9cq80:o9cq80": "wechat:custom:o9cq80"}
 
 security:
   bash_allow_network: false     # true = allow curl/pip/wget in bash tool
