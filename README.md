@@ -180,8 +180,8 @@ auth:
 ```yaml
 sandbox:
   roots:                           # 边界目录（可多个）
-    - "C:/Users/MR/Desktop/Personal Agent"
-    - "C:/Users/MR/Desktop/SJS-AGENT"
+    - "/home/user/projects/agent"
+    - "/home/user/projects/other"
   blocked:                         # 黑名单（glob，全局生效）
     - "**/.env"
     - "**/.git/**"

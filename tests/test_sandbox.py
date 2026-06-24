@@ -144,7 +144,7 @@ class TestIsUnderRoot:
 class TestGlobMatch:
     def test_full_path_env(self):
         from personal_agent.tools.sandbox import _glob_match
-        assert _glob_match("C:/Users/MR/Desktop/.env", "**/.env") is True
+        assert _glob_match("/home/user/projects/.env", "**/.env") is True
 
     def test_bare_no_match_starstar(self):
         from personal_agent.tools.sandbox import _glob_match
@@ -160,12 +160,12 @@ class TestGlobMatch:
 
     def test_id_rsa_star(self):
         from personal_agent.tools.sandbox import _glob_match
-        assert _glob_match("C:/Users/MR/Desktop/id_rsa", "**/id_rsa*") is True
-        assert _glob_match("C:/Users/MR/Desktop/id_rsa.pub", "**/id_rsa*") is True
+        assert _glob_match("/home/user/projects/id_rsa", "**/id_rsa*") is True
+        assert _glob_match("/home/user/projects/id_rsa.pub", "**/id_rsa*") is True
 
     def test_non_match(self):
         from personal_agent.tools.sandbox import _glob_match
-        assert _glob_match("C:/Users/MR/Desktop/notes.txt", "**/.env") is False
+        assert _glob_match("/home/user/projects/notes.txt", "**/.env") is False
 
     def test_windows_backslash(self):
         from personal_agent.tools.sandbox import _glob_match

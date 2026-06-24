@@ -5,7 +5,7 @@ SQLite session store. Messages are wrapped in Anthropic content-block format.
 
 Usage:
   uv run python scripts/import_sjs_session.py \
-    --source "C:/Users/MR/Desktop/SJS-AGENT/prompt_config/.sessions/luna/feishu_*.jsonl" \
+    --source "/path/to/source/prompt_config/.sessions/<name>/feishu_*.jsonl" \
     --session-key "wechat:wx_id:wx_id" \
     [--dry-run]
 
