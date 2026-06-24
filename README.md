@@ -1,6 +1,8 @@
 # Personal Agent
 
-从零构建的多平台 AI Agent 系统。支持飞书/Telegram/微信，多 LLM Provider，完整安全管线，多 Agent 编排引擎，语义记忆，MCP 集成。
+从零构建的多平台 AI Agent 系统。参考 Hermes 架构。支持飞书/Telegram/微信，多 LLM Provider，统一沙箱安全模型，多 Agent 编排引擎，语义记忆，MCP 集成。
+
+> 架构借鉴 [hermes-agent](https://github.com/NiceLubin/hermes-agent)，飞书适配器、Gateway 调度、Agent 循环、消息压缩等核心模式来自 Hermes，在此基础上重新实现了完整的工具安全管线、统一沙箱、多 Agent 编排、CC 风格工作流引擎和 MCP 集成。
 
 ## 快速开始
 
@@ -171,10 +173,55 @@ auth:
   enabled: true
 ```
 
+## 沙箱
+
+统一沙箱模型，所有文件工具 + bash 走同一套判定：
+
+```yaml
+sandbox:
+  roots:                           # 边界目录（可多个）
+    - "C:/Users/MR/Desktop/Personal Agent"
+    - "C:/Users/MR/Desktop/SJS-AGENT"
+  blocked:                         # 黑名单（glob，全局生效）
+    - "**/.env"
+    - "**/.git/**"
+    - "**/.ssh/**"
+    - "**/id_rsa*"
+    - "**/data/auth/**"
+    - "**/node_modules/**"
+    - "**/__pycache__/**"
+    - "**/.venv/**"
+  bash_work_dir: "./data"          # bash cwd
+  bash_restrict_paths: true        # bash 限定在 roots 内
+  bash_allow_network: false        # curl/pip/wget 开关
+  file_max_write_bytes: 100000
+  audit_enabled: true
+```
+
+**安全管线（6 层）**：
+
+```
+tool_call 到达
+  ├─ ① pre_check — 硬拦截，永不问用户
+  │   bash: 硬黑名单 (rm -rf /, mkfs, dd, fork bomb, shutdown) + 白名单 (42 命令)
+  │          + 路径沙箱 (blocked 黑名单 + roots 边界 + 系统路径防护)
+  │   write: 扩展名白名单 + 大小限制 + 沙箱判定
+  │   read: 沙箱判定 (blocked + roots)
+  │   web: SSRF 防护 (127.0.0.1, 169.254.169.254, 内网 IP)
+  │
+  ├─ ② scope gate — destructive 工具需 /allow write|bash|all，独立配额 (3/轮)
+  │
+  ├─ ③ env sanitization — 子进程启动前 strip API key，强制 UTF-8
+  │
+  ├─ ④ checkpoint — write/edit 前备份原文件
+  │
+  └─ ⑤ audit + redact — 每次操作记审计日志，API key 自动掩码
+```
+
 ## 测试
 
 ```bash
-uv run pytest tests/ -v    # 161 tests, 0 failures
+uv run pytest tests/ -v    # 224 tests, 0 failures
 ```
 
 ## 技术栈
