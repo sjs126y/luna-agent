@@ -1,0 +1,10 @@
+key: memory/file
+name: File Memory Provider
+version: "0.1.0"
+description: File-backed system prompt and profile memory provider package.
+kind: builtin
+entrypoint: personal_agent.plugins.builtin.memory.file:register
+provides: [memory]
+enabled_by_default: true
+source: builtin
+record_import_delta: false

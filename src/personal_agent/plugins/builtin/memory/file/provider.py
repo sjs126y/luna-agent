@@ -161,7 +161,7 @@ from personal_agent.tools.registry import tool_registry
 
 def _get_ext_store():
     try:
-        from personal_agent.memory.embedding_store import get_external_instance
+        from personal_agent.plugins.builtin.memory.embedding.provider import get_external_instance
         return get_external_instance()
     except Exception:
         return None

@@ -134,10 +134,13 @@ async def boot() -> None:
 
     external_store = None
     if settings.memory_external_provider == "embedding":
-        from personal_agent.memory.embedding_store import EmbeddingMemoryProvider, set_external_instance
-        external_store = EmbeddingMemoryProvider(data_dir / "memory")
-        set_external_instance(external_store)
-        logger.info("External memory: embedding (BAAI/bge-small-zh-v1.5)")
+        external_store = await plugin_manager.invoke_hook(
+            "create_external_memory_provider",
+            settings=settings,
+            data_dir=data_dir / "memory",
+        )
+        if external_store is not None:
+            logger.info("External memory: embedding (BAAI/bge-small-zh-v1.5)")
 
     memory_manager = MemoryManager(builtin=memory_store, external=external_store)
 
@@ -259,15 +262,27 @@ def _run_ingest(file_path: str) -> None:
     """CLI: ingest a file into external memory."""
     import asyncio
     from pathlib import Path
-    from personal_agent.memory.embedding_store import EmbeddingMemoryProvider
 
     async def _run():
         settings = Settings()
+        from personal_agent.plugins.manager import PluginManager
+
+        plugin_manager = PluginManager(settings)
+        plugin_manager.discover()
+        plugin_manager.load_enabled()
         path = Path(file_path)
         if not path.exists():
             print(f"Error: file not found: {file_path}")
             return
-        ext = EmbeddingMemoryProvider(settings.agent_data_dir / "memory")
+        ext = await plugin_manager.invoke_hook(
+            "create_external_memory_provider",
+            settings=settings,
+            data_dir=settings.agent_data_dir / "memory",
+            force=True,
+        )
+        if ext is None:
+            print("Error: external embedding memory provider is unavailable.")
+            return
         try:
             count = await ext.ingest_file(str(path.resolve()))
             print(f"Ingested {path.name}: {count} chunks stored.")

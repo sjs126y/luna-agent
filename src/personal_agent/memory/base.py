@@ -1,10 +1,10 @@
-"""MemoryProvider abstract base — config-driven implementation."""
+"""MemoryProvider abstract base for plugin-backed implementations."""
 
 from abc import ABC, abstractmethod
 
 
 class MemoryProvider(ABC):
-    """Implementations: FileMemoryProvider, RAGMemoryProvider (future)."""
+    """Base interface implemented by memory provider plugins."""
 
     @abstractmethod
     async def prefetch(self, user_message: str) -> list[dict]:

@@ -1,0 +1,10 @@
+key: memory/embedding
+name: Embedding Memory Provider
+version: "0.1.0"
+description: Embedding-backed external memory provider package.
+kind: builtin
+entrypoint: personal_agent.plugins.builtin.memory.embedding:register
+provides: [memory]
+enabled_by_default: true
+source: builtin
+record_import_delta: false

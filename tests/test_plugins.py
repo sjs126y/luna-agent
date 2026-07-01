@@ -257,16 +257,16 @@ def test_builtin_skills_use_explicit_plugin_registration(tmp_path):
     assert "python-expert" in plugin.skills_registered
 
 
-def test_disable_builtin_plugin_removes_hooks(tmp_path):
+def test_disable_memory_provider_plugin_removes_hooks(tmp_path):
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
-    manager.load_plugin("builtin/memory")
+    manager.load_plugin("memory/file")
     assert "on_session_selected" in manager.hooks
     assert "create_builtin_memory_provider" in manager.hooks
 
-    manager.disable_plugin("builtin/memory")
+    manager.disable_plugin("memory/file")
     assert "on_session_selected" not in manager.hooks
     assert "create_builtin_memory_provider" not in manager.hooks
 
@@ -276,7 +276,7 @@ async def test_builtin_memory_provider_is_created_by_hook(tmp_path):
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
-    manager.load_plugin("builtin/memory")
+    manager.load_plugin("memory/file")
 
     provider = await manager.invoke_hook(
         "create_builtin_memory_provider",
