@@ -16,7 +16,7 @@ import pytest
 
 
 def test_shell_allowed_commands():
-    from personal_agent.tools.builtin.bash import _check_command
+    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # Safe commands should pass
     for cmd in ["ls -la", "cat file.txt", "grep pattern file", "git status",
@@ -33,7 +33,7 @@ def test_shell_allowed_commands():
 
 def test_shell_command_chaining_bypass():
     """Command chaining (&& || | ;) is now blocked — one command per call."""
-    from personal_agent.tools.builtin.bash import _check_command
+    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # All chain operators are blocked
     assert _check_command("whoami && ls") is not None     # blocked
@@ -48,7 +48,7 @@ def test_shell_command_chaining_bypass():
 
 
 def test_shell_network_blocked():
-    from personal_agent.tools.builtin.bash import _check_command, _allow_network
+    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command, _allow_network
 
     assert _allow_network is False  # default should be false
 
@@ -60,7 +60,7 @@ def test_shell_network_blocked():
 
 
 def test_shell_dangerous_patterns():
-    from personal_agent.tools.builtin.bash import _check_command
+    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     dangerous = [
         "rm -rf /",
@@ -76,7 +76,7 @@ def test_shell_dangerous_patterns():
 
 
 def test_file_write_extension_whitelist():
-    from personal_agent.tools.builtin.file_write import _check_extension
+    from personal_agent.plugins.builtin.tools.builtin.file_write import _check_extension
 
     # Allowed extensions
     for ext in [".txt", ".md", ".json", ".py", ".js", ".html", ".css", ".csv",
@@ -90,14 +90,14 @@ def test_file_write_extension_whitelist():
 
 
 def test_file_write_max_size():
-    from personal_agent.tools.builtin.file_write import _MAX_WRITE_BYTES
+    from personal_agent.plugins.builtin.tools.builtin.file_write import _MAX_WRITE_BYTES
 
     assert _MAX_WRITE_BYTES == 100_000  # default 100KB
 
 
 @pytest.mark.asyncio
 async def test_file_write_large_content():
-    from personal_agent.tools.builtin.file_write import _file_write
+    from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
 
     large = "x" * 200_000
     result = await _file_write("large.txt", large)
@@ -107,7 +107,7 @@ async def test_file_write_large_content():
 @pytest.mark.asyncio
 async def test_file_write_path_traversal():
     from personal_agent.tools.sandbox import init_sandbox
-    from personal_agent.tools.builtin.file_write import _file_write
+    from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
 
     init_sandbox([Path("./data")], ["**/.env", "**/.git/**", "**/.ssh/**"])
     result = await _file_write("../../../etc/passwd", "hello")
@@ -119,7 +119,7 @@ async def test_file_write_path_traversal():
 
 @pytest.mark.asyncio
 async def test_bridge_tool_call_blocks_destructive():
-    from personal_agent.tools.bridge import _tool_call
+    from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
 
     # file_write is destructive — should be blocked via tool_call
     result = await _tool_call("write", {"path": "test.txt", "content": "hello"})
@@ -128,7 +128,7 @@ async def test_bridge_tool_call_blocks_destructive():
 
 @pytest.mark.asyncio
 async def test_bridge_tool_call_allows_safe():
-    from personal_agent.tools.bridge import _tool_call
+    from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
 
     # tool_search is safe — should work
     result = await _tool_call("tool_search", {"query": "search"})
@@ -371,7 +371,7 @@ def test_bm25_search_returns_schema():
 
 def test_bash_hard_blacklist_catastrophic():
     """Hard blacklist blocks catastrophic commands unconditionally."""
-    from personal_agent.tools.builtin.bash import _check_command
+    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # These must ALWAYS be blocked (even with /allow bash)
     catastrophic = [
@@ -398,7 +398,7 @@ def test_bash_hard_blacklist_catastrophic():
 
 def test_bash_hard_blacklist_sudo_wrappers():
     """Hard blacklist catches sudo-wrapped catastrophic commands."""
-    from personal_agent.tools.builtin.bash import _check_command
+    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     assert _check_command("sudo rm -rf /") is not None
     assert _check_command("sudo shutdown -h now") is not None
@@ -407,7 +407,7 @@ def test_bash_hard_blacklist_sudo_wrappers():
 
 def test_bash_normal_rm_not_blocked():
     """Normal rm operations (not targeting root) should pass hard blacklist."""
-    from personal_agent.tools.builtin.bash import _check_command
+    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # Single file removal — NOT caught by hard blacklist
     result = _check_command("rm file.txt")

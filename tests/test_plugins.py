@@ -207,25 +207,24 @@ def test_builtin_manifests_are_discovered_from_project_plugins(tmp_path):
 
     skills = manager._plugins["builtin/skills"]
     assert skills.manifest.source == "builtin"
-    assert skills.manifest.entrypoint == "plugins.skills.builtin:register"
+    assert skills.manifest.entrypoint == "personal_agent.plugins.builtin.skills.builtin:register"
     assert skills.manifest.path is not None
-    assert "plugins/skills/builtin" in skills.manifest.path.as_posix()
+    assert "src/personal_agent/plugins/builtin/skills/builtin" in skills.manifest.path.as_posix()
 
     tools = manager._plugins["builtin/tools"]
-    assert tools.manifest.entrypoint == "plugins.tools.builtin:register"
+    assert tools.manifest.entrypoint == "personal_agent.plugins.builtin.tools.builtin:register"
     assert tools.manifest.path is not None
-    assert "plugins/tools/builtin" in tools.manifest.path.as_posix()
+    assert "src/personal_agent/plugins/builtin/tools/builtin" in tools.manifest.path.as_posix()
 
     telegram = manager._plugins["platforms/telegram"]
     assert telegram.status == PluginStatus.DEFERRED
-    assert telegram.manifest.entrypoint == "plugins.platforms.telegram:register"
+    assert telegram.manifest.entrypoint == "personal_agent.plugins.builtin.platforms.telegram:register"
     assert telegram.manifest.path is not None
-    assert "plugins/platforms/telegram" in telegram.manifest.path.as_posix()
+    assert "src/personal_agent/plugins/builtin/platforms/telegram" in telegram.manifest.path.as_posix()
 
-    from plugins.skills.builtin import register as skills_register
-    from personal_agent.plugins.builtin_skills import register as legacy_skills_register
+    from personal_agent.plugins.builtin.skills.builtin import register as skills_register
 
-    assert legacy_skills_register is skills_register
+    assert callable(skills_register)
 
 
 def test_builtin_tools_use_explicit_plugin_registration(tmp_path):

@@ -1,0 +1,10 @@
+key: builtin/llm
+name: Built-in LLM Providers
+version: "0.1.0"
+description: Provider and transport registrations.
+kind: builtin
+entrypoint: personal_agent.plugins.builtin.llm.builtin:register
+provides: [llm]
+enabled_by_default: true
+source: builtin
+record_import_delta: false

@@ -239,7 +239,7 @@ def test_load_writes_audit(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_skill_search_exact_name():
-    from personal_agent.tools.builtin.skill_tools import _skill_search
+    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("python-expert")
     assert "python-expert" in result
@@ -248,7 +248,7 @@ async def test_skill_search_exact_name():
 
 @pytest.mark.asyncio
 async def test_skill_search_partial():
-    from personal_agent.tools.builtin.skill_tools import _skill_search
+    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("python")
     assert "python-expert" in result
@@ -256,7 +256,7 @@ async def test_skill_search_partial():
 
 @pytest.mark.asyncio
 async def test_skill_search_no_match():
-    from personal_agent.tools.builtin.skill_tools import _skill_search
+    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("zzz-nonexistent-query")
     assert "No matching" in result or "Available:" in result
@@ -264,7 +264,7 @@ async def test_skill_search_no_match():
 
 @pytest.mark.asyncio
 async def test_skill_search_prompts_load():
-    from personal_agent.tools.builtin.skill_tools import _skill_search
+    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("git")
     assert "skill_load" in result
@@ -275,7 +275,7 @@ async def test_skill_search_prompts_load():
 
 @pytest.mark.asyncio
 async def test_skill_load_existing():
-    from personal_agent.tools.builtin.skill_tools import _skill_load
+    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_load
 
     content = await _skill_load("python-expert")
     assert len(content) > 0
@@ -283,7 +283,7 @@ async def test_skill_load_existing():
 
 @pytest.mark.asyncio
 async def test_skill_load_nonexistent():
-    from personal_agent.tools.builtin.skill_tools import _skill_load
+    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_load
 
     result = await _skill_load("no-such-skill")
     assert "not found" in result.lower()
@@ -295,7 +295,7 @@ async def test_skill_load_nonexistent():
 @pytest.mark.asyncio
 async def test_e2e_llm_skill_flow():
     """Simulate: LLM calls skill_search → gets results → calls skill_load → gets content."""
-    from personal_agent.tools.builtin.skill_tools import _skill_search, _skill_load
+    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search, _skill_load
 
     # Step 1: LLM asks "I need help with git"
     search_result = await _skill_search("git")

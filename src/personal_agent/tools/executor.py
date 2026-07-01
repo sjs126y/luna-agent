@@ -207,7 +207,7 @@ def _pre_check(tc: dict, entry) -> str | None:
 
     # ── bash: hard blacklist + whitelist + dangerous patterns + chaining + network ──
     if name == "bash":
-        from personal_agent.tools.builtin.bash import _check_command
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
         cmd = inp.get("command", "")
         if cmd:
             err = _check_command(cmd)
@@ -218,7 +218,7 @@ def _pre_check(tc: dict, entry) -> str | None:
     elif name == "write":
         path = inp.get("path", "")
         if path:
-            from personal_agent.tools.builtin.file_write import _check_extension
+            from personal_agent.plugins.builtin.tools.builtin.file_write import _check_extension
             from personal_agent.tools.sandbox import get_sandbox
             ext_err = _check_extension(path)
             if ext_err:
@@ -228,7 +228,7 @@ def _pre_check(tc: dict, entry) -> str | None:
             if sandbox_err:
                 return sandbox_err
             content = inp.get("content", "")
-            from personal_agent.tools.builtin.file_write import _MAX_WRITE_BYTES
+            from personal_agent.plugins.builtin.tools.builtin.file_write import _MAX_WRITE_BYTES
             if len(content) > _MAX_WRITE_BYTES:
                 return f"Error: content too large ({len(content)} bytes, max {_MAX_WRITE_BYTES})"
 

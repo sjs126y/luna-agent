@@ -179,35 +179,35 @@ class TestGlobMatch:
 class TestBashPathSandbox:
     def test_blocked_env(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/.env", "**/config.yaml"])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat .env") is not None
 
     def test_blocked_config(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/config.yaml"])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat config.yaml") is not None
 
     def test_blocked_even_restrict_off(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/.env"])
         set_restrict_paths(False)
         assert _check_path_sandbox("cat .env") is not None
 
     def test_restrict_off_allows_etc(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/.env"])
         set_restrict_paths(False)
         assert _check_path_sandbox("cat /etc/passwd") is None
 
     def test_unix_system_blocked(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         for p in ["/etc/passwd", "/var/log", "/proc/cpuinfo", "/usr/bin/env"]:
@@ -215,21 +215,21 @@ class TestBashPathSandbox:
 
     def test_windows_system_blocked(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox(r"type C:\Windows\System32\hosts") is not None
 
     def test_tilde_blocked(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat ~/.ssh/id_rsa") is not None
 
     def test_parent_traversal_blocked(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat ../../secret.txt") is not None
@@ -237,7 +237,7 @@ class TestBashPathSandbox:
 
     def test_relative_paths_ok(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         for cmd in ["cat notes.txt", "ls ./", "python s.py", "echo hi"]:
@@ -245,14 +245,14 @@ class TestBashPathSandbox:
 
     def test_root_in_command_ok(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox(f"cat {tmp_path}/f.txt") is None
 
     def test_simple_commands_ok(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         for cmd in ["ls", "pwd", "date", "whoami"]:
@@ -263,7 +263,7 @@ class TestBashPathSandbox:
         Root 'Desktop' substring-matches 'DesktopProjects', so
         cat DesktopProjects/secret.txt may bypass if not caught by escape patterns."""
         from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         d = tmp_path / "Desktop"; d.mkdir()
         dp = tmp_path / "DesktopProjects"; dp.mkdir()
         init_sandbox([d], [])
@@ -293,32 +293,32 @@ class TestBashGlobToRegex:
     """
 
     def test_dotenv(self):
-        from personal_agent.tools.builtin.bash import _glob_pattern_to_regex
+        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/.env")
         # **/.env → .env → regex \.env (works for simple case)
         assert re.search(r, ".env") is not None
         assert re.search(r, "path/to/.env") is not None
 
     def test_git_trailing_starstar(self):
-        from personal_agent.tools.builtin.bash import _glob_pattern_to_regex
+        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/.git/**")
         assert re.search(r, "path/.git/file") is not None
         assert re.search(r, ".git/") is not None   # fixed: trailing → /, matches directory refs
 
     def test_ssh_trailing_starstar(self):
-        from personal_agent.tools.builtin.bash import _glob_pattern_to_regex
+        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/.ssh/**")
         assert re.search(r, "path/.ssh/config") is not None
         assert re.search(r, ".ssh/") is not None   # fixed: trailing → /, matches directory refs
 
     def test_id_rsa_wildcard(self):
-        from personal_agent.tools.builtin.bash import _glob_pattern_to_regex
+        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/id_rsa*")
         assert re.search(r, "id_rsa") is not None       # fixed: *→wildcard, matches bare name
         assert re.search(r, "id_rsa.pub") is not None   # wildcard matches extension
 
     def test_config_yaml(self):
-        from personal_agent.tools.builtin.bash import _glob_pattern_to_regex
+        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/config.yaml")
         assert re.search(r, "config.yaml") is not None
 
@@ -353,7 +353,7 @@ class TestFileReadIntegration:
         from personal_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         f = tmp_path / "hello.txt"; f.write_text("world")
-        from personal_agent.tools.builtin.file_read import _file_read
+        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
         r = await _file_read(str(f))
         assert "world" in r
 
@@ -362,7 +362,7 @@ class TestFileReadIntegration:
         from personal_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], ["**/.env"])
         env = tmp_path / ".env"; env.write_text("X")
-        from personal_agent.tools.builtin.file_read import _file_read
+        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
         r = await _file_read(str(env))
         assert "blocked" in r.lower()
 
@@ -372,7 +372,7 @@ class TestFileReadIntegration:
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "s.txt"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.tools.builtin.file_read import _file_read
+        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
         r = await _file_read(str(o))
         assert "outside" in r.lower()
 
@@ -382,7 +382,7 @@ class TestFileWriteIntegration:
     async def test_write_normal(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
-        from personal_agent.tools.builtin.file_write import _file_write
+        from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
         r = await _file_write("out.txt", "data")
         assert "Written" in r
         assert (tmp_path / "out.txt").exists()
@@ -391,7 +391,7 @@ class TestFileWriteIntegration:
     async def test_write_blocked_env(self, tmp_path: Path):
         from personal_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], ["**/.env"])
-        from personal_agent.tools.builtin.file_write import _file_write
+        from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
         r = await _file_write(".env", "X")
         assert "blocked" in r.lower()
 
@@ -402,7 +402,7 @@ class TestGlobIntegration:
         from personal_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         (tmp_path / "a.py").write_text("x"); (tmp_path / "b.py").write_text("y")
-        from personal_agent.tools.builtin.glob_tool import _glob
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
         r = await _glob("*.py", str(tmp_path))
         assert "a.py" in r and "b.py" in r
 
@@ -412,7 +412,7 @@ class TestGlobIntegration:
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "o.py"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.tools.builtin.glob_tool import _glob
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
         r = await _glob("*.py", str(o.parent))
         assert "outside" in r.lower() or "Error" in r
 
@@ -423,7 +423,7 @@ class TestGrepIntegration:
         from personal_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         (tmp_path / "c.py").write_text("def fn(): pass")
-        from personal_agent.tools.builtin.grep_tool import _grep
+        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
         r = await _grep("def", str(tmp_path))
         assert "fn" in r
 
@@ -433,7 +433,7 @@ class TestGrepIntegration:
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "d.txt"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.tools.builtin.grep_tool import _grep
+        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
         r = await _grep("x", str(o.parent))
         assert "outside" in r.lower() or "Error" in r
 
@@ -444,7 +444,7 @@ class TestFileEditIntegration:
         from personal_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         f = tmp_path / "notes.md"; f.write_text("# T")
-        from personal_agent.tools.builtin.file_edit import _file_edit
+        from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
         r = await _file_edit("append", str(f), content="\nmore")
         assert "Appended" in r
 
@@ -454,7 +454,7 @@ class TestFileEditIntegration:
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "f.md"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.tools.builtin.file_edit import _file_edit
+        from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
         r = await _file_edit("append", str(o), content="more")
         assert "outside" in r.lower()
 

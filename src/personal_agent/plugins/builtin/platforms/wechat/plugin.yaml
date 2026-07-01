@@ -1,0 +1,12 @@
+key: platforms/wechat
+name: WeChat Platform
+version: "0.1.0"
+description: WeChat adapter registration.
+kind: platform
+entrypoint: personal_agent.plugins.builtin.platforms.wechat:register
+requires_env: [WEIXIN_TOKEN]
+provides: [platforms]
+enabled_by_default: true
+source: builtin
+deferred: true
+record_import_delta: false

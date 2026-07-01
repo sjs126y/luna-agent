@@ -11,11 +11,11 @@ from pathlib import Path
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
 from personal_agent.gateway.gateway import Gateway
-from personal_agent.memory.file_store import FileMemoryProvider, set_system_dir
+from personal_agent.plugins.builtin.memory.provider import FileMemoryProvider, set_system_dir
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.tools.sandbox import init_sandbox
-from personal_agent.tools.builtin.bash import set_allow_network, set_restrict_paths, set_work_dir as set_bash_work_dir
-from personal_agent.tools.builtin.file_write import set_max_write_bytes
+from personal_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_restrict_paths, set_work_dir as set_bash_work_dir
+from personal_agent.plugins.builtin.tools.builtin.file_write import set_max_write_bytes
 from personal_agent.tools.audit import set_audit_path
 
 logger = logging.getLogger("personal_agent")
@@ -125,7 +125,7 @@ async def boot() -> None:
     await db.initialize()
 
     # ── 4.5. Profile routing ────────────────────────
-    from personal_agent.memory.file_store import set_profile_map
+    from personal_agent.plugins.builtin.memory.provider import set_profile_map
     set_profile_map(settings.profile_map)
 
     # ── 5. Memory ──────────────────────────────────────
@@ -246,7 +246,7 @@ def _run_wechat_login() -> None:
     """CLI: QR login for WeChat."""
     import asyncio
     from pathlib import Path
-    from personal_agent.adapters.wechat.adapter import wechat_qr_login
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import wechat_qr_login
 
     settings = Settings()
     base_url = settings.weixin_base_url
@@ -282,9 +282,9 @@ def _run_cli(message: str) -> None:
     from personal_agent.agent.context import build_turn_context
     from personal_agent.agent.loop import run_conversation
     from personal_agent.compression.simple import ContextCompressor
-    from personal_agent.tools.builtin import calculator, datetime_tool, todo, web_search, web_fetch, file_edit  # noqa
-    from personal_agent.tools.builtin import grep_tool, glob_tool  # noqa
-    from personal_agent.memory.file_store import FileMemoryProvider
+    from personal_agent.plugins.builtin.tools.builtin import calculator, datetime_tool, todo, web_search, web_fetch, file_edit  # noqa
+    from personal_agent.plugins.builtin.tools.builtin import grep_tool, glob_tool  # noqa
+    from personal_agent.plugins.builtin.memory.provider import FileMemoryProvider
     from personal_agent.memory.manager import MemoryManager
 
     async def _run():

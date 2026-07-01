@@ -8,8 +8,10 @@ import json
 import pytest
 
 # Trigger registrations
-import personal_agent.workflow.builtin.review  # noqa
-import personal_agent.tools.builtin.workflow_tool  # noqa
+from personal_agent.plugins.builtin.workflows.review import register as register_review
+import personal_agent.plugins.builtin.tools.builtin.workflow_tool  # noqa
+
+register_review()
 
 
 # ── Mock LLM for workflow testing ──────────────────────

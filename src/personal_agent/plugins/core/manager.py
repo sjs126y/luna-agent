@@ -36,8 +36,7 @@ CORE_SLASH_COMMANDS = {
     "usage",
 }
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
-_PROJECT_PLUGIN_DIR = _PROJECT_ROOT / "plugins"
+_BUILTIN_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "builtin"
 
 
 class PluginManager:
@@ -57,7 +56,7 @@ class PluginManager:
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
-        self._plugin_dirs = self._dedupe_dirs([_PROJECT_PLUGIN_DIR, *[Path(p) for p in requested_dirs]])
+        self._plugin_dirs = self._dedupe_dirs([_BUILTIN_PLUGIN_DIR, *[Path(p) for p in requested_dirs]])
 
         data_dir = Path(getattr(settings, "agent_data_dir", "data"))
         self._state_path = Path(state_path) if state_path else data_dir / "plugins" / "state.json"
@@ -454,18 +453,7 @@ class PluginManager:
         paths: list[Path] = []
         if manifest.path:
             paths.append(manifest.path)
-            if self._is_project_plugin_path(manifest.path):
-                paths.append(_PROJECT_ROOT)
         return paths
-
-    @staticmethod
-    def _is_project_plugin_path(path: Path) -> bool:
-        try:
-            resolved = path.resolve()
-            plugin_root = _PROJECT_PLUGIN_DIR.resolve()
-        except OSError:
-            return False
-        return resolved == plugin_root or plugin_root in resolved.parents
 
     def _check_entrypoint(self, manifest: PluginManifest) -> tuple[bool, str]:
         try:

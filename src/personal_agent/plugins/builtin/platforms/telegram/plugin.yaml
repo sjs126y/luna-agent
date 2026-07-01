@@ -1,0 +1,12 @@
+key: platforms/telegram
+name: Telegram Platform
+version: "0.1.0"
+description: Telegram adapter registration.
+kind: platform
+entrypoint: personal_agent.plugins.builtin.platforms.telegram:register
+requires_env: [TELEGRAM_BOT_TOKEN]
+provides: [platforms]
+enabled_by_default: true
+source: builtin
+deferred: true
+record_import_delta: false

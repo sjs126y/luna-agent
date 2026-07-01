@@ -14,7 +14,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_clarify_question_only():
-    from personal_agent.tools.builtin.clarify import _clarify
+    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([{
@@ -29,7 +29,7 @@ async def test_clarify_question_only():
 
 @pytest.mark.asyncio
 async def test_clarify_with_choices():
-    from personal_agent.tools.builtin.clarify import _clarify
+    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([{
@@ -47,7 +47,7 @@ async def test_clarify_with_choices():
 
 @pytest.mark.asyncio
 async def test_clarify_multi_question():
-    from personal_agent.tools.builtin.clarify import _clarify
+    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([
@@ -62,7 +62,7 @@ async def test_clarify_multi_question():
 
 @pytest.mark.asyncio
 async def test_clarify_multi_select():
-    from personal_agent.tools.builtin.clarify import _clarify
+    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([{
@@ -77,7 +77,7 @@ async def test_clarify_multi_select():
 
 @pytest.mark.asyncio
 async def test_clarify_invalid_json():
-    from personal_agent.tools.builtin.clarify import _clarify
+    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
 
     result = await _clarify("not json")
     assert "Error" in result
@@ -89,7 +89,7 @@ async def test_clarify_invalid_json():
 
 @pytest.mark.asyncio
 async def test_process_list_empty():
-    from personal_agent.tools.builtin.process_tool import _process_list
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_list
 
     result = await _process_list()
     assert "No background processes" in result or "running" not in result.lower()
@@ -97,7 +97,7 @@ async def test_process_list_empty():
 
 @pytest.mark.asyncio
 async def test_process_kill_nonexistent():
-    from personal_agent.tools.builtin.process_tool import _process_kill
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_kill
 
     result = await _process_kill(99999)
     assert "no process" in result.lower()
@@ -105,7 +105,7 @@ async def test_process_kill_nonexistent():
 
 @pytest.mark.asyncio
 async def test_process_wait_nonexistent():
-    from personal_agent.tools.builtin.process_tool import _process_wait
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_wait
 
     result = await _process_wait(99999)
     assert "no process" in result.lower()
@@ -114,7 +114,7 @@ async def test_process_wait_nonexistent():
 @pytest.mark.asyncio
 async def test_process_lifecycle():
     """Spawn a real background process, list it, wait for it, verify."""
-    from personal_agent.tools.builtin.process_tool import (
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
         _process_list, _process_wait, _process_kill, _register,
     )
 
@@ -145,7 +145,7 @@ async def test_process_lifecycle():
 
 @pytest.mark.asyncio
 async def test_execute_code_basic():
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("print('hello world')")
     assert "hello world" in result
@@ -153,7 +153,7 @@ async def test_execute_code_basic():
 
 @pytest.mark.asyncio
 async def test_execute_code_math():
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("print(2 ** 10)")
     assert "1024" in result
@@ -161,7 +161,7 @@ async def test_execute_code_math():
 
 @pytest.mark.asyncio
 async def test_execute_code_stderr():
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("import sys; print('ok', file=sys.stderr)")
     assert "[stderr]" in result
@@ -170,7 +170,7 @@ async def test_execute_code_stderr():
 
 @pytest.mark.asyncio
 async def test_execute_code_exception():
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("raise RuntimeError('boom')")
     assert "RuntimeError" in result
@@ -179,7 +179,7 @@ async def test_execute_code_exception():
 
 @pytest.mark.asyncio
 async def test_execute_code_imports():
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code(
         "import json, math, datetime, collections; "
@@ -190,7 +190,7 @@ async def test_execute_code_imports():
 
 @pytest.mark.asyncio
 async def test_execute_code_timeout():
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("import time; time.sleep(120)", timeout=5)
     assert "timed out" in result.lower()
@@ -199,7 +199,7 @@ async def test_execute_code_timeout():
 @pytest.mark.asyncio
 async def test_execute_code_sandbox_env():
     """API keys should NOT be available in the sandbox."""
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code(
         "import os; print('LLM_API_KEY' in os.environ)"
@@ -210,7 +210,7 @@ async def test_execute_code_sandbox_env():
 @pytest.mark.asyncio
 async def test_execute_code_isolated_cwd():
     """Sandbox should run in a temp directory, not the agent's directory."""
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("import os; print(os.getcwd())")
     # Should be a temp dir, not the project dir
@@ -220,7 +220,7 @@ async def test_execute_code_isolated_cwd():
 
 @pytest.mark.asyncio
 async def test_execute_code_no_output():
-    from personal_agent.tools.builtin.execute_code import _execute_code
+    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("x = 1 + 1")
     assert "no output" in result.lower()
@@ -232,7 +232,7 @@ async def test_execute_code_no_output():
 @pytest.mark.asyncio
 async def test_sub_agent_not_initialized():
     """Without setup, sub_agent should return a clear error."""
-    from personal_agent.tools.builtin.delegate import _sub_agent
+    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent
 
     result = await _sub_agent("test prompt")
     assert "not initialized" in result.lower()
@@ -240,7 +240,7 @@ async def test_sub_agent_not_initialized():
 
 @pytest.mark.asyncio
 async def test_sub_parallel_bad_json():
-    from personal_agent.tools.builtin.delegate import _sub_parallel
+    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_parallel
 
     result = await _sub_parallel("not json")
     assert "invalid" in result.lower()

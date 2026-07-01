@@ -156,7 +156,7 @@ class Gateway:
         # 5. Mark running → process → cleanup
         self._running_agents[session_key] = True
         try:
-            from personal_agent.memory.file_store import set_current_session
+            from personal_agent.plugins.builtin.memory.provider import set_current_session
             set_current_session(session_key)
             return await self._handle_message_with_agent(event, session_key)
         finally:
@@ -276,7 +276,7 @@ class Gateway:
         if self.plugin_manager is not None:
             self._wire_plugin_hooks(agent)
         # Wire delegate subsystem (so delegate_task tool can call LLM)
-        from personal_agent.tools.builtin.delegate import setup_delegate
+        from personal_agent.plugins.builtin.tools.builtin.delegate import setup_delegate
         setup_delegate(
             call_fn=transport.call,
             tools=agent.tools,
