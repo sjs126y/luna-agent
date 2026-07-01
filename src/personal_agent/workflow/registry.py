@@ -17,6 +17,9 @@ class WorkflowRegistry:
         self._workflows[defn.name] = defn
         logger.debug("Workflow registered: %s", defn.name)
 
+    def unregister(self, name: str) -> None:
+        self._workflows.pop(name, None)
+
     def get(self, name: str) -> WorkflowDef | None:
         return self._workflows.get(name)
 

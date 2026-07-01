@@ -13,6 +13,7 @@ _CORE_TOOLS: set[str] = {
     "skill_search", "skill_load",
     "clarify", "execute_code",
     "sub_agent", "sub_parallel", "sub_pipeline",
+    "delegate_task", "run_research", "run_review", "run_workflow",
     "process_list", "process_kill", "process_wait",
     "confirm", "task",
     "workflow_run", "workflow_list",

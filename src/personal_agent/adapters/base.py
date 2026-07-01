@@ -52,6 +52,9 @@ class PlatformRegistry:
     def register(self, entry: PlatformEntry) -> None:
         self._entries[entry.name] = entry
 
+    def unregister(self, name: str) -> None:
+        self._entries.pop(name, None)
+
     def list(self) -> list[PlatformEntry]:
         return list(self._entries.values())
 

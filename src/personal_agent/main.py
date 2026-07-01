@@ -6,6 +6,7 @@ import asyncio
 import logging
 import signal
 import sys
+from pathlib import Path
 
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
@@ -94,48 +95,29 @@ async def boot() -> None:
     data_dir = settings.agent_data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── 3. Import triggers (self-registration) ────────
-    import personal_agent.tools.builtin.calculator       # noqa
-    import personal_agent.tools.builtin.web_search        # noqa
-    import personal_agent.tools.builtin.web_fetch         # noqa
-    import personal_agent.tools.builtin.datetime_tool     # noqa
-    import personal_agent.tools.builtin.file_read         # noqa
-    import personal_agent.tools.builtin.file_write        # noqa
-    import personal_agent.tools.builtin.file_edit         # noqa
-    import personal_agent.tools.builtin.grep_tool         # noqa
-    import personal_agent.tools.builtin.glob_tool         # noqa
-    import personal_agent.tools.builtin.todo              # noqa
-    import personal_agent.tools.builtin.task              # noqa
-    import personal_agent.tools.builtin.weather           # noqa
-    import personal_agent.tools.builtin.bash              # noqa
-    import personal_agent.tools.builtin.random_tool       # noqa
-    import personal_agent.tools.builtin.timer             # noqa
-    import personal_agent.tools.builtin.json_tool         # noqa
-    import personal_agent.tools.builtin.skill_tools       # noqa: skill_search, skill_load
-    import personal_agent.tools.builtin.clarify           # noqa
-    import personal_agent.tools.builtin.process_tool      # noqa: process_list/kill/wait
-    import personal_agent.tools.builtin.execute_code      # noqa
-    import personal_agent.tools.builtin.delegate          # noqa: delegate_task
-    import personal_agent.tools.builtin.confirm           # noqa
-    import personal_agent.tools.builtin.workflow_tool    # noqa: workflow_run/list
-    import personal_agent.workflow.builtin.review         # noqa: register built-in workflows
-    import personal_agent.tools.builtin.worktree_tool    # noqa: worktree_create/merge/cleanup/list
-    import personal_agent.tools.bridge                    # noqa: bridge tools (tool_search/describe/call)
-    # memory tool is auto-registered in file_store.py
-
-    import personal_agent.llm                # noqa: trigger transport/provider registration
-    import personal_agent.adapters.feishu     # noqa
-    import personal_agent.adapters.telegram   # noqa
-    import personal_agent.adapters.wechat     # noqa
-    import personal_agent.skills.builtin      # noqa: triggers skill registration
-    from personal_agent.skills.registry import discover_skills
-    discover_skills(data_dir / "skills")       # auto-discover user-provided skills
+    # ── 3. Plugins and built-in registration ──────────
+    from personal_agent.plugins.manager import PluginManager
+    plugin_manager = PluginManager(settings)
+    plugin_manager.discover()
+    plugin_manager.load_enabled()
 
     # ── 3.5. MCP servers ──────────────────────────
     mcp_manager = None
-    if settings.mcp_enabled and settings.mcp_servers:
+    mcp_servers = list(settings.mcp_servers)
+    for cfg in plugin_manager.get_mcp_servers():
+        if isinstance(cfg, dict):
+            mcp_servers.append(cfg)
+        else:
+            mcp_servers.append({
+                "name": getattr(cfg, "name", ""),
+                "command": getattr(cfg, "command", ""),
+                "args": getattr(cfg, "args", []),
+                "env": getattr(cfg, "env", {}),
+                "enabled": getattr(cfg, "enabled", True),
+            })
+    if settings.mcp_enabled and mcp_servers:
         from personal_agent.mcp.manager import MCPManager
-        mcp_manager = MCPManager(settings.mcp_servers)
+        mcp_manager = MCPManager(mcp_servers)
         await mcp_manager.start()
 
     # ── 4. Database ────────────────────────────────────
@@ -182,7 +164,13 @@ async def boot() -> None:
         "3. 用中文回复，保持简洁有条理\n"
         "4. 工具返回的结果要如实转述，不要编造"
     )
-    gateway = Gateway(settings, db, memory_manager, system_prompt_template=system_prompt)
+    gateway = Gateway(
+        settings,
+        db,
+        memory_manager,
+        system_prompt_template=system_prompt,
+        plugin_manager=plugin_manager,
+    )
     gateway._mcp_manager = mcp_manager  # for shutdown cleanup
 
     # ── 7.5. Default hooks — non-restrictive utility hooks ──
@@ -244,6 +232,9 @@ def main() -> None:
         _run_wechat_login()
     elif len(sys.argv) > 1 and sys.argv[1] == "--ingest":
         _run_ingest(sys.argv[2] if len(sys.argv) > 2 else "")
+    elif len(sys.argv) > 1:
+        from personal_agent.cli import run
+        run()
     else:
         try:
             asyncio.run(boot())

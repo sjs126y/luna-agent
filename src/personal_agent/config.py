@@ -21,9 +21,11 @@ def _load_env(path: str = ".env") -> dict[str, str]:
 
 
 class Settings:
-    def __init__(self) -> None:
+    def __init__(self, **overrides: Any) -> None:
         yaml_cfg = _load_yaml()
         env = _load_env()
+        self.raw_env: dict[str, str] = env
+        self.raw_config: dict[str, Any] = yaml_cfg
 
         # ── LLM (from .env) ──
         self.llm_api_key: str = env.get("LLM_API_KEY", "")
@@ -106,6 +108,18 @@ class Settings:
         self.mcp_enabled: bool = mcp.get("enabled", False)
         self.mcp_servers: list[dict] = mcp.get("servers", [])
 
+        # ── Plugins (from config.yaml) ──
+        plugins = yaml_cfg.get("plugins", {})
+        raw_plugin_dirs = plugins.get("dirs", ["./plugins", "./data/plugins"])
+        if isinstance(raw_plugin_dirs, str):
+            self.plugins_dirs: list[Path] = [
+                Path(p.strip()) for p in raw_plugin_dirs.split(",") if p.strip()
+            ]
+        else:
+            self.plugins_dirs = [Path(p) for p in raw_plugin_dirs]
+        self.plugins_enabled: list[str] = plugins.get("enabled", [])
+        self.plugins_disabled: list[str] = plugins.get("disabled", [])
+
         # ── Auth (from config.yaml) ──
         auth = yaml_cfg.get("auth", {})
         self.auth_enabled: bool = auth.get("enabled", False)
@@ -123,3 +137,8 @@ class Settings:
                 self.profile_map.update(json.loads(profiles_env))
             except json.JSONDecodeError:
                 pass
+
+        for key, value in overrides.items():
+            if key.endswith("_dir") and isinstance(value, str):
+                value = Path(value)
+            setattr(self, key, value)

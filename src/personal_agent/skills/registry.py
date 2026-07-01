@@ -34,6 +34,9 @@ class SkillRegistry:
         self._entries[entry.name] = entry
         logger.debug("Skill registered: %s", entry.name)
 
+    def unregister(self, name: str) -> None:
+        self._entries.pop(name, None)
+
     def get(self, name: str) -> SkillEntry | None:
         return self._entries.get(name)
 

@@ -135,4 +135,4 @@ def _glob_match(path_str: str, pattern: str) -> bool:
     # fnmatch doesn't handle ** natively — we do a simple check:
     # For most patterns like "**/.git/**" or "**/.env", fnmatch works
     # on the full path with forward slashes.
-    return fnmatch.fnmatch(path_str, pattern)
+    return fnmatch.fnmatch(path_str.replace("\\", "/"), pattern.replace("\\", "/"))

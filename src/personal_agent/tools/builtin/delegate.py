@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any, Callable
 
+from personal_agent.agents.runtime import AgentRuntime, AgentSpec
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 
@@ -20,13 +21,15 @@ logger = logging.getLogger(__name__)
 _delegate_call: Callable | None = None
 _delegate_tools: list[dict] | None = None
 _delegate_max_tokens: int = 4096
+_agent_runtime: AgentRuntime = AgentRuntime()
 
 
 def setup_delegate(call_fn, tools, max_tokens=4096):
-    global _delegate_call, _delegate_tools, _delegate_max_tokens
+    global _delegate_call, _delegate_tools, _delegate_max_tokens, _agent_runtime
     _delegate_call = call_fn
     _delegate_tools = tools
     _delegate_max_tokens = max_tokens
+    _agent_runtime = AgentRuntime(call_fn=call_fn, tools=tools, max_tokens=max_tokens)
 
 
 # Default: read-only tools a sub-agent always gets
@@ -225,6 +228,123 @@ async def _sub_pipeline(items_json, stage_prompt, stage_system_prompt=""):
         lines.append(f"## [{i}] {label}\n{rt}")
     return "\n\n".join(lines)
 
+
+async def _delegate_task(task: str, role: str = "assistant", system_prompt: str = "",
+                         tool_policy: str = "readonly", max_tokens: int = 2048) -> str:
+    spec = AgentSpec(
+        role=role,
+        system_prompt=system_prompt,
+        tool_policy=tool_policy or "readonly",
+        max_tokens=max_tokens,
+    )
+    run = await _agent_runtime.run(task, spec)
+    return _format_agent_run(run)
+
+
+async def _run_research(question: str, max_tokens: int = 2048) -> str:
+    spec = AgentSpec(
+        role="researcher",
+        system_prompt=(
+            "You are a focused research sub-agent. Gather relevant facts with read-only tools "
+            "and return a concise sourced summary when tools provide sources."
+        ),
+        tool_policy=["web_search", "web_fetch", "read", "grep", "glob", "calculator", "datetime"],
+        max_tokens=max_tokens,
+    )
+    run = await _agent_runtime.run(question, spec)
+    return _format_agent_run(run)
+
+
+async def _run_review(target: str, focus: str = "bugs, security, performance",
+                      max_tokens: int = 2048) -> str:
+    spec = AgentSpec(
+        role="code reviewer",
+        system_prompt=(
+            "You are a skeptical code review sub-agent. Use read-only tools only. "
+            "Prioritize concrete bugs, regressions, security issues, and missing tests."
+        ),
+        tool_policy=["read", "grep", "glob"],
+        max_tokens=max_tokens,
+    )
+    run = await _agent_runtime.run(
+        f"Review target: {target}\nFocus: {focus}",
+        spec,
+    )
+    return _format_agent_run(run)
+
+
+async def _run_workflow(name: str, args: str = "{}") -> str:
+    from personal_agent.workflow.engine import run_workflow_tool
+
+    return await run_workflow_tool(name, args)
+
+
+def _format_agent_run(run) -> str:
+    if run.status != "completed":
+        return run.result
+    usage = run.usage
+    return (
+        f"{run.result}\n\n"
+        f"[agent_run id={run.run_id} status={run.status} "
+        f"duration={run.duration:.2f}s input={usage.get('input_tokens', 0)} "
+        f"output={usage.get('output_tokens', 0)}]"
+    )
+
+
+tool_registry.register(ToolEntry(
+    name="delegate_task",
+    description=(
+        "Delegate one focused task to a controlled sub-agent. Defaults to read-only tools. "
+        "Use for independent analysis, research, or code inspection."
+    ),
+    schema={"type": "object", "properties": {
+        "task": {"type": "string", "description": "The exact task to delegate."},
+        "role": {"type": "string", "description": "Short role name for the sub-agent."},
+        "system_prompt": {"type": "string", "description": "Optional system prompt override."},
+        "tool_policy": {"type": "string", "description": "readonly, none, or all. Destructive tools remain blocked by default."},
+        "max_tokens": {"type": "integer", "description": "Max output tokens."},
+    }, "required": ["task"]},
+    handler=_delegate_task,
+    toolset="builtin",
+    is_parallel_safe=True,
+))
+
+tool_registry.register(ToolEntry(
+    name="run_research",
+    description="Run a read-only research sub-agent for a focused question.",
+    schema={"type": "object", "properties": {
+        "question": {"type": "string", "description": "Research question."},
+        "max_tokens": {"type": "integer", "description": "Max output tokens."},
+    }, "required": ["question"]},
+    handler=_run_research,
+    toolset="builtin",
+    is_parallel_safe=True,
+))
+
+tool_registry.register(ToolEntry(
+    name="run_review",
+    description="Run a read-only code review sub-agent for a target file, directory, or change.",
+    schema={"type": "object", "properties": {
+        "target": {"type": "string", "description": "File, directory, diff, or change description to review."},
+        "focus": {"type": "string", "description": "Review focus, e.g. bugs, security, tests."},
+        "max_tokens": {"type": "integer", "description": "Max output tokens."},
+    }, "required": ["target"]},
+    handler=_run_review,
+    toolset="builtin",
+    is_parallel_safe=True,
+))
+
+tool_registry.register(ToolEntry(
+    name="run_workflow",
+    description="Run a named workflow through the workflow engine. Args is a JSON object string.",
+    schema={"type": "object", "properties": {
+        "name": {"type": "string", "description": "Workflow name."},
+        "args": {"type": "string", "description": "JSON object with workflow arguments."},
+    }, "required": ["name"]},
+    handler=_run_workflow,
+    toolset="builtin",
+    is_parallel_safe=False,
+))
 
 tool_registry.register(ToolEntry(
     name="sub_agent",

@@ -15,7 +15,14 @@ logger = logging.getLogger(__name__)
 
 
 class Gateway:
-    def __init__(self, config, db, memory_manager, system_prompt_template: str = "") -> None:
+    def __init__(
+        self,
+        config,
+        db,
+        memory_manager,
+        system_prompt_template: str = "",
+        plugin_manager=None,
+    ) -> None:
         self.config = config
         self.db = db
         self._memory_manager = memory_manager
@@ -31,6 +38,7 @@ class Gateway:
         self._session_override: dict[str, str] = {}  # platform:user → custom chat_id
         self._cron_scheduler = None
         self.hooks = Hooks()
+        self.plugin_manager = plugin_manager
         self._shutdown_event = asyncio.Event()
         self._mcp_manager = None  # set by main.py after MCPManager.start()
 
@@ -41,6 +49,11 @@ class Gateway:
         self._session_override.update(self.config.session_override)  # config defaults
         await self._session_store.initialize()
         await self._session_store.expire_sessions(self.config.session_expire_days)
+
+        if self.plugin_manager is not None:
+            for plugin in self.plugin_manager.list_plugins():
+                if plugin.enabled and plugin.manifest.kind == "platform":
+                    self.plugin_manager.load_plugin(plugin.key)
 
         # Seed and start cron if enabled
         if self.config.enable_cron:
@@ -113,6 +126,10 @@ class Gateway:
                 return None  # dropped
             if hook_result is not event:
                 event = hook_result
+        if self.plugin_manager is not None:
+            hook_result = await self.plugin_manager.invoke_hook("on_message_received", event)
+            if hook_result is not None and hook_result is not event:
+                event = hook_result
 
         # 2. Authorization (skip internal/cron events)
         if not event.internal and event.source.user_id != "cron":
@@ -181,6 +198,10 @@ class Gateway:
         hook_result = await self.hooks.fire("on_before_send", final, event.source)
         if isinstance(hook_result, str):
             final = hook_result
+        if self.plugin_manager is not None:
+            hook_result = await self.plugin_manager.invoke_hook("on_before_send", final, event.source)
+            if isinstance(hook_result, str):
+                final = hook_result
 
         # Background memory review (Hermes-style nudge)
         if result.get("should_review_memory") and final:
@@ -235,10 +256,11 @@ class Gateway:
 
             compressor = ContextCompressor(
                 context_length=provider.context_window or 64_000,
-                threshold_ratio=0.6,
+                threshold_ratio=self.config.compression_threshold_ratio,
                 tail_token_budget=self.config.tail_token_budget,
                 max_summary_tokens=self.config.compressor_max_tokens,
                 compressor_transport=compressor_transport,
+                model=provider.model or "",
             )
 
         agent = init_agent(
@@ -251,6 +273,8 @@ class Gateway:
             system_prompt_template=self._system_prompt_template,
             enabled_toolsets=self.config.enabled_toolsets,
         )
+        if self.plugin_manager is not None:
+            self._wire_plugin_hooks(agent)
         # Wire delegate subsystem (so delegate_task tool can call LLM)
         from personal_agent.tools.builtin.delegate import setup_delegate
         setup_delegate(
@@ -273,6 +297,26 @@ class Gateway:
             self._agent_cache.popitem(last=False)
         self._agent_cache[session_key] = agent
         return agent
+
+    def _wire_plugin_hooks(self, agent) -> None:
+        async def _before_llm(messages, system_prompt, tools):
+            return await self.plugin_manager.invoke_hook(
+                "on_before_llm_call", messages, system_prompt, tools
+            )
+
+        async def _after_llm(response, usage):
+            return await self.plugin_manager.invoke_hook("on_after_llm_call", response, usage)
+
+        async def _before_tool(tool_call, agent_obj):
+            return await self.plugin_manager.invoke_hook("on_before_tool_exec", tool_call, agent_obj)
+
+        async def _after_tool(tool_call, result):
+            return await self.plugin_manager.invoke_hook("on_after_tool_exec", tool_call, result)
+
+        agent.hooks.on_before_llm_call.append(_before_llm)
+        agent.hooks.on_after_llm_call.append(_after_llm)
+        agent.hooks.on_before_tool_exec.append(_before_tool)
+        agent.hooks.on_after_tool_exec.append(_after_tool)
 
 
     # ── commands ──────────────────────────────────────
@@ -339,20 +383,35 @@ class Gateway:
             agent = self._agent_cache.get(session_key)
             if agent is None:
                 return "暂无会话数据。"
-            from personal_agent.llm.token_counter import context_usage
+            from personal_agent.context_budget import estimate_context_budget
+            from personal_agent.skills.registry import skill_registry
+            model = agent._provider.model if agent._provider else ""
             ctx_win = agent._provider.context_window if agent._provider and agent._provider.context_window else 64_000
-            cu = context_usage([], agent._cached_system_prompt or "", agent.tools,
-                               context_limit=ctx_win)
+            session = await self._session_store.get_or_create(session_key, event.source)
+            current_id = self._compression_chain.resolve(session.session_id)
+            history = await self._session_store.load_history(current_id)
+            budget = estimate_context_budget(
+                messages=history,
+                system_prompt=agent._cached_system_prompt or "",
+                tools=agent.tools,
+                skills_summary=skill_registry.get_summaries(),
+                context_limit=ctx_win,
+                model=model,
+            )
             return (
                 f"📊 会话用量\n"
                 f"API 调用: {agent.session_api_calls} 次\n"
                 f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
                 f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
                 f"\n📐 上下文窗口 (估算)\n"
-                f"已用: {cu['used']:,} / {cu['limit']:,} tokens ({cu['percent']}%)\n"
-                f"  system prompt: {cu['system']:,}\n"
-                f"  工具定义: {cu['tools']:,}\n"
-                f"剩余: {cu['remaining']:,} tokens\n"
+                f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
+                f"  system prompt: {budget.system_prompt:,}\n"
+                f"  history messages: {budget.history_messages:,}\n"
+                f"  tools schema: {budget.tools_schema:,}\n"
+                f"  skills: {budget.skills:,}\n"
+                f"  memory injections: {budget.memory_injections:,}\n"
+                f"  MCP tools: {budget.mcp_tools:,}\n"
+                f"剩余: {budget.remaining_context:,} tokens\n"
                 f"\n🔧 本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
             )
 
@@ -373,6 +432,22 @@ class Gateway:
                 "/export - 导出当前会话（JSONL）\n"
                 "/help - 显示此帮助\n"
                 "/<skill-name> - 加载技能（如果可用）"
+            )
+
+        plugin_command = None
+        if self.plugin_manager is not None:
+            command_name = text[1:].split()[0]
+            plugin_command = self.plugin_manager.get_command(command_name, scope="slash")
+        if plugin_command is not None:
+            parts = text.split(None, 1)
+            args = parts[1] if len(parts) > 1 else ""
+            return await self.plugin_manager.execute_command(
+                plugin_command.name,
+                scope="slash",
+                event=event,
+                args=args,
+                gateway=self,
+                session_key=session_key,
             )
 
         # Skill command: /skill-name [message]
