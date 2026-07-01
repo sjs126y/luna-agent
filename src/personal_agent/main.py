@@ -272,9 +272,6 @@ def _run_cli(message: str) -> None:
     from personal_agent.agent.context import build_turn_context
     from personal_agent.agent.loop import run_conversation
     from personal_agent.compression.simple import ContextCompressor
-    from personal_agent.plugins.builtin.tools.builtin import calculator, datetime_tool, todo, web_search, web_fetch, file_edit  # noqa
-    from personal_agent.plugins.builtin.tools.builtin import grep_tool, glob_tool  # noqa
-    from personal_agent.plugins.builtin.memory.provider import FileMemoryProvider
     from personal_agent.memory.manager import MemoryManager
 
     async def _run():
@@ -287,6 +284,12 @@ def _run_cli(message: str) -> None:
 
     async def _run_cli_inner():
         settings = Settings()
+        from personal_agent.plugins.manager import PluginManager
+        plugin_manager = PluginManager(settings)
+        plugin_manager.discover()
+        plugin_manager.load_enabled()
+        await plugin_manager.invoke_hook("configure", settings=settings)
+
         from personal_agent.llm.provider import provider_registry
         from personal_agent.llm.transport_registry import transport_registry
         provider = provider_registry.get(settings.llm_provider, settings)
@@ -299,6 +302,15 @@ def _run_cli(message: str) -> None:
                           max_tool_calls_per_turn=settings.max_tool_calls_per_turn,
                           enabled_toolsets=settings.enabled_toolsets,
                           system_prompt_template='你是一个智能助手。优先使用工具获取实时信息和执行操作，不要凭记忆编造。用中文回复。')
+        await plugin_manager.invoke_hook(
+            "on_agent_created",
+            agent=agent,
+            transport=transport,
+            provider=provider,
+            call_fn=transport.call,
+            tools=agent.tools,
+            max_tokens=provider.max_tokens,
+        )
 
         ctx = await build_turn_context(agent, message)
         result = await run_conversation(agent, ctx)
