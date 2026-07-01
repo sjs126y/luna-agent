@@ -36,6 +36,7 @@ class PluginManifest:
     source: str = "user"
     path: Path | None = None
     deferred: bool = False
+    record_import_delta: bool = True
 
     @classmethod
     def from_mapping(
@@ -69,6 +70,7 @@ class PluginManifest:
             source=str(data.get("source", source)),
             path=Path(path) if path else None,
             deferred=bool(data.get("deferred", False)),
+            record_import_delta=bool(data.get("record_import_delta", True)),
         )
 
 

@@ -47,6 +47,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "provides": ["tools"],
         "enabled_by_default": True,
         "source": "builtin",
+        "record_import_delta": False,
     },
     {
         "key": "builtin/bridge",
@@ -58,6 +59,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "provides": ["tools"],
         "enabled_by_default": True,
         "source": "builtin",
+        "record_import_delta": False,
     },
     {
         "key": "builtin/skills",
@@ -69,6 +71,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "provides": ["skills"],
         "enabled_by_default": True,
         "source": "builtin",
+        "record_import_delta": False,
     },
     {
         "key": "workflows/review",
@@ -80,6 +83,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "provides": ["workflows"],
         "enabled_by_default": True,
         "source": "builtin",
+        "record_import_delta": False,
     },
     {
         "key": "builtin/llm",
@@ -91,6 +95,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "provides": ["llm"],
         "enabled_by_default": True,
         "source": "builtin",
+        "record_import_delta": False,
     },
     {
         "key": "platforms/feishu",
@@ -104,6 +109,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "enabled_by_default": True,
         "source": "builtin",
         "deferred": True,
+        "record_import_delta": False,
     },
     {
         "key": "platforms/telegram",
@@ -117,6 +123,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "enabled_by_default": True,
         "source": "builtin",
         "deferred": True,
+        "record_import_delta": False,
     },
     {
         "key": "platforms/wechat",
@@ -130,6 +137,7 @@ _BUILTIN_MANIFESTS: list[dict[str, Any]] = [
         "enabled_by_default": True,
         "source": "builtin",
         "deferred": True,
+        "record_import_delta": False,
     },
 ]
 
@@ -224,7 +232,8 @@ class PluginManager:
                 result = module.register(plugin.ctx)
                 if inspect.isawaitable(result):
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
-            self._record_registry_delta(plugin, before, self._registry_snapshot())
+            if plugin.manifest.record_import_delta:
+                self._record_registry_delta(plugin, before, self._registry_snapshot())
             plugin.status = PluginStatus.LOADED
         except Exception as exc:
             plugin.status = PluginStatus.ERROR

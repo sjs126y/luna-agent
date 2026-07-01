@@ -162,6 +162,36 @@ def test_command_cannot_override_core_command(tmp_path):
         ))
 
 
+def test_builtin_tools_use_explicit_plugin_registration(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+
+    plugin = manager.load_plugin("builtin/tools")
+    assert plugin.status == PluginStatus.LOADED
+    assert "calculator" in plugin.tools_registered
+    assert "read" in plugin.tools_registered
+    assert tool_registry.get("calculator") is not None
+
+    manager.disable_plugin("builtin/tools")
+    assert tool_registry.get("calculator") is None
+
+    manager.enable_plugin("builtin/tools")
+    plugin = manager.load_plugin("builtin/tools")
+    assert plugin.status == PluginStatus.LOADED
+    assert tool_registry.get("calculator") is not None
+
+
+def test_builtin_skills_use_explicit_plugin_registration(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+
+    plugin = manager.load_plugin("builtin/skills")
+    assert plugin.status == PluginStatus.LOADED
+    assert "python-expert" in plugin.skills_registered
+
+
 @pytest.mark.asyncio
 async def test_hook_priority_and_fail_open(tmp_path):
     manager = PluginManager(

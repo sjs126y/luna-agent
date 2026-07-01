@@ -120,7 +120,7 @@ class SkillRegistry:
 skill_registry = SkillRegistry()
 
 
-def discover_skills(skills_dir: Path | None = None) -> int:
+def discover_skills(skills_dir: Path | None = None, registrar=None) -> int:
     """Auto-register .md files from a directory. Returns count added."""
     from personal_agent.skills.entry import SkillEntry
     target = Path(skills_dir) if skills_dir else SKILLS_DIR
@@ -134,11 +134,15 @@ def discover_skills(skills_dir: Path | None = None) -> int:
             continue  # don't overwrite explicitly registered skills
         text = f.read_text(encoding="utf-8").strip()
         desc = text.split("\n")[0].lstrip("#").strip() if text else name
-        skill_registry.register(SkillEntry(
+        entry = SkillEntry(
             name=name,
             description=desc[:100],
             path=str(f),
-        ))
+        )
+        if registrar is not None:
+            registrar.register_skill(entry)
+        else:
+            skill_registry.register(entry)
         count += 1
         logger.info("Auto-discovered skill: %s", name)
     return count

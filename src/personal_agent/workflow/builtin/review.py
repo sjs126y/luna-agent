@@ -185,12 +185,22 @@ async def review_workflow(args: dict | None = None) -> dict:
     }
 
 
-# ── Register ───────────────────────────────────────────
-
-workflow_registry.register(WorkflowDef(
+_WORKFLOW_DEF = WorkflowDef(
     name="review",
     description="Multi-dimensional code review with adversarial verification. Finds issues across security/performance/bugs dimensions, then verifies each finding by trying to refute it.",
     fn=review_workflow,
     phases=["Find", "Verify", "Report"],
     when_to_use="When the user asks to review code, check for bugs, audit security, or analyze performance.",
-))
+)
+
+
+def register(ctx=None) -> None:
+    """Register the review workflow with a plugin context or the global registry."""
+    if ctx is not None and hasattr(ctx, "register_workflow"):
+        ctx.register_workflow(_WORKFLOW_DEF)
+    else:
+        workflow_registry.register(_WORKFLOW_DEF)
+
+
+# Backward compatibility for direct imports.
+register()
