@@ -156,8 +156,8 @@ class Gateway:
         # 5. Mark running → process → cleanup
         self._running_agents[session_key] = True
         try:
-            from personal_agent.plugins.builtin.memory.provider import set_current_session
-            set_current_session(session_key)
+            if self.plugin_manager is not None:
+                await self.plugin_manager.invoke_hook("on_session_selected", session_key=session_key)
             return await self._handle_message_with_agent(event, session_key)
         finally:
             self._running_agents.pop(session_key, None)
@@ -172,7 +172,7 @@ class Gateway:
         history = await self._session_store.load_history(current_id)
         previous_count = len(history)
 
-        agent = self._get_or_create_agent(session_key)
+        agent = await self._get_or_create_agent(session_key)
 
         from personal_agent.agent.context import build_turn_context
         from personal_agent.agent.loop import run_conversation
@@ -209,7 +209,7 @@ class Gateway:
 
         return final or "..."
 
-    def _get_or_create_agent(self, session_key: str):
+    async def _get_or_create_agent(self, session_key: str):
         """Return cached Agent if available, otherwise create and cache."""
         if session_key in self._agent_cache:
             agent = self._agent_cache[session_key]
@@ -220,9 +220,9 @@ class Gateway:
             # Tools changed — evict stale cache entry
             del self._agent_cache[session_key]
 
-        return self._create_agent(session_key)
+        return await self._create_agent(session_key)
 
-    def _create_agent(self, session_key: str):
+    async def _create_agent(self, session_key: str):
         from personal_agent.agent.agent import init_agent
         from personal_agent.llm.provider import provider_registry
         from personal_agent.llm.transport_registry import transport_registry
@@ -275,13 +275,15 @@ class Gateway:
         )
         if self.plugin_manager is not None:
             self._wire_plugin_hooks(agent)
-        # Wire delegate subsystem (so delegate_task tool can call LLM)
-        from personal_agent.plugins.builtin.tools.builtin.delegate import setup_delegate
-        setup_delegate(
-            call_fn=transport.call,
-            tools=agent.tools,
-            max_tokens=provider.max_tokens,
-        )
+            await self.plugin_manager.invoke_hook(
+                "on_agent_created",
+                agent=agent,
+                transport=transport,
+                provider=provider,
+                call_fn=transport.call,
+                tools=agent.tools,
+                max_tokens=provider.max_tokens,
+            )
 
         # Wire workflow engine (so workflow_run tool can call LLM)
         from personal_agent.workflow.engine import setup_engine
@@ -459,7 +461,7 @@ class Gateway:
                 if content:
                     # Inject skill via agent field → TurnContext → api_messages
                     # NOT into ctx.messages (not persisted)
-                    agent = self._get_or_create_agent(session_key)
+                    agent = await self._get_or_create_agent(session_key)
                     agent._pending_skill_injection = (
                         f"[技能: {skill_name}]\n\n{content}"
                     )

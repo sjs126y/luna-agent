@@ -13,6 +13,15 @@ def _configure(settings=None, **kwargs) -> None:
     set_system_dir(settings.agent_data_dir / "system")
 
 
+def _set_current_session(session_key: str | None = None, **kwargs) -> None:
+    if not session_key:
+        return
+
+    from personal_agent.plugins.builtin.memory.provider import set_current_session
+
+    set_current_session(session_key)
+
+
 def register(ctx) -> None:
     from personal_agent.tools.registry import tool_registry
 
@@ -28,3 +37,4 @@ def register(ctx) -> None:
         ctx.register_tool(entry)
 
     ctx.register_hook("configure", _configure, priority=10)
+    ctx.register_hook("on_session_selected", _set_current_session, priority=10)

@@ -79,6 +79,19 @@ def _configure(settings=None, **kwargs) -> None:
     set_max_write_bytes(settings.file_max_write_bytes)
 
 
+def _setup_delegate(call_fn=None, tools=None, max_tokens: int | None = None, **kwargs) -> None:
+    if call_fn is None or tools is None:
+        return
+
+    from personal_agent.plugins.builtin.tools.builtin.delegate import setup_delegate
+
+    setup_delegate(
+        call_fn=call_fn,
+        tools=tools,
+        max_tokens=max_tokens or 4096,
+    )
+
+
 def register(ctx) -> None:
     from personal_agent.tools.registry import tool_registry
 
@@ -97,3 +110,4 @@ def register(ctx) -> None:
             ctx.register_tool(entry)
 
     ctx.register_hook("configure", _configure, priority=20)
+    ctx.register_hook("on_agent_created", _setup_delegate, priority=20)
