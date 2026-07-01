@@ -222,6 +222,16 @@ def test_builtin_manifests_are_discovered_from_project_plugins(tmp_path):
     assert telegram.manifest.path is not None
     assert "src/personal_agent/plugins/builtin/platforms/telegram" in telegram.manifest.path.as_posix()
 
+    memory_file = manager._plugins["memory/file"]
+    assert memory_file.manifest.entrypoint == "personal_agent.plugins.builtin.memory.file:register"
+    assert memory_file.manifest.path is not None
+    assert "src/personal_agent/plugins/builtin/memory/file" in memory_file.manifest.path.as_posix()
+
+    memory_embedding = manager._plugins["memory/embedding"]
+    assert memory_embedding.manifest.entrypoint == "personal_agent.plugins.builtin.memory.embedding:register"
+    assert memory_embedding.manifest.path is not None
+    assert "src/personal_agent/plugins/builtin/memory/embedding" in memory_embedding.manifest.path.as_posix()
+
     from personal_agent.plugins.builtin.skills.builtin import register as skills_register
 
     assert callable(skills_register)
@@ -285,6 +295,56 @@ async def test_builtin_memory_provider_is_created_by_hook(tmp_path):
 
     assert provider is not None
     assert provider.__class__.__name__ == "FileMemoryProvider"
+
+
+@pytest.mark.asyncio
+async def test_external_memory_provider_is_created_by_hook_and_removed_on_disable(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+    manager.load_plugin("memory/embedding")
+
+    provider = await manager.invoke_hook(
+        "create_external_memory_provider",
+        data_dir=tmp_path / "memory",
+        force=True,
+    )
+
+    assert provider is not None
+    assert provider.__class__.__name__ == "EmbeddingMemoryProvider"
+    assert "create_external_memory_provider" in manager.hooks
+
+    manager.disable_plugin("memory/embedding")
+    assert "create_external_memory_provider" not in manager.hooks
+    assert await manager.invoke_hook(
+        "create_external_memory_provider",
+        data_dir=tmp_path / "memory",
+        force=True,
+    ) is None
+
+
+def test_memory_provider_doctor_reports_registered_hooks(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+    manager.load_plugin("memory/file")
+    manager.load_plugin("memory/embedding")
+
+    file_report = manager.doctor_plugin("memory/file")
+    assert file_report["status"] == "LOADED"
+    assert file_report["registered"]["hooks"] == 3
+    assert file_report["registered_items"]["hooks"] == [
+        "configure:10",
+        "on_session_selected:10",
+        "create_builtin_memory_provider:10",
+    ]
+
+    embedding_report = manager.doctor_plugin("memory/embedding")
+    assert embedding_report["status"] == "LOADED"
+    assert embedding_report["registered"]["hooks"] == 1
+    assert embedding_report["registered_items"]["hooks"] == [
+        "create_external_memory_provider:10",
+    ]
 
 
 def test_wechat_plugin_registers_login_hook(tmp_path):

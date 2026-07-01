@@ -4,6 +4,8 @@
 
 > 架构借鉴 [hermes-agent](https://github.com/NiceLubin/hermes-agent)，飞书适配器、Gateway 调度、Agent 循环、消息压缩等核心模式来自 Hermes，在此基础上重新实现了完整的工具安全管线、统一沙箱、多 Agent 编排、CC 风格工作流引擎和 MCP 集成。
 
+插件目录结构和开发约定见 [插件系统文档](docs/plugins.md)。
+
 ## 快速开始
 
 ```bash
