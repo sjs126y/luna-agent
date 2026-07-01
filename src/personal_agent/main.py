@@ -11,11 +11,9 @@ from pathlib import Path
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
 from personal_agent.gateway.gateway import Gateway
-from personal_agent.plugins.builtin.memory.provider import FileMemoryProvider, set_system_dir
+from personal_agent.plugins.builtin.memory.provider import FileMemoryProvider
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.tools.sandbox import init_sandbox
-from personal_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_restrict_paths, set_work_dir as set_bash_work_dir
-from personal_agent.plugins.builtin.tools.builtin.file_write import set_max_write_bytes
 from personal_agent.tools.audit import set_audit_path
 
 logger = logging.getLogger("personal_agent")
@@ -100,6 +98,7 @@ async def boot() -> None:
     plugin_manager = PluginManager(settings)
     plugin_manager.discover()
     plugin_manager.load_enabled()
+    await plugin_manager.invoke_hook("configure", settings=settings)
 
     # ── 3.5. MCP servers ──────────────────────────
     mcp_manager = None
@@ -124,13 +123,8 @@ async def boot() -> None:
     db = Database(data_dir / "state.db")
     await db.initialize()
 
-    # ── 4.5. Profile routing ────────────────────────
-    from personal_agent.plugins.builtin.memory.provider import set_profile_map
-    set_profile_map(settings.profile_map)
-
     # ── 5. Memory ──────────────────────────────────────
     system_dir = data_dir / "system"
-    set_system_dir(system_dir)
     _ensure_system_files(system_dir)
     memory_store = FileMemoryProvider(system_dir)   # system prompt material
 
@@ -145,10 +139,6 @@ async def boot() -> None:
 
     # ── 6. Sandbox (unified — all file tools + bash) ──
     init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
-    set_allow_network(settings.bash_allow_network)
-    set_restrict_paths(settings.bash_restrict_paths)
-    set_bash_work_dir(settings.bash_work_dir)
-    set_max_write_bytes(settings.file_max_write_bytes)
     if settings.audit_enabled:
         set_audit_path(data_dir / "audit.log")
 

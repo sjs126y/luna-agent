@@ -62,6 +62,23 @@ def _ensure_module_entries(module_name: str, names: tuple[str, ...]) -> None:
     importlib.reload(module)
 
 
+def _configure(settings=None, **kwargs) -> None:
+    if settings is None:
+        return
+
+    from personal_agent.plugins.builtin.tools.builtin.bash import (
+        set_allow_network,
+        set_restrict_paths,
+        set_work_dir,
+    )
+    from personal_agent.plugins.builtin.tools.builtin.file_write import set_max_write_bytes
+
+    set_allow_network(settings.bash_allow_network)
+    set_restrict_paths(settings.bash_restrict_paths)
+    set_work_dir(settings.bash_work_dir)
+    set_max_write_bytes(settings.file_max_write_bytes)
+
+
 def register(ctx) -> None:
     from personal_agent.tools.registry import tool_registry
 
@@ -78,3 +95,5 @@ def register(ctx) -> None:
             if entry is None:
                 raise RuntimeError(f"Built-in tool did not register: {name}")
             ctx.register_tool(entry)
+
+    ctx.register_hook("configure", _configure, priority=20)
