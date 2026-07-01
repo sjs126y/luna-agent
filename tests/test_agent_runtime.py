@@ -1,5 +1,7 @@
 """Controlled multi-agent runtime."""
 
+import asyncio
+
 import pytest
 
 from personal_agent.agents.runtime import AgentRuntime, AgentSpec
@@ -110,3 +112,59 @@ async def test_agent_runtime_retries_schema_output():
     assert '"answer": "ok"' in run.result
     assert calls == 2
     assert run.usage == {"input_tokens": 3, "output_tokens": 4}
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_records_success_and_error_runs():
+    async def ok_call(messages, system_prompt, tools, max_tokens):
+        return NormalizedResponse(text="ok")
+
+    runtime = AgentRuntime(call_fn=ok_call, tools=[], max_tokens=100)
+    ok = await runtime.run("ok", AgentSpec(role="assistant"))
+
+    async def bad_call(messages, system_prompt, tools, max_tokens):
+        raise RuntimeError("boom")
+
+    runtime.call_fn = bad_call
+    bad = await runtime.run("bad", AgentSpec(role="assistant"))
+
+    runs = runtime.list_runs()
+    assert [run.run_id for run in runs] == [ok.run_id, bad.run_id]
+    assert [run.status for run in runs] == ["completed", "error"]
+    assert runtime.get_run(ok.run_id) is ok
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_records_uninitialized_and_caps_history():
+    runtime = AgentRuntime(history_limit=2)
+
+    first = await runtime.run("first", AgentSpec(role="assistant"))
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        return NormalizedResponse(text=messages[0]["content"][0]["text"])
+
+    runtime.call_fn = call_fn
+    second = await runtime.run("second", AgentSpec(role="assistant"))
+    third = await runtime.run("third", AgentSpec(role="assistant"))
+
+    assert first.status == "error"
+    assert [run.run_id for run in runtime.list_runs()] == [second.run_id, third.run_id]
+    assert runtime.get_run(first.run_id) is None
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_parallel_runs_keep_distinct_messages():
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        await asyncio.sleep(0)
+        return NormalizedResponse(text=messages[0]["content"][0]["text"])
+
+    runtime = AgentRuntime(call_fn=call_fn, tools=[], max_tokens=100)
+    first, second = await asyncio.gather(
+        runtime.run("one", AgentSpec(role="assistant")),
+        runtime.run("two", AgentSpec(role="assistant")),
+    )
+
+    assert first.messages is not second.messages
+    assert first.result == "one"
+    assert second.result == "two"
+    assert len(runtime.list_runs()) == 2

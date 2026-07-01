@@ -7,6 +7,7 @@ import json
 import re
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -83,10 +84,12 @@ class AgentRuntime:
         call_fn: Callable | None = None,
         tools: list[dict] | None = None,
         max_tokens: int = 4096,
+        history_limit: int = 100,
     ) -> None:
         self.call_fn = call_fn
         self.tools = tools or []
         self.max_tokens = max_tokens
+        self._runs: deque[AgentRun] = deque(maxlen=max(1, history_limit))
 
     async def run(
         self,
@@ -106,6 +109,7 @@ class AgentRuntime:
         if self.call_fn is None:
             run.status = "error"
             run.result = "Error: agent runtime is not initialized"
+            self._record_run(run)
             return run
 
         tools = self._select_tools(spec.tool_policy, allow_destructive=allow_destructive)
@@ -162,7 +166,26 @@ class AgentRuntime:
         finally:
             run.duration = time.monotonic() - started
             run.messages = messages
+            self._record_run(run)
         return run
+
+    def list_runs(self, *, limit: int | None = None) -> list[AgentRun]:
+        runs = list(self._runs)
+        if limit is not None:
+            return runs[-max(0, limit):]
+        return runs
+
+    def get_run(self, run_id: str) -> AgentRun | None:
+        for run in reversed(self._runs):
+            if run.run_id == run_id:
+                return run
+        return None
+
+    def clear_runs(self) -> None:
+        self._runs.clear()
+
+    def _record_run(self, run: AgentRun) -> None:
+        self._runs.append(run)
 
     def _select_tools(self, policy: str | list[str], *, allow_destructive: bool) -> list[dict]:
         if policy == "none":

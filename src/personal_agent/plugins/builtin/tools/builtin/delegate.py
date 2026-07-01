@@ -28,6 +28,14 @@ def setup_delegate(call_fn, tools, max_tokens=4096):
     _agent_runtime = AgentRuntime(call_fn=call_fn, tools=tools, max_tokens=max_tokens)
 
 
+def list_agent_runs(limit: int | None = None) -> list[dict]:
+    return [_agent_run_summary(run) for run in _agent_runtime.list_runs(limit=limit)]
+
+
+def get_agent_run(run_id: str):
+    return _agent_runtime.get_run(run_id)
+
+
 # Default: read-only tools a sub-agent always gets
 _READONLY_TOOLS = {
     "read", "grep", "glob", "web_search", "web_fetch",
@@ -226,6 +234,18 @@ def _format_agent_run(run) -> str:
 
 def _format_agent_result(run) -> str:
     return run.result
+
+
+def _agent_run_summary(run) -> dict:
+    return {
+        "run_id": run.run_id,
+        "parent_turn_id": run.parent_turn_id,
+        "status": run.status,
+        "duration": round(run.duration, 3),
+        "usage": dict(run.usage),
+        "tool_calls": len(run.tool_calls),
+        "result": run.result,
+    }
 
 
 tool_registry.register(ToolEntry(

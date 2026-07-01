@@ -298,6 +298,30 @@ async def test_sub_agent_accepts_allowed_tools_json_string():
     assert seen["tools"] == ["read", "write"]
 
 
+@pytest.mark.asyncio
+async def test_delegate_lists_agent_run_summaries():
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        _delegate_task,
+        list_agent_runs,
+        setup_delegate,
+    )
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        return NormalizedResponse(text="summary-ok", usage={"input_tokens": 1, "output_tokens": 2})
+
+    setup_delegate(call_fn, tools=[], max_tokens=100)
+
+    result = await _delegate_task("summarize")
+    runs = list_agent_runs()
+
+    assert "summary-ok" in result
+    assert len(runs) == 1
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["usage"] == {"input_tokens": 1, "output_tokens": 2}
+    assert runs[0]["tool_calls"] == 0
+
+
 # ── tools are registered ────────────────────────────────
 
 
