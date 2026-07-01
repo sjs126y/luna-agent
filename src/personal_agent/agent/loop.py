@@ -217,6 +217,7 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
     # Skills summaries: lightweight list of available skills (Tier 1)
     from personal_agent.skills.registry import skill_registry
     summaries = skill_registry.get_summaries()
+    agent._last_skill_summaries = summaries or ""
     if summaries:
         msgs.insert(0, {
             "role": "user",
@@ -232,12 +233,17 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
         ctx.skill_injection = None  # consumed — won't inject again this turn
 
     # Memory prefetch: external provider results injected as prefix
+    memory_injections = []
     if agent._memory_manager:
         try:
+            from personal_agent.context_budget import message_text
+
             prefetched = await agent._memory_manager.prefetch(ctx.original_user_message)
             for p in prefetched:
                 msgs.insert(0, p)
+                memory_injections.append(message_text(p))
         except Exception:
             pass  # prefetch failure never blocks the turn
+    agent._last_memory_injections = "\n".join(text for text in memory_injections if text)
 
     return msgs

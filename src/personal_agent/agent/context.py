@@ -49,6 +49,9 @@ async def build_turn_context(
     agent._tool_calls_this_turn = 0
     agent._destructive_calls_this_turn = 0
     agent._destructive_allowed.clear()
+    agent._last_skill_injection = ""
+    agent._last_skill_summaries = ""
+    agent._last_memory_injections = ""
 
     # Refresh tools (if registry changed)
     from personal_agent.agent.agent import _refresh_tools, _build_system_prompt
@@ -84,6 +87,7 @@ async def build_turn_context(
     skill_injection = None
     if agent._pending_skill_injection:
         skill_injection = agent._pending_skill_injection
+        agent._last_skill_injection = skill_injection
         agent._pending_skill_injection = None  # consumed, won't leak to next turn
 
     turn_id = f"{uuid.uuid4().hex[:8]}"

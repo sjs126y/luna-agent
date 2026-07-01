@@ -54,6 +54,9 @@ class Agent:
     _destructive_calls_this_turn: int = 0
     _max_destructive_per_turn: int = 3
     _pending_skill_injection: str | None = None  # set by Gateway, consumed by context
+    _last_skill_injection: str = ""
+    _last_skill_summaries: str = ""
+    _last_memory_injections: str = ""
 
     # ── memory review (Hermes-style background nudge) ──
     _turns_since_memory: int = 0

@@ -385,21 +385,28 @@ class Gateway:
             agent = self._agent_cache.get(session_key)
             if agent is None:
                 return "暂无会话数据。"
-            from personal_agent.context_budget import estimate_context_budget
-            from personal_agent.skills.registry import skill_registry
-            model = agent._provider.model if agent._provider else ""
-            ctx_win = agent._provider.context_window if agent._provider and agent._provider.context_window else 64_000
+            from personal_agent.context_budget import build_context_budget
             session = await self._session_store.get_or_create(session_key, event.source)
             current_id = self._compression_chain.resolve(session.session_id)
             history = await self._session_store.load_history(current_id)
-            budget = estimate_context_budget(
+            budget = await build_context_budget(
                 messages=history,
-                system_prompt=agent._cached_system_prompt or "",
-                tools=agent.tools,
-                skills_summary=skill_registry.get_summaries(),
-                context_limit=ctx_win,
-                model=model,
+                agent=agent,
+                settings=self.config,
+                skills_summary="\n".join(
+                    part for part in (
+                        getattr(agent, "_last_skill_summaries", ""),
+                        getattr(agent, "_last_skill_injection", ""),
+                    )
+                    if part
+                ),
+                memory_injections=getattr(agent, "_last_memory_injections", ""),
+                current_user_message=event.text,
             )
+            threshold_line = ""
+            if budget.compression_threshold:
+                marker = "，已达到" if budget.over_compression_threshold else ""
+                threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
             return (
                 f"📊 会话用量\n"
                 f"API 调用: {agent.session_api_calls} 次\n"
@@ -414,6 +421,7 @@ class Gateway:
                 f"  memory injections: {budget.memory_injections:,}\n"
                 f"  MCP tools: {budget.mcp_tools:,}\n"
                 f"剩余: {budget.remaining_context:,} tokens\n"
+                f"{threshold_line}"
                 f"\n🔧 本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
             )
 

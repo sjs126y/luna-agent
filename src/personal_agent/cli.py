@@ -11,7 +11,7 @@ from typing import Any, Optional
 import typer
 
 from personal_agent.config import Settings
-from personal_agent.context_budget import estimate_context_budget
+from personal_agent.context_budget import build_context_budget
 from personal_agent.main import _run_cli, boot
 from personal_agent.plugins.manager import PluginManager
 
@@ -123,19 +123,39 @@ def tokens_session(
     context_limit: int = typer.Option(0, help="Context limit override."),
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
-    messages: list[dict] = []
-    if session_json is not None:
-        messages = json.loads(session_json.read_text(encoding="utf-8"))
-    budget = estimate_context_budget(
-        messages=messages,
-        model=model,
-        context_limit=context_limit,
-    )
-    data = budget.as_dict()
-    if json_output:
-        typer.echo(json.dumps(data, indent=2, ensure_ascii=False))
-    else:
-        typer.echo(format_token_budget(data))
+    async def _run() -> None:
+        settings = Settings()
+        manager = _plugin_manager(settings)
+        manager.load_enabled()
+
+        from personal_agent.llm.provider import _detect_context_window
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.tools.registry import tool_registry
+
+        messages: list[dict] = []
+        if session_json is not None:
+            messages.extend(json.loads(session_json.read_text(encoding="utf-8")))
+
+        effective_model = model or settings.llm_model
+        effective_limit = context_limit or _detect_context_window(effective_model)
+        budget = await build_context_budget(
+            messages=messages,
+            settings=settings,
+            model=effective_model,
+            context_limit=effective_limit,
+            tools=tool_registry.get_definitions(
+                enabled_toolsets=settings.enabled_toolsets,
+                quiet_mode=True,
+            ),
+            skills_summary=skill_registry.get_summaries(),
+        )
+        data = budget.as_dict()
+        if json_output:
+            typer.echo(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            typer.echo(format_token_budget(data))
+
+    asyncio.run(_run())
 
 
 @agents_app.command("run")
@@ -309,7 +329,7 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
 
 
 def format_token_budget(data: dict[str, Any]) -> str:
-    return "\n".join([
+    lines = [
         "上下文预算估算",
         f"已用: {data['used']:,} / {data['context_limit']:,} tokens ({data['percent']}%)",
         f"剩余: {data['remaining_context']:,}",
@@ -319,7 +339,11 @@ def format_token_budget(data: dict[str, Any]) -> str:
         f"skills: {data['skills']:,}",
         f"memory injections: {data['memory_injections']:,}",
         f"MCP tools: {data['mcp_tools']:,}",
-    ])
+    ]
+    if data.get("compression_threshold"):
+        marker = " (已达到)" if data.get("over_compression_threshold") else ""
+        lines.append(f"compression threshold: {data['compression_threshold']:,}{marker}")
+    return "\n".join(lines)
 
 
 def _registration_summary(counts: dict[str, int]) -> str:
