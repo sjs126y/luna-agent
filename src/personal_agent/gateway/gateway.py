@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections import OrderedDict
 
 from personal_agent.adapters.base import platform_registry
@@ -223,102 +222,21 @@ class Gateway:
         return await self._create_agent(session_key)
 
     async def _create_agent(self, session_key: str):
-        from personal_agent.agent.agent import init_agent
-        from personal_agent.llm.provider import provider_registry
-        from personal_agent.llm.transport_registry import transport_registry
-        from personal_agent.compression.simple import ContextCompressor
+        from personal_agent.agent.factory import create_agent_runtime
 
-        # Resolve provider via registry
-        provider_name = self.config.llm_provider
-        provider = provider_registry.get(provider_name, self.config)
-
-        # Detect api_mode and get transport
-        api_mode = provider_registry.detect_api_mode(
-            self.config.llm_base_url, provider_name
-        )
-        transport = transport_registry.get(api_mode, provider)
-        logger.debug("Agent transport: provider=%s api_mode=%s", provider_name, api_mode)
-
-        # Compressor: optionally use a separate cheap model for compression
-        compressor = None
-        if self.config.compressor_engine in ("simple", "compressor"):
-            compressor_transport = None
-            if self.config.compressor_model:
-                from personal_agent.llm.provider import ProviderProfile
-                comp_provider = ProviderProfile(
-                    name="compressor",
-                    base_url=self.config.llm_base_url,
-                    api_key=self.config.llm_api_key,
-                    model=self.config.compressor_model,
-                    max_tokens=512,
-                )
-                compressor_transport = transport_registry.get(api_mode, comp_provider)
-
-            compressor = ContextCompressor(
-                context_length=provider.context_window or 64_000,
-                threshold_ratio=self.config.compression_threshold_ratio,
-                tail_token_budget=self.config.tail_token_budget,
-                max_summary_tokens=self.config.compressor_max_tokens,
-                compressor_transport=compressor_transport,
-                model=provider.model or "",
-            )
-
-        agent = init_agent(
-            transport, provider,
+        runtime = await create_agent_runtime(
+            self.config,
             memory_manager=self._memory_manager,
-            compressor=compressor,
-            max_iterations=self.config.max_iterations,
-            max_tool_calls_per_turn=self.config.max_tool_calls_per_turn,
-            memory_review_interval=self.config.memory_review_interval,
+            plugin_manager=self.plugin_manager,
             system_prompt_template=self._system_prompt_template,
-            enabled_toolsets=self.config.enabled_toolsets,
         )
-        if self.plugin_manager is not None:
-            self._wire_plugin_hooks(agent)
-            await self.plugin_manager.invoke_hook(
-                "on_agent_created",
-                agent=agent,
-                transport=transport,
-                provider=provider,
-                call_fn=transport.call,
-                tools=agent.tools,
-                max_tokens=provider.max_tokens,
-            )
-
-        # Wire workflow engine (so workflow_run tool can call LLM)
-        from personal_agent.workflow.engine import setup_engine
-        setup_engine(
-            call_fn=transport.call,
-            tools=agent.tools,
-            max_tokens=provider.max_tokens,
-        )
+        agent = runtime.agent
 
         # LRU eviction if cache too large
         if len(self._agent_cache) >= 128:
-            from collections import OrderedDict
             self._agent_cache.popitem(last=False)
         self._agent_cache[session_key] = agent
         return agent
-
-    def _wire_plugin_hooks(self, agent) -> None:
-        async def _before_llm(messages, system_prompt, tools):
-            return await self.plugin_manager.invoke_hook(
-                "on_before_llm_call", messages, system_prompt, tools
-            )
-
-        async def _after_llm(response, usage):
-            return await self.plugin_manager.invoke_hook("on_after_llm_call", response, usage)
-
-        async def _before_tool(tool_call, agent_obj):
-            return await self.plugin_manager.invoke_hook("on_before_tool_exec", tool_call, agent_obj)
-
-        async def _after_tool(tool_call, result):
-            return await self.plugin_manager.invoke_hook("on_after_tool_exec", tool_call, result)
-
-        agent.hooks.on_before_llm_call.append(_before_llm)
-        agent.hooks.on_after_llm_call.append(_after_llm)
-        agent.hooks.on_before_tool_exec.append(_before_tool)
-        agent.hooks.on_after_tool_exec.append(_after_tool)
 
 
     # ── commands ──────────────────────────────────────
@@ -355,7 +273,7 @@ class Gateway:
             return f"会话已切换: {new_key}"
 
         if text.startswith("/new"):
-            await self._session_store.reset_session(session_key)
+            await self._session_store.reset_session(session_key, event.source)
             return "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
 
         if text.startswith("/allow"):

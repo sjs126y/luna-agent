@@ -35,6 +35,32 @@ def test_plugins_list_json_command():
     assert any(plugin["key"] == "builtin/tools" for plugin in data)
 
 
+def test_chat_positional_message_runs_once(monkeypatch):
+    calls = []
+
+    def fake_once(message, *, session_name="default"):
+        calls.append((message, session_name))
+
+    monkeypatch.setattr("personal_agent.cli.run_cli_once_sync", fake_once)
+    result = runner.invoke(app, ["chat", "你好", "--session", "work"])
+
+    assert result.exit_code == 0
+    assert calls == [("你好", "work")]
+
+
+def test_chat_once_option_runs_once(monkeypatch):
+    calls = []
+
+    def fake_once(message, *, session_name="default"):
+        calls.append((message, session_name))
+
+    monkeypatch.setattr("personal_agent.cli.run_cli_once_sync", fake_once)
+    result = runner.invoke(app, ["chat", "--once", "你好"])
+
+    assert result.exit_code == 0
+    assert calls == [("你好", "default")]
+
+
 def test_plugins_info_command_shows_registered_items():
     result = runner.invoke(app, ["plugins", "info", "builtin/skills", "--load"])
 

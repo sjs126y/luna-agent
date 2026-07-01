@@ -12,7 +12,8 @@ import typer
 
 from personal_agent.config import Settings
 from personal_agent.context_budget import build_context_budget
-from personal_agent.main import _run_cli, boot
+from personal_agent.cli_chat import run_cli_once_sync, run_cli_repl_sync
+from personal_agent.main import boot
 from personal_agent.plugins.manager import PluginManager
 
 app = typer.Typer(help="Personal Agent")
@@ -26,9 +27,17 @@ app.add_typer(agents_app, name="agents")
 
 
 @app.command()
-def chat(message: str = typer.Argument("Hello")) -> None:
-    """Run one debug chat turn."""
-    _run_cli(message)
+def chat(
+    message: str = typer.Argument("", help="可选：只运行一轮消息后退出。"),
+    once: str = typer.Option("", "--once", "-o", help="只运行一轮消息后退出。"),
+    session: str = typer.Option("default", "--session", "-s", help="CLI 会话名。"),
+) -> None:
+    """Interactive multi-turn chat loop."""
+    one_shot = once or message
+    if one_shot:
+        run_cli_once_sync(one_shot, session_name=session)
+    else:
+        run_cli_repl_sync(session_name=session)
 
 
 @app.command()

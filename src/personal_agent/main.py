@@ -293,67 +293,10 @@ def _run_ingest(file_path: str) -> None:
 
 
 def _run_cli(message: str) -> None:
-    """Interactive CLI mode for debugging without a platform."""
-    import asyncio
-    from personal_agent.agent.agent import init_agent
-    from personal_agent.agent.context import build_turn_context
-    from personal_agent.agent.loop import run_conversation
-    from personal_agent.compression.simple import ContextCompressor
-    from personal_agent.memory.manager import MemoryManager
+    """Compatibility one-shot CLI entry."""
+    from personal_agent.cli_chat import run_cli_once_sync
 
-    async def _run():
-        from personal_agent.trace import trace_id, set_trace
-        token = set_trace("cli")
-        try:
-            return await _run_cli_inner()
-        finally:
-            trace_id.reset(token)
-
-    async def _run_cli_inner():
-        settings = Settings()
-        from personal_agent.plugins.manager import PluginManager
-        plugin_manager = PluginManager(settings)
-        plugin_manager.discover()
-        plugin_manager.load_enabled()
-        await plugin_manager.invoke_hook("configure", settings=settings)
-
-        from personal_agent.llm.provider import provider_registry
-        from personal_agent.llm.transport_registry import transport_registry
-        provider = provider_registry.get(settings.llm_provider, settings)
-        api_mode = provider_registry.detect_api_mode(settings.llm_base_url, settings.llm_provider)
-        transport = transport_registry.get(api_mode, provider)
-        system_dir = settings.agent_data_dir / "system"
-        _ensure_system_files(system_dir)
-        memory = await plugin_manager.invoke_hook(
-            "create_builtin_memory_provider",
-            system_dir=system_dir,
-        )
-        if memory is None:
-            raise RuntimeError("No built-in memory provider registered")
-        memory_manager = MemoryManager(builtin=memory)
-        agent = init_agent(transport, provider, memory_manager=memory_manager,
-                          compressor=ContextCompressor(), max_iterations=settings.max_iterations,
-                          max_tool_calls_per_turn=settings.max_tool_calls_per_turn,
-                          enabled_toolsets=settings.enabled_toolsets,
-                          system_prompt_template='你是一个智能助手。优先使用工具获取实时信息和执行操作，不要凭记忆编造。用中文回复。')
-        await plugin_manager.invoke_hook(
-            "on_agent_created",
-            agent=agent,
-            transport=transport,
-            provider=provider,
-            call_fn=transport.call,
-            tools=agent.tools,
-            max_tokens=provider.max_tokens,
-        )
-
-        ctx = await build_turn_context(agent, message)
-        result = await run_conversation(agent, ctx)
-        # Use sys.stdout with encoding fix for Windows console
-        import sys
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        print(result["final_response"])
-
-    asyncio.run(_run())
+    run_cli_once_sync(message)
 
 
 if __name__ == "__main__":
