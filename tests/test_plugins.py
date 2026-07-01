@@ -118,6 +118,44 @@ enabled_by_default: true
     assert "Missing required env" in (plugin.error or "")
 
 
+def test_plugin_doctor_reports_traceback_and_registered_items(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "broken"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/broken
+name: Broken Plugin
+version: 1.0.0
+entrypoint: broken_plugin:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "broken_plugin.py").write_text(
+        """
+def register(ctx):
+    raise RuntimeError("doctor boom")
+""".strip(),
+        encoding="utf-8",
+    )
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    plugin = manager.load_plugin("user/broken")
+    report = manager.doctor_plugin(plugin.key)
+
+    assert report["status"] == "ERROR"
+    assert report["entrypoint_importable"] is True
+    assert "RuntimeError: doctor boom" in report["error"]
+    assert "RuntimeError: doctor boom" in report["error_traceback"]
+    assert report["registered_items"]["tools"] == []
+
+
 def test_duplicate_plugin_key_marks_existing_error(tmp_path):
     plugins_dir = tmp_path / "plugins"
     for name in ("one", "two"):

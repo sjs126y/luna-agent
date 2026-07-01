@@ -215,10 +215,12 @@ class PluginManager:
         if missing_env:
             plugin.status = PluginStatus.ERROR
             plugin.error = f"Missing required env: {', '.join(missing_env)}"
+            plugin.error_traceback = None
             return plugin
 
         plugin.status = PluginStatus.LOADING
         plugin.error = None
+        plugin.error_traceback = None
         plugin.ctx = PluginContext(self, plugin)
         before = self._registry_snapshot()
         try:
@@ -238,6 +240,7 @@ class PluginManager:
         except Exception as exc:
             plugin.status = PluginStatus.ERROR
             plugin.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+            plugin.error_traceback = traceback.format_exc()
             logger.exception("Plugin '%s' failed to load", key)
         return plugin
 
@@ -271,6 +274,8 @@ class PluginManager:
         plugin.middleware_registered.clear()
         plugin.module = None
         plugin.ctx = None
+        plugin.error = None
+        plugin.error_traceback = None
         plugin.status = PluginStatus.DISABLED if not plugin.enabled else PluginStatus.DISCOVERED
         return plugin
 
@@ -366,10 +371,16 @@ class PluginManager:
             self.discover()
         plugin = self._plugins[key]
         missing_env = self._missing_env(plugin.manifest)
+        entrypoint_ok, entrypoint_error = self._check_entrypoint(plugin.manifest)
         return {
             "key": plugin.key,
             "name": plugin.manifest.name,
             "version": plugin.manifest.version,
+            "description": plugin.manifest.description,
+            "kind": plugin.manifest.kind,
+            "entrypoint": plugin.manifest.entrypoint,
+            "provides": plugin.manifest.provides,
+            "enabled_by_default": plugin.manifest.enabled_by_default,
             "enabled": plugin.enabled,
             "status": plugin.status.value,
             "deferred": plugin.deferred,
@@ -377,8 +388,12 @@ class PluginManager:
             "path": str(plugin.manifest.path) if plugin.manifest.path else "",
             "requires_env": plugin.manifest.requires_env,
             "missing_env": missing_env,
+            "entrypoint_importable": entrypoint_ok,
+            "entrypoint_error": entrypoint_error,
             "error": plugin.error or "",
+            "error_traceback": plugin.error_traceback or "",
             "registered": plugin.registration_counts(),
+            "registered_items": self._registered_items(plugin),
         }
 
     def _add_manifest(self, manifest: PluginManifest) -> None:
@@ -508,6 +523,31 @@ class PluginManager:
         module = importlib.import_module(module_name)
         fn = getattr(module, func_name) if func_name else None
         return module, fn
+
+    def _check_entrypoint(self, manifest: PluginManifest) -> tuple[bool, str]:
+        try:
+            module, fn = self._import_entrypoint(manifest)
+            if ":" in manifest.entrypoint and fn is None:
+                return False, f"Entrypoint function not found: {manifest.entrypoint}"
+            if fn is not None and not callable(fn):
+                return False, f"Entrypoint is not callable: {manifest.entrypoint}"
+            if fn is None and not hasattr(module, "register"):
+                return False, "Module has no register() function"
+            return True, ""
+        except Exception as exc:
+            return False, "".join(traceback.format_exception_only(type(exc), exc)).strip()
+
+    def _registered_items(self, plugin: LoadedPlugin) -> dict[str, list[str]]:
+        return {
+            "tools": list(plugin.tools_registered),
+            "skills": list(plugin.skills_registered),
+            "workflows": list(plugin.workflows_registered),
+            "platforms": list(plugin.platforms_registered),
+            "mcp_servers": list(plugin.mcp_servers_registered),
+            "hooks": list(plugin.hooks_registered),
+            "commands": list(plugin.commands_registered),
+            "middleware": list(plugin.middleware_registered),
+        }
 
     def _registry_snapshot(self) -> dict[str, set[str]]:
         from personal_agent.adapters.base import platform_registry

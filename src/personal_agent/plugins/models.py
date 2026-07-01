@@ -99,6 +99,7 @@ class LoadedPlugin:
     module: Any | None = None
     ctx: Any | None = None
     error: str | None = None
+    error_traceback: str | None = None
     deferred: bool = False
     enabled: bool = False
     tools_registered: list[str] = field(default_factory=list)

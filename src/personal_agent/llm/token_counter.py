@@ -104,6 +104,23 @@ def estimate_tokens(text: str, model: str = "") -> int:
     return len(enc.encode(text, disallowed_special=()))  # type: ignore[union-attr]
 
 
+def tokenizer_status() -> dict:
+    """Return tokenizer health for CLI/doctor diagnostics."""
+    cached = {
+        name: {
+            "available": enc is not None,
+            "fallback": enc is None,
+        }
+        for name, enc in sorted(_encodings.items())
+    }
+    return {
+        "tiktoken_available": _tiktoken_available,
+        "fallback_active": (not _tiktoken_available) or any(enc is None for enc in _encodings.values()),
+        "default_encoding": "cl100k_base",
+        "cached_encodings": cached,
+    }
+
+
 def count_messages_tokens(
     messages: list[dict],
     system_prompt: str = "",
