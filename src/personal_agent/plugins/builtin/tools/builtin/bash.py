@@ -327,6 +327,11 @@ async def _bash(command: str, timeout: int = 30) -> str:
         return f"Error: {e}"
 
 
+def _precheck(input_: dict) -> str | None:
+    command = input_.get("command", "")
+    return _check_command(command) if command else None
+
+
 tool_registry.register(ToolEntry(
     name="bash",
     description="Execute a shell command in a restricted sandbox. "
@@ -342,6 +347,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_bash,
     toolset="builtin",
+    precheck=_precheck,
     is_parallel_safe=False,
     is_destructive=False,  # whitelist constrains safety
 ))

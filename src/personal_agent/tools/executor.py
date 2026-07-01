@@ -205,35 +205,13 @@ def _pre_check(tc: dict, entry) -> str | None:
     name = tc["name"]
     inp = tc.get("input", {})
 
-    # ── bash: hard blacklist + whitelist + dangerous patterns + chaining + network ──
-    if name == "bash":
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
-        cmd = inp.get("command", "")
-        if cmd:
-            err = _check_command(cmd)
-            if err:
-                return err
-
-    # ── write: extension whitelist + sandbox path check ──
-    elif name == "write":
-        path = inp.get("path", "")
-        if path:
-            from personal_agent.plugins.builtin.tools.builtin.file_write import _check_extension
-            from personal_agent.tools.sandbox import get_sandbox
-            ext_err = _check_extension(path)
-            if ext_err:
-                return ext_err
-            full = get_sandbox().resolve(path)
-            sandbox_err = get_sandbox().check_path(full)
-            if sandbox_err:
-                return sandbox_err
-            content = inp.get("content", "")
-            from personal_agent.plugins.builtin.tools.builtin.file_write import _MAX_WRITE_BYTES
-            if len(content) > _MAX_WRITE_BYTES:
-                return f"Error: content too large ({len(content)} bytes, max {_MAX_WRITE_BYTES})"
+    if entry.precheck is not None:
+        error = entry.precheck(inp)
+        if error:
+            return error
 
     # ── edit: sandbox path check ──
-    elif name == "edit":
+    if name == "edit":
         path = inp.get("path", "")
         if path:
             from personal_agent.tools.sandbox import get_sandbox

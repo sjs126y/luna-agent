@@ -66,6 +66,23 @@ async def _file_write(path: str, content: str) -> str:
         return f"Error: {e}"
 
 
+def _precheck(input_: dict) -> str | None:
+    path = input_.get("path", "")
+    if path:
+        ext_error = _check_extension(path)
+        if ext_error:
+            return ext_error
+        full = get_sandbox().resolve(path)
+        sandbox_error = get_sandbox().check_path(full)
+        if sandbox_error:
+            return sandbox_error
+
+    content = input_.get("content", "")
+    if len(content) > _MAX_WRITE_BYTES:
+        return f"Error: content too large ({len(content)} bytes, max {_MAX_WRITE_BYTES})"
+    return None
+
+
 tool_registry.register(ToolEntry(
     name="write",
     description="Write content to a file in the agent's allowed directories. "
@@ -80,6 +97,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_file_write,
     toolset="builtin",
+    precheck=_precheck,
     is_parallel_safe=False,
     is_destructive=True,
 ))
