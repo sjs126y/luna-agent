@@ -1,0 +1,173 @@
+"""Shared slash command service."""
+
+from __future__ import annotations
+
+import pytest
+
+from personal_agent.commands.runtime import handle_slash_command
+from personal_agent.config import Settings
+from personal_agent.models.messages import SessionSource
+from personal_agent.plugins.models import CommandEntry
+
+
+class Agent:
+    session_api_calls = 2
+    session_prompt_tokens = 10
+    session_completion_tokens = 5
+    _last_skill_summaries = ""
+    _last_skill_injection = ""
+    _last_memory_injections = ""
+    _tool_calls_this_turn = 0
+    _max_tool_calls_per_turn = 20
+    _destructive_allowed: set[str]
+    _interrupt_requested = False
+    _cached_system_prompt = "system"
+    tools = []
+    model = "deepseek-chat"
+    _memory_manager = None
+
+    class Provider:
+        model = "deepseek-chat"
+        context_window = 1000
+
+    _provider = Provider()
+
+    def __init__(self):
+        self._destructive_allowed = set()
+
+
+class PluginManager:
+    def __init__(self):
+        self.commands = {}
+
+    def get_command(self, name, *, scope="slash"):
+        return self.commands.get(name)
+
+    async def execute_command(self, name, **kwargs):
+        value = self.commands[name].handler(**kwargs)
+        if hasattr(value, "__await__"):
+            value = await value
+        return value
+
+
+class Runtime:
+    def __init__(self, tmp_path):
+        self.settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+        self.plugin_manager = PluginManager()
+        self._session_key = "cli:default:local"
+        self.source = SessionSource(platform="cli", user_id="local", chat_id="default")
+        self.agent = Agent()
+        self.reset_called = False
+        self.clear_called = False
+        self.switched_to = ""
+        self.exported = False
+
+    @property
+    def session_key(self):
+        return self._session_key
+
+    async def get_agent(self):
+        return self.agent
+
+    async def reset_session(self):
+        self.reset_called = True
+
+    async def switch_session(self, name: str):
+        self.switched_to = name
+        self._session_key = f"cli:{name}:local"
+        return f"会话已切换: {self._session_key}"
+
+    async def list_sessions(self):
+        return f"当前会话: {self._session_key}"
+
+    async def load_history(self):
+        return [{
+            "role": "user",
+            "content": [{"type": "text", "text": "hello"}],
+        }]
+
+    async def export_session(self):
+        self.exported = True
+        return 1, "/tmp/export.jsonl"
+
+    async def clear_agent(self):
+        self.clear_called = True
+
+    def plugin_command_kwargs(self, args: str):
+        return {
+            "args": args,
+            "runtime": self,
+            "session_key": self.session_key,
+        }
+
+
+@pytest.mark.asyncio
+async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/new")
+    assert result.handled
+    assert runtime.reset_called
+    assert runtime.clear_called
+
+    result = await handle_slash_command(runtime, "/session work")
+    assert result.response == "会话已切换: cli:work:local"
+
+    result = await handle_slash_command(runtime, "/session list")
+    assert "当前会话: cli:work:local" in result.response
+
+    result = await handle_slash_command(runtime, "/usage")
+    assert "上下文窗口" in result.response
+
+    result = await handle_slash_command(runtime, "/export")
+    assert "已导出 1 条对话" in result.response
+    assert runtime.exported
+
+    result = await handle_slash_command(runtime, "/allow write")
+    assert "已授权 write" in result.response
+    assert "write" in runtime.agent._destructive_allowed
+
+
+@pytest.mark.asyncio
+async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypatch):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/stop")
+    assert result.response == "已停止。"
+    assert runtime.agent._interrupt_requested
+
+    async def plugin_handler(args="", **kwargs):
+        return f"plugin:{args}:{kwargs['session_key']}"
+
+    runtime.plugin_manager.commands["demo"] = CommandEntry(
+        name="demo",
+        description="demo",
+        handler=plugin_handler,
+    )
+    result = await handle_slash_command(runtime, "/demo hi")
+    assert result.response == "plugin:hi:cli:default:local"
+
+    from personal_agent.skills.registry import skill_registry
+
+    original_load = skill_registry.load
+    monkeypatch.setattr(skill_registry, "load", lambda name: "skill body")
+    try:
+        result = await handle_slash_command(runtime, "/python-expert fix it")
+    finally:
+        monkeypatch.setattr(skill_registry, "load", original_load)
+    assert result.continue_text == "fix it"
+    assert "[技能: python-expert]" in runtime.agent._pending_skill_injection
+
+    monkeypatch.setattr(skill_registry, "load", lambda name: "")
+    result = await handle_slash_command(runtime, "/unknown")
+    assert not result.handled
+
+
+@pytest.mark.asyncio
+async def test_shared_command_uses_exact_command_names(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/newsletter")
+
+    assert not result.handled
+    assert not runtime.reset_called

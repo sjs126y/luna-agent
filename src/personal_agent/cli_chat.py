@@ -132,11 +132,13 @@ class CliChatRuntime:
         self.agent_cache[key] = runtime.agent
         return runtime.agent
 
-    async def reset_current_session(self) -> str:
+    async def reset_session(self) -> str:
         await self.session_store.reset_session(self.session_key, self.source)
+        return "会话已重置。开始新的对话吧。"
+
+    async def clear_agent(self) -> None:
         assert self.agent_cache is not None
         self.agent_cache.pop(self.session_key, None)
-        return "会话已重置。开始新的对话吧。"
 
     async def switch_session(self, name: str) -> str:
         self.session_name = _clean_session_name(name)
@@ -153,51 +155,15 @@ class CliChatRuntime:
             lines.append("  无")
         return "\n".join(lines)
 
-    async def usage(self, current_user_message: str = "") -> str:
-        agent = await self.get_or_create_agent()
+    async def get_agent(self):
+        return await self.get_or_create_agent()
+
+    async def load_history(self) -> list[dict]:
         session = await self.session_store.get_or_create(self.session_key, self.source)
         current_id = self.compression_chain.resolve(session.session_id)
-        history = await self.session_store.load_history(current_id)
+        return await self.session_store.load_history(current_id)
 
-        from personal_agent.context_budget import build_context_budget
-
-        budget = await build_context_budget(
-            messages=history,
-            agent=agent,
-            settings=self.settings,
-            skills_summary="\n".join(
-                part for part in (
-                    getattr(agent, "_last_skill_summaries", ""),
-                    getattr(agent, "_last_skill_injection", ""),
-                )
-                if part
-            ),
-            memory_injections=getattr(agent, "_last_memory_injections", ""),
-            current_user_message=current_user_message,
-        )
-        threshold_line = ""
-        if budget.compression_threshold:
-            marker = "，已达到" if budget.over_compression_threshold else ""
-            threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
-        return (
-            f"会话用量\n"
-            f"API 调用: {agent.session_api_calls} 次\n"
-            f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
-            f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
-            f"\n上下文窗口 (估算)\n"
-            f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
-            f"  system prompt: {budget.system_prompt:,}\n"
-            f"  history messages: {budget.history_messages:,}\n"
-            f"  tools schema: {budget.tools_schema:,}\n"
-            f"  skills: {budget.skills:,}\n"
-            f"  memory injections: {budget.memory_injections:,}\n"
-            f"  MCP tools: {budget.mcp_tools:,}\n"
-            f"剩余: {budget.remaining_context:,} tokens\n"
-            f"{threshold_line}"
-            f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
-        )
-
-    async def export_current_session(self) -> str:
+    async def export_session(self) -> tuple[int, str]:
         session = await self.session_store.get_or_create(self.session_key, self.source)
         current_id = self.compression_chain.resolve(session.session_id)
         export_path = (
@@ -206,17 +172,9 @@ class CliChatRuntime:
             / f"{self.session_key.replace(':', '_')}.jsonl"
         )
         count = await self.session_store.export(current_id, str(export_path))
-        return f"已导出 {count} 条对话 -> {export_path}"
+        return count, str(export_path)
 
-    async def allow(self, category: str) -> str:
-        valid = {"write", "bash", "all"}
-        if category not in valid:
-            return f"用法: /allow [write|bash|all]，当前有效类别: {', '.join(sorted(valid))}"
-        agent = await self.get_or_create_agent()
-        agent._destructive_allowed.add(category)
-        return f"已授权 {category} 操作，本轮对话内有效。"
-
-    async def stop(self) -> str:
+    async def stop_agents(self) -> str:
         assert self.agent_cache is not None
         for agent in self.agent_cache.values():
             if hasattr(agent, "_interrupt_requested"):
@@ -226,71 +184,22 @@ class CliChatRuntime:
         set_interrupted()
         return "已停止。"
 
+    def plugin_command_kwargs(self, args: str) -> dict:
+        return {
+            "args": args,
+            "runtime": self,
+            "session_key": self.session_key,
+        }
+
     async def handle_command(self, text: str) -> str | None:
-        text = text.strip()
-        if not text.startswith("/"):
+        from personal_agent.commands.runtime import handle_slash_command
+
+        result = await handle_slash_command(self, text)
+        if not result.handled:
             return None
-
-        if text.startswith("/new"):
-            return await self.reset_current_session()
-
-        if text.startswith("/session"):
-            parts = text.split()
-            if len(parts) < 2 or parts[1] == "list":
-                return await self.list_sessions()
-            return await self.switch_session(parts[1])
-
-        if text.startswith("/usage"):
-            return await self.usage(current_user_message=text)
-
-        if text.startswith("/export"):
-            return await self.export_current_session()
-
-        if text.startswith("/allow"):
-            parts = text.split()
-            return await self.allow(parts[1] if len(parts) > 1 else "write")
-
-        if text.startswith("/stop"):
-            return await self.stop()
-
-        if text.startswith("/help"):
-            return _help_text()
-
-        command_name = text[1:].split()[0]
-        plugin_command = self.plugin_manager.get_command(command_name, scope="slash")
-        if plugin_command is not None:
-            parts = text.split(None, 1)
-            args = parts[1] if len(parts) > 1 else ""
-            return await self.plugin_manager.execute_command(
-                plugin_command.name,
-                scope="slash",
-                args=args,
-                runtime=self,
-                session_key=self.session_key,
-            )
-
-        skill_result = await self._prepare_skill_command(text)
-        if skill_result is not None:
-            return await self.run_message(skill_result)
-
-        return None
-
-    async def _prepare_skill_command(self, text: str) -> str | None:
-        skill_name = text[1:].split()[0]
-        if not skill_name:
-            return None
-        try:
-            from personal_agent.skills.registry import skill_registry
-
-            content = skill_registry.load(skill_name)
-        except Exception:
-            return None
-        if not content:
-            return None
-        agent = await self.get_or_create_agent()
-        agent._pending_skill_injection = f"[技能: {skill_name}]\n\n{content}"
-        parts = text.split(None, 1)
-        return parts[1] if len(parts) > 1 else "你好"
+        if result.continue_text is not None:
+            return await self.run_message(result.continue_text)
+        return result.response
 
 
 async def create_cli_runtime(
@@ -418,18 +327,3 @@ def _configure_stdout() -> None:
 def _clean_session_name(name: str) -> str:
     name = (name or "default").strip()
     return name.replace(":", "_") or "default"
-
-
-def _help_text() -> str:
-    return (
-        "可用命令:\n"
-        "/new - 重置当前会话\n"
-        "/session [list|name] - 查看或切换 CLI 会话\n"
-        "/usage - 查看当前会话上下文预算\n"
-        "/allow [write|bash|all] - 授权危险操作\n"
-        "/stop - 停止当前处理\n"
-        "/export - 导出当前会话 JSONL\n"
-        "/help - 显示此帮助\n"
-        "/<skill-name> [message] - 加载技能后发送消息\n"
-        "exit / quit / 空行 - 退出"
-    )

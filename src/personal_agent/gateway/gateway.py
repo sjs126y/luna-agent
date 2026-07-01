@@ -8,6 +8,7 @@ from collections import OrderedDict
 
 from personal_agent.adapters.base import platform_registry
 from personal_agent.agent.hooks import Hooks
+from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.gateway.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -242,163 +243,14 @@ class Gateway:
     # ── commands ──────────────────────────────────────
 
     async def _handle_command(self, event, session_key: str) -> str | None:
-        text = event.text.strip()
-
-        if text.startswith("/session"):
-            parts = text.split()
-            base_key = f"{event.source.platform}:{event.source.chat_id}:{event.source.user_id}"
-            key_parts = base_key.split(":", 2)
-            platform = key_parts[0]
-            user_id = key_parts[2] if len(key_parts) > 2 else ""
-
-            if len(parts) < 2 or parts[1] == "list":
-                current = self._session_override.get(base_key, base_key)
-                # Show all sessions belonging to this platform+user
-                sessions = await self._session_store.list_user_sessions(platform, user_id)
-                lines = [f"当前会话: {current}", "你的会话列表:"]
-                for s in sessions[:10]:
-                    marker = " ←" if s["session_key"] == current else ""
-                    lines.append(f"  {s['session_key']}{marker} ({s.get('message_count', 0)} 条消息)")
-                return "\n".join(lines)
-
-            new_name = parts[1]
-            # Compute base key from source (ignoring any existing override)
-            base_key = f"{event.source.platform}:{event.source.chat_id}:{event.source.user_id}"
-            key_parts = base_key.split(":", 2)
-            platform = key_parts[0]
-            user_id = key_parts[2] if len(key_parts) > 2 else ""
-            new_key = f"{platform}:{new_name}:{user_id}"
-            self._session_override[base_key] = new_key
-            await self._session_store.get_or_create(new_key, event.source)
-            return f"会话已切换: {new_key}"
-
-        if text.startswith("/new"):
-            await self._session_store.reset_session(session_key, event.source)
-            return "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
-
-        if text.startswith("/allow"):
-            # Granular: /allow write, /allow shell, /allow all
-            parts = text.split()
-            category = parts[1] if len(parts) > 1 else "write"
-            valid = {"write", "bash", "all"}
-            if category not in valid:
-                return f"用法: /allow [write|bash|all]，当前有效类别: {', '.join(sorted(valid))}"
-            for agent in self._agent_cache.values():
-                if hasattr(agent, '_destructive_allowed'):
-                    agent._destructive_allowed.add(category)
-            return f"✅ 已授权 {category} 操作，本轮对话内有效。"
-
-        if text.startswith("/stop"):
-            # Set interrupt flag on all cached agents
-            for agent in self._agent_cache.values():
-                if hasattr(agent, '_interrupt_requested'):
-                    agent._interrupt_requested = True
-            # Also trigger tool-level interrupt for running bash/execute_code
-            from personal_agent.tools.executor import set_interrupted
-            set_interrupted()
-            return "已停止。"
-
-        if text.startswith("/usage"):
-            # Show token usage + context stats for this session
-            agent = self._agent_cache.get(session_key)
-            if agent is None:
-                return "暂无会话数据。"
-            from personal_agent.context_budget import build_context_budget
-            session = await self._session_store.get_or_create(session_key, event.source)
-            current_id = self._compression_chain.resolve(session.session_id)
-            history = await self._session_store.load_history(current_id)
-            budget = await build_context_budget(
-                messages=history,
-                agent=agent,
-                settings=self.config,
-                skills_summary="\n".join(
-                    part for part in (
-                        getattr(agent, "_last_skill_summaries", ""),
-                        getattr(agent, "_last_skill_injection", ""),
-                    )
-                    if part
-                ),
-                memory_injections=getattr(agent, "_last_memory_injections", ""),
-                current_user_message=event.text,
-            )
-            threshold_line = ""
-            if budget.compression_threshold:
-                marker = "，已达到" if budget.over_compression_threshold else ""
-                threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
-            return (
-                f"📊 会话用量\n"
-                f"API 调用: {agent.session_api_calls} 次\n"
-                f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
-                f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
-                f"\n📐 上下文窗口 (估算)\n"
-                f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
-                f"  system prompt: {budget.system_prompt:,}\n"
-                f"  history messages: {budget.history_messages:,}\n"
-                f"  tools schema: {budget.tools_schema:,}\n"
-                f"  skills: {budget.skills:,}\n"
-                f"  memory injections: {budget.memory_injections:,}\n"
-                f"  MCP tools: {budget.mcp_tools:,}\n"
-                f"剩余: {budget.remaining_context:,} tokens\n"
-                f"{threshold_line}"
-                f"\n🔧 本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
-            )
-
-        if text.startswith("/export"):
-            session = await self._session_store.get_or_create(session_key, event.source)
-            export_path = self.config.agent_data_dir / "exports" / f"{session_key.replace(':', '_')}.jsonl"
-            export_path.parent.mkdir(parents=True, exist_ok=True)
-            count = await self._session_store.export(session.session_id, str(export_path))
-            return f"已导出 {count} 条对话 → {export_path}"
-
-        if text.startswith("/help"):
-            return (
-                "可用命令:\n"
-                "/new - 重置对话\n"
-                "/session <name> - 切换会话\n"
-                "/stop - 停止当前处理\n"
-                "/allow - 授权危险操作（如写文件）\n"
-                "/export - 导出当前会话（JSONL）\n"
-                "/help - 显示此帮助\n"
-                "/<skill-name> - 加载技能（如果可用）"
-            )
-
-        plugin_command = None
-        if self.plugin_manager is not None:
-            command_name = text[1:].split()[0]
-            plugin_command = self.plugin_manager.get_command(command_name, scope="slash")
-        if plugin_command is not None:
-            parts = text.split(None, 1)
-            args = parts[1] if len(parts) > 1 else ""
-            return await self.plugin_manager.execute_command(
-                plugin_command.name,
-                scope="slash",
-                event=event,
-                args=args,
-                gateway=self,
-                session_key=session_key,
-            )
-
-        # Skill command: /skill-name [message]
-        skill_name = text[1:].split()[0]
-        if skill_name:
-            try:
-                from personal_agent.skills.registry import skill_registry
-                content = skill_registry.load(skill_name)
-                if content:
-                    # Inject skill via agent field → TurnContext → api_messages
-                    # NOT into ctx.messages (not persisted)
-                    agent = await self._get_or_create_agent(session_key)
-                    agent._pending_skill_injection = (
-                        f"[技能: {skill_name}]\n\n{content}"
-                    )
-                    parts = text.split(None, 1)
-                    event.text = parts[1] if len(parts) > 1 else "你好"
-                    return None  # flow to agent with clean user message
-            except Exception:
-                pass
-                pass
-
-        return None  # unknown command → pass to agent
+        runtime = _GatewayCommandRuntime(self, event, session_key)
+        result = await handle_slash_command(runtime, event.text)
+        if not result.handled:
+            return None
+        if result.continue_text is not None:
+            event.text = result.continue_text
+            return None
+        return result.response
 
     # ── memory review ────────────────────────────────
 
@@ -447,3 +299,144 @@ class Gateway:
 
     # ── auth ──────────────────────────────────────────
     # Auth is now handled by AuthManager — see gateway/auth.py
+
+
+class _GatewayCommandRuntime:
+    def __init__(self, gateway: Gateway, event, session_key: str) -> None:
+        self.gateway = gateway
+        self.event = event
+        self._session_key = session_key
+        self.settings = gateway.config
+        self.plugin_manager = gateway.plugin_manager
+
+    @property
+    def session_key(self) -> str:
+        return self._session_key
+
+    @property
+    def source(self):
+        return self.event.source
+
+    async def get_agent(self):
+        return await self.gateway._get_or_create_agent(self._session_key)
+
+    async def reset_session(self) -> str:
+        await self.gateway._session_store.reset_session(self._session_key, self.event.source)
+        return "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
+
+    async def clear_agent(self) -> None:
+        self.gateway._agent_cache.pop(self._session_key, None)
+
+    async def switch_session(self, name: str) -> str:
+        base_key = self._base_key()
+        platform, user_id = self._platform_user()
+        new_key = f"{platform}:{name}:{user_id}"
+        self.gateway._session_override[base_key] = new_key
+        await self.gateway._session_store.get_or_create(new_key, self.event.source)
+        self._session_key = new_key
+        return f"会话已切换: {new_key}"
+
+    async def list_sessions(self) -> str:
+        base_key = self._base_key()
+        current = self.gateway._session_override.get(base_key, base_key)
+        platform, user_id = self._platform_user()
+        sessions = await self.gateway._session_store.list_user_sessions(platform, user_id)
+        lines = [f"当前会话: {current}", "你的会话列表:"]
+        for item in sessions[:10]:
+            marker = " <-" if item["session_key"] == current else ""
+            lines.append(f"  {item['session_key']}{marker} ({item.get('message_count', 0)} 条消息)")
+        if len(lines) == 2:
+            lines.append("  无")
+        return "\n".join(lines)
+
+    async def load_history(self) -> list[dict]:
+        session = await self.gateway._session_store.get_or_create(self._session_key, self.event.source)
+        current_id = self.gateway._compression_chain.resolve(session.session_id)
+        return await self.gateway._session_store.load_history(current_id)
+
+    async def export_session(self) -> tuple[int, str]:
+        session = await self.gateway._session_store.get_or_create(self._session_key, self.event.source)
+        current_id = self.gateway._compression_chain.resolve(session.session_id)
+        export_path = (
+            self.gateway.config.agent_data_dir
+            / "exports"
+            / f"{self._session_key.replace(':', '_')}.jsonl"
+        )
+        count = await self.gateway._session_store.export(current_id, str(export_path))
+        return count, str(export_path)
+
+    async def usage(self, *, current_user_message: str = "") -> str:
+        agent = self.gateway._agent_cache.get(self._session_key)
+        if agent is None:
+            return "暂无会话数据。"
+        history = await self.load_history()
+
+        from personal_agent.context_budget import build_context_budget
+
+        budget = await build_context_budget(
+            messages=history,
+            agent=agent,
+            settings=self.gateway.config,
+            skills_summary="\n".join(
+                part for part in (
+                    getattr(agent, "_last_skill_summaries", ""),
+                    getattr(agent, "_last_skill_injection", ""),
+                )
+                if part
+            ),
+            memory_injections=getattr(agent, "_last_memory_injections", ""),
+            current_user_message=current_user_message,
+        )
+        threshold_line = ""
+        if budget.compression_threshold:
+            marker = "，已达到" if budget.over_compression_threshold else ""
+            threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
+        return (
+            f"会话用量\n"
+            f"API 调用: {agent.session_api_calls} 次\n"
+            f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
+            f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
+            f"\n上下文窗口 (估算)\n"
+            f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
+            f"  system prompt: {budget.system_prompt:,}\n"
+            f"  history messages: {budget.history_messages:,}\n"
+            f"  tools schema: {budget.tools_schema:,}\n"
+            f"  skills: {budget.skills:,}\n"
+            f"  memory injections: {budget.memory_injections:,}\n"
+            f"  MCP tools: {budget.mcp_tools:,}\n"
+            f"剩余: {budget.remaining_context:,} tokens\n"
+            f"{threshold_line}"
+            f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
+        )
+
+    async def allow_category(self, category: str) -> str:
+        for agent in self.gateway._agent_cache.values():
+            if hasattr(agent, "_destructive_allowed"):
+                agent._destructive_allowed.add(category)
+        return f"已授权 {category} 操作，本轮对话内有效。"
+
+    async def stop_agents(self) -> str:
+        for agent in self.gateway._agent_cache.values():
+            if hasattr(agent, "_interrupt_requested"):
+                agent._interrupt_requested = True
+        from personal_agent.tools.executor import set_interrupted
+
+        set_interrupted()
+        return "已停止。"
+
+    def plugin_command_kwargs(self, args: str) -> dict:
+        return {
+            "event": self.event,
+            "args": args,
+            "gateway": self.gateway,
+            "session_key": self._session_key,
+        }
+
+    def _base_key(self) -> str:
+        return f"{self.event.source.platform}:{self.event.source.chat_id}:{self.event.source.user_id}"
+
+    def _platform_user(self) -> tuple[str, str]:
+        parts = self._base_key().split(":", 2)
+        platform = parts[0]
+        user_id = parts[2] if len(parts) > 2 else ""
+        return platform, user_id
