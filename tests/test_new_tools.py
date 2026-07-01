@@ -246,6 +246,58 @@ async def test_sub_parallel_bad_json():
     assert "invalid" in result.lower()
 
 
+@pytest.mark.asyncio
+async def test_sub_agent_uses_runtime_after_setup():
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, setup_delegate
+
+    seen = {}
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        seen["tools"] = [tool["name"] for tool in tools]
+        return NormalizedResponse(text="runtime-ok")
+
+    setup_delegate(
+        call_fn,
+        tools=[
+            {"name": "read", "description": "read", "input_schema": {}},
+            {"name": "write", "description": "write", "input_schema": {}},
+        ],
+        max_tokens=100,
+    )
+
+    result = await _sub_agent("inspect")
+
+    assert result == "runtime-ok"
+    assert seen["tools"] == ["read"]
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_accepts_allowed_tools_json_string():
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, setup_delegate
+
+    seen = {}
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        seen["tools"] = [tool["name"] for tool in tools]
+        return NormalizedResponse(text="runtime-ok")
+
+    setup_delegate(
+        call_fn,
+        tools=[
+            {"name": "read", "description": "read", "input_schema": {}},
+            {"name": "write", "description": "write", "input_schema": {}},
+        ],
+        max_tokens=100,
+    )
+
+    result = await _sub_agent("inspect", allowed_tools='["write"]')
+
+    assert result == "runtime-ok"
+    assert seen["tools"] == ["read", "write"]
+
+
 # ── tools are registered ────────────────────────────────
 
 

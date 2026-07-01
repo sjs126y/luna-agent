@@ -10,25 +10,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable
+from typing import Callable
 
-from personal_agent.agents.runtime import AgentRuntime, AgentSpec
+from personal_agent.agents.runtime import AgentRuntime, AgentSpec, DESTRUCTIVE_TOOLS
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
 
 _delegate_call: Callable | None = None
-_delegate_tools: list[dict] | None = None
-_delegate_max_tokens: int = 4096
 _agent_runtime: AgentRuntime = AgentRuntime()
 
 
 def setup_delegate(call_fn, tools, max_tokens=4096):
-    global _delegate_call, _delegate_tools, _delegate_max_tokens, _agent_runtime
+    global _delegate_call, _agent_runtime
     _delegate_call = call_fn
-    _delegate_tools = tools
-    _delegate_max_tokens = max_tokens
     _agent_runtime = AgentRuntime(call_fn=call_fn, tools=tools, max_tokens=max_tokens)
 
 
@@ -42,11 +38,6 @@ _READONLY_TOOLS = {
 # Tools the main agent can optionally grant
 _GRANTABLE_TOOLS = {"write", "edit", "bash", "execute_code", "process_kill", "memory"}
 
-# Never grantable — recursive or dangerous even for main agent to delegate
-_NEVER_GRANT = {"sub_agent", "sub_parallel", "sub_pipeline", "workflow_run",
-                "delegate_task", "clarify", "confirm"}
-
-
 async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048,
                      allowed_tools=None, allowed_categories=None):
     """Run a single-turn sub-agent.
@@ -59,125 +50,67 @@ async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048,
     if _delegate_call is None:
         return "Error: sub-agent system not initialized"
 
-    messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
-    sys = system_prompt or "You are a focused sub-agent. Complete the task and return your result concisely."
+    output_schema = _parse_schema(schema)
+    tool_policy = _tool_policy_from_legacy(allowed_tools, allowed_categories)
+    allow_destructive = _allows_destructive(tool_policy)
+    spec = AgentSpec(
+        role="sub-agent",
+        system_prompt=system_prompt or (
+            "You are a focused sub-agent. Complete the task and return your result concisely."
+        ),
+        tool_policy=tool_policy,
+        max_tokens=max_tokens,
+        output_schema=output_schema,
+    )
+    run = await _agent_runtime.run(prompt, spec, allow_destructive=allow_destructive)
+    return _format_agent_result(run)
 
-    # ── Build tool list based on granted permissions ──
+
+def _tool_policy_from_legacy(allowed_tools=None, allowed_categories=None) -> str | list[str]:
     if allowed_categories == "all":
-        granted = set(_GRANTABLE_TOOLS)
-    elif allowed_tools:
-        granted = set(allowed_tools) & set(_GRANTABLE_TOOLS)
-    else:
-        granted = set()
-
-    allowed = _READONLY_TOOLS | granted
-    sub_tools = [t for t in (_delegate_tools or [])
-                 if t.get("name") in allowed and t.get("name") not in _NEVER_GRANT]
-
-    # Inherit main agent's /allow status for destructive tools
-    # (if main agent hasn't /allow'd write, sub-agent can't either)
-    inherited_allowed = set()
-    if granted:
-        # Check what the main agent (or whoever set up delegate) has allowed
-        # We read from a stored reference to main agent's state
-        pass  # set below based on granted tools
-
-    try:
-        response = await asyncio.wait_for(
-            _delegate_call(messages=messages, system_prompt=sys, tools=sub_tools,
-                          max_tokens=min(max_tokens, _delegate_max_tokens)),
-            timeout=180.0)
-    except asyncio.TimeoutError:
-        return "Error: sub-agent timed out"
-    except Exception as e:
-        return f"Error: sub-agent failed: {e}"
-
-    if response.tool_calls:
-        from personal_agent.tools.executor import execute_tool_calls
-
-        # Sub-agent context: inherits main agent's /allow for granted tools,
-        # but starts with its own call counter for the per-turn quota.
-        class _SubAgentCtx:
-            _destructive_allowed: set = granted  # inherit permissions
-            _tool_calls_this_turn: int = 0
-            _max_tool_calls_per_turn: int = 10
-            _destructive_calls_this_turn: int = 0
-            _max_destructive_per_turn: int = 5
-
-        _sub_ctx = _SubAgentCtx()
-        blocks = []
-        if response.text:
-            blocks.append({"type": "text", "text": response.text})
-        for tc in response.tool_calls:
-            blocks.append({"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": tc["input"]})
-        messages.append({"role": "assistant", "content": blocks})
-        await execute_tool_calls(response.tool_calls, messages, agent=_sub_ctx)
-        messages.append({"role": "user", "content": [{"type": "text", "text": "Tools done. Now give your final answer."}]})
-        try:
-            response = await asyncio.wait_for(
-                _delegate_call(messages=messages, system_prompt=sys, tools=[], max_tokens=max_tokens),
-                timeout=120.0)
-        except Exception as e:
-            return f"Error: follow-up failed: {e}"
-
-    text = (response.text or "").strip()
-
-    if schema:
-        try:
-            schema_obj = json.loads(schema)
-            result = _extract_json(text, schema_obj)
-            if result is not None:
-                return json.dumps(result, indent=2, ensure_ascii=False)
-            messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
-            messages.append({"role": "user", "content": [{"type": "text", "text": "Return ONLY valid JSON matching the schema."}]})
-            try:
-                r2 = await asyncio.wait_for(
-                    _delegate_call(messages=messages, system_prompt=sys, tools=[], max_tokens=max_tokens),
-                    timeout=60.0)
-                result = _extract_json((r2.text or "").strip(), schema_obj)
-                if result is not None:
-                    return json.dumps(result, indent=2, ensure_ascii=False)
-            except Exception:
-                pass
-            return f"Error: could not produce valid JSON. Raw: {text[:500]}"
-        except json.JSONDecodeError:
-            pass
-    return text
+        return sorted(_READONLY_TOOLS | _GRANTABLE_TOOLS)
+    allowed_tools = _normalize_allowed_tools(allowed_tools)
+    if allowed_tools:
+        return sorted(_READONLY_TOOLS | (set(allowed_tools) & _GRANTABLE_TOOLS))
+    return "readonly"
 
 
-def _extract_json(text, schema):
-    import re
-    try:
-        obj = json.loads(text)
-        if _validate(obj, schema):
-            return obj
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
-    if m:
-        try:
-            obj = json.loads(m.group(0))
-            if _validate(obj, schema):
-                return obj
-        except json.JSONDecodeError:
-            pass
-    return None
-
-
-def _validate(obj, schema):
-    if schema.get("type") != "object":
+def _allows_destructive(policy: str | list[str]) -> bool:
+    if policy == "all":
         return True
-    for key in schema.get("required", []):
-        if key not in obj:
-            return False
-    return True
+    if isinstance(policy, list):
+        return bool(set(policy) & DESTRUCTIVE_TOOLS)
+    return False
+
+
+def _parse_schema(schema: str) -> dict | None:
+    if not schema:
+        return None
+    try:
+        value = json.loads(schema)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _normalize_allowed_tools(allowed_tools) -> list[str]:
+    if not allowed_tools:
+        return []
+    if isinstance(allowed_tools, str):
+        try:
+            value = json.loads(allowed_tools)
+        except json.JSONDecodeError:
+            return []
+        return [str(item) for item in value] if isinstance(value, list) else []
+    if isinstance(allowed_tools, list):
+        return [str(item) for item in allowed_tools]
+    return []
 
 
 async def _sub_agent(prompt, system_prompt="", schema="", max_tokens=2048,
                      allowed_tools="", allowed_categories=""):
-    tools_list = json.loads(allowed_tools) if allowed_tools else None
     return await _run_agent(prompt, system_prompt, schema, max_tokens,
-                            allowed_tools=tools_list,
+                            allowed_tools=allowed_tools,
                             allowed_categories=allowed_categories or None)
 
 
@@ -289,6 +222,10 @@ def _format_agent_run(run) -> str:
         f"duration={run.duration:.2f}s input={usage.get('input_tokens', 0)} "
         f"output={usage.get('output_tokens', 0)}]"
     )
+
+
+def _format_agent_result(run) -> str:
+    return run.result
 
 
 tool_registry.register(ToolEntry(

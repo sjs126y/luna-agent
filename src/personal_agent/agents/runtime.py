@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -57,6 +59,7 @@ class AgentSpec:
     memory_policy: str = "none"
     timeout: float = 180.0
     max_tokens: int = 2048
+    output_schema: dict | None = None
 
 
 @dataclass
@@ -137,8 +140,19 @@ class AgentRuntime:
                     timeout=min(spec.timeout, 120.0),
                 )
                 self._accumulate_usage(run.usage, response.usage)
-            run.result = (response.text or "").strip()
+            text = (response.text or "").strip()
+            if spec.output_schema:
+                text = await self._coerce_schema(
+                    text,
+                    spec.output_schema,
+                    messages,
+                    system_prompt,
+                    min(spec.max_tokens, self.max_tokens),
+                    spec.timeout,
+                    run,
+                )
             run.status = "completed"
+            run.result = text
         except asyncio.TimeoutError:
             run.status = "timeout"
             run.result = "Error: delegated agent timed out"
@@ -167,6 +181,46 @@ class AgentRuntime:
         allowed -= NEVER_DELEGATE
         return [tool for tool in self.tools if tool.get("name") in allowed]
 
+    async def _coerce_schema(
+        self,
+        text: str,
+        schema: dict,
+        messages: list[dict],
+        system_prompt: str,
+        max_tokens: int,
+        timeout: float,
+        run: AgentRun,
+    ) -> str:
+        result = _extract_json(text, schema)
+        if result is not None:
+            return json.dumps(result, indent=2, ensure_ascii=False)
+
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
+        messages.append({
+            "role": "user",
+            "content": [{"type": "text", "text": "Return ONLY valid JSON matching the schema."}],
+        })
+        if self.call_fn is None:
+            return f"Error: could not produce valid JSON. Raw: {text[:500]}"
+        try:
+            retry = await asyncio.wait_for(
+                self.call_fn(
+                    messages=messages,
+                    system_prompt=system_prompt,
+                    tools=[],
+                    max_tokens=max_tokens,
+                ),
+                timeout=min(timeout, 60.0),
+            )
+            self._accumulate_usage(run.usage, retry.usage)
+            retry_text = (retry.text or "").strip()
+            result = _extract_json(retry_text, schema)
+            if result is not None:
+                return json.dumps(result, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+        return f"Error: could not produce valid JSON. Raw: {text[:500]}"
+
     async def _execute_tools(self, response, messages: list[dict], *, allow_destructive: bool) -> None:
         from personal_agent.tools.executor import execute_tool_calls
 
@@ -194,3 +248,30 @@ class AgentRuntime:
     def _accumulate_usage(self, target: dict[str, int], usage: dict[str, int]) -> None:
         for key in ("input_tokens", "output_tokens"):
             target[key] = target.get(key, 0) + int(usage.get(key, 0) or 0)
+
+
+def _extract_json(text: str, schema: dict) -> dict | None:
+    try:
+        obj = json.loads(text)
+        if _validate_schema(obj, schema):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
+    if match:
+        try:
+            obj = json.loads(match.group(0))
+            if _validate_schema(obj, schema):
+                return obj
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _validate_schema(obj: Any, schema: dict) -> bool:
+    if schema.get("type") != "object":
+        return True
+    if not isinstance(obj, dict):
+        return False
+    return all(key in obj for key in schema.get("required", []))
