@@ -16,4 +16,3 @@ def register(ctx) -> None:
         factory=_factory,
         check_fn=_check,
     ))
-

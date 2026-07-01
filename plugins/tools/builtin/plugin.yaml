@@ -1,0 +1,10 @@
+key: builtin/tools
+name: Built-in Tools
+version: "0.1.0"
+description: Core built-in tool modules.
+kind: builtin
+entrypoint: plugins.tools.builtin:register
+provides: [tools]
+enabled_by_default: true
+source: builtin
+record_import_delta: false

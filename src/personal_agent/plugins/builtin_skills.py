@@ -1,5 +1,5 @@
 """Compatibility entrypoint for built-in skills."""
 
-from personal_agent.plugins.builtin.skills import register
+from plugins.skills.builtin import register
 
 __all__ = ["register"]

@@ -27,4 +27,3 @@ def register(ctx) -> None:
     data_dir = getattr(ctx.settings, "agent_data_dir", None)
     if data_dir is not None:
         discover_skills(data_dir / "skills", registrar=ctx)
-

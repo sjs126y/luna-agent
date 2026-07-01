@@ -36,34 +36,8 @@ CORE_SLASH_COMMANDS = {
     "usage",
 }
 
-_BUILTIN_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "builtin"
-
-_BUILTIN_MANIFESTS: list[dict[str, Any]] = [
-    {
-        "key": "builtin/tools",
-        "name": "Built-in Tools",
-        "version": "0.1.0",
-        "description": "Core built-in tool modules.",
-        "kind": "builtin",
-        "entrypoint": "personal_agent.plugins.builtin_tools:register",
-        "provides": ["tools"],
-        "enabled_by_default": True,
-        "source": "builtin",
-        "record_import_delta": False,
-    },
-    {
-        "key": "builtin/bridge",
-        "name": "Tool Bridge",
-        "version": "0.1.0",
-        "description": "Deferred tool search/describe/call bridge.",
-        "kind": "builtin",
-        "entrypoint": "personal_agent.plugins.builtin_bridge:register",
-        "provides": ["tools"],
-        "enabled_by_default": True,
-        "source": "builtin",
-        "record_import_delta": False,
-    },
-]
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_PROJECT_PLUGIN_DIR = _PROJECT_ROOT / "plugins"
 
 
 class PluginManager:
@@ -82,7 +56,8 @@ class PluginManager:
         self._env = self._load_env_file()
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
-        self._plugin_dirs = [Path(p) for p in (plugin_dirs or configured_dirs)]
+        requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
+        self._plugin_dirs = self._dedupe_dirs([_PROJECT_PLUGIN_DIR, *[Path(p) for p in requested_dirs]])
 
         data_dir = Path(getattr(settings, "agent_data_dir", "data"))
         self._state_path = Path(state_path) if state_path else data_dir / "plugins" / "state.json"
@@ -97,13 +72,8 @@ class PluginManager:
         return {name: list(items) for name, items in self._hooks.items()}
 
     def discover(self) -> list[LoadedPlugin]:
-        for data in _BUILTIN_MANIFESTS:
-            self._add_manifest(PluginManifest.from_mapping(data, source="builtin"))
-
-        self._discover_dir(_BUILTIN_PLUGIN_DIR, source="builtin", recursive=True)
-
         for directory in self._plugin_dirs:
-            self._discover_dir(Path(directory))
+            self._discover_dir(Path(directory), recursive=True)
 
         for plugin in self._plugins.values():
             plugin.enabled = self._resolve_enabled(plugin.manifest)
@@ -403,6 +373,22 @@ class PluginManager:
             raise ValueError("Plugin manifest must be an object")
         return data
 
+    @staticmethod
+    def _dedupe_dirs(directories: Iterable[Path]) -> list[Path]:
+        seen: set[Path] = set()
+        result: list[Path] = []
+        for directory in directories:
+            path = Path(directory).expanduser()
+            try:
+                key = path.resolve()
+            except OSError:
+                key = path.absolute()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
+
     def _resolve_enabled(self, manifest: PluginManifest) -> bool:
         enabled = set(getattr(self.settings, "plugins_enabled", []) or [])
         disabled = set(getattr(self.settings, "plugins_disabled", []) or [])
@@ -457,11 +443,29 @@ class PluginManager:
     def _import_entrypoint(self, manifest: PluginManifest) -> tuple[ModuleType, Any | None]:
         entrypoint = manifest.entrypoint
         module_name, _, func_name = entrypoint.partition(":")
-        if manifest.path and str(manifest.path) not in sys.path:
-            sys.path.insert(0, str(manifest.path))
+        for path in self._import_paths_for_manifest(manifest):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
         module = importlib.import_module(module_name)
         fn = getattr(module, func_name) if func_name else None
         return module, fn
+
+    def _import_paths_for_manifest(self, manifest: PluginManifest) -> list[Path]:
+        paths: list[Path] = []
+        if manifest.path:
+            paths.append(manifest.path)
+            if self._is_project_plugin_path(manifest.path):
+                paths.append(_PROJECT_ROOT)
+        return paths
+
+    @staticmethod
+    def _is_project_plugin_path(path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+            plugin_root = _PROJECT_PLUGIN_DIR.resolve()
+        except OSError:
+            return False
+        return resolved == plugin_root or plugin_root in resolved.parents
 
     def _check_entrypoint(self, manifest: PluginManifest) -> tuple[bool, str]:
         try:
