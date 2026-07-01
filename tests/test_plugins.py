@@ -200,6 +200,29 @@ def test_command_cannot_override_core_command(tmp_path):
         ))
 
 
+def test_builtin_manifests_are_discovered_from_builtin_package(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+
+    skills = manager._plugins["builtin/skills"]
+    assert skills.manifest.source == "builtin"
+    assert skills.manifest.entrypoint == "personal_agent.plugins.builtin.skills:register"
+    assert skills.manifest.path is not None
+    assert "plugins/builtin/skills" in skills.manifest.path.as_posix()
+
+    telegram = manager._plugins["platforms/telegram"]
+    assert telegram.status == PluginStatus.DEFERRED
+    assert telegram.manifest.entrypoint == "personal_agent.plugins.builtin.platforms.telegram:register"
+    assert telegram.manifest.path is not None
+    assert "plugins/builtin/platforms/telegram" in telegram.manifest.path.as_posix()
+
+    from personal_agent.plugins.builtin.skills import register as skills_register
+    from personal_agent.plugins.builtin_skills import register as legacy_skills_register
+
+    assert legacy_skills_register is skills_register
+
+
 def test_builtin_tools_use_explicit_plugin_registration(tmp_path):
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")

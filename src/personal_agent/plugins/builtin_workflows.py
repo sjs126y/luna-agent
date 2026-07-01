@@ -1,7 +1,5 @@
-"""Built-in workflow plugin entrypoint."""
+"""Compatibility entrypoint for built-in workflows."""
 
+from personal_agent.plugins.builtin.workflows.review import register
 
-def register(ctx) -> None:
-    from personal_agent.workflow.builtin.review import register as register_review
-
-    register_review(ctx)
+__all__ = ["register"]

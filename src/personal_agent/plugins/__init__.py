@@ -1,8 +1,8 @@
 """Plugin core for Personal Agent."""
 
-from personal_agent.plugins.context import PluginContext
-from personal_agent.plugins.manager import PluginManager
-from personal_agent.plugins.models import (
+from personal_agent.plugins.core.context import PluginContext
+from personal_agent.plugins.core.manager import PluginManager
+from personal_agent.plugins.core.models import (
     CommandEntry,
     HookRegistration,
     LoadedPlugin,

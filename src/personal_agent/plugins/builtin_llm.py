@@ -1,8 +1,5 @@
-"""Built-in LLM provider plugin entrypoint."""
+"""Compatibility entrypoint for built-in LLM providers."""
 
-import importlib
+from personal_agent.plugins.builtin.llm import register
 
-
-def register(ctx) -> None:
-    module = importlib.import_module("personal_agent.llm")
-    importlib.reload(module)
+__all__ = ["register"]
