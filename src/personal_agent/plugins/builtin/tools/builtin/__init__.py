@@ -85,10 +85,16 @@ def _setup_delegate(call_fn=None, tools=None, max_tokens: int | None = None, **k
 
     from personal_agent.plugins.builtin.tools.builtin.delegate import setup_delegate
 
+    settings = kwargs.get("settings")
+    run_store_path = None
+    if settings is not None:
+        run_store_path = settings.agent_data_dir / "agent_runs.jsonl"
+
     setup_delegate(
         call_fn=call_fn,
         tools=tools,
         max_tokens=max_tokens or 4096,
+        run_store_path=run_store_path,
     )
 
 

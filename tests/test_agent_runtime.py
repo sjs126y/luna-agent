@@ -32,6 +32,9 @@ async def test_agent_runtime_defaults_to_readonly_tools():
     run = await runtime.run("inspect safely", AgentSpec(role="reviewer"))
 
     assert run.status == "completed"
+    assert run.role == "reviewer"
+    assert run.task == "inspect safely"
+    assert run.tool_policy == "readonly"
     assert run.result == "done"
     assert run.usage == {"input_tokens": 3, "output_tokens": 2}
     assert seen_tool_names == [["read"]]
@@ -168,3 +171,21 @@ async def test_agent_runtime_parallel_runs_keep_distinct_messages():
     assert first.result == "one"
     assert second.result == "two"
     assert len(runtime.list_runs()) == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_persists_runs_to_jsonl(tmp_path):
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        return NormalizedResponse(text="persisted", usage={"input_tokens": 1, "output_tokens": 2})
+
+    path = tmp_path / "agent_runs.jsonl"
+    runtime = AgentRuntime(call_fn=call_fn, tools=[], max_tokens=100, run_store_path=path)
+    run = await runtime.run("persist me", AgentSpec(role="assistant"))
+
+    loaded = AgentRuntime(run_store_path=path)
+
+    assert path.exists()
+    assert loaded.get_run(run.run_id).result == "persisted"
+    assert loaded.get_run(run.run_id).task == "persist me"
+    loaded.clear_runs()
+    assert not path.exists()

@@ -203,3 +203,34 @@ async def test_shared_command_uses_exact_command_names(tmp_path):
 
     assert not result.handled
     assert not runtime.reset_called
+
+
+@pytest.mark.asyncio
+async def test_shared_command_lists_shows_and_clears_agent_runs(tmp_path):
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        _delegate_task,
+        reset_delegate,
+        setup_delegate,
+    )
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        return NormalizedResponse(text="agent result", usage={"input_tokens": 1, "output_tokens": 2})
+
+    reset_delegate()
+    setup_delegate(call_fn, tools=[], max_tokens=100)
+    await _delegate_task("inspect", role="reviewer")
+    runtime = Runtime(tmp_path)
+
+    listed = await handle_slash_command(runtime, "/agents list")
+    run_id = listed.response.splitlines()[1].split()[1]
+    shown = await handle_slash_command(runtime, f"/agents show {run_id}")
+    cleared = await handle_slash_command(runtime, "/agents clear")
+    empty = await handle_slash_command(runtime, "/agent-runs")
+
+    assert "子 agent 运行记录" in listed.response
+    assert "reviewer" in listed.response
+    assert "agent result" in shown.response
+    assert "已清理 1 条" in cleared.response
+    assert "暂无子 agent" in empty.response
+    reset_delegate()

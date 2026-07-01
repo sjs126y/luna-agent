@@ -176,6 +176,31 @@ def agents_run(prompt: str) -> None:
     typer.echo(prompt)
 
 
+@agents_app.command("list")
+def agents_list(limit: int = typer.Option(20, "--limit", "-n", help="显示最近 N 条记录。")) -> None:
+    _load_agent_run_store()
+    from personal_agent.plugins.builtin.tools.builtin.delegate import format_agent_runs
+
+    typer.echo(format_agent_runs(limit=limit))
+
+
+@agents_app.command("show")
+def agents_show(run_id: str) -> None:
+    _load_agent_run_store()
+    from personal_agent.plugins.builtin.tools.builtin.delegate import format_agent_run
+
+    typer.echo(format_agent_run(run_id))
+
+
+@agents_app.command("clear")
+def agents_clear() -> None:
+    _load_agent_run_store()
+    from personal_agent.plugins.builtin.tools.builtin.delegate import clear_agent_runs
+
+    count = clear_agent_runs()
+    typer.echo(f"已清理 {count} 条子 agent 运行记录。")
+
+
 @agents_app.command("workflow")
 def agents_workflow(name: str, args: str = "{}") -> None:
     async def _run() -> None:
@@ -191,6 +216,13 @@ def _plugin_manager(settings: Settings | None = None) -> PluginManager:
     manager = PluginManager(settings)
     manager.discover()
     return manager
+
+
+def _load_agent_run_store(settings: Settings | None = None) -> None:
+    settings = settings or Settings()
+    from personal_agent.plugins.builtin.tools.builtin.delegate import load_agent_runs
+
+    load_agent_runs(settings.agent_data_dir / "agent_runs.jsonl")
 
 
 def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:

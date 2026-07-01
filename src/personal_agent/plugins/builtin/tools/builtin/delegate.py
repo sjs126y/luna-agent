@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Callable
 
 from personal_agent.agents.runtime import AgentRuntime, AgentSpec, DESTRUCTIVE_TOOLS
@@ -20,12 +21,32 @@ logger = logging.getLogger(__name__)
 
 _delegate_call: Callable | None = None
 _agent_runtime: AgentRuntime = AgentRuntime()
+_run_store_path: Path | None = None
 
 
-def setup_delegate(call_fn, tools, max_tokens=4096):
-    global _delegate_call, _agent_runtime
+def setup_delegate(call_fn, tools, max_tokens=4096, run_store_path: Path | None = None):
+    global _delegate_call, _agent_runtime, _run_store_path
     _delegate_call = call_fn
-    _agent_runtime = AgentRuntime(call_fn=call_fn, tools=tools, max_tokens=max_tokens)
+    _run_store_path = Path(run_store_path) if run_store_path else _run_store_path
+    _agent_runtime = AgentRuntime(
+        call_fn=call_fn,
+        tools=tools,
+        max_tokens=max_tokens,
+        run_store_path=_run_store_path,
+    )
+
+
+def reset_delegate():
+    global _delegate_call, _agent_runtime, _run_store_path
+    _delegate_call = None
+    _run_store_path = None
+    _agent_runtime = AgentRuntime()
+
+
+def load_agent_runs(path: Path | None) -> None:
+    global _agent_runtime, _run_store_path
+    _run_store_path = Path(path) if path else None
+    _agent_runtime.set_run_store(_run_store_path)
 
 
 def list_agent_runs(limit: int | None = None) -> list[dict]:
@@ -34,6 +55,59 @@ def list_agent_runs(limit: int | None = None) -> list[dict]:
 
 def get_agent_run(run_id: str):
     return _agent_runtime.get_run(run_id)
+
+
+def clear_agent_runs() -> int:
+    count = len(_agent_runtime.list_runs())
+    _agent_runtime.clear_runs()
+    return count
+
+
+def format_agent_runs(limit: int | None = None) -> str:
+    runs = list_agent_runs(limit=limit)
+    if not runs:
+        return "暂无子 agent 运行记录。"
+    lines = ["子 agent 运行记录:"]
+    for item in runs:
+        usage = item["usage"]
+        result = _shorten(item.get("result", ""), 80)
+        lines.append(
+            f"- {item['run_id']} [{item['status']}] role={item['role']} "
+            f"duration={item['duration']:.2f}s input={usage.get('input_tokens', 0)} "
+            f"output={usage.get('output_tokens', 0)} tools={item['tool_calls']} "
+            f"task={_shorten(item.get('task', ''), 48)} result={result}"
+        )
+    return "\n".join(lines)
+
+
+def format_agent_run(run_id: str) -> str:
+    run = get_agent_run(run_id)
+    if run is None:
+        return f"未找到子 agent 运行记录: {run_id}"
+    usage = run.usage
+    tool_names = [
+        str(call.get("name", ""))
+        for call in run.tool_calls
+        if isinstance(call, dict)
+    ]
+    lines = [
+        f"子 agent 运行: {run.run_id}",
+        f"状态: {run.status}",
+        f"角色: {run.role or '-'}",
+        f"模型: {run.model or '-'}",
+        f"父 turn: {run.parent_turn_id or '-'}",
+        f"耗时: {run.duration:.2f}s",
+        f"输入 tokens: {usage.get('input_tokens', 0)}",
+        f"输出 tokens: {usage.get('output_tokens', 0)}",
+        f"工具调用: {len(run.tool_calls)}" + (f" ({', '.join(tool_names)})" if tool_names else ""),
+        "",
+        "任务:",
+        run.task or "-",
+        "",
+        "结果:",
+        run.result or "-",
+    ]
+    return "\n".join(lines)
 
 
 # Default: read-only tools a sub-agent always gets
@@ -240,12 +314,23 @@ def _agent_run_summary(run) -> dict:
     return {
         "run_id": run.run_id,
         "parent_turn_id": run.parent_turn_id,
+        "role": run.role,
+        "task": run.task,
+        "tool_policy": run.tool_policy,
+        "model": run.model,
         "status": run.status,
         "duration": round(run.duration, 3),
         "usage": dict(run.usage),
         "tool_calls": len(run.tool_calls),
         "result": run.result,
     }
+
+
+def _shorten(text: str, max_chars: int) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 1)] + "…"
 
 
 tool_registry.register(ToolEntry(

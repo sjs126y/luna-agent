@@ -61,6 +61,33 @@ def test_chat_once_option_runs_once(monkeypatch):
     assert calls == [("你好", "default")]
 
 
+def test_agents_list_show_clear_commands(monkeypatch):
+    monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.format_agent_runs",
+        lambda limit=None: f"runs:{limit}",
+    )
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.format_agent_run",
+        lambda run_id: f"run:{run_id}",
+    )
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.clear_agent_runs",
+        lambda: 3,
+    )
+
+    listed = runner.invoke(app, ["agents", "list", "--limit", "5"])
+    shown = runner.invoke(app, ["agents", "show", "abc123"])
+    cleared = runner.invoke(app, ["agents", "clear"])
+
+    assert listed.exit_code == 0
+    assert "runs:5" in listed.output
+    assert shown.exit_code == 0
+    assert "run:abc123" in shown.output
+    assert cleared.exit_code == 0
+    assert "已清理 3 条" in cleared.output
+
+
 def test_plugins_info_command_shows_registered_items():
     result = runner.invoke(app, ["plugins", "info", "builtin/skills", "--load"])
 

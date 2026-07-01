@@ -58,6 +58,7 @@ async def create_agent_runtime(
             call_fn=transport.call,
             tools=agent.tools,
             max_tokens=provider.max_tokens,
+            settings=settings,
         )
 
     from personal_agent.workflow.engine import setup_engine

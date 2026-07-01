@@ -232,8 +232,9 @@ async def test_execute_code_no_output():
 @pytest.mark.asyncio
 async def test_sub_agent_not_initialized():
     """Without setup, sub_agent should return a clear error."""
-    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent
+    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, reset_delegate
 
+    reset_delegate()
     result = await _sub_agent("test prompt")
     assert "not initialized" in result.lower()
 
@@ -303,6 +304,9 @@ async def test_delegate_lists_agent_run_summaries():
     from personal_agent.models.messages import NormalizedResponse
     from personal_agent.plugins.builtin.tools.builtin.delegate import (
         _delegate_task,
+        clear_agent_runs,
+        format_agent_run,
+        format_agent_runs,
         list_agent_runs,
         setup_delegate,
     )
@@ -317,9 +321,39 @@ async def test_delegate_lists_agent_run_summaries():
 
     assert "summary-ok" in result
     assert len(runs) == 1
+    assert runs[0]["role"] == "assistant"
+    assert runs[0]["task"] == "summarize"
     assert runs[0]["status"] == "completed"
     assert runs[0]["usage"] == {"input_tokens": 1, "output_tokens": 2}
     assert runs[0]["tool_calls"] == 0
+    assert runs[0]["run_id"] in format_agent_runs()
+    assert "summary-ok" in format_agent_run(runs[0]["run_id"])
+    assert clear_agent_runs() == 1
+    assert list_agent_runs() == []
+
+
+@pytest.mark.asyncio
+async def test_delegate_persists_agent_runs(tmp_path):
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        _delegate_task,
+        format_agent_runs,
+        load_agent_runs,
+        reset_delegate,
+        setup_delegate,
+    )
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        return NormalizedResponse(text="persisted", usage={"input_tokens": 1, "output_tokens": 2})
+
+    path = tmp_path / "runs.jsonl"
+    setup_delegate(call_fn, tools=[], max_tokens=100, run_store_path=path)
+    await _delegate_task("save me", role="observer")
+    load_agent_runs(path)
+
+    assert "observer" in format_agent_runs()
+    assert "save me" in format_agent_runs()
+    reset_delegate()
 
 
 # ── tools are registered ────────────────────────────────

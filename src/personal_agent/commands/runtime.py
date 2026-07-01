@@ -88,6 +88,9 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
     if command_name == "stop":
         return CommandResult.reply(await _stop(runtime))
 
+    if command_name in {"agents", "agent-runs"}:
+        return CommandResult.reply(await _agents(args))
+
     if command_name == "help":
         return CommandResult.reply(help_text())
 
@@ -212,6 +215,36 @@ async def _allow(runtime: CommandRuntime, category: str) -> str:
     return f"已授权 {category} 操作，本轮对话内有效。"
 
 
+async def _agents(args: str) -> str:
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        clear_agent_runs,
+        format_agent_run,
+        format_agent_runs,
+    )
+
+    parts = args.split()
+    if not parts or parts[0] == "list":
+        limit = _parse_limit(parts[1] if len(parts) > 1 else "")
+        return format_agent_runs(limit=limit)
+    if parts[0] == "show":
+        if len(parts) < 2:
+            return "用法: /agents show <run_id>"
+        return format_agent_run(parts[1])
+    if parts[0] == "clear":
+        count = clear_agent_runs()
+        return f"已清理 {count} 条子 agent 运行记录。"
+    return "用法: /agents [list [limit]|show <run_id>|clear]"
+
+
+def _parse_limit(value: str) -> int | None:
+    if not value:
+        return None
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return None
+
+
 async def _stop(runtime: CommandRuntime) -> str:
     custom = await _call_optional(runtime, "stop_agents")
     if custom is not None:
@@ -251,6 +284,7 @@ def help_text() -> str:
         "/allow [write|bash|all] - 授权危险操作\n"
         "/stop - 停止当前处理\n"
         "/export - 导出当前会话 JSONL\n"
+        "/agents [list|show|clear] - 查看子 agent 运行记录\n"
         "/help - 显示此帮助\n"
         "/<skill-name> [message] - 加载技能后发送消息\n"
         "exit / quit / 空行 - 退出 CLI"

@@ -8,7 +8,8 @@ import re
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 READONLY_TOOLS = {
@@ -68,6 +69,10 @@ class AgentRun:
     run_id: str
     parent_turn_id: str
     status: str
+    role: str = ""
+    task: str = ""
+    tool_policy: str | list[str] = "readonly"
+    model: str = ""
     messages: list[dict] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
@@ -85,11 +90,19 @@ class AgentRuntime:
         tools: list[dict] | None = None,
         max_tokens: int = 4096,
         history_limit: int = 100,
+        run_store_path: Path | None = None,
     ) -> None:
         self.call_fn = call_fn
         self.tools = tools or []
         self.max_tokens = max_tokens
         self._runs: deque[AgentRun] = deque(maxlen=max(1, history_limit))
+        self._run_store_path = Path(run_store_path) if run_store_path else None
+        self._load_runs()
+
+    def set_run_store(self, path: Path | None) -> None:
+        self._run_store_path = Path(path) if path else None
+        self._runs.clear()
+        self._load_runs()
 
     async def run(
         self,
@@ -103,6 +116,10 @@ class AgentRuntime:
             run_id=uuid.uuid4().hex[:12],
             parent_turn_id=parent_turn_id,
             status="running",
+            role=spec.role,
+            task=task,
+            tool_policy=spec.tool_policy,
+            model=spec.model,
         )
         started = time.monotonic()
 
@@ -183,9 +200,31 @@ class AgentRuntime:
 
     def clear_runs(self) -> None:
         self._runs.clear()
+        if self._run_store_path and self._run_store_path.exists():
+            self._run_store_path.unlink()
 
     def _record_run(self, run: AgentRun) -> None:
         self._runs.append(run)
+        self._append_run(run)
+
+    def _load_runs(self) -> None:
+        if self._run_store_path is None or not self._run_store_path.exists():
+            return
+        try:
+            for line in self._run_store_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                self._runs.append(AgentRun(**data))
+        except Exception:
+            self._runs.clear()
+
+    def _append_run(self, run: AgentRun) -> None:
+        if self._run_store_path is None:
+            return
+        self._run_store_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._run_store_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(run), ensure_ascii=False) + "\n")
 
     def _select_tools(self, policy: str | list[str], *, allow_destructive: bool) -> list[dict]:
         if policy == "none":
