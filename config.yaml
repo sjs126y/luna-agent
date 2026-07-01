@@ -33,7 +33,9 @@ session:
 
 sandbox:
   roots:                           # allowed directories (boundary for all file tools + bash)
-    - "/path/to/project"
+    - "/home/sujinsheng/projects/Personal-Agent"
+    - "/mnt/c/Users/MR/Desktop/SJS-AGENT"
+    - "/mnt/c/Users/MR/Desktop/luna workspace"
   blocked:                         # never accessible — glob patterns, applies to all tools
     - "**/.env"
     - "**/.env.*"
@@ -71,7 +73,7 @@ mcp:
   servers:
     - name: "filesystem"
       command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/mnt/c/Users/MR"]
       enabled: true
 
     - name: "github"

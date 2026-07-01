@@ -108,10 +108,11 @@ async def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
     if agent._compressor is None:
         return messages
 
+    model = agent._provider.model if agent._provider else ""
     total = (
-        count_messages_tokens(messages)
-        + count_messages_tokens([], agent._cached_system_prompt or "")
-        + count_tools_tokens(agent.tools)
+        count_messages_tokens(messages, model=model)
+        + count_messages_tokens([], agent._cached_system_prompt or "", model=model)
+        + count_tools_tokens(agent.tools, model=model)
     )
 
     if not agent._compressor.should_compress(total, messages):

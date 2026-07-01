@@ -30,6 +30,7 @@ class ContextCompressor(ContextEngine):
         protect_head: int = 2,
         protect_tail: int = 6,
         compressor_transport: Any = None,  # optional: separate transport for cheap model
+        model: str = "",
     ) -> None:
         self.context_length = context_length
         self.threshold_tokens = int(context_length * threshold_ratio)
@@ -38,6 +39,7 @@ class ContextCompressor(ContextEngine):
         self.protect_head = protect_head
         self.protect_tail = protect_tail
         self._compressor_transport = compressor_transport  # None = use main transport
+        self.model = model
 
         # Per-session state
         self._previous_summary: str | None = None
@@ -76,7 +78,7 @@ class ContextCompressor(ContextEngine):
         messages = self._prune_old_tool_results(messages)
 
         # Check if pruning was enough
-        token_count = count_messages_tokens(messages) + count_messages_tokens([], system_prompt)
+        token_count = count_messages_tokens(messages, model=self.model) + count_messages_tokens([], system_prompt, model=self.model)
         if token_count < self.threshold_tokens:
             logger.info("Pruning sufficient: %d → %d tokens", self.last_prompt_tokens, token_count)
             return messages
@@ -102,7 +104,7 @@ class ContextCompressor(ContextEngine):
             "content": [{"type": "text", "text": f"[对话历史摘要]\n{summary}"}],
         }
         compressed = head + [summary_msg] + tail
-        after_tokens = count_messages_tokens(compressed) + count_messages_tokens([], system_prompt)
+        after_tokens = count_messages_tokens(compressed, model=self.model) + count_messages_tokens([], system_prompt, model=self.model)
 
         if before_tokens > 0 and (before_tokens - after_tokens) / before_tokens < 0.10:
             logger.info("Compression ineffective: %d → %d tokens (< 10%%)", before_tokens, after_tokens)

@@ -88,7 +88,7 @@ class FileMemoryProvider(MemoryProvider):
         parts = []
         for f in sorted(profile_dir.glob("*.md")):
             try:
-                text = f.read_text(encoding="utf-8").strip()
+                text = _read_md(f)
                 if text:
                     title = _file_title(f.stem)
                     parts.append(f"## {title}\n\n{text}")
@@ -122,6 +122,20 @@ class FileMemoryProvider(MemoryProvider):
             if part:
                 entries.append(part)
         return entries
+
+
+def _read_md(path) -> str:
+    """Read a .md file, trying UTF-8, then GBK, then replace bad bytes."""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except UnicodeDecodeError:
+        pass
+    try:
+        return path.read_text(encoding="gbk").strip()
+    except (UnicodeDecodeError, UnicodeError):
+        pass
+    # Last resort: UTF-8 with bad-byte replacement
+    return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
 def _file_title(stem: str) -> str:
