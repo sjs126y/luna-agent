@@ -11,7 +11,6 @@ from pathlib import Path
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
 from personal_agent.gateway.gateway import Gateway
-from personal_agent.plugins.builtin.memory.provider import FileMemoryProvider
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.tools.sandbox import init_sandbox
 from personal_agent.tools.audit import set_audit_path
@@ -126,7 +125,12 @@ async def boot() -> None:
     # ── 5. Memory ──────────────────────────────────────
     system_dir = data_dir / "system"
     _ensure_system_files(system_dir)
-    memory_store = FileMemoryProvider(system_dir)   # system prompt material
+    memory_store = await plugin_manager.invoke_hook(
+        "create_builtin_memory_provider",
+        system_dir=system_dir,
+    )
+    if memory_store is None:
+        raise RuntimeError("No built-in memory provider registered")
 
     external_store = None
     if settings.memory_external_provider == "embedding":
@@ -235,12 +239,20 @@ def main() -> None:
 def _run_wechat_login() -> None:
     """CLI: QR login for WeChat."""
     import asyncio
-    from pathlib import Path
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import wechat_qr_login
 
     settings = Settings()
-    base_url = settings.weixin_base_url
-    asyncio.run(wechat_qr_login(settings.agent_data_dir / "wechat", base_url))
+
+    async def _run():
+        from personal_agent.plugins.manager import PluginManager
+
+        plugin_manager = PluginManager(settings)
+        plugin_manager.discover()
+        plugin_manager.load_plugin("platforms/wechat")
+        result = await plugin_manager.invoke_hook("wechat_qr_login", settings=settings)
+        if result is None:
+            print("WeChat login plugin is unavailable.")
+
+    asyncio.run(_run())
 
 
 def _run_ingest(file_path: str) -> None:
@@ -295,7 +307,14 @@ def _run_cli(message: str) -> None:
         provider = provider_registry.get(settings.llm_provider, settings)
         api_mode = provider_registry.detect_api_mode(settings.llm_base_url, settings.llm_provider)
         transport = transport_registry.get(api_mode, provider)
-        memory = FileMemoryProvider(settings.agent_data_dir / "system")
+        system_dir = settings.agent_data_dir / "system"
+        _ensure_system_files(system_dir)
+        memory = await plugin_manager.invoke_hook(
+            "create_builtin_memory_provider",
+            system_dir=system_dir,
+        )
+        if memory is None:
+            raise RuntimeError("No built-in memory provider registered")
         memory_manager = MemoryManager(builtin=memory)
         agent = init_agent(transport, provider, memory_manager=memory_manager,
                           compressor=ContextCompressor(), max_iterations=settings.max_iterations,

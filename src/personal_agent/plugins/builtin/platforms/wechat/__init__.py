@@ -1,6 +1,18 @@
 """WeChat platform plugin entrypoint."""
 
 
+async def _wechat_qr_login(settings=None, **kwargs):
+    if settings is None:
+        return None
+
+    from .adapter import wechat_qr_login
+
+    return await wechat_qr_login(
+        settings.agent_data_dir / "wechat",
+        settings.weixin_base_url,
+    )
+
+
 def register(ctx) -> None:
     from personal_agent.adapters.base import PlatformEntry
     from .adapter import WeChatAdapter
@@ -19,3 +31,4 @@ def register(ctx) -> None:
         factory=_factory,
         check_fn=_check,
     ))
+    ctx.register_hook("wechat_qr_login", _wechat_qr_login, priority=10)

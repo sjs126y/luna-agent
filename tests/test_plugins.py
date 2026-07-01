@@ -257,6 +257,48 @@ def test_builtin_skills_use_explicit_plugin_registration(tmp_path):
     assert "python-expert" in plugin.skills_registered
 
 
+def test_disable_builtin_plugin_removes_hooks(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+
+    manager.load_plugin("builtin/memory")
+    assert "on_session_selected" in manager.hooks
+    assert "create_builtin_memory_provider" in manager.hooks
+
+    manager.disable_plugin("builtin/memory")
+    assert "on_session_selected" not in manager.hooks
+    assert "create_builtin_memory_provider" not in manager.hooks
+
+
+@pytest.mark.asyncio
+async def test_builtin_memory_provider_is_created_by_hook(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+    manager.load_plugin("builtin/memory")
+
+    provider = await manager.invoke_hook(
+        "create_builtin_memory_provider",
+        system_dir=tmp_path / "system",
+    )
+
+    assert provider is not None
+    assert provider.__class__.__name__ == "FileMemoryProvider"
+
+
+def test_wechat_plugin_registers_login_hook(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+
+    plugin = manager.load_plugin("platforms/wechat")
+
+    assert plugin.status == PluginStatus.LOADED
+    assert "wechat_qr_login:10" in plugin.hooks_registered
+    assert "wechat_qr_login" in manager.hooks
+
+
 @pytest.mark.asyncio
 async def test_hook_priority_and_fail_open(tmp_path):
     manager = PluginManager(
