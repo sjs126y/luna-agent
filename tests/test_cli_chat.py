@@ -166,6 +166,39 @@ async def test_cli_session_switch_list_usage_export_and_allow(runtime):
 
 
 @pytest.mark.asyncio
+async def test_cli_session_current_rename_and_delete(runtime):
+    await runtime.run_once("hello")
+    old_agent = runtime.agent_cache[runtime.session_key]
+
+    current = await runtime.handle_command("/session current")
+    renamed = await runtime.handle_command("/session rename renamed")
+    listed = await runtime.handle_command("/session list")
+    deleted = await runtime.handle_command("/session delete current")
+
+    assert "session id" in current
+    assert "cli:renamed:local" in renamed
+    assert "cli:renamed:local" in listed
+    assert "会话已删除: cli:renamed:local" in deleted
+    assert runtime.session_key == "cli:default:local"
+    assert "cli:renamed:local" not in runtime.agent_cache
+    assert runtime.agent_cache.get("cli:default:local") is not old_agent
+
+
+@pytest.mark.asyncio
+async def test_cli_delete_named_session_without_switching(runtime):
+    await runtime.switch_session("work")
+    runtime.agent_cache[runtime.session_key] = next(iter(runtime.agent_cache.values()))
+    await runtime.switch_session("default")
+
+    deleted = await runtime.handle_command("/session delete work")
+
+    assert "会话已删除: cli:work:local" in deleted
+    assert runtime.session_key == "cli:default:local"
+    assert "cli:work:local" not in runtime.agent_cache
+    assert runtime.session_store.get("cli:work:local") is None
+
+
+@pytest.mark.asyncio
 async def test_cli_plugin_command_and_skill_command(runtime):
     async def plugin_handler(args="", **kwargs):
         return f"plugin:{args}:{kwargs['session_key']}"

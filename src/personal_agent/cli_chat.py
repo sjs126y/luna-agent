@@ -160,6 +160,45 @@ class CliChatRuntime:
             lines.append("  无")
         return "\n".join(lines)
 
+    async def current_session(self) -> str:
+        session = await self.session_store.get_or_create(self.session_key, self.source)
+        current_id = self.compression_chain.resolve(session.session_id)
+        count = len(await self.session_store.load_history(current_id))
+        return (
+            f"当前会话: {self.session_key}\n"
+            f"session id: {current_id[:8]}\n"
+            f"消息数: {count}"
+        )
+
+    async def rename_session(self, name: str) -> str:
+        old_key = self.session_key
+        new_name = _clean_session_name(name)
+        new_key = f"cli:{new_name}:local"
+        if new_key == old_key:
+            return f"会话已是: {new_key}"
+        ok = await self.session_store.rename_session(old_key, new_key)
+        if not ok:
+            return f"无法重命名，会话不存在或目标已存在: {new_key}"
+        assert self.agent_cache is not None
+        agent = self.agent_cache.pop(old_key, None)
+        if agent is not None:
+            self.agent_cache[new_key] = agent
+        self.session_name = new_name
+        return f"会话已重命名: {old_key} -> {new_key}"
+
+    async def delete_session(self, name: str | None = None) -> str:
+        target_name = _clean_session_name(name) if name else self.session_name
+        target_key = f"cli:{target_name}:local"
+        if self.session_store.get(target_key) is None:
+            return f"会话不存在: {target_key}"
+        await self.session_store.delete_session(target_key)
+        assert self.agent_cache is not None
+        self.agent_cache.pop(target_key, None)
+        if target_key == self.session_key:
+            self.session_name = "default"
+        await self.session_store.get_or_create(self.session_key, self.source)
+        return f"会话已删除: {target_key}\n当前会话: {self.session_key}"
+
     async def get_agent(self):
         return await self.get_or_create_agent()
 

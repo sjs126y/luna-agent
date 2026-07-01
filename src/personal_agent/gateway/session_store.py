@@ -91,10 +91,29 @@ class SessionStore:
         logger.info("Session reset: %s → %s", session_key, new_id)
         return new_id
 
+    async def rename_session(self, old_key: str, new_key: str) -> bool:
+        if old_key == new_key:
+            return True
+        if new_key in self._index:
+            return False
+        entry = self._index.pop(old_key, None)
+        if entry is None:
+            return False
+        entry.session_key = new_key
+        self._index[new_key] = entry
+        await self._db.update_session_key(entry.session_id, new_key)
+        self._save_index()
+        logger.info("Session renamed: %s → %s", old_key, new_key)
+        return True
+
     async def delete_session(self, session_key: str) -> str | None:
         entry = self._index.pop(session_key, None)
         if entry:
-            await self._db.delete_session(entry.session_id)
+            session_ids = self._chain_ids(entry.session_id)
+            for session_id in session_ids:
+                await self._db.delete_session(session_id)
+            if self._chain:
+                self._chain.remove_chain(session_ids)
             self._save_index()
             new_id = str(uuid.uuid4())
             logger.info("Session deleted: %s, new session will get ID %s", session_key, new_id)
@@ -152,10 +171,13 @@ class SessionStore:
         results = []
         for key, entry in self._index.items():
             if entry.platform == platform and entry.user_id == user_id:
+                current_id = self._chain.resolve(entry.session_id) if self._chain else entry.session_id
                 results.append({
                     "session_key": key,
                     "session_id": entry.session_id[:8],
-                    "message_count": entry.message_count,
+                    "current_session_id": current_id,
+                    "current_session_short": current_id[:8],
+                    "message_count": await self._db.get_message_count(current_id),
                     "last_active": entry.last_active_at,
                 })
         results.sort(key=lambda x: x.get("last_active", ""), reverse=True)
@@ -175,22 +197,27 @@ class SessionStore:
             if entry.last_active_at < cutoff:
                 expired.append(key)
 
+        removed_ids: list[str] = []
         for key in expired:
             entry = self._index.pop(key, None)
             if entry:
-                await self._db.delete_session(entry.session_id)
+                session_ids = self._chain_ids(entry.session_id)
+                removed_ids.extend(session_ids)
+                for session_id in session_ids:
+                    await self._db.delete_session(session_id)
 
         if expired:
             self._save_index()
-            # Follow chain to also clean compressed descendants
             if self._chain:
-                for key in expired:
-                    old_id = entry.session_id if (entry := self._index.get(key)) else None  # already popped
-                # Note: chain cleanup is deferred — old sessions without index entry
-                # are orphaned but not automatically deleted from DB
+                self._chain.remove_chain(removed_ids)
 
         logger.info("Expired %d sessions (>%d days)", len(expired), max_age_days)
         return len(expired)
+
+    def _chain_ids(self, session_id: str) -> list[str]:
+        if self._chain:
+            return self._chain.get_chain(session_id)
+        return [session_id]
 
     # ── persistence ───────────────────────────────────
 

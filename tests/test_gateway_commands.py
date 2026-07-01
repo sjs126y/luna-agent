@@ -86,6 +86,36 @@ async def test_gateway_session_command_uses_shared_service(gateway):
 
 
 @pytest.mark.asyncio
+async def test_gateway_session_current_rename_and_delete(gateway):
+    await gateway._session_store.get_or_create("telegram:c1:u1", _event("hello").source)
+    gateway._agent_cache["telegram:c1:u1"] = Agent()
+
+    current = await gateway._handle_command(_event("/session current"), "telegram:c1:u1")
+    renamed = await gateway._handle_command(_event("/session rename renamed"), "telegram:c1:u1")
+    listed = await gateway._handle_command(_event("/session list"), "telegram:renamed:u1")
+    deleted = await gateway._handle_command(_event("/session delete current"), "telegram:renamed:u1")
+
+    assert "session id" in current
+    assert "telegram:renamed:u1" in renamed
+    assert "telegram:renamed:u1" in listed
+    assert "会话已删除: telegram:renamed:u1" in deleted
+    assert "telegram:renamed:u1" not in gateway._agent_cache
+    assert gateway._session_override.get("telegram:c1:u1") is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_delete_named_session_without_switching(gateway):
+    await gateway._handle_command(_event("/session work"), "telegram:c1:u1")
+    gateway._agent_cache["telegram:work:u1"] = Agent()
+
+    result = await gateway._handle_command(_event("/session delete work"), "telegram:c1:u1")
+
+    assert "会话已删除: telegram:work:u1" in result
+    assert "telegram:work:u1" not in gateway._agent_cache
+    assert gateway._session_store.get("telegram:work:u1") is None
+
+
+@pytest.mark.asyncio
 async def test_gateway_plugin_command_receives_gateway_kwargs(gateway):
     async def handler(args="", **kwargs):
         assert kwargs["event"].text == "/demo hi"

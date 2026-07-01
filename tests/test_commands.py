@@ -60,6 +60,8 @@ class Runtime:
         self.reset_called = False
         self.clear_called = False
         self.switched_to = ""
+        self.renamed_to = ""
+        self.deleted = None
         self.exported = False
 
     @property
@@ -79,6 +81,18 @@ class Runtime:
 
     async def list_sessions(self):
         return f"当前会话: {self._session_key}"
+
+    async def current_session(self):
+        return f"当前会话: {self._session_key}\nsession id: abc123\n消息数: 0"
+
+    async def rename_session(self, name: str):
+        self.renamed_to = name
+        self._session_key = f"cli:{name}:local"
+        return f"会话已重命名: {self._session_key}"
+
+    async def delete_session(self, name: str | None = None):
+        self.deleted = name
+        return f"会话已删除: {name or self._session_key}"
 
     async def load_history(self):
         return [{
@@ -115,6 +129,24 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
     result = await handle_slash_command(runtime, "/session list")
     assert "当前会话: cli:work:local" in result.response
+
+    result = await handle_slash_command(runtime, "/session current")
+    assert "session id" in result.response
+
+    result = await handle_slash_command(runtime, "/session switch ops")
+    assert result.response == "会话已切换: cli:ops:local"
+
+    result = await handle_slash_command(runtime, "/session rename renamed")
+    assert "会话已重命名" in result.response
+    assert runtime.renamed_to == "renamed"
+
+    result = await handle_slash_command(runtime, "/session delete current")
+    assert "会话已删除" in result.response
+    assert runtime.deleted is None
+
+    result = await handle_slash_command(runtime, "/session delete old")
+    assert "会话已删除" in result.response
+    assert runtime.deleted == "old"
 
     result = await handle_slash_command(runtime, "/usage")
     assert "上下文窗口" in result.response

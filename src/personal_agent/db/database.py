@@ -107,6 +107,23 @@ class Database:
             await self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
             await self._conn.commit()
 
+    async def update_session_key(self, session_id: str, session_key: str) -> None:
+        async with self._write_lock:
+            await self._conn.execute(
+                "UPDATE sessions SET session_key = ? WHERE session_id = ?",
+                (session_key, session_id),
+            )
+            await self._conn.commit()
+
+    async def get_session_key(self, session_id: str) -> str | None:
+        rows = await self._conn.execute(
+            "SELECT session_key FROM sessions WHERE session_id = ?",
+            (session_id,),
+        )
+        async for row in rows:
+            return row["session_key"]
+        return None
+
     # ── messages ──────────────────────────────────────
 
     async def save_message(

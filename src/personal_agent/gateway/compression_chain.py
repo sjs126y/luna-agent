@@ -64,3 +64,20 @@ class CompressionChain:
             seen.add(current)
             result.append(current)
         return result
+
+    def get_descendants(self, session_id: str) -> list[str]:
+        """Return compressed descendants for a session, excluding the input id."""
+        return self.get_chain(session_id)[1:]
+
+    def remove_chain(self, session_ids: list[str] | set[str]) -> None:
+        """Remove mappings that point from or to any provided session id."""
+        targets = set(session_ids)
+        if not targets:
+            return
+        changed = False
+        for old_id, new_id in list(self._chain.items()):
+            if old_id in targets or new_id in targets:
+                del self._chain[old_id]
+                changed = True
+        if changed:
+            self.save()

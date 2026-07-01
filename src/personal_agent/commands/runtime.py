@@ -44,6 +44,12 @@ class CommandRuntime(Protocol):
 
     async def list_sessions(self) -> str: ...
 
+    async def current_session(self) -> str: ...
+
+    async def rename_session(self, name: str) -> str: ...
+
+    async def delete_session(self, name: str | None = None) -> str: ...
+
     async def load_history(self) -> list[dict]: ...
 
     async def export_session(self) -> tuple[int, str]: ...
@@ -66,10 +72,7 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         return CommandResult.reply(response or "会话已重置。开始新的对话吧。")
 
     if command_name == "session":
-        parts = args.split()
-        if not parts or parts[0] == "list":
-            return CommandResult.reply(await runtime.list_sessions())
-        return CommandResult.reply(await runtime.switch_session(parts[0]))
+        return CommandResult.reply(await _session(runtime, args))
 
     if command_name == "usage":
         return CommandResult.reply(await _usage(runtime, current_user_message=text))
@@ -174,6 +177,29 @@ async def _usage(runtime: CommandRuntime, *, current_user_message: str) -> str:
     )
 
 
+async def _session(runtime: CommandRuntime, args: str) -> str:
+    parts = args.split()
+    if not parts or parts[0] == "current":
+        return await runtime.current_session()
+    action = parts[0]
+    if action == "list":
+        return await runtime.list_sessions()
+    if action == "switch":
+        if len(parts) < 2:
+            return "用法: /session switch <name>"
+        return await runtime.switch_session(parts[1])
+    if action == "rename":
+        if len(parts) < 2:
+            return "用法: /session rename <name>"
+        return await runtime.rename_session(parts[1])
+    if action == "delete":
+        target = parts[1] if len(parts) > 1 else None
+        if target == "current":
+            target = None
+        return await runtime.delete_session(target)
+    return await runtime.switch_session(action)
+
+
 async def _allow(runtime: CommandRuntime, category: str) -> str:
     valid = {"write", "bash", "all"}
     if category not in valid:
@@ -220,7 +246,7 @@ def help_text() -> str:
     return (
         "可用命令:\n"
         "/new - 重置当前会话\n"
-        "/session [list|name] - 查看或切换会话\n"
+        "/session [current|list|switch <name>|rename <name>|delete [name]] - 管理会话\n"
         "/usage - 查看当前会话上下文预算\n"
         "/allow [write|bash|all] - 授权危险操作\n"
         "/stop - 停止当前处理\n"

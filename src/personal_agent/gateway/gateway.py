@@ -349,6 +349,54 @@ class _GatewayCommandRuntime:
             lines.append("  无")
         return "\n".join(lines)
 
+    async def current_session(self) -> str:
+        session = await self.gateway._session_store.get_or_create(self._session_key, self.event.source)
+        current_id = self.gateway._compression_chain.resolve(session.session_id)
+        count = len(await self.gateway._session_store.load_history(current_id))
+        return (
+            f"当前会话: {self._session_key}\n"
+            f"session id: {current_id[:8]}\n"
+            f"消息数: {count}"
+        )
+
+    async def rename_session(self, name: str) -> str:
+        old_key = self._session_key
+        platform, user_id = self._platform_user()
+        new_key = f"{platform}:{name}:{user_id}"
+        if new_key == old_key:
+            return f"会话已是: {new_key}"
+        ok = await self.gateway._session_store.rename_session(old_key, new_key)
+        if not ok:
+            return f"无法重命名，会话不存在或目标已存在: {new_key}"
+        agent = self.gateway._agent_cache.pop(old_key, None)
+        if agent is not None:
+            self.gateway._agent_cache[new_key] = agent
+        base_key = self._base_key()
+        if old_key == base_key:
+            self.gateway._session_override[base_key] = new_key
+        else:
+            for key, value in list(self.gateway._session_override.items()):
+                if value == old_key:
+                    self.gateway._session_override[key] = new_key
+        self._session_key = new_key
+        return f"会话已重命名: {old_key} -> {new_key}"
+
+    async def delete_session(self, name: str | None = None) -> str:
+        base_key = self._base_key()
+        platform, user_id = self._platform_user()
+        target_key = self._session_key if name is None else f"{platform}:{name}:{user_id}"
+        if self.gateway._session_store.get(target_key) is None:
+            return f"会话不存在: {target_key}"
+        await self.gateway._session_store.delete_session(target_key)
+        self.gateway._agent_cache.pop(target_key, None)
+        for key, value in list(self.gateway._session_override.items()):
+            if key == target_key or value == target_key:
+                del self.gateway._session_override[key]
+        if target_key == self._session_key:
+            self._session_key = base_key
+            await self.gateway._session_store.get_or_create(base_key, self.event.source)
+        return f"会话已删除: {target_key}\n当前会话: {self._session_key}"
+
     async def load_history(self) -> list[dict]:
         session = await self.gateway._session_store.get_or_create(self._session_key, self.event.source)
         current_id = self.gateway._compression_chain.resolve(session.session_id)
