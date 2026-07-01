@@ -14,6 +14,7 @@ from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import SessionSource
+from personal_agent.runtime import AppRuntime, create_app_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class CliChatRuntime:
     compression_chain: CompressionChain
     memory_manager: MemoryManager
     mcp_manager: object | None = None
+    app_runtime: AppRuntime | None = None
     system_prompt_template: str = CLI_SYSTEM_PROMPT
     session_name: str = "default"
     agent_cache: dict[str, object] | None = None
@@ -54,6 +56,9 @@ class CliChatRuntime:
         return f"cli:{self.session_name}:local"
 
     async def close(self) -> None:
+        if self.app_runtime is not None:
+            await self.app_runtime.close()
+            return
         if self.mcp_manager is not None:
             await self.mcp_manager.stop()
         await self.db.close()
@@ -207,86 +212,19 @@ async def create_cli_runtime(
     settings: Settings | None = None,
     session_name: str = "default",
 ) -> CliChatRuntime:
-    settings = settings or Settings()
-    settings.agent_data_dir.mkdir(parents=True, exist_ok=True)
-
-    from personal_agent.main import _ensure_system_files
-    from personal_agent.plugins.manager import PluginManager
-    from personal_agent.tools.audit import set_audit_path
-    from personal_agent.tools.sandbox import init_sandbox
-
-    plugin_manager = PluginManager(settings)
-    plugin_manager.discover()
-    plugin_manager.load_enabled()
-    await plugin_manager.invoke_hook("configure", settings=settings)
-
-    init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
-    if settings.audit_enabled:
-        set_audit_path(settings.agent_data_dir / "audit.log")
-
-    mcp_manager = await _start_mcp_manager(settings, plugin_manager)
-
-    db = Database(settings.agent_data_dir / "state.db")
-    await db.initialize()
-
-    compression_chain = CompressionChain(settings.agent_data_dir / "compression_chain.json")
-    compression_chain.load()
-    session_store = SessionStore(db, settings.agent_data_dir, chain=compression_chain)
-    await session_store.initialize()
-    await session_store.expire_sessions(settings.session_expire_days)
-
-    system_dir = settings.agent_data_dir / "system"
-    _ensure_system_files(system_dir)
-    builtin_memory = await plugin_manager.invoke_hook(
-        "create_builtin_memory_provider",
-        system_dir=system_dir,
-    )
-    if builtin_memory is None:
-        raise RuntimeError("No built-in memory provider registered")
-
-    external_memory = None
-    if settings.memory_external_provider == "embedding":
-        external_memory = await plugin_manager.invoke_hook(
-            "create_external_memory_provider",
-            settings=settings,
-            data_dir=settings.agent_data_dir / "memory",
-        )
-        if external_memory is not None:
-            logger.info("External memory: embedding (BAAI/bge-small-zh-v1.5)")
+    app_runtime = await create_app_runtime(settings)
 
     return CliChatRuntime(
-        settings=settings,
-        plugin_manager=plugin_manager,
-        db=db,
-        session_store=session_store,
-        compression_chain=compression_chain,
-        memory_manager=MemoryManager(builtin=builtin_memory, external=external_memory),
-        mcp_manager=mcp_manager,
+        settings=app_runtime.settings,
+        plugin_manager=app_runtime.plugin_manager,
+        db=app_runtime.db,
+        session_store=app_runtime.session_store,
+        compression_chain=app_runtime.compression_chain,
+        memory_manager=app_runtime.memory_manager,
+        mcp_manager=app_runtime.mcp_manager,
+        app_runtime=app_runtime,
         session_name=_clean_session_name(session_name),
     )
-
-
-async def _start_mcp_manager(settings, plugin_manager):
-    mcp_servers = list(settings.mcp_servers)
-    for cfg in plugin_manager.get_mcp_servers():
-        if isinstance(cfg, dict):
-            mcp_servers.append(cfg)
-        else:
-            mcp_servers.append({
-                "name": getattr(cfg, "name", ""),
-                "command": getattr(cfg, "command", ""),
-                "args": getattr(cfg, "args", []),
-                "env": getattr(cfg, "env", {}),
-                "enabled": getattr(cfg, "enabled", True),
-            })
-    if not settings.mcp_enabled or not mcp_servers:
-        return None
-
-    from personal_agent.mcp.manager import MCPManager
-
-    manager = MCPManager(mcp_servers)
-    await manager.start()
-    return manager
 
 
 async def run_cli_once(message: str, *, session_name: str = "default") -> str:

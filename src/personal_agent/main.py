@@ -6,14 +6,10 @@ import asyncio
 import logging
 import signal
 import sys
-from pathlib import Path
 
 from personal_agent.config import Settings
-from personal_agent.db.database import Database
 from personal_agent.gateway.gateway import Gateway
-from personal_agent.memory.manager import MemoryManager
-from personal_agent.tools.sandbox import init_sandbox
-from personal_agent.tools.audit import set_audit_path
+from personal_agent.runtime import create_app_runtime, ensure_system_files
 
 logger = logging.getLogger("personal_agent")
 
@@ -67,19 +63,7 @@ def setup_logging(level: str = "INFO") -> None:
     logging.root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
 
-def _ensure_system_files(system_dir: Path) -> None:
-    """Create default system prompt files if they don't exist."""
-    system_dir.mkdir(parents=True, exist_ok=True)
-    defaults = {
-        "SOUL.md": "# 角色与人格\n\n- 你是一个智能个人助理，名字叫小助\n- 你擅长编程、问题分析和技术支持\n- 回复风格：简洁、直接、有条理\n",
-        "AGENT.md": "# 行为规则\n\n- 涉及实时数据时必须调用工具，不要凭记忆回答\n- 使用中文回复\n- 工具返回的结果要如实转述，不要编造\n- 优先使用工具而不是猜测\n",
-        "USER.md": "# 用户偏好\n\n- 用户偏好从这里开始记录\n",
-        "MEMORY.md": "# 用户画像\n\n- 从这里开始记录用户的重要信息\n",
-    }
-    for name, content in defaults.items():
-        f = system_dir / name
-        if not f.exists():
-            f.write_text(content, encoding="utf-8")
+_ensure_system_files = ensure_system_files
 
 
 async def boot() -> None:
@@ -88,66 +72,7 @@ async def boot() -> None:
     setup_logging(settings.log_level)
     logger.info("Personal Agent starting...")
 
-    # ── 2. Data dirs ──────────────────────────────────
-    data_dir = settings.agent_data_dir
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    # ── 3. Plugins and built-in registration ──────────
-    from personal_agent.plugins.manager import PluginManager
-    plugin_manager = PluginManager(settings)
-    plugin_manager.discover()
-    plugin_manager.load_enabled()
-    await plugin_manager.invoke_hook("configure", settings=settings)
-
-    # ── 3.5. MCP servers ──────────────────────────
-    mcp_manager = None
-    mcp_servers = list(settings.mcp_servers)
-    for cfg in plugin_manager.get_mcp_servers():
-        if isinstance(cfg, dict):
-            mcp_servers.append(cfg)
-        else:
-            mcp_servers.append({
-                "name": getattr(cfg, "name", ""),
-                "command": getattr(cfg, "command", ""),
-                "args": getattr(cfg, "args", []),
-                "env": getattr(cfg, "env", {}),
-                "enabled": getattr(cfg, "enabled", True),
-            })
-    if settings.mcp_enabled and mcp_servers:
-        from personal_agent.mcp.manager import MCPManager
-        mcp_manager = MCPManager(mcp_servers)
-        await mcp_manager.start()
-
-    # ── 4. Database ────────────────────────────────────
-    db = Database(data_dir / "state.db")
-    await db.initialize()
-
-    # ── 5. Memory ──────────────────────────────────────
-    system_dir = data_dir / "system"
-    _ensure_system_files(system_dir)
-    memory_store = await plugin_manager.invoke_hook(
-        "create_builtin_memory_provider",
-        system_dir=system_dir,
-    )
-    if memory_store is None:
-        raise RuntimeError("No built-in memory provider registered")
-
-    external_store = None
-    if settings.memory_external_provider == "embedding":
-        external_store = await plugin_manager.invoke_hook(
-            "create_external_memory_provider",
-            settings=settings,
-            data_dir=data_dir / "memory",
-        )
-        if external_store is not None:
-            logger.info("External memory: embedding (BAAI/bge-small-zh-v1.5)")
-
-    memory_manager = MemoryManager(builtin=memory_store, external=external_store)
-
-    # ── 6. Sandbox (unified — all file tools + bash) ──
-    init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
-    if settings.audit_enabled:
-        set_audit_path(data_dir / "audit.log")
+    runtime = await create_app_runtime(settings)
 
     # ── 7. Gateway ─────────────────────────────────────
     system_prompt = (
@@ -162,13 +87,12 @@ async def boot() -> None:
         "4. 工具返回的结果要如实转述，不要编造"
     )
     gateway = Gateway(
-        settings,
-        db,
-        memory_manager,
+        runtime.settings,
+        runtime.db,
+        runtime.memory_manager,
         system_prompt_template=system_prompt,
-        plugin_manager=plugin_manager,
+        plugin_manager=runtime.plugin_manager,
     )
-    gateway._mcp_manager = mcp_manager  # for shutdown cleanup
 
     # ── 7.5. Default hooks — non-restrictive utility hooks ──
 
@@ -214,6 +138,7 @@ async def boot() -> None:
         logger.info("Interrupted, shutting down...")
     finally:
         await gateway.stop()
+        await runtime.close()
 
 
 async def _shutdown(gateway: Gateway) -> None:
@@ -264,30 +189,29 @@ def _run_ingest(file_path: str) -> None:
     from pathlib import Path
 
     async def _run():
-        settings = Settings()
-        from personal_agent.plugins.manager import PluginManager
-
-        plugin_manager = PluginManager(settings)
-        plugin_manager.discover()
-        plugin_manager.load_enabled()
         path = Path(file_path)
         if not path.exists():
             print(f"Error: file not found: {file_path}")
             return
-        ext = await plugin_manager.invoke_hook(
-            "create_external_memory_provider",
-            settings=settings,
-            data_dir=settings.agent_data_dir / "memory",
-            force=True,
-        )
-        if ext is None:
-            print("Error: external embedding memory provider is unavailable.")
-            return
+
+        settings = Settings()
+        runtime = await create_app_runtime(settings)
         try:
+            ext = await runtime.plugin_manager.invoke_hook(
+                "create_external_memory_provider",
+                settings=runtime.settings,
+                data_dir=runtime.data_dir / "memory",
+                force=True,
+            )
+            if ext is None:
+                print("Error: external embedding memory provider is unavailable.")
+                return
             count = await ext.ingest_file(str(path.resolve()))
             print(f"Ingested {path.name}: {count} chunks stored.")
         except ValueError as e:
             print(f"Error: {e}")
+        finally:
+            await runtime.close()
 
     asyncio.run(_run())
 
