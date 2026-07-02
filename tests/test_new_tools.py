@@ -371,11 +371,15 @@ async def test_delegate_records_denied_tool_calls_in_detail():
     )
 
     result = await _delegate_task("try write")
-    run_id = list_agent_runs()[0]["run_id"]
+    summary = list_agent_runs()[0]
+    run_id = summary["run_id"]
     detail = format_agent_run(run_id)
 
     assert "denied-ok" in result
     assert "denied=1" in result
+    assert summary["denial_categories"] == {"policy": 2}
+    assert summary["denied_tool_call_details"][0]["name"] == "write"
+    assert summary["tool_result_summaries"][0]["denied"] is True
     assert "状态: completed (已完成)" in detail
     assert "拒绝工具调用: 1" in detail
     assert "工具结果摘要: 1" in detail

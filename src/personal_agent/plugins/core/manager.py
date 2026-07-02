@@ -75,7 +75,8 @@ class PluginManager:
 
     def discover(self) -> list[LoadedPlugin]:
         for directory in self._plugin_dirs:
-            self._discover_dir(Path(directory), recursive=True)
+            source = "builtin" if self._same_path(Path(directory), _BUILTIN_PLUGIN_DIR) else "user"
+            self._discover_dir(Path(directory), source=source, recursive=True)
 
         for plugin in self._plugins.values():
             plugin.enabled = self._resolve_enabled(plugin.manifest)
@@ -264,15 +265,21 @@ class PluginManager:
     def list_plugins(self) -> list[LoadedPlugin]:
         return [self._plugins[key] for key in sorted(self._plugins)]
 
-    def doctor_plugin(self, key: str) -> dict[str, Any]:
+    def doctor_plugin(self, key: str, *, check_entrypoint: bool | None = None) -> dict[str, Any]:
         if not self._plugins:
             self.discover()
         plugin = self._plugins[key]
         missing_env = self._missing_env(plugin.manifest)
         manifest_error = (plugin.error or "") if plugin.manifest.entrypoint == "invalid" else ""
+        entrypoint_checked = False
         if manifest_error:
             entrypoint_ok, entrypoint_error = False, ""
+        elif check_entrypoint is False:
+            entrypoint_ok, entrypoint_error = True, ""
+        elif check_entrypoint is None and plugin.status == PluginStatus.DEFERRED:
+            entrypoint_ok, entrypoint_error = True, ""
         else:
+            entrypoint_checked = True
             entrypoint_ok, entrypoint_error = self._check_entrypoint(plugin.manifest)
         return {
             "key": plugin.key,
@@ -288,10 +295,13 @@ class PluginManager:
             "deferred": plugin.deferred,
             "source": plugin.manifest.source,
             "path": str(plugin.manifest.path) if plugin.manifest.path else "",
+            "manifest_path": self._manifest_path(plugin),
+            "source_boundary": self._source_boundary(plugin),
             "requires_env": plugin.manifest.requires_env,
             "missing_env": missing_env,
             "manifest_valid": not manifest_error,
             "manifest_error": manifest_error,
+            "entrypoint_checked": entrypoint_checked,
             "entrypoint_importable": entrypoint_ok,
             "entrypoint_error": entrypoint_error,
             "deferred_reason": self._deferred_reason(plugin),
@@ -326,7 +336,7 @@ class PluginManager:
             if load:
                 plugin = self.load_plugin(plugin.key)
 
-        report = self.doctor_plugin(plugin.key)
+        report = self.doctor_plugin(plugin.key, check_entrypoint=True)
         report["validation_path"] = str(plugin_dir)
         report["validation_manifest"] = str(manifest_path)
         report["validation_load_requested"] = load
@@ -342,6 +352,12 @@ class PluginManager:
     def _add_manifest(self, manifest: PluginManifest) -> None:
         if manifest.key in self._plugins:
             existing = self._plugins[manifest.key]
+            if (
+                existing.manifest.path is not None
+                and manifest.path is not None
+                and self._same_path(existing.manifest.path, manifest.path)
+            ):
+                return
             existing.status = PluginStatus.ERROR
             existing.error = f"Duplicate plugin key: {manifest.key}"
             existing.error_traceback = None
@@ -388,9 +404,11 @@ class PluginManager:
         for manifest_path in manifest_files:
             try:
                 data = self._read_manifest_file(manifest_path)
+                manifest_data = dict(data)
+                manifest_data["source"] = source or "user"
                 manifest = PluginManifest.from_mapping(
-                    data,
-                    source=source or str(data.get("source", "user")),
+                    manifest_data,
+                    source=source or "user",
                     path=manifest_path.parent,
                 )
                 self._add_manifest(manifest)
@@ -606,6 +624,22 @@ class PluginManager:
             "commands": list(plugin.commands_registered),
             "middleware": list(plugin.middleware_registered),
         }
+
+    def _manifest_path(self, plugin: LoadedPlugin) -> str:
+        if plugin.manifest.path is None:
+            return ""
+        for name in ("plugin.yaml", "plugin.yml", "plugin.json"):
+            path = plugin.manifest.path / name
+            if path.exists():
+                return str(path)
+        return ""
+
+    def _source_boundary(self, plugin: LoadedPlugin) -> str:
+        if plugin.manifest.path is None:
+            return "unknown"
+        if self._same_path(plugin.manifest.path, _BUILTIN_PLUGIN_DIR) or _BUILTIN_PLUGIN_DIR in plugin.manifest.path.parents:
+            return "builtin"
+        return "user"
 
     def _registry_snapshot(self) -> dict[str, set[str]]:
         from personal_agent.adapters.base import platform_registry

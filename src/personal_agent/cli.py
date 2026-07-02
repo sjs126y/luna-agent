@@ -29,6 +29,16 @@ app.add_typer(agents_app, name="agents")
 
 
 _CONFIG_TEMPLATE = """# Personal Agent minimal configuration
+agent:
+  max_iterations: 30
+  max_tool_calls_per_turn: 20
+
+agents:
+  max_concurrent_runs: 4
+  max_tool_calls: 10
+  max_tokens: 4096
+  history_limit: 100
+
 storage:
   data_dir: ./data
   log_level: INFO
@@ -533,6 +543,12 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "mcp_enabled": settings.mcp_enabled,
         "runtime": runtime_health["runtime"],
         "memory": runtime_health["memory"],
+        "agents": {
+            "max_concurrent_runs": settings.agent_runtime_max_concurrent_runs,
+            "max_tool_calls": settings.agent_runtime_max_tool_calls,
+            "max_tokens": settings.agent_runtime_max_tokens,
+            "history_limit": settings.agent_runtime_history_limit,
+        },
         "sandbox": {
             "roots": sandbox_roots,
             "blocked_count": len(settings.sandbox_blocked),
@@ -580,6 +596,12 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  external provider: {memory.get('external_provider') or '-'}",
         f"  review service: {memory.get('review_service') or '-'}",
         f"  review enabled: {_yes(memory.get('review_enabled', False))}",
+        "",
+        "Agents:",
+        f"  max concurrent runs: {report.get('agents', {}).get('max_concurrent_runs', 0)}",
+        f"  max tool calls: {report.get('agents', {}).get('max_tool_calls', 0)}",
+        f"  max tokens: {report.get('agents', {}).get('max_tokens', 0)}",
+        f"  history limit: {report.get('agents', {}).get('history_limit', 0)}",
         "",
         "Sandbox:",
     ]
@@ -664,8 +686,9 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         f"描述: {report['description'] or '-'}",
         f"类型: {report['kind']}  来源: {report['source']}",
         f"路径: {report.get('path') or '-'}",
+        f"Manifest 文件: {report.get('manifest_path') or '-'}",
         f"Manifest: {_status(report.get('manifest_valid', True))}",
-        f"入口: {report['entrypoint']} [{_status(report['entrypoint_importable'])}]",
+        f"入口: {report['entrypoint']} [{_entrypoint_status_text(report)}]",
         f"启用: {_yes(report['enabled'])}  默认启用: {_yes(report['enabled_by_default'])}  延迟加载: {_yes(report['deferred'])}",
         f"状态: {report['status']}",
         f"提供能力: {_list_or_none(report['provides'])}",
@@ -852,6 +875,12 @@ def _yes(value: bool) -> str:
 
 def _status(ok: bool) -> str:
     return "正常" if ok else "异常"
+
+
+def _entrypoint_status_text(report: dict[str, Any]) -> str:
+    if not report.get("entrypoint_checked", True):
+        return "未检查"
+    return _status(report.get("entrypoint_importable", True))
 
 
 def _list_or_none(items) -> str:

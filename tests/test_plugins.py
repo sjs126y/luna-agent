@@ -153,8 +153,82 @@ def test_plugin_doctor_reports_deferred_reason_and_hint(tmp_path):
     report = manager.doctor_plugin("platforms/telegram")
 
     assert report["status"] == "DEFERRED"
+    assert report["entrypoint_checked"] is False
     assert report["deferred_reason"] == "平台插件会在网关解析平台适配器时加载"
     assert "平台插件会在网关解析平台适配器时加载" in report["diagnostic_hints"]
+
+
+def test_deferred_plugin_doctor_does_not_import_before_load(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "lazy"
+    marker = tmp_path / "imported.txt"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/lazy
+name: Lazy Plugin
+version: 1.0.0
+kind: platform
+entrypoint: lazy_plugin:register
+enabled_by_default: true
+deferred: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "lazy_plugin.py").write_text(
+        f"""
+from pathlib import Path
+Path({str(marker)!r}).write_text("imported", encoding="utf-8")
+
+def register(ctx):
+    pass
+""".strip(),
+        encoding="utf-8",
+    )
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+    manager.discover()
+    report = manager.doctor_plugin("user/lazy")
+
+    assert report["status"] == "DEFERRED"
+    assert report["entrypoint_checked"] is False
+    assert not marker.exists()
+
+
+def test_user_plugin_source_is_forced_by_scan_boundary(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "pretend_builtin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/pretend-builtin
+name: Pretend Builtin
+version: 1.0.0
+entrypoint: pretend_plugin:register
+source: builtin
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "pretend_plugin.py").write_text("def register(ctx): pass\n", encoding="utf-8")
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+    manager.discover()
+    report = manager.doctor_plugin("user/pretend-builtin")
+
+    assert report["source"] == "user"
+    assert report["source_boundary"] == "user"
+    assert report["manifest_path"].endswith("plugin.yaml")
 
 
 def test_plugin_load_registers_and_unloads_entries(tmp_path):
@@ -320,6 +394,36 @@ enabled_by_default: true
     assert "Duplicate plugin key" in (manager._plugins["user/sample"].error or "")
 
 
+def test_discover_is_idempotent_for_same_manifest_path(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "sample"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/sample
+name: Sample
+version: 1.0.0
+entrypoint: sample_plugin:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "sample_plugin.py").write_text("def register(ctx): pass\n", encoding="utf-8")
+
+    manager = PluginManager(
+        _settings(tmp_path, plugins_dir),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.discover()
+    manager.discover()
+
+    assert manager._plugins["user/sample"].status == PluginStatus.DISCOVERED
+    assert manager._plugins["user/sample"].error is None
+
+
 def test_command_cannot_override_core_command(tmp_path):
     manager = PluginManager(
         _settings(tmp_path, tmp_path / "plugins"),
@@ -391,6 +495,40 @@ def test_builtin_tools_use_explicit_plugin_registration(tmp_path):
     plugin = manager.load_plugin("builtin/tools")
     assert plugin.status == PluginStatus.LOADED
     assert tool_registry.get("calculator") is not None
+
+
+def test_builtin_tool_delegate_setup_uses_agent_runtime_settings(tmp_path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import _setup_delegate
+
+    captured = {}
+
+    def fake_setup_delegate(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.setup_delegate",
+        fake_setup_delegate,
+    )
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        agent_runtime_max_tokens=1234,
+        agent_runtime_max_concurrent_runs=2,
+        agent_runtime_max_tool_calls=3,
+        agent_runtime_history_limit=4,
+    )
+
+    _setup_delegate(
+        call_fn=lambda **kwargs: None,
+        tools=[],
+        max_tokens=9999,
+        settings=settings,
+    )
+
+    assert captured["max_tokens"] == 1234
+    assert captured["max_concurrent_runs"] == 2
+    assert captured["max_tool_calls"] == 3
+    assert captured["history_limit"] == 4
+    assert captured["run_store_path"] == tmp_path / "data" / "agent_runs.jsonl"
 
 
 def test_builtin_skills_use_explicit_plugin_registration(tmp_path):

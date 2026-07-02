@@ -49,6 +49,13 @@ class Settings:
         self.max_iterations: int = agent.get("max_iterations", 30)
         self.max_tool_calls_per_turn: int = agent.get("max_tool_calls_per_turn", 20)
 
+        # ── Delegated agents (from config.yaml) ──
+        agents = yaml_cfg.get("agents", {})
+        self.agent_runtime_max_concurrent_runs: int = agents.get("max_concurrent_runs", 4)
+        self.agent_runtime_max_tool_calls: int = agents.get("max_tool_calls", 10)
+        self.agent_runtime_max_tokens: int = agents.get("max_tokens", 4096)
+        self.agent_runtime_history_limit: int = agents.get("history_limit", 100)
+
         # ── Storage (from config.yaml) ──
         storage = yaml_cfg.get("storage", {})
         self.agent_data_dir: Path = Path(storage.get("data_dir", "./data"))

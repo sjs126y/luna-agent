@@ -5,6 +5,12 @@ agent:
   max_iterations: 30
   max_tool_calls_per_turn: 20
 
+agents:
+  max_concurrent_runs: 4          # max active delegated sub-agents
+  max_tool_calls: 10              # max tool calls per delegated sub-agent
+  max_tokens: 4096                # max output tokens per delegated sub-agent
+  history_limit: 100              # recent sub-agent runs kept in memory
+
 storage:
   data_dir: "./data"
   log_level: "INFO"

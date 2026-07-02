@@ -31,6 +31,7 @@ def setup_delegate(
     run_store_path: Path | None = None,
     max_concurrent_runs: int = 4,
     max_tool_calls: int = 10,
+    history_limit: int = 100,
 ):
     global _delegate_call, _agent_runtime, _run_store_path
     _delegate_call = call_fn
@@ -41,6 +42,7 @@ def setup_delegate(
         max_tokens=max_tokens,
         max_concurrent_runs=max_concurrent_runs,
         max_tool_calls=max_tool_calls,
+        history_limit=history_limit,
         run_store_path=_run_store_path,
     )
 
@@ -359,8 +361,21 @@ def _agent_run_summary(run) -> dict:
         "denied_tool_calls": len(run.denied_tool_calls),
         "tool_results": len(run.tool_results),
         "denied_tools": len(run.denied_tools),
+        "denial_categories": _denial_categories(run),
+        "executed_tool_call_details": list(run.executed_tool_calls),
+        "denied_tool_call_details": list(run.denied_tool_calls),
+        "tool_result_summaries": list(run.tool_results),
+        "denied_tool_selection_details": list(run.denied_tools),
         "result": run.result,
     }
+
+
+def _denial_categories(run) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in [*run.denied_tool_calls, *run.denied_tools]:
+        category = str(item.get("category", "policy") or "policy")
+        counts[category] = counts.get(category, 0) + 1
+    return counts
 
 
 def _normalize_tool_policy(tool_policy: str | list[str], allowed_tools: list[str]) -> str | list[str]:

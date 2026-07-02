@@ -87,14 +87,25 @@ def _setup_delegate(call_fn=None, tools=None, max_tokens: int | None = None, **k
 
     settings = kwargs.get("settings")
     run_store_path = None
+    runtime_max_tokens = max_tokens or 4096
+    max_concurrent_runs = 4
+    max_tool_calls = 10
+    history_limit = 100
     if settings is not None:
         run_store_path = settings.agent_data_dir / "agent_runs.jsonl"
+        runtime_max_tokens = getattr(settings, "agent_runtime_max_tokens", runtime_max_tokens)
+        max_concurrent_runs = getattr(settings, "agent_runtime_max_concurrent_runs", max_concurrent_runs)
+        max_tool_calls = getattr(settings, "agent_runtime_max_tool_calls", max_tool_calls)
+        history_limit = getattr(settings, "agent_runtime_history_limit", history_limit)
 
     setup_delegate(
         call_fn=call_fn,
         tools=tools,
-        max_tokens=max_tokens or 4096,
+        max_tokens=runtime_max_tokens,
         run_store_path=run_store_path,
+        max_concurrent_runs=max_concurrent_runs,
+        max_tool_calls=max_tool_calls,
+        history_limit=history_limit,
     )
 
 

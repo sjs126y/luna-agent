@@ -289,6 +289,7 @@ def test_global_doctor_json_command_contains_runtime_and_memory():
     data = json.loads(result.output)
     assert "runtime" in data
     assert "memory" in data
+    assert "agents" in data
     assert "plugins" in data
 
 
@@ -332,6 +333,7 @@ def test_init_command_generates_and_skips_existing_files(tmp_path):
     assert "已生成" in result.output
     assert (tmp_path / "config.yaml").exists()
     assert (tmp_path / ".env.example").exists()
+    assert "agents:" in (tmp_path / "config.yaml").read_text(encoding="utf-8")
 
     original = (tmp_path / "config.yaml").read_text(encoding="utf-8")
     second = runner.invoke(app, ["init", "--dir", str(tmp_path)])
@@ -511,6 +513,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     text = format_doctor_report(report)
 
     assert "总体状态: 需要注意" in text
+    assert "Agents:" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
