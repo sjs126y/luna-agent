@@ -13,6 +13,8 @@ import time
 from typing import Any
 
 from personal_agent.compression.base import ContextEngine
+from personal_agent.compression.registry import compression_registry
+from personal_agent.llm.provider import ProviderProfile
 from personal_agent.llm.token_counter import count_messages_tokens, count_tools_tokens
 
 logger = logging.getLogger(__name__)
@@ -244,6 +246,38 @@ class ContextCompressor(ContextEngine):
             count_messages_tokens(messages, model=self.model)
             + count_messages_tokens([], system_prompt, model=self.model)
         )
+
+
+def build_simple_compressor(
+    settings: Any,
+    provider: ProviderProfile,
+    api_mode: str,
+) -> ContextCompressor | None:
+    """Build the built-in compressor implementation."""
+    compressor_transport = None
+    if settings.compressor_model:
+        comp_provider = ProviderProfile(
+            name="compressor",
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.compressor_model,
+            max_tokens=512,
+        )
+        from personal_agent.llm.transport_registry import transport_registry
+
+        compressor_transport = transport_registry.get(api_mode, comp_provider)
+
+    return ContextCompressor(
+        context_length=provider.context_window or 64_000,
+        threshold_ratio=settings.compression_threshold_ratio,
+        tail_token_budget=settings.tail_token_budget,
+        max_summary_tokens=settings.compressor_max_tokens,
+        compressor_transport=compressor_transport,
+        model=provider.model or "",
+    )
+
+
+compression_registry.register("simple", build_simple_compressor, aliases=("compressor",))
 
 
 def _format_messages_for_summary(messages: list[dict]) -> str:

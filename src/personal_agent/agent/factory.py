@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from personal_agent.agent.agent import init_agent
-from personal_agent.compression.simple import ContextCompressor
+from personal_agent.compression import compression_registry
 from personal_agent.llm.provider import ProviderProfile, provider_registry
 from personal_agent.llm.transport_registry import transport_registry
 
@@ -73,28 +73,17 @@ async def create_agent_runtime(
 
 
 def _create_compressor(settings, provider: ProviderProfile, api_mode: str):
-    if settings.compressor_engine not in ("simple", "compressor"):
+    engine_name = str(getattr(settings, "compressor_engine", "compressor") or "").strip().lower()
+    if engine_name in {"", "none", "off", "disabled"}:
         return None
 
-    compressor_transport = None
-    if settings.compressor_model:
-        comp_provider = ProviderProfile(
-            name="compressor",
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.compressor_model,
-            max_tokens=512,
-        )
-        compressor_transport = transport_registry.get(api_mode, comp_provider)
+    try:
+        factory = compression_registry.get(engine_name)
+    except KeyError:
+        logger.warning("Unknown compression engine: %s", engine_name)
+        return None
 
-    return ContextCompressor(
-        context_length=provider.context_window or 64_000,
-        threshold_ratio=settings.compression_threshold_ratio,
-        tail_token_budget=settings.tail_token_budget,
-        max_summary_tokens=settings.compressor_max_tokens,
-        compressor_transport=compressor_transport,
-        model=provider.model or "",
-    )
+    return factory(settings, provider, api_mode)
 
 
 def _wire_plugin_hooks(agent, plugin_manager) -> None:

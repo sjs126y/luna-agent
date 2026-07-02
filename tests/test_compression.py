@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personal_agent.compression import compression_registry
 from personal_agent.compression.base import ContextEngine
 from personal_agent.compression.simple import (
     ContextCompressor,
@@ -68,6 +69,11 @@ def test_context_engine_update_from_response():
     )
     engine.update_from_response(resp)
     assert engine.last_prompt_tokens == 5000
+
+
+def test_builtin_compression_registry_registers_aliases():
+    assert compression_registry.list_engines() == ["simple"]
+    assert compression_registry.get("simple") is compression_registry.get("compressor")
 
 
 # ── ContextCompressor init ───────────────────────────────
