@@ -34,6 +34,11 @@ class MockTransport:
         return messages
 
 
+class FailingTransport(MockTransport):
+    async def call(self, messages, system_prompt="", tools=None, max_tokens=4096, stream=False):
+        raise RuntimeError("transport boom")
+
+
 @pytest.fixture
 def provider():
     return ProviderProfile(name="test", base_url="http://test", api_key="k", model="m")
@@ -110,6 +115,19 @@ async def test_tool_use_loop(provider):
     tool_results = [m for m in result["messages"] if isinstance(m.get("content"), list)
                     and any(b.get("type") == "tool_result" for b in m["content"])]
     assert len(tool_results) >= 1
+
+
+@pytest.mark.asyncio
+async def test_llm_failure_returns_failed_status(provider):
+    agent = init_agent(FailingTransport([]), provider)
+    ctx = await build_turn_context(agent, "Hi")
+
+    result = await run_conversation(agent, ctx)
+
+    assert result["completed"] is False
+    assert result["status"] == "failed"
+    assert result["error"] == "RuntimeError: transport boom"
+    assert "模型调用出错" in result["final_response"]
 
 
 @pytest.mark.asyncio

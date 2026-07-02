@@ -18,6 +18,7 @@ from typing import Any
 
 import yaml
 
+from personal_agent.persistence.json_store import read_json_object, write_json_atomic
 from personal_agent.plugins.core.context import PluginContext
 from personal_agent.plugins.core.models import (
     CommandEntry,
@@ -543,21 +544,14 @@ class PluginManager:
         return manifest.enabled_by_default
 
     def _load_state(self) -> dict[str, list[str]]:
-        try:
-            if self._state_path.exists():
-                data = json.loads(self._state_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    return {
-                        "enabled": list(data.get("enabled", [])),
-                        "disabled": list(data.get("disabled", [])),
-                    }
-        except Exception:
-            logger.exception("Failed to read plugin state: %s", self._state_path)
-        return {"enabled": [], "disabled": []}
+        data = read_json_object(self._state_path, {"enabled": [], "disabled": []})
+        return {
+            "enabled": list(data.get("enabled", [])),
+            "disabled": list(data.get("disabled", [])),
+        }
 
     def _save_state(self) -> None:
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
+        write_json_atomic(self._state_path, self._state)
 
     def _load_env_file(self) -> dict[str, str]:
         env_path = Path(".env")

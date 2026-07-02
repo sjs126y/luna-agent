@@ -123,7 +123,7 @@ async def test_run_turn_persists_history_and_invokes_session_hook(service, monke
 
 
 @pytest.mark.asyncio
-async def test_run_turn_does_not_persist_incomplete_or_overflow_turns(service, monkeypatch):
+async def test_run_turn_persists_minimal_context_overflow_turn(service, monkeypatch):
     svc, _manager, _db = service
 
     async def build_turn_context(agent, text, history):
@@ -140,10 +140,84 @@ async def test_run_turn_does_not_persist_incomplete_or_overflow_turns(service, m
     monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
     monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
 
-    await svc.run_turn("cli:default:local", _source(), "hello")
+    result = await svc.run_turn("cli:default:local", _source(), "hello")
 
     session = await svc.session_store.get_or_create("cli:default:local", _source())
-    assert await svc.session_store.load_history(session.session_id) == []
+    history = await svc.session_store.load_history(session.session_id)
+    assert result.status == "context_overflow"
+    assert [msg["content"][0]["text"] for msg in history] == ["hello", "partial"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_persists_minimal_failed_turn(service, monkeypatch):
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages(user_text=text))
+
+    async def run_conversation(agent, ctx):
+        return {
+            "final_response": "抱歉，模型调用出错了：boom",
+            "messages": ctx.messages,
+            "completed": False,
+            "status": "failed",
+            "error": "RuntimeError: boom",
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "hello")
+
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+    history = await svc.session_store.load_history(session.session_id)
+    assert result.status == "failed"
+    assert result.error == "RuntimeError: boom"
+    assert [msg["content"][0]["text"] for msg in history] == ["hello", "抱歉，模型调用出错了：boom"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_persists_minimal_stopped_turn(service, monkeypatch):
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages(user_text=text))
+
+    async def run_conversation(agent, ctx):
+        return {
+            "final_response": "已停止。",
+            "messages": ctx.messages,
+            "completed": False,
+            "status": "stopped",
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "hello")
+
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+    history = await svc.session_store.load_history(session.session_id)
+    assert result.status == "stopped"
+    assert [msg["content"][0]["text"] for msg in history] == ["hello", "已停止。"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_converts_unhandled_exception_to_failed_turn(service, monkeypatch):
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        raise RuntimeError("context boom")
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+
+    result = await svc.run_turn("cli:default:local", _source(), "hello")
+
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+    history = await svc.session_store.load_history(session.session_id)
+    assert result.status == "failed"
+    assert result.error == "RuntimeError: context boom"
+    assert [msg["content"][0]["text"] for msg in history] == ["hello", "抱歉，本轮处理出错了：context boom"]
 
 
 @pytest.mark.asyncio

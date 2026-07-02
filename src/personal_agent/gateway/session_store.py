@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
 from pathlib import Path
 
 from personal_agent.models.session import SessionEntry
+from personal_agent.persistence.json_store import read_json_object, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -224,13 +224,13 @@ class SessionStore:
     def _load_index(self) -> None:
         if not self._index_path.exists():
             return
-        try:
-            data = json.loads(self._index_path.read_text(encoding="utf-8"))
-            for key, val in data.items():
+        data = read_json_object(self._index_path, {})
+        for key, val in data.items():
+            try:
                 self._index[key] = SessionEntry(**val)
-            logger.info("Loaded %d sessions from index", len(self._index))
-        except Exception:
-            logger.exception("Failed to load sessions.json")
+            except Exception:
+                logger.exception("Failed to load session index entry: %s", key)
+        logger.info("Loaded %d sessions from index", len(self._index))
 
     def _save_index(self) -> None:
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,4 +241,4 @@ class SessionStore:
             "created_at": v.created_at, "last_active_at": v.last_active_at,
             "message_count": v.message_count,
         } for k, v in self._index.items()}
-        self._index_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        write_json_atomic(self._index_path, data)

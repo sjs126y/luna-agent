@@ -17,6 +17,8 @@ class ConversationTurnResult:
     was_compressed: bool
     should_review_memory: bool
     raw: dict[str, Any]
+    status: str = "completed"
+    error: str = ""
 
 
 class ConversationService:
@@ -53,18 +55,40 @@ class ConversationService:
         current_id = self.resolve_session_id(session.session_id)
         history = await self.session_store.load_history(current_id)
         previous_count = len(history)
-        agent = await self.get_or_create_agent(session_key)
 
         from personal_agent.agent.context import build_turn_context
         from personal_agent.agent.loop import run_conversation
 
-        ctx = await build_turn_context(agent, text, history)
-        result = await run_conversation(agent, ctx)
+        ctx = None
+        try:
+            agent = await self.get_or_create_agent(session_key)
+            ctx = await build_turn_context(agent, text, history)
+            result = await run_conversation(agent, ctx)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            final = f"抱歉，本轮处理出错了：{exc}"
+            result = {
+                "final_response": final,
+                "messages": _minimal_turn_messages(text, final),
+                "completed": False,
+                "status": "failed",
+                "error": error,
+            }
 
         completed = bool(result.get("completed"))
         context_overflow = bool(result.get("context_overflow"))
-        if completed and not context_overflow:
-            if ctx.was_compressed:
+        status = _turn_status(result, completed=completed, context_overflow=context_overflow)
+        error = str(result.get("error") or "")
+        final_response = _final_response_for_status(status, result.get("final_response", ""), error)
+        was_compressed = bool(ctx.was_compressed) if ctx is not None else False
+        should_review_memory = (
+            bool(result.get("should_review_memory", ctx.should_review_memory))
+            if ctx is not None and status == "completed"
+            else False
+        )
+
+        if status == "completed" and completed and not context_overflow:
+            if was_compressed:
                 await self.session_store.create_compressed_session(
                     session_key, source, result["messages"]
                 )
@@ -72,15 +96,22 @@ class ConversationService:
                 await self.session_store.save_transcript(
                     current_id, result["messages"], previous_count
                 )
+        else:
+            minimal_messages = _minimal_turn_messages(text, final_response)
+            await self.session_store.save_transcript(
+                current_id, history + minimal_messages, previous_count
+            )
 
         return ConversationTurnResult(
-            final_response=result.get("final_response", "") or "",
+            final_response=final_response,
             messages=result.get("messages", []),
             completed=completed,
             context_overflow=context_overflow,
-            was_compressed=ctx.was_compressed,
-            should_review_memory=bool(result.get("should_review_memory", ctx.should_review_memory)),
+            was_compressed=was_compressed,
+            should_review_memory=should_review_memory,
             raw=result,
+            status=status,
+            error=error,
         )
 
     async def get_or_create_agent(self, session_key: str):
@@ -294,3 +325,36 @@ class ConversationService:
     def _allow_agent_category(agent, category: str) -> None:
         if hasattr(agent, "_destructive_allowed"):
             agent._destructive_allowed.add(category)
+
+
+def _minimal_turn_messages(user_text: str, assistant_text: str) -> list[dict]:
+    return [
+        {"role": "user", "content": [{"type": "text", "text": user_text}]},
+        {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+    ]
+
+
+def _turn_status(result: dict[str, Any], *, completed: bool, context_overflow: bool) -> str:
+    raw = str(result.get("status") or "").strip()
+    if raw in {"completed", "stopped", "failed", "context_overflow"}:
+        return raw
+    if context_overflow:
+        return "context_overflow"
+    if not completed:
+        if str(result.get("final_response") or "").strip() == "已停止。":
+            return "stopped"
+        return "failed"
+    return "completed"
+
+
+def _final_response_for_status(status: str, final_response: Any, error: str = "") -> str:
+    text = str(final_response or "").strip()
+    if text:
+        return text
+    if status == "stopped":
+        return "已停止。"
+    if status == "context_overflow":
+        return "抱歉，本轮上下文超出限制，未能完成处理。"
+    if status == "failed":
+        return f"抱歉，本轮处理出错了：{error}" if error else "抱歉，本轮处理出错了。"
+    return ""

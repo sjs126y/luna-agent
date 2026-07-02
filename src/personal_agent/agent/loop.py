@@ -65,6 +65,8 @@ async def run_conversation(agent, ctx) -> dict:
                         "messages": ctx.messages,
                         "api_calls": agent.session_api_calls,
                         "completed": False,
+                        "status": "stopped",
+                        "error": "",
                     }
             response = await llm_task
         except asyncio.CancelledError:
@@ -73,6 +75,8 @@ async def run_conversation(agent, ctx) -> dict:
                 "messages": ctx.messages,
                 "api_calls": agent.session_api_calls,
                 "completed": False,
+                "status": "stopped",
+                "error": "",
             }
         except Exception as exc:
             # ── retry: invalid JSON / parse error ──
@@ -92,6 +96,8 @@ async def run_conversation(agent, ctx) -> dict:
                 "messages": ctx.messages,
                 "api_calls": agent.session_api_calls,
                 "completed": False,
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
             }
 
         agent.session_prompt_tokens += response.usage.get("input_tokens", 0)
@@ -132,6 +138,8 @@ async def run_conversation(agent, ctx) -> dict:
                 "messages": ctx.messages,
                 "api_calls": agent.session_api_calls,
                 "completed": True,
+                "status": "completed",
+                "error": "",
             }
 
         # ── retry: invalid JSON in tool calls ──
@@ -199,6 +207,8 @@ async def run_conversation(agent, ctx) -> dict:
         "api_calls": agent.session_api_calls,
         "completed": True,
         "should_review_memory": ctx.should_review_memory,
+        "status": "completed",
+        "error": "",
     }
 
 

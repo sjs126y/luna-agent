@@ -7,9 +7,10 @@ The chain maps old → new so get_current_session_id() can walk to the latest.
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
+
+from personal_agent.persistence.json_store import read_json_object, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,16 @@ class CompressionChain:
     def load(self) -> None:
         if not self._path.exists():
             return
-        try:
-            self._chain = json.loads(self._path.read_text(encoding="utf-8"))
-            logger.info("Loaded compression chain: %d entries", len(self._chain))
-        except Exception:
-            logger.exception("Failed to load compression chain")
+        data = read_json_object(self._path, {})
+        self._chain = {
+            str(old): str(new)
+            for old, new in data.items()
+            if isinstance(old, str) and isinstance(new, str)
+        }
+        logger.info("Loaded compression chain: %d entries", len(self._chain))
 
     def save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._chain, indent=2, ensure_ascii=False), encoding="utf-8")
+        write_json_atomic(self._path, self._chain)
 
     def link(self, old_session_id: str, new_session_id: str) -> None:
         """Record that old_session was compressed into new_session."""
