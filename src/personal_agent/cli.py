@@ -821,6 +821,15 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
                 "db_open": False,
                 "mcp_enabled": bool(settings.mcp_enabled),
                 "mcp_running": False,
+                "mcp": {
+                    "enabled": bool(settings.mcp_enabled),
+                    "running": False,
+                    "configured_count": len(settings.mcp_servers),
+                    "connected_count": 0,
+                    "total_tools": 0,
+                    "registered_tools": [],
+                    "servers": [],
+                },
                 "gateway_created": False,
                 "gateway_running": False,
                 "gateway": {},
@@ -921,6 +930,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "runtime": runtime_health["runtime"],
         "memory": runtime_health["memory"],
         "gateway": runtime_health["runtime"].get("gateway", {}),
+        "mcp_runtime": runtime_health["runtime"].get("mcp", {}),
         "agents": {
             "max_concurrent_runs": settings.agent_runtime_max_concurrent_runs,
             "max_tool_calls": settings.agent_runtime_max_tool_calls,
@@ -946,6 +956,7 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     memory = report.get("memory", {})
     gateway = report.get("gateway", {})
     config = report.get("config", {})
+    mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
         "Personal Agent 诊断",
         f"总体状态: {'需要注意' if issues else '正常'}",
@@ -1012,11 +1023,35 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     lines.append(f"  bash 工作目录: {report['sandbox']['bash_work_dir']}")
 
     lines.extend(["", "MCP 服务器:"])
+    runtime_servers = {
+        str(server.get("name", "")): server
+        for server in mcp_runtime.get("servers", [])
+        if server.get("name")
+    }
+    seen_mcp_servers: set[str] = set()
     if report["mcp_servers"]:
         for server in report["mcp_servers"]:
             state = "禁用" if not server["enabled"] else _status(server["command_found"])
-            lines.append(f"  - {server['name']}: {server['command'] or '-'} [{state}]")
-    else:
+            name = str(server["name"])
+            seen_mcp_servers.add(name)
+            runtime_server = runtime_servers.get(name, {})
+            runtime_text = _format_mcp_runtime_summary(runtime_server)
+            lines.append(
+                f"  - {name}: {server['command'] or '-'} [{state}] {runtime_text}"
+            )
+            stderr = _format_mcp_stderr(runtime_server)
+            if stderr:
+                lines.append(f"    stderr: {stderr}")
+    for name, runtime_server in runtime_servers.items():
+        if name in seen_mcp_servers:
+            continue
+        runtime_text = _format_mcp_runtime_summary(runtime_server)
+        command = runtime_server.get("command") or "-"
+        lines.append(f"  - {name}: {command} [runtime] {runtime_text}")
+        stderr = _format_mcp_stderr(runtime_server)
+        if stderr:
+            lines.append(f"    stderr: {stderr}")
+    if not report["mcp_servers"] and not runtime_servers:
         lines.append("  - 无")
 
     lines.extend(["", "平台配置:"])
@@ -1171,6 +1206,24 @@ def _format_memory_provider(name: str, data: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _format_mcp_runtime_summary(server: dict[str, Any]) -> str:
+    if not server:
+        return "runtime=-"
+    error = server.get("last_error") or server.get("last_call_error") or "-"
+    return (
+        f"runtime=connected:{_yes(bool(server.get('connected', False)))} "
+        f"tools={server.get('tool_count', 0)} "
+        f"error={_short_text(str(error), 120)}"
+    )
+
+
+def _format_mcp_stderr(server: dict[str, Any]) -> str:
+    tail = list(server.get("stderr_tail") or [])
+    if not tail:
+        return ""
+    return _short_text(" | ".join(str(item) for item in tail[-2:]), 160)
+
+
 def format_memory_entries(entries: list[dict[str, Any]], *, title: str = "记忆列表") -> str:
     if not entries:
         return f"{title}: 无"
@@ -1321,6 +1374,14 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
     for server in report["mcp_servers"]:
         if server["enabled"] and not server["command_found"]:
             issues.append(f"MCP 服务器 {server['name']} 的命令不可用: {server['command'] or '-'}")
+
+    mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
+    for server in mcp_runtime.get("servers", []):
+        name = server.get("name") or "-"
+        if server.get("last_error"):
+            issues.append(f"MCP 服务器 {name} 连接失败: {server['last_error']}")
+        if server.get("last_call_error"):
+            issues.append(f"MCP 服务器 {name} 最近调用失败: {server['last_call_error']}")
 
     for platform in (report.get("gateway") or {}).get("platforms", []):
         connect_error = platform.get("last_connect_error") or platform.get("last_error")

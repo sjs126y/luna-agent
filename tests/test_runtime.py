@@ -101,6 +101,8 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert runtime.mcp_manager is None
         health = runtime.health_snapshot()
         assert health["db_open"] is True
+        assert health["mcp"]["running"] is False
+        assert health["mcp"]["total_tools"] == 0
         assert health["gateway_created"] is False
         assert health["gateway_running"] is False
         assert health["gateway"] == {}

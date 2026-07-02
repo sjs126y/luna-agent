@@ -327,6 +327,7 @@ def test_global_doctor_report_contains_tokenizer_and_plugins():
 
     assert "runtime" in report
     assert "memory" in report
+    assert "mcp_runtime" in report
     assert "initialized" in report["runtime"]
     assert "builtin_available" in report["memory"]
     assert "tokenizer" in report
@@ -342,6 +343,7 @@ def test_global_doctor_json_command_contains_runtime_and_memory():
     assert "runtime" in data
     assert "memory" in data
     assert "gateway" in data
+    assert "mcp_runtime" in data
     assert "config" in data
     assert "agents" in data
     assert "plugins" in data
@@ -699,6 +701,29 @@ def test_format_doctor_report_includes_summary_and_issues():
             "enabled": True,
             "command_found": False,
         }],
+        "mcp_runtime": {
+            "running": True,
+            "configured_count": 1,
+            "connected_count": 0,
+            "total_tools": 0,
+            "registered_tools": [],
+            "servers": [{
+                "name": "demo",
+                "command": "missing-cmd",
+                "args": [],
+                "enabled": True,
+                "connected": False,
+                "pid": None,
+                "tool_count": 0,
+                "server_name": "",
+                "server_version": "",
+                "last_error": "command not found: missing-cmd",
+                "last_call_error": "",
+                "last_connected_at": "",
+                "last_disconnected_at": "",
+                "stderr_tail": ["startup failed"],
+            }],
+        },
         "platforms": [{
             "key": "platforms/telegram",
             "name": "Telegram",
@@ -748,6 +773,9 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
     assert "MCP 服务器 demo 的命令不可用: missing-cmd" in text
+    assert "runtime=connected:否 tools=0 error=command not found: missing-cmd" in text
+    assert "stderr: startup failed" in text
+    assert "MCP 服务器 demo 连接失败: command not found: missing-cmd" in text
     assert "runtime=reconnecting connected=否 attempts=2 pending=3" in text
     assert "平台 telegram 连接失败: RuntimeError: no token" in text
     assert "插件 user/demo: 加载错误: boom" in text

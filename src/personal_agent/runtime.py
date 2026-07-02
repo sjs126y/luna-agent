@@ -84,11 +84,17 @@ class AppRuntime:
         await self.db.close()
 
     def health_snapshot(self) -> dict[str, Any]:
+        mcp_health = _mcp_health_snapshot(
+            self.mcp_manager,
+            enabled=bool(self.settings.mcp_enabled),
+            configured_count=len(self.settings.mcp_servers),
+        )
         return {
             "data_dir": str(self.data_dir),
             "db_open": getattr(self.db, "_conn", None) is not None,
             "mcp_enabled": bool(self.settings.mcp_enabled),
             "mcp_running": self.mcp_manager is not None,
+            "mcp": mcp_health,
             "gateway_created": self.gateway is not None,
             "gateway_running": bool(self.gateway is not None and self.gateway_started),
             "gateway": self.gateway.health_snapshot() if self.gateway is not None else {},
@@ -155,6 +161,27 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         data_dir=data_dir,
         system_dir=system_dir,
     )
+
+
+def _mcp_health_snapshot(
+    manager: Any | None,
+    *,
+    enabled: bool,
+    configured_count: int,
+) -> dict[str, Any]:
+    if manager is not None and hasattr(manager, "health_snapshot"):
+        health = dict(manager.health_snapshot())
+        health.setdefault("enabled", enabled)
+        return health
+    return {
+        "enabled": enabled,
+        "running": manager is not None,
+        "configured_count": configured_count,
+        "connected_count": 0,
+        "total_tools": 0,
+        "registered_tools": [],
+        "servers": [],
+    }
 
 
 async def start_mcp_manager(settings: Settings, plugin_manager: PluginManager):

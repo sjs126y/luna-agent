@@ -25,6 +25,9 @@ class MCPManager:
 
     def __init__(self, server_configs: list[dict]) -> None:
         self._clients: dict[str, MCPClient] = {}
+        self._server_clients: dict[str, MCPClient] = {}
+        self._registered_tool_names: set[str] = set()
+        self._running: bool = False
         self._server_configs = [
             MCPServerConfig(
                 name=cfg.get("name", cfg.get("command", "unknown")),
@@ -48,30 +51,61 @@ class MCPManager:
     def client_names(self) -> list[str]:
         return list(self._clients.keys())
 
+    def health_snapshot(self) -> dict:
+        servers = []
+        for cfg in self._server_configs:
+            client = self._server_clients.get(cfg.name)
+            if client is not None:
+                servers.append(client.health_snapshot())
+            else:
+                servers.append({
+                    "name": cfg.name,
+                    "command": cfg.command,
+                    "args": list(cfg.args),
+                    "enabled": bool(cfg.enabled),
+                    "connected": False,
+                    "pid": None,
+                    "tool_count": 0,
+                    "server_name": "",
+                    "server_version": "",
+                    "last_error": "",
+                    "last_call_error": "",
+                    "last_connected_at": "",
+                    "last_disconnected_at": "",
+                    "stderr_tail": [],
+                })
+        return {
+            "running": self._running,
+            "configured_count": len(self._server_configs),
+            "connected_count": sum(1 for item in servers if item.get("connected")),
+            "total_tools": self._total_tools,
+            "registered_tools": sorted(self._registered_tool_names),
+            "servers": servers,
+        }
+
     async def start(self) -> int:
         """Connect all enabled MCP servers concurrently. Returns total tools registered."""
         if not self._server_configs:
+            self._running = True
             return 0
 
         logger.info("Connecting %d MCP server(s)...", len(self._server_configs))
+        self._running = True
 
         # Connect all servers concurrently
-        async def _connect_one(cfg: MCPServerConfig) -> tuple[MCPServerConfig, MCPClient | None]:
+        async def _connect_one(cfg: MCPServerConfig) -> tuple[MCPServerConfig, MCPClient]:
             client = MCPClient(cfg)
             try:
                 tools = await client.connect()
             except Exception:
                 logger.exception("MCP server '%s': unexpected error during connect", cfg.name)
                 tools = []
-            if tools:
-                return cfg, client
-            else:
-                # Connection failed or no tools — clean up
+            if not tools and not client.connected:
                 try:
                     await client.disconnect()
                 except Exception:
                     pass
-                return cfg, None
+            return cfg, client
 
         tasks = [_connect_one(cfg) for cfg in self._server_configs]
         results = await _gather_with_grace(*tasks)
@@ -81,13 +115,12 @@ class MCPManager:
         from personal_agent.tools.registry import tool_registry
 
         count = 0
-        for cfg, client in results:
-            if client is None or not client.connected:
-                if client is not None:
-                    try:
-                        await client.disconnect()
-                    except Exception:
-                        pass
+        for result in results:
+            if result is None:
+                continue
+            cfg, client = result
+            self._server_clients[cfg.name] = client
+            if not client.connected:
                 continue
 
             self._clients[cfg.name] = client
@@ -107,6 +140,7 @@ class MCPManager:
                     is_destructive=False,
                 )
                 tool_registry.register(entry)
+                self._registered_tool_names.add(entry.name)
                 count += 1
 
         self._total_tools = count
@@ -116,7 +150,7 @@ class MCPManager:
 
     async def stop(self) -> None:
         """Disconnect all MCP servers."""
-        for name, client in self._clients.items():
+        for name, client in self._server_clients.items():
             try:
                 await client.disconnect()
             except Exception:
@@ -124,18 +158,16 @@ class MCPManager:
 
         from personal_agent.tools.registry import tool_registry
 
-        # Unregister all MCP tools
-        prefixes = [f"{MCP_PREFIX}{name}__" for name in self._clients.keys()]
-        to_remove = [
-            name for name in tool_registry.all_names
-            if any(name.startswith(p) for p in prefixes)
-        ]
+        to_remove = sorted(self._registered_tool_names)
         for name in to_remove:
             tool_registry.unregister(name)
 
         logger.debug("MCP: unregistered %d tools", len(to_remove))
         self._clients.clear()
+        self._server_clients.clear()
+        self._registered_tool_names.clear()
         self._total_tools = 0
+        self._running = False
 
 
 # ── helpers ────────────────────────────────────────────

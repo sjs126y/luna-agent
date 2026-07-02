@@ -92,6 +92,12 @@ async def test_client_connect_and_discover(mock_server_script: Path):
         assert tools[1].name == "add"
         assert "Echo" in tools[0].description
         assert client.connected is True
+        health = client.health_snapshot()
+        assert health["connected"] is True
+        assert health["pid"]
+        assert health["tool_count"] == 2
+        assert health["server_name"] == "mock"
+        assert health["last_error"] == ""
     finally:
         await client.disconnect()
 
@@ -128,6 +134,7 @@ async def test_client_call_unknown_tool(mock_server_script: Path):
         await client.connect()
         with pytest.raises(RuntimeError, match="Unknown tool"):
             await client.call_tool("nonexistent", {})
+        assert "Unknown tool" in client.health_snapshot()["last_call_error"]
     finally:
         await client.disconnect()
 
@@ -143,6 +150,11 @@ async def test_client_disconnect(mock_server_script: Path):
     assert client.connected is False
     assert client._process is None
     assert len(client.tools) == 0
+    health = client.health_snapshot()
+    assert health["connected"] is False
+    assert health["pid"] is None
+    assert health["tool_count"] == 0
+    assert health["last_disconnected_at"]
 
 
 @pytest.mark.asyncio
@@ -167,6 +179,7 @@ async def test_client_bad_command():
     tools = await client.connect()
     assert tools == []
     assert client.connected is False
+    assert "command not found" in client.health_snapshot()["last_error"]
 
 
 @pytest.mark.asyncio
@@ -175,6 +188,33 @@ async def test_client_call_without_connect():
     client = MCPClient(MCPServerConfig(name="test", command="echo", args=[]))
     result = await client.call_tool("echo", {"msg": "hi"})
     assert "not connected" in result.lower()
+    assert "not connected" in client.health_snapshot()["last_call_error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_client_stderr_tail_is_captured(tmp_path: Path):
+    """Recent stderr lines should be available in the health snapshot."""
+    script = tmp_path / "stderr_mcp_server.py"
+    script.write_text(
+        "import sys\n"
+        "sys.stderr.write('mcp startup warning\\n')\n"
+        "sys.stderr.flush()\n"
+        + MOCK_SERVER_SCRIPT,
+        encoding="utf-8",
+    )
+    client = MCPClient(make_config(script))
+    try:
+        await client.connect()
+        for _ in range(20):
+            if client.health_snapshot()["stderr_tail"]:
+                break
+            await asyncio.sleep(0.05)
+        assert any(
+            "mcp startup warning" in line
+            for line in client.health_snapshot()["stderr_tail"]
+        )
+    finally:
+        await client.disconnect()
 
 
 # ── MCPManager tests ────────────────────────────────────
@@ -201,6 +241,12 @@ async def test_manager_start_stop(mock_server_script: Path):
         assert count == 2
         assert manager.total_tools == 2
         assert "mock" in manager.client_names
+        health = manager.health_snapshot()
+        assert health["running"] is True
+        assert health["configured_count"] == 1
+        assert health["connected_count"] == 1
+        assert health["total_tools"] == 2
+        assert sorted(health["registered_tools"]) == ["mcp__mock__add", "mcp__mock__echo"]
 
         # Tools should be registered
         assert "mcp__mock__echo" in tool_registry.all_names
@@ -219,6 +265,8 @@ async def test_manager_start_stop(mock_server_script: Path):
         assert "mcp__mock__add" not in tool_registry.all_names
         after_count = len(tool_registry.all_names)
         assert after_count == count_before + 0  # no leftover MCP tools
+        assert manager.health_snapshot()["running"] is False
+        assert manager.health_snapshot()["registered_tools"] == []
 
 
 @pytest.mark.asyncio
@@ -274,6 +322,14 @@ async def test_manager_bad_server_doesnt_block_others(mock_server_script: Path):
         assert count == 2  # mock server's 2 tools
         assert "mock" in manager.client_names
         assert "bad_one" not in manager.client_names
+        health = manager.health_snapshot()
+        assert health["configured_count"] == 2
+        assert health["connected_count"] == 1
+        servers = {item["name"]: item for item in health["servers"]}
+        assert servers["mock"]["connected"] is True
+        assert servers["mock"]["tool_count"] == 2
+        assert servers["bad_one"]["connected"] is False
+        assert "command not found" in servers["bad_one"]["last_error"]
     finally:
         await manager.stop()
 
