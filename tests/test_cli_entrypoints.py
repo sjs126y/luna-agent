@@ -147,3 +147,20 @@ def test_doctor_json_reports_runtime_failure_without_traceback(tmp_path, monkeyp
     assert data["runtime"]["initialized"] is False
     assert "RuntimeError: broken bootstrap" in data["runtime"]["error"]
     assert "Traceback" not in result.output
+
+
+def test_doctor_json_reports_settings_failure_without_crashing(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\nLLM_MAX_TOKENS=bad\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["runtime"]["initialized"] is False
+    assert "Settings 初始化失败" in data["runtime"]["error"]
+    assert any("LLM_MAX_TOKENS" in error for error in data["config"]["errors"])
+    assert "Traceback" not in result.output

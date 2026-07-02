@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,30 @@ KNOWN_TOP_LEVEL_KEYS = {
     "toolsets",
 }
 
+KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
+    "agent": {"max_iterations", "max_tool_calls_per_turn"},
+    "agents": {"max_concurrent_runs", "max_tool_calls", "max_tokens", "history_limit"},
+    "auth": {"enabled", "admins", "allowed_users"},
+    "compression": {"engine", "model", "max_tokens", "tail_token_budget", "threshold_ratio"},
+    "cron": {"enabled"},
+    "mcp": {"enabled", "servers"},
+    "memory": {"provider", "external_provider", "review_interval"},
+    "plugins": {"dirs", "enabled", "disabled"},
+    "profiles": None,
+    "sandbox": {
+        "roots",
+        "blocked",
+        "bash_work_dir",
+        "bash_restrict_paths",
+        "bash_allow_network",
+        "file_max_write_bytes",
+        "audit_enabled",
+    },
+    "session": {"expire_days", "override"},
+    "storage": {"data_dir", "log_level"},
+    "toolsets": {"enabled"},
+}
+
 DEPRECATED_TOP_LEVEL_KEYS = {
     "platform": "平台配置已插件化，平台 secret 放到 .env，启用项由插件和 env 决定。",
     "platforms": "平台配置已插件化，平台 secret 放到 .env，启用项由插件和 env 决定。",
@@ -37,11 +64,20 @@ PROVIDER_REQUIRED_ENV = {
     "openrouter": ["LLM_API_KEY"],
 }
 
+VALID_LLM_PROVIDERS = set(PROVIDER_REQUIRED_ENV)
+VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages"}
+VALID_COMPRESSION_ENGINES = {"compressor", "simple", "none", "off", "disabled"}
+VALID_MEMORY_PROVIDERS = {"file"}
+VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "embedding"}
+
 PLATFORM_ENV = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
     "feishu": ["FEISHU_APP_ID", "FEISHU_APP_SECRET"],
     "wechat": ["WEIXIN_TOKEN", "WEIXIN_ACCOUNT_ID", "WEIXIN_USER_ID"],
 }
+
+MCP_SERVER_KEYS = {"name", "command", "args", "env", "enabled"}
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
@@ -52,7 +88,9 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     config, config_error = _read_yaml(config_path)
     env = _read_env(env_path)
 
-    llm_provider = str(env.get("LLM_PROVIDER") or "deepseek")
+    llm_provider = str(env.get("LLM_PROVIDER") or "deepseek").strip()
+    llm_api_mode = str(env.get("LLM_API_MODE") or "auto").strip()
+    llm_max_tokens = str(env.get("LLM_MAX_TOKENS") or "4096").strip()
     required_llm_env = PROVIDER_REQUIRED_ENV.get(llm_provider, ["LLM_API_KEY"])
     missing_llm_env = [name for name in required_llm_env if not env.get(name)]
     llm_base_url = str(env.get("LLM_BASE_URL") or "")
@@ -68,11 +106,20 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         for key in sorted(config)
         if key in DEPRECATED_TOP_LEVEL_KEYS
     ]
+    validation = _validate_config(config)
+    env_validation = _validate_env(
+        llm_provider=llm_provider,
+        llm_api_mode=llm_api_mode,
+        llm_max_tokens=llm_max_tokens,
+    )
+    mcp_servers = _mcp_server_report(config)
+    path_warnings = _path_warnings(directories)
     platform_env = _platform_env_report(config, env)
 
+    errors: list[str] = []
     warnings: list[str] = []
     if config_error:
-        warnings.append(f"config.yaml 解析失败: {config_error}")
+        errors.append(f"config.yaml 解析失败: {config_error}")
     if not config_path.exists():
         warnings.append("缺少 config.yaml。")
     if not env_path.exists():
@@ -84,10 +131,12 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     if not llm_model:
         warnings.append("LLM_MODEL 未设置，将使用默认模型。")
     for item in directories:
-        if not item["exists"] and item["required"]:
+        if not item["exists"] and item["required"] and item.get("portable", True):
             warnings.append(f"目录不存在: {item['path']} ({item['kind']})")
     for key in unknown_keys:
         warnings.append(f"未知 config 顶层配置: {key}")
+    for key in validation["unknown_nested_keys"]:
+        warnings.append(f"未知 config 配置: {key}")
     for item in deprecated_keys:
         warnings.append(f"已废弃配置 {item['key']}: {item['message']}")
     for item in platform_env:
@@ -96,8 +145,20 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
                 f"平台 {item['name']} 缺少环境变量: {', '.join(item['missing_env'])}"
             )
 
+    errors.extend(env_validation["errors"])
+    errors.extend(validation["errors"])
+    errors.extend(mcp_servers["errors"])
+    warnings.extend(env_validation["warnings"])
+    warnings.extend(validation["warnings"])
+    warnings.extend(path_warnings)
+    warnings.extend(mcp_servers["warnings"])
+
+    errors = _dedupe(errors)
+    warnings = _dedupe(warnings)
     migration_hints = _migration_hints(
+        config=config,
         unknown_keys=unknown_keys,
+        unknown_nested_keys=validation["unknown_nested_keys"],
         deprecated_keys=deprecated_keys,
         platform_env=platform_env,
     )
@@ -107,7 +168,9 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         env_example_path=env_example_path,
         missing_llm_env=missing_llm_env,
         directories=directories,
+        errors=errors,
         warnings=warnings,
+        path_warnings=path_warnings,
     )
     next_steps = _next_steps(
         config_path,
@@ -115,10 +178,11 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         env_example_path,
         missing_llm_env,
         directories,
+        errors,
         warnings,
     )
     return {
-        "ok": not warnings,
+        "ok": not errors and not warnings,
         "base_dir": str(base),
         "files": {
             "config": {"path": str(config_path), "exists": config_path.exists(), "error": config_error},
@@ -127,18 +191,27 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         },
         "env": {
             "llm_provider": llm_provider,
+            "llm_api_mode": llm_api_mode,
             "llm_api_key_set": bool(env.get("LLM_API_KEY")),
+            "llm_base_url": llm_base_url,
             "llm_base_url_set": bool(llm_base_url),
+            "llm_model": llm_model,
             "llm_model_set": bool(llm_model),
+            "llm_max_tokens": llm_max_tokens,
             "missing_llm_env": missing_llm_env,
             "platforms": platform_env,
         },
         "directories": directories,
+        "mcp_servers": mcp_servers["servers"],
         "unknown_keys": unknown_keys,
+        "unknown_nested_keys": validation["unknown_nested_keys"],
         "deprecated_keys": deprecated_keys,
         "migration_hints": migration_hints,
         "recommended_commands": recommended_commands,
+        "errors": errors,
         "warnings": warnings,
+        "path_warnings": path_warnings,
+        "validation_errors": validation["errors"] + env_validation["errors"] + mcp_servers["errors"],
         "next_steps": next_steps,
     }
 
@@ -149,7 +222,8 @@ def ensure_config_dirs(base_dir: Path | str) -> list[str]:
     paths = [
         item["path"]
         for item in _directory_report(base, config)
-        if item["required"] or item["kind"] in {"plugin_dir", "system_dir"}
+        if item.get("portable", True)
+        and (item["required"] or item["kind"] in {"plugin_dir", "system_dir"})
     ]
     created: list[str] = []
     for value in paths:
@@ -184,24 +258,181 @@ def _read_env(path: Path) -> dict[str, str]:
         return {}
 
 
+def _validate_env(*, llm_provider: str, llm_api_mode: str, llm_max_tokens: str) -> dict[str, list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    if llm_provider not in VALID_LLM_PROVIDERS:
+        errors.append(
+            f"LLM_PROVIDER 不支持: {llm_provider}，可选: {', '.join(sorted(VALID_LLM_PROVIDERS))}"
+        )
+    if llm_api_mode not in VALID_LLM_API_MODES:
+        errors.append(
+            f"LLM_API_MODE 不支持: {llm_api_mode}，可选: {', '.join(sorted(VALID_LLM_API_MODES))}"
+        )
+    try:
+        max_tokens = int(llm_max_tokens)
+    except ValueError:
+        errors.append("LLM_MAX_TOKENS 必须是正整数。")
+    else:
+        if max_tokens <= 0:
+            errors.append("LLM_MAX_TOKENS 必须大于 0。")
+        elif max_tokens < 256:
+            warnings.append("LLM_MAX_TOKENS 很小，可能导致回复被截断。")
+    return {"errors": errors, "warnings": warnings}
+
+
+def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    unknown_nested_keys: list[str] = []
+
+    sections: dict[str, dict[str, Any]] = {}
+    for section, allowed_keys in KNOWN_SECTION_KEYS.items():
+        raw = config.get(section)
+        if raw is None:
+            sections[section] = {}
+            continue
+        if not isinstance(raw, dict):
+            errors.append(f"配置 {section} 必须是对象。")
+            sections[section] = {}
+            continue
+        sections[section] = raw
+        if allowed_keys is not None:
+            unknown_nested_keys.extend(
+                f"{section}.{key}" for key in sorted(raw) if key not in allowed_keys
+            )
+
+    _positive_int(sections["agent"], "max_iterations", "agent.max_iterations", errors)
+    _positive_int(
+        sections["agent"],
+        "max_tool_calls_per_turn",
+        "agent.max_tool_calls_per_turn",
+        errors,
+    )
+    for key in ("max_concurrent_runs", "max_tool_calls", "max_tokens", "history_limit"):
+        _positive_int(sections["agents"], key, f"agents.{key}", errors)
+
+    _string_value(sections["storage"], "data_dir", "storage.data_dir", errors)
+    _string_value(sections["storage"], "log_level", "storage.log_level", errors)
+
+    _string_list_or_csv(sections["plugins"], "dirs", "plugins.dirs", errors)
+    _string_list(sections["plugins"], "enabled", "plugins.enabled", errors)
+    _string_list(sections["plugins"], "disabled", "plugins.disabled", errors)
+    _string_list(sections["toolsets"], "enabled", "toolsets.enabled", errors)
+
+    compression = sections["compression"]
+    _enum_value(compression, "engine", "compression.engine", VALID_COMPRESSION_ENGINES, errors)
+    _string_value(compression, "model", "compression.model", errors)
+    _positive_int(compression, "max_tokens", "compression.max_tokens", errors)
+    _positive_int(compression, "tail_token_budget", "compression.tail_token_budget", errors)
+    _ratio_value(compression, "threshold_ratio", "compression.threshold_ratio", errors)
+
+    memory = sections["memory"]
+    _enum_value(memory, "provider", "memory.provider", VALID_MEMORY_PROVIDERS, errors)
+    _enum_value(
+        memory,
+        "external_provider",
+        "memory.external_provider",
+        VALID_EXTERNAL_MEMORY_PROVIDERS,
+        errors,
+    )
+    _non_negative_int(memory, "review_interval", "memory.review_interval", errors)
+    for old_key in ("external", "embedding"):
+        if old_key in memory:
+            warnings.append(
+                "检测到旧 memory 配置，请使用 memory.external_provider: embedding 或 none。"
+            )
+
+    _bool_value(sections["cron"], "enabled", "cron.enabled", errors)
+
+    sandbox = sections["sandbox"]
+    _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)
+    _string_list(sandbox, "blocked", "sandbox.blocked", errors)
+    _string_value(sandbox, "bash_work_dir", "sandbox.bash_work_dir", errors)
+    for key in ("bash_restrict_paths", "bash_allow_network", "audit_enabled"):
+        _bool_value(sandbox, key, f"sandbox.{key}", errors)
+    _positive_int(sandbox, "file_max_write_bytes", "sandbox.file_max_write_bytes", errors)
+
+    session = sections["session"]
+    _non_negative_int(session, "expire_days", "session.expire_days", errors)
+    _dict_value(session, "override", "session.override", errors)
+
+    mcp = sections["mcp"]
+    _bool_value(mcp, "enabled", "mcp.enabled", errors)
+    if "servers" in mcp and not isinstance(mcp["servers"], list):
+        errors.append("mcp.servers 必须是列表。")
+
+    auth = sections["auth"]
+    _bool_value(auth, "enabled", "auth.enabled", errors)
+    _string_list(auth, "admins", "auth.admins", errors)
+    _string_list(auth, "allowed_users", "auth.allowed_users", errors)
+
+    return {
+        "errors": _dedupe(errors),
+        "warnings": _dedupe(warnings),
+        "unknown_nested_keys": sorted(_dedupe(unknown_nested_keys)),
+    }
+
+
 def _directory_report(base: Path, config: dict[str, Any]) -> list[dict[str, Any]]:
     storage = config.get("storage") if isinstance(config.get("storage"), dict) else {}
     plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
     sandbox = config.get("sandbox") if isinstance(config.get("sandbox"), dict) else {}
 
-    data_dir = _resolve(base, storage.get("data_dir", "./data"))
+    data_dir = storage.get("data_dir", "./data")
     plugin_dirs = _string_or_list(plugins.get("dirs", ["./plugins", "./data/plugins"]))
     sandbox_roots = _string_or_list(sandbox.get("roots", ["./data"]))
     bash_work_dir = sandbox.get("bash_work_dir", "./data")
 
     result = [
-        _dir_item("data_dir", data_dir, required=True),
-        _dir_item("system_dir", data_dir / "system", required=True),
-        _dir_item("bash_work_dir", _resolve(base, bash_work_dir), required=True),
+        _dir_item(base, "data_dir", data_dir, required=True),
+        _dir_item(base, "system_dir", str(_path_for_child(base, data_dir, "system")), required=True),
+        _dir_item(base, "bash_work_dir", bash_work_dir, required=True),
     ]
-    result.extend(_dir_item("plugin_dir", _resolve(base, item), required=False) for item in plugin_dirs)
-    result.extend(_dir_item("sandbox_root", _resolve(base, item), required=True) for item in sandbox_roots)
+    result.extend(_dir_item(base, "plugin_dir", item, required=False) for item in plugin_dirs)
+    result.extend(_dir_item(base, "sandbox_root", item, required=True) for item in sandbox_roots)
     return result
+
+
+def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
+    mcp = config.get("mcp") if isinstance(config.get("mcp"), dict) else {}
+    mcp_enabled = bool(mcp.get("enabled", False))
+    raw_servers = mcp.get("servers", [])
+    servers: list[dict[str, Any]] = []
+    errors: list[str] = []
+    warnings: list[str] = []
+    if raw_servers is None:
+        raw_servers = []
+    if not isinstance(raw_servers, list):
+        return {"servers": servers, "errors": ["mcp.servers 必须是列表。"], "warnings": []}
+
+    for index, raw in enumerate(raw_servers):
+        label = f"mcp.servers[{index}]"
+        if not isinstance(raw, dict):
+            errors.append(f"{label} 必须是对象。")
+            continue
+        unknown = sorted(key for key in raw if key not in MCP_SERVER_KEYS)
+        if unknown:
+            warnings.append(f"{label} 包含未知字段: {', '.join(unknown)}")
+        command = str(raw.get("command") or "")
+        name = str(raw.get("name") or command or f"server-{index}")
+        enabled = bool(raw.get("enabled", True))
+        command_found = bool(command and shutil.which(command))
+        servers.append({
+            "index": index,
+            "name": name,
+            "command": command,
+            "enabled": enabled,
+            "command_found": command_found,
+            "missing_command": not bool(command),
+            "unknown_keys": unknown,
+        })
+        if mcp_enabled and enabled and not command:
+            errors.append(f"MCP 服务器 {name} 缺少 command。")
+        elif mcp_enabled and enabled and not command_found:
+            warnings.append(f"MCP 服务器 {name} 的命令不可用: {command}")
+
+    return {"servers": servers, "errors": _dedupe(errors), "warnings": _dedupe(warnings)}
 
 
 def _platform_env_report(config: dict[str, Any], env: dict[str, str]) -> list[dict[str, Any]]:
@@ -236,6 +467,7 @@ def _next_steps(
     env_example_path: Path,
     missing_llm_env: list[str],
     directories: list[dict[str, Any]],
+    errors: list[str],
     warnings: list[str],
 ) -> list[str]:
     steps: list[str] = []
@@ -247,9 +479,13 @@ def _next_steps(
         steps.append("根据 .env.example 创建 .env，或运行 personal-agent init --copy-env。")
     if missing_llm_env:
         steps.append(f"在 .env 中填写 {', '.join(missing_llm_env)}。")
-    if any(not item["exists"] and item["required"] for item in directories):
+    if any(not item["exists"] and item["required"] and item.get("portable", True) for item in directories):
         steps.append("运行 personal-agent init --fix-dirs 创建基础目录。")
-    if warnings:
+    if any(not item.get("portable", True) for item in directories):
+        steps.append("修正 config.yaml 中的 Windows/反斜杠路径，WSL 下建议使用 /mnt/c/... 或 Linux 路径。")
+    if errors:
+        steps.append("先修复上面的配置错误，再启动 Personal Agent。")
+    elif warnings:
         steps.append("修复上面的配置警告后再运行 personal-agent doctor。")
     if not steps:
         steps.append("配置检查通过，可以运行 personal-agent chat 或 personal-agent serve。")
@@ -258,21 +494,46 @@ def _next_steps(
 
 def _migration_hints(
     *,
+    config: dict[str, Any],
     unknown_keys: list[str],
+    unknown_nested_keys: list[str],
     deprecated_keys: list[dict[str, str]],
     platform_env: list[dict[str, Any]],
 ) -> list[str]:
     hints: list[str] = []
+    llm = config.get("llm") if isinstance(config.get("llm"), dict) else {}
+    llm_mapping = {
+        "provider": "LLM_PROVIDER",
+        "api_key": "LLM_API_KEY",
+        "base_url": "LLM_BASE_URL",
+        "model": "LLM_MODEL",
+        "api_mode": "LLM_API_MODE",
+        "max_tokens": "LLM_MAX_TOKENS",
+    }
+    platforms = config.get("platforms") if isinstance(config.get("platforms"), dict) else {}
+    memory = config.get("memory") if isinstance(config.get("memory"), dict) else {}
+
     for item in deprecated_keys:
         key = item["key"]
         if key == "llm":
             hints.append("将顶层 llm 配置迁移到 .env 的 LLM_PROVIDER/LLM_API_KEY/LLM_BASE_URL/LLM_MODEL。")
+            for old_key, env_name in llm_mapping.items():
+                if old_key in llm:
+                    hints.append(f"旧配置 llm.{old_key} 请迁移到 .env 的 {env_name}。")
         elif key in {"platform", "platforms"}:
             hints.append(
                 "删除顶层 platform/platforms；平台 secret 放到 .env，平台插件 key 使用 platforms/telegram 等。"
             )
+            for name in sorted(platforms):
+                hints.append(
+                    f"旧配置 platforms.{name} 请改为 plugins.enabled 添加 platforms/{name}，secret 放入 .env。"
+                )
+    if "external" in memory or "embedding" in memory:
+        hints.append("旧 memory external/embedding 配置请改为 memory.external_provider: embedding 或 none。")
     if unknown_keys:
         hints.append(f"确认或移除未知顶层配置: {', '.join(unknown_keys)}。")
+    if unknown_nested_keys:
+        hints.append(f"确认或移除未知配置: {', '.join(unknown_nested_keys)}。")
     for item in platform_env:
         if item["enabled"] and item["missing_env"]:
             hints.append(
@@ -288,7 +549,9 @@ def _recommended_commands(
     env_example_path: Path,
     missing_llm_env: list[str],
     directories: list[dict[str, Any]],
+    errors: list[str],
     warnings: list[str],
+    path_warnings: list[str],
 ) -> list[str]:
     commands: list[str] = []
     if not config_path.exists() or not env_example_path.exists():
@@ -297,13 +560,38 @@ def _recommended_commands(
         if env_example_path.exists():
             commands.append("cp .env.example .env")
         commands.append("personal-agent init --copy-env")
-    if any(not item["exists"] and item["required"] for item in directories):
+    if any(not item["exists"] and item["required"] and item.get("portable", True) for item in directories):
         commands.append("personal-agent init --fix-dirs")
     if missing_llm_env:
         commands.append("编辑 .env，填写 LLM_API_KEY")
+    if path_warnings:
+        commands.append("编辑 config.yaml，修正 Windows/WSL 路径")
+    if errors:
+        commands.append("personal-agent init --check")
     if warnings:
         commands.append("personal-agent doctor")
     return _dedupe(commands)
+
+
+def _path_warnings(directories: list[dict[str, Any]]) -> list[str]:
+    warnings: list[str] = []
+    for item in directories:
+        style = item.get("path_style")
+        if item.get("portable", True):
+            continue
+        if style == "windows_drive":
+            warnings.append(
+                f"{item['kind']} 使用 Windows 盘符路径: {item['raw']}；WSL/Linux 下建议改成 /mnt/c/... 或 Linux 路径。"
+            )
+        elif style == "unc":
+            warnings.append(
+                f"{item['kind']} 使用 UNC 路径: {item['raw']}；当前环境可能无法直接访问。"
+            )
+        elif style == "backslash":
+            warnings.append(
+                f"{item['kind']} 使用反斜杠路径: {item['raw']}；当前环境建议使用正斜杠路径。"
+            )
+    return _dedupe(warnings)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -330,10 +618,127 @@ def _resolve(base: Path, value: Any) -> Path:
     return path if path.is_absolute() else base / path
 
 
-def _dir_item(kind: str, path: Path, *, required: bool) -> dict[str, Any]:
+def _path_for_child(base: Path, value: Any, child: str) -> str:
+    style = _path_style(value)
+    if os.name != "nt" and style in {"windows_drive", "unc", "backslash"}:
+        return str(value)
+    return str(_resolve(base, value) / child)
+
+
+def _dir_item(base: Path, kind: str, raw: Any, *, required: bool) -> dict[str, Any]:
+    style = _path_style(raw)
+    portable = _portable_path_style(style)
+    path = Path(str(raw)) if not portable else _resolve(base, raw)
     return {
         "kind": kind,
+        "raw": str(raw),
         "path": str(path),
-        "exists": path.exists(),
+        "exists": path.exists() if portable else False,
         "required": required,
+        "path_style": style,
+        "portable": portable,
     }
+
+
+def _path_style(value: Any) -> str:
+    text = str(value)
+    if _WINDOWS_DRIVE_RE.match(text):
+        return "windows_drive"
+    if text.startswith("\\\\"):
+        return "unc"
+    if text.startswith("/mnt/") and len(text) > 7 and text[6] == "/":
+        return "wsl_mount"
+    if os.name != "nt" and "\\" in text:
+        return "backslash"
+    return "native"
+
+
+def _portable_path_style(style: str) -> bool:
+    if os.name == "nt":
+        return True
+    return style not in {"windows_drive", "unc", "backslash"}
+
+
+def _positive_int(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        errors.append(f"{label} 必须是正整数。")
+    elif value <= 0:
+        errors.append(f"{label} 必须大于 0。")
+
+
+def _non_negative_int(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        errors.append(f"{label} 必须是非负整数。")
+    elif value < 0:
+        errors.append(f"{label} 必须大于等于 0。")
+
+
+def _ratio_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        errors.append(f"{label} 必须是 0 到 1 之间的数字。")
+    elif value <= 0 or value > 1:
+        errors.append(f"{label} 必须大于 0 且小于等于 1。")
+
+
+def _enum_value(
+    section: dict[str, Any],
+    key: str,
+    label: str,
+    choices: set[str],
+    errors: list[str],
+) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if not isinstance(value, str) or value not in choices:
+        errors.append(f"{label} 不支持: {value}，可选: {', '.join(sorted(choices))}")
+
+
+def _bool_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    if not isinstance(section[key], bool):
+        errors.append(f"{label} 必须是 true/false。")
+
+
+def _string_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    if not isinstance(section[key], str):
+        errors.append(f"{label} 必须是字符串。")
+
+
+def _dict_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    if not isinstance(section[key], dict):
+        errors.append(f"{label} 必须是对象。")
+
+
+def _string_list(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if value is None:
+        return
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        errors.append(f"{label} 必须是字符串列表。")
+
+
+def _string_list_or_csv(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if isinstance(value, str):
+        return
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        errors.append(f"{label} 必须是字符串列表或逗号分隔字符串。")

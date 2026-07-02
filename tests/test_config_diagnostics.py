@@ -86,6 +86,108 @@ sandbox:
     assert any("平台 telegram 缺少环境变量" in warning for warning in report["warnings"])
 
 
+def test_config_report_validates_nested_keys_ranges_and_env(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+agent:
+  max_iterations: 0
+  max_tool_calls_per_turn: many
+  surprise: true
+agents:
+  max_concurrent_runs: -1
+compression:
+  engine: magic
+  threshold_ratio: 1.5
+memory:
+  external_provider: vector
+plugins:
+  enabled: builtin/tools
+sandbox:
+  bash_restrict_paths: "yes"
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=unknown\nLLM_API_KEY=test\nLLM_API_MODE=bad\nLLM_MAX_TOKENS=nope\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert report["ok"] is False
+    assert "agent.surprise" in report["unknown_nested_keys"]
+    assert any("LLM_PROVIDER 不支持" in error for error in report["errors"])
+    assert any("LLM_API_MODE 不支持" in error for error in report["errors"])
+    assert any("LLM_MAX_TOKENS 必须是正整数" in error for error in report["errors"])
+    assert any("agent.max_iterations 必须大于 0" in error for error in report["errors"])
+    assert any("agent.max_tool_calls_per_turn 必须是正整数" in error for error in report["errors"])
+    assert any("compression.engine 不支持" in error for error in report["errors"])
+    assert any("memory.external_provider 不支持" in error for error in report["errors"])
+    assert any("plugins.enabled 必须是字符串列表" in error for error in report["errors"])
+
+
+def test_config_report_warns_about_windows_paths_and_does_not_create_them(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        r"""
+storage:
+  data_dir: 'C:\Users\agent\data'
+plugins:
+  dirs:
+    - 'plugins\user'
+sandbox:
+  roots:
+    - 'D:\agent\data'
+  bash_work_dir: '\\server\share\agent'
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\nLLM_BASE_URL=https://api.deepseek.com\nLLM_MODEL=deepseek-chat\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("Windows 盘符路径" in warning for warning in report["path_warnings"])
+    assert any("UNC 路径" in warning for warning in report["path_warnings"])
+    assert any("反斜杠路径" in warning for warning in report["path_warnings"])
+    assert any(not item["portable"] for item in report["directories"])
+    assert ensure_config_dirs(tmp_path) == []
+    assert not (tmp_path / r"C:\Users\agent\data").exists()
+
+
+def test_config_report_diagnoses_mcp_servers(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+mcp:
+  enabled: true
+  servers:
+    - name: missing-command
+      enabled: true
+    - name: missing-binary
+      command: definitely_missing_personal_agent_mcp
+      extra: ignored
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\nLLM_BASE_URL=https://api.deepseek.com\nLLM_MODEL=deepseek-chat\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("MCP 服务器 missing-command 缺少 command" in error for error in report["errors"])
+    assert any("MCP 服务器 missing-binary 的命令不可用" in warning for warning in report["warnings"])
+    assert report["mcp_servers"][0]["missing_command"] is True
+    assert report["mcp_servers"][1]["unknown_keys"] == ["extra"]
+
+
 def test_ensure_config_dirs_creates_expected_directories(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

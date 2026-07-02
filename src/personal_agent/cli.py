@@ -913,7 +913,11 @@ def _run_async_sync(coro):
 
 
 def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
-    settings = settings or Settings()
+    if settings is None:
+        try:
+            settings = Settings()
+        except Exception as exc:
+            return _settings_failure_doctor_report(exc)
     runtime_health = _runtime_health_report(settings)
     plugins = runtime_health.pop("_plugins", None)
     if plugins is None:
@@ -979,6 +983,60 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
     }
 
 
+def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
+    config_report = build_config_report(Path("."))
+    data_dir = _config_directory(config_report, "data_dir", "./data")
+    sandbox_roots = [
+        {"path": item["path"], "exists": item["exists"]}
+        for item in config_report.get("directories", [])
+        if item.get("kind") == "sandbox_root"
+    ]
+    from personal_agent.llm.token_counter import tokenizer_status
+
+    return {
+        "data_dir": data_dir,
+        "log_level": "-",
+        "llm_provider": config_report.get("env", {}).get("llm_provider") or "-",
+        "llm_model": config_report.get("env", {}).get("llm_model") or "-",
+        "mcp_enabled": False,
+        "config": config_report,
+        "runtime": {
+            "initialized": False,
+            "db_open": False,
+            "mcp_running": False,
+            "gateway_created": False,
+            "gateway_running": False,
+            "cached_agents": 0,
+            "error": f"Settings 初始化失败: {type(exc).__name__}: {exc}",
+        },
+        "memory": {
+            "builtin_available": False,
+            "external_available": False,
+            "providers": {},
+            "review": {},
+        },
+        "gateway": {},
+        "mcp_runtime": {},
+        "agents": {},
+        "sandbox": {
+            "roots": sandbox_roots,
+            "blocked_count": 0,
+            "bash_work_dir": _config_directory(config_report, "bash_work_dir", "./data"),
+        },
+        "mcp_servers": config_report.get("mcp_servers", []),
+        "platforms": [],
+        "plugins": [],
+        "tokenizer": tokenizer_status(),
+    }
+
+
+def _config_directory(report: dict[str, Any], kind: str, default: str) -> str:
+    for item in report.get("directories", []):
+        if item.get("kind") == kind:
+            return str(item.get("path") or default)
+    return default
+
+
 def format_doctor_report(report: dict[str, Any]) -> str:
     issues = _doctor_issues(report)
     plugin_summary = _plugin_status_summary(report["plugins"])
@@ -1017,6 +1075,7 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  .env: {_yes(config.get('files', {}).get('env', {}).get('exists', False))}",
         f"  LLM key: {_yes(config.get('env', {}).get('llm_api_key_set', False))}",
         f"  unknown keys: {_list_or_none(config.get('unknown_keys', []))}",
+        f"  errors: {len(config.get('errors', []))}",
         f"  warnings: {len(config.get('warnings', []))}",
         "",
         "Gateway:",
@@ -1163,6 +1222,8 @@ def format_config_report(report: dict[str, Any]) -> str:
         )
     if report.get("unknown_keys"):
         lines.extend(["", f"未知配置: {_list_or_none(report['unknown_keys'])}"])
+    if report.get("unknown_nested_keys"):
+        lines.extend(["", f"未知嵌套配置: {_list_or_none(report['unknown_nested_keys'])}"])
     if report.get("deprecated_keys"):
         lines.append("")
         lines.append("已废弃配置:")
@@ -1171,6 +1232,9 @@ def format_config_report(report: dict[str, Any]) -> str:
     if report.get("migration_hints"):
         lines.extend(["", "迁移建议:"])
         lines.extend(f"  - {hint}" for hint in report["migration_hints"])
+    if report.get("errors"):
+        lines.extend(["", "错误:"])
+        lines.extend(f"  - {error}" for error in report["errors"])
     if report.get("warnings"):
         lines.extend(["", "警告:"])
         lines.extend(f"  - {warning}" for warning in report["warnings"])
@@ -1378,6 +1442,8 @@ def format_token_budget(data: dict[str, Any]) -> str:
 
 def _doctor_issues(report: dict[str, Any]) -> list[str]:
     issues: list[str] = []
+    for error in (report.get("config") or {}).get("errors", []):
+        issues.append(f"配置错误: {error}")
     for warning in (report.get("config") or {}).get("warnings", []):
         issues.append(f"配置: {warning}")
 
