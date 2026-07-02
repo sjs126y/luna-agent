@@ -47,6 +47,7 @@ class PluginManager:
         *,
         plugin_dirs: Iterable[Path] | None = None,
         state_path: Path | None = None,
+        include_builtin: bool = True,
     ) -> None:
         self.settings = settings
         self._plugins: dict[str, LoadedPlugin] = {}
@@ -57,7 +58,8 @@ class PluginManager:
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
-        self._plugin_dirs = self._dedupe_dirs([_BUILTIN_PLUGIN_DIR, *[Path(p) for p in requested_dirs]])
+        base_dirs = [_BUILTIN_PLUGIN_DIR] if include_builtin else []
+        self._plugin_dirs = self._dedupe_dirs([*base_dirs, *[Path(p) for p in requested_dirs]])
 
         data_dir = Path(getattr(settings, "agent_data_dir", "data"))
         self._state_path = Path(state_path) if state_path else data_dir / "plugins" / "state.json"
@@ -300,6 +302,43 @@ class PluginManager:
             "diagnostic_hints": self._diagnostic_hints(plugin, missing_env, entrypoint_ok, entrypoint_error),
         }
 
+    def validate_plugin_path(self, path: Path, *, load: bool = True) -> dict[str, Any]:
+        manifest_path = self._resolve_plugin_manifest_path(Path(path))
+        plugin_dir = manifest_path.parent
+        if not self._plugins:
+            self.discover()
+
+        matches = [
+            plugin
+            for plugin in self._plugins.values()
+            if plugin.manifest.path and self._same_path(plugin.manifest.path, plugin_dir)
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Expected exactly one plugin manifest at {plugin_dir}, found {len(matches)}"
+            )
+
+        plugin = matches[0]
+        if plugin.manifest.entrypoint != "invalid":
+            plugin.enabled = True
+            if plugin.status == PluginStatus.DISABLED:
+                plugin.status = PluginStatus.DEFERRED if plugin.deferred else PluginStatus.DISCOVERED
+            if load:
+                plugin = self.load_plugin(plugin.key)
+
+        report = self.doctor_plugin(plugin.key)
+        report["validation_path"] = str(plugin_dir)
+        report["validation_manifest"] = str(manifest_path)
+        report["validation_load_requested"] = load
+        report["validation_loaded"] = report["status"] == PluginStatus.LOADED.value
+        report["validation_ok"] = (
+            report["manifest_valid"]
+            and report["entrypoint_importable"]
+            and not report["missing_env"]
+            and report["status"] != PluginStatus.ERROR.value
+        )
+        return report
+
     def _add_manifest(self, manifest: PluginManifest) -> None:
         if manifest.key in self._plugins:
             existing = self._plugins[manifest.key]
@@ -382,6 +421,37 @@ class PluginManager:
         if not isinstance(data, dict):
             raise ValueError("Plugin manifest must be an object")
         return data
+
+    def _resolve_plugin_manifest_path(self, path: Path) -> Path:
+        target = path.expanduser()
+        if not target.exists():
+            raise ValueError(f"Plugin path does not exist: {target}")
+        if target.is_file():
+            if target.name not in {"plugin.yaml", "plugin.yml", "plugin.json"}:
+                raise ValueError(f"Plugin manifest file must be plugin.yaml, plugin.yml, or plugin.json: {target}")
+            return target
+
+        direct = [
+            target / name
+            for name in ("plugin.yaml", "plugin.yml", "plugin.json")
+            if (target / name).is_file()
+        ]
+        if len(direct) == 1:
+            return direct[0]
+        if len(direct) > 1:
+            raise ValueError(f"Plugin directory has multiple manifest files: {target}")
+
+        nested = sorted(
+            item
+            for item in target.rglob("*")
+            if item.is_file() and item.name in {"plugin.yaml", "plugin.yml", "plugin.json"}
+        )
+        if not nested:
+            raise ValueError(f"Plugin manifest not found under: {target}")
+        if len(nested) > 1:
+            choices = ", ".join(str(item) for item in nested[:5])
+            raise ValueError(f"Plugin path contains multiple manifests; specify one plugin directory: {choices}")
+        return nested[0]
 
     def _invalid_manifest_key(self, manifest_path: Path) -> str:
         raw_base = (manifest_path.parent.name or "manifest").lower()
@@ -508,6 +578,8 @@ class PluginManager:
         paths: list[Path] = []
         if manifest.path:
             paths.append(manifest.path)
+            if (manifest.path / "__init__.py").is_file():
+                paths.append(manifest.path.parent)
         return paths
 
     def _check_entrypoint(self, manifest: PluginManifest) -> tuple[bool, str]:
@@ -574,6 +646,13 @@ class PluginManager:
             self._hooks[name] = [reg for reg in regs if reg.plugin_key != plugin_key]
             if not self._hooks[name]:
                 del self._hooks[name]
+
+    @staticmethod
+    def _same_path(left: Path, right: Path) -> bool:
+        try:
+            return left.resolve() == right.resolve()
+        except OSError:
+            return left.absolute() == right.absolute()
 
 
 def run_async(coro):

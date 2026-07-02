@@ -13,6 +13,7 @@ from personal_agent.cli import (
     format_doctor_report,
     format_plugin_list,
     format_plugin_report,
+    format_plugin_validation_report,
 )
 
 
@@ -207,6 +208,68 @@ def test_plugins_doctor_json_command():
     assert "python-expert" in data["registered_items"]["skills"]
 
 
+def test_plugins_validate_command_loads_local_plugin(tmp_path):
+    plugin_dir = tmp_path / "plugins" / "clihello"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/clihello
+name: CLI Hello
+version: 1.0.0
+entrypoint: clihello:register
+enabled_by_default: false
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "__init__.py").write_text(
+        """
+from personal_agent.plugins.models import CommandEntry
+
+def hello(args="", **kwargs):
+    return "hello"
+
+def register(ctx):
+    ctx.register_command(CommandEntry(
+        name="clihello",
+        description="CLI validation command",
+        handler=hello,
+        scope="both",
+    ))
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["plugins", "validate", str(plugin_dir)])
+
+    assert result.exit_code == 0
+    assert "插件校验" in result.output
+    assert "校验结果: 通过" in result.output
+    assert "commands: clihello" in result.output
+
+
+def test_plugins_validate_json_reports_bad_manifest(tmp_path):
+    plugin_dir = tmp_path / "plugins" / "bad"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: User/Bad
+name: Bad
+version: 1.0.0
+entrypoint: bad:register
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["plugins", "validate", str(plugin_dir), "--json"])
+
+    assert result.exit_code == 1
+    data = json.loads(result.output)
+    assert data["key"] == "invalid/bad"
+    assert data["validation_ok"] is False
+    assert data["manifest_valid"] is False
+    assert "field 'key'" in data["manifest_error"]
+
+
 def test_global_doctor_report_contains_tokenizer_and_plugins():
     report = build_doctor_report()
 
@@ -298,6 +361,24 @@ def test_format_plugin_report_includes_deferred_reason():
     assert "延迟原因: 平台插件会在网关解析平台适配器时加载" in text
     assert "延迟加载，当前未 import" in text
     assert "建议: 平台插件会在网关解析平台适配器时加载" in text
+
+
+def test_format_plugin_validation_report_wraps_plugin_report():
+    report = _plugin_report("user/demo", status="LOADED")
+    report.update({
+        "validation_path": "plugins/demo",
+        "validation_manifest": "plugins/demo/plugin.yaml",
+        "validation_load_requested": True,
+        "validation_ok": True,
+    })
+
+    text = format_plugin_validation_report(report, include_traceback=False)
+
+    assert "插件校验" in text
+    assert "Manifest 文件: plugins/demo/plugin.yaml" in text
+    assert "加载测试: 已执行" in text
+    assert "校验结果: 通过" in text
+    assert "插件: user/demo" in text
 
 
 def test_format_plugin_list_summarizes_and_groups_reports():

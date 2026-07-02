@@ -64,6 +64,16 @@ src/personal_agent/plugins/
 
 仓库根目录的 `plugins/` 只给用户插件或本地开发插件使用。内置插件不要放到根目录 `plugins/`。
 
+仓库里也保留了一个最小示例插件：
+
+```text
+examples/plugins/hello/
+  __init__.py
+  plugin.yaml
+```
+
+它演示了用户插件最常见的包式结构：插件目录本身是 Python package，`plugin.yaml` 的 `entrypoint` 写成 `hello:register`。
+
 ## plugin.yaml
 
 每个插件包必须有 `plugin.yaml`、`plugin.yml` 或 `plugin.json`。内置插件由 `PluginManager` 递归扫描 `src/personal_agent/plugins/builtin/**/plugin.yaml` 发现；用户插件从配置里的插件目录发现。
@@ -92,6 +102,17 @@ record_import_delta: false
 
 `key` 是启用/禁用插件时使用的稳定身份，不要用展示名代替。推荐类似 `platforms/telegram`、`memory/file`、`workflows/review` 这样的 key。
 
+manifest 会做严格校验：
+
+- `key` 必须是小写分段格式，例如 `builtin/tools`、`platforms/telegram`、`examples/hello`。
+- `entrypoint` 必须是 `module` 或 `module:function`，模块名和函数名都要是合法 Python 标识符。
+- `kind` 目前支持 `builtin`、`platform`、`tool`、`tools`、`skill`、`skills`、`workflow`、`memory`、`llm`、`mcp`、`user`。
+- `source` 目前支持 `builtin`、`user`。
+- `requires_env`、`provides` 必须是字符串或字符串列表。
+- `enabled_by_default`、`deferred`、`record_import_delta` 必须是布尔值。
+
+manifest 有错时插件不会消失，会以 `invalid/<目录名>` 留在插件列表里，方便 `plugins doctor` 或 `plugins validate` 给出具体错误。
+
 ## 入口函数
 
 `entrypoint` 可以指向模块，也可以指向模块里的函数。常见写法：
@@ -102,6 +123,22 @@ def register(ctx) -> None:
 ```
 
 `register()` 必须是同步函数。会阻塞、会联网、会启动进程的事情不要放进 `register()`，应该放到 hook 里，或者交给对应子系统的 manager 处理。
+
+用户插件可以用两种组织方式：
+
+```text
+plugins/demo/
+  plugin.yaml              # entrypoint: demo_plugin:register
+  demo_plugin.py
+```
+
+或：
+
+```text
+plugins/hello/
+  plugin.yaml              # entrypoint: hello:register
+  __init__.py
+```
 
 ## PluginContext 能注册什么
 
@@ -172,8 +209,31 @@ Hook 由 `PluginManager` 直接管理：
 uv run python -m personal_agent plugins list --load
 uv run python -m personal_agent plugins info memory/file --load
 uv run python -m personal_agent plugins doctor memory/embedding --json
+uv run python -m personal_agent plugins validate examples/plugins/hello
 uv run python -m personal_agent doctor --json
 ```
+
+`plugins validate <path>` 可以直接校验一个插件目录或 manifest 文件，不要求先把插件目录写进 `config.yaml`：
+
+```bash
+uv run python -m personal_agent plugins validate examples/plugins/hello
+uv run python -m personal_agent plugins validate examples/plugins/hello --json
+uv run python -m personal_agent plugins validate examples/plugins/hello --no-load
+```
+
+默认会执行 `register()`，所以能发现入口导入失败、缺环境变量、注册时报错、command/hook 注册冲突等问题。`--no-load` 只检查 manifest、环境变量和入口导入，不执行注册函数。
+
+示例插件端到端检查：
+
+```bash
+uv run python -m personal_agent plugins validate examples/plugins/hello
+```
+
+输出里应该能看到：
+
+- `校验结果: 通过`
+- `commands: hello`
+- `hooks: example_hello:100`
 
 插件相关改动合入前至少跑：
 

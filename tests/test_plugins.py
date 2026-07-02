@@ -99,6 +99,52 @@ def test_non_object_manifest_is_preserved_for_doctor(tmp_path):
     assert report["registered_items"]["tools"] == []
 
 
+def test_validate_plugin_path_loads_package_plugin(tmp_path):
+    plugin_dir = tmp_path / "plugins" / "pkg_example"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/pkg-example
+name: Package Example
+version: 1.0.0
+entrypoint: pkg_example:register
+enabled_by_default: false
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "__init__.py").write_text(
+        """
+from personal_agent.plugins.models import CommandEntry
+
+def hello(args="", **kwargs):
+    return "hello " + (args or "world")
+
+def register(ctx):
+    ctx.register_command(CommandEntry(
+        name="pkghello",
+        description="package command",
+        handler=hello,
+        scope="both",
+    ))
+""".strip(),
+        encoding="utf-8",
+    )
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[]),
+        plugin_dirs=[plugin_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    report = manager.validate_plugin_path(plugin_dir)
+
+    assert report["validation_ok"] is True
+    assert report["validation_loaded"] is True
+    assert report["registered_items"]["commands"] == ["pkghello"]
+    assert manager.get_command("pkghello", scope="cli") is not None
+
+
 def test_plugin_doctor_reports_deferred_reason_and_hint(tmp_path):
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")

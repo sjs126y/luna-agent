@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -117,6 +118,27 @@ def plugins_doctor(
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
         typer.echo(format_plugin_report(report, include_traceback=True))
+
+
+@plugins_app.command("validate")
+def plugins_validate(
+    path: Path,
+    no_load: bool = typer.Option(False, "--no-load", help="只校验 manifest 和入口导入，不执行 register()。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """Validate a local plugin directory or manifest file."""
+    try:
+        manager = _plugin_validation_manager(path)
+        report = manager.validate_plugin_path(path, load=not no_load)
+    except Exception as exc:
+        _exit_error(f"插件校验失败: {exc}")
+
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        typer.echo(format_plugin_validation_report(report, include_traceback=True))
+    if not report["validation_ok"]:
+        raise typer.Exit(1)
 
 
 @tokens_app.command("estimate")
@@ -257,6 +279,19 @@ def _plugin_manager(settings: Settings | None = None) -> PluginManager:
     settings = settings or Settings()
     manager = PluginManager(settings)
     manager.discover()
+    return manager
+
+
+def _plugin_validation_manager(path: Path, settings: Settings | None = None) -> PluginManager:
+    settings = settings or Settings()
+    plugin_root = path.parent if path.name in {"plugin.yaml", "plugin.yml", "plugin.json"} else path
+    validation_state = Path(tempfile.gettempdir()) / "personal-agent-plugin-validate-state.json"
+    manager = PluginManager(
+        settings,
+        plugin_dirs=[plugin_root],
+        state_path=validation_state,
+        include_builtin=False,
+    )
     return manager
 
 
@@ -447,6 +482,19 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         ])
     if include_traceback and report["error_traceback"]:
         lines.extend(["", "Traceback:", report["error_traceback"].strip()])
+    return "\n".join(lines)
+
+
+def format_plugin_validation_report(report: dict[str, Any], *, include_traceback: bool) -> str:
+    lines = [
+        "插件校验",
+        f"路径: {report.get('validation_path') or '-'}",
+        f"Manifest 文件: {report.get('validation_manifest') or '-'}",
+        f"加载测试: {'已执行' if report.get('validation_load_requested') else '跳过'}",
+        f"校验结果: {'通过' if report.get('validation_ok') else '失败'}",
+        "",
+        format_plugin_report(report, include_traceback=include_traceback),
+    ]
     return "\n".join(lines)
 
 

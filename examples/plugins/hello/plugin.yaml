@@ -1,0 +1,10 @@
+key: examples/hello
+name: Hello Example Plugin
+version: "0.1.0"
+description: Minimal example plugin with one command and one hook.
+kind: user
+entrypoint: hello:register
+provides: [commands, hooks]
+enabled_by_default: false
+source: user
+
