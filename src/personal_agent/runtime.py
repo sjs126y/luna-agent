@@ -15,6 +15,7 @@ from personal_agent.memory.manager import MemoryManager
 from personal_agent.plugins.manager import PluginManager
 from personal_agent.tools.audit import set_audit_path
 from personal_agent.tools.sandbox import init_sandbox
+from personal_agent.conversation import ConversationService
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class AppRuntime:
     compression_chain: CompressionChain
     session_store: SessionStore
     memory_manager: MemoryManager
+    conversation_service: ConversationService
     mcp_manager: Any | None
     data_dir: Path
     system_dir: Path
@@ -68,6 +70,13 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         system_dir = data_dir / "system"
         ensure_system_files(system_dir)
         memory_manager = await create_memory_manager(settings, plugin_manager, system_dir, data_dir)
+        conversation_service = ConversationService(
+            settings=settings,
+            plugin_manager=plugin_manager,
+            session_store=session_store,
+            compression_chain=compression_chain,
+            memory_manager=memory_manager,
+        )
     except Exception:
         if mcp_manager is not None:
             await mcp_manager.stop()
@@ -82,6 +91,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         compression_chain=compression_chain,
         session_store=session_store,
         memory_manager=memory_manager,
+        conversation_service=conversation_service,
         mcp_manager=mcp_manager,
         data_dir=data_dir,
         system_dir=system_dir,

@@ -92,6 +92,7 @@ async def boot() -> None:
         runtime.memory_manager,
         system_prompt_template=system_prompt,
         plugin_manager=runtime.plugin_manager,
+        conversation_service=runtime.conversation_service,
     )
 
     # ── 7.5. Default hooks — non-restrictive utility hooks ──

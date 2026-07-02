@@ -9,6 +9,7 @@ from collections import OrderedDict
 from personal_agent.adapters.base import platform_registry
 from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
+from personal_agent.conversation import ConversationService
 from personal_agent.gateway.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class Gateway:
         memory_manager,
         system_prompt_template: str = "",
         plugin_manager=None,
+        conversation_service: ConversationService | None = None,
     ) -> None:
         self.config = config
         self.db = db
@@ -29,12 +31,29 @@ class Gateway:
         self._system_prompt_template = system_prompt_template
         from personal_agent.gateway.compression_chain import CompressionChain
         from personal_agent.gateway.auth import AuthManager
-        self._compression_chain = CompressionChain(config.agent_data_dir / "compression_chain.json")
+        if conversation_service is None:
+            compression_chain = CompressionChain(config.agent_data_dir / "compression_chain.json")
+            session_store = SessionStore(db, config.agent_data_dir, chain=compression_chain)
+            conversation_service = ConversationService(
+                settings=config,
+                plugin_manager=plugin_manager,
+                session_store=session_store,
+                compression_chain=compression_chain,
+                memory_manager=memory_manager,
+                system_prompt_template=system_prompt_template,
+                agent_cache_max=128,
+            )
+        else:
+            conversation_service.system_prompt_template = system_prompt_template
+            if conversation_service.agent_cache_max is None:
+                conversation_service.agent_cache_max = 128
+        self._conversation_service = conversation_service
+        self._compression_chain = conversation_service.compression_chain
         self._auth_manager = AuthManager(config, config.agent_data_dir)
-        self._session_store = SessionStore(db, config.agent_data_dir, chain=self._compression_chain)
+        self._session_store = conversation_service.session_store
         self._adapters: list = []
         self._running_agents: dict[str, bool] = {}
-        self._agent_cache: OrderedDict[str, object] = OrderedDict()
+        self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
         self._session_override: dict[str, str] = {}  # platform:user → custom chat_id
         self._cron_scheduler = None
         self.hooks = Hooks()
@@ -156,8 +175,6 @@ class Gateway:
         # 5. Mark running → process → cleanup
         self._running_agents[session_key] = True
         try:
-            if self.plugin_manager is not None:
-                await self.plugin_manager.invoke_hook("on_session_selected", session_key=session_key)
             return await self._handle_message_with_agent(event, session_key)
         finally:
             self._running_agents.pop(session_key, None)
@@ -165,36 +182,10 @@ class Gateway:
     # ── agent dispatch ────────────────────────────────
 
     async def _handle_message_with_agent(self, event, session_key: str) -> str:
-        session = await self._session_store.get_or_create(session_key, event.source)
-
-        # Walk chain to find the latest (uncompressed) session
-        current_id = self._compression_chain.resolve(session.session_id)
-        history = await self._session_store.load_history(current_id)
-        previous_count = len(history)
-
-        agent = await self._get_or_create_agent(session_key)
-
-        from personal_agent.agent.context import build_turn_context
-        from personal_agent.agent.loop import run_conversation
-
-        ctx = await build_turn_context(agent, event.text, history)
-        result = await run_conversation(agent, ctx)
-
-        # Only save transcript if the conversation completed cleanly.
-        # On error (completed=False), messages may be corrupted (orphan tool_use).
-        if result.get("completed") and not result.get("context_overflow"):
-            target_session_id = current_id
-            if ctx.was_compressed:
-                target_session_id = await self._session_store.create_compressed_session(
-                    session_key, event.source, result["messages"]
-                )
-            else:
-                await self._session_store.save_transcript(
-                    target_session_id, result["messages"], previous_count
-                )
+        turn = await self._conversation_service.run_turn(session_key, event.source, event.text)
 
         # Hook: on_before_send
-        final = result.get("final_response", "")
+        final = turn.final_response
         hook_result = await self.hooks.fire("on_before_send", final, event.source)
         if isinstance(hook_result, str):
             final = hook_result
@@ -204,40 +195,15 @@ class Gateway:
                 final = hook_result
 
         # Background memory review (Hermes-style nudge)
-        if result.get("should_review_memory") and final:
-            self._spawn_memory_review(agent, ctx.messages)
+        agent = self._conversation_service.agent_cache.get(session_key)
+        if turn.should_review_memory and final and agent is not None:
+            self._spawn_memory_review(agent, turn.messages)
 
         return final or "..."
 
     async def _get_or_create_agent(self, session_key: str):
         """Return cached Agent if available, otherwise create and cache."""
-        if session_key in self._agent_cache:
-            agent = self._agent_cache[session_key]
-            # Check if tools stale (registry generation changed)
-            from personal_agent.tools.registry import tool_registry
-            if agent._tools_generation == tool_registry.generation:
-                return agent
-            # Tools changed — evict stale cache entry
-            del self._agent_cache[session_key]
-
-        return await self._create_agent(session_key)
-
-    async def _create_agent(self, session_key: str):
-        from personal_agent.agent.factory import create_agent_runtime
-
-        runtime = await create_agent_runtime(
-            self.config,
-            memory_manager=self._memory_manager,
-            plugin_manager=self.plugin_manager,
-            system_prompt_template=self._system_prompt_template,
-        )
-        agent = runtime.agent
-
-        # LRU eviction if cache too large
-        if len(self._agent_cache) >= 128:
-            self._agent_cache.popitem(last=False)
-        self._agent_cache[session_key] = agent
-        return agent
+        return await self._conversation_service.get_or_create_agent(session_key)
 
 
     # ── commands ──────────────────────────────────────
@@ -322,14 +288,14 @@ class _GatewayCommandRuntime:
         return self.event.source
 
     async def get_agent(self):
-        return await self.gateway._get_or_create_agent(self._session_key)
+        return await self.gateway._conversation_service.get_or_create_agent(self._session_key)
 
     async def reset_session(self) -> str:
         await self.gateway._session_store.reset_session(self._session_key, self.event.source)
         return "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
 
     async def clear_agent(self) -> None:
-        self.gateway._agent_cache.pop(self._session_key, None)
+        self.gateway._conversation_service.clear_agent(self._session_key)
 
     async def switch_session(self, name: str) -> str:
         base_key = self._base_key()
@@ -372,9 +338,7 @@ class _GatewayCommandRuntime:
         ok = await self.gateway._session_store.rename_session(old_key, new_key)
         if not ok:
             return f"无法重命名，会话不存在或目标已存在: {new_key}"
-        agent = self.gateway._agent_cache.pop(old_key, None)
-        if agent is not None:
-            self.gateway._agent_cache[new_key] = agent
+        self.gateway._conversation_service.move_agent(old_key, new_key)
         base_key = self._base_key()
         if old_key == base_key:
             self.gateway._session_override[base_key] = new_key
@@ -392,7 +356,7 @@ class _GatewayCommandRuntime:
         if self.gateway._session_store.get(target_key) is None:
             return f"会话不存在: {target_key}"
         await self.gateway._session_store.delete_session(target_key)
-        self.gateway._agent_cache.pop(target_key, None)
+        self.gateway._conversation_service.delete_agent(target_key)
         for key, value in list(self.gateway._session_override.items()):
             if key == target_key or value == target_key:
                 del self.gateway._session_override[key]
@@ -402,23 +366,21 @@ class _GatewayCommandRuntime:
         return f"会话已删除: {target_key}\n当前会话: {self._session_key}"
 
     async def load_history(self) -> list[dict]:
-        session = await self.gateway._session_store.get_or_create(self._session_key, self.event.source)
-        current_id = self.gateway._compression_chain.resolve(session.session_id)
-        return await self.gateway._session_store.load_history(current_id)
+        return await self.gateway._conversation_service.load_history(self._session_key, self.event.source)
 
     async def export_session(self) -> tuple[int, str]:
-        session = await self.gateway._session_store.get_or_create(self._session_key, self.event.source)
-        current_id = self.gateway._compression_chain.resolve(session.session_id)
         export_path = (
             self.gateway.config.agent_data_dir
             / "exports"
             / f"{self._session_key.replace(':', '_')}.jsonl"
         )
-        count = await self.gateway._session_store.export(current_id, str(export_path))
+        count = await self.gateway._conversation_service.export_session(
+            self._session_key, self.event.source, export_path
+        )
         return count, str(export_path)
 
     async def usage(self, *, current_user_message: str = "") -> str:
-        agent = self.gateway._agent_cache.get(self._session_key)
+        agent = self.gateway._conversation_service.agent_cache.get(self._session_key)
         if agent is None:
             return "暂无会话数据。"
         history = await self.load_history()
@@ -462,20 +424,13 @@ class _GatewayCommandRuntime:
         )
 
     async def allow_category(self, category: str) -> str:
-        for agent in self.gateway._agent_cache.values():
+        for agent in self.gateway._conversation_service.agent_cache.values():
             if hasattr(agent, "_destructive_allowed"):
                 agent._destructive_allowed.add(category)
         return f"已授权 {category} 操作，本轮对话内有效。"
 
     async def stop_agents(self) -> str:
-        for agent in self.gateway._agent_cache.values():
-            if hasattr(agent, "_interrupt_requested"):
-                agent._interrupt_requested = True
-        from personal_agent.tools.executor import set_interrupted
-        from personal_agent.plugins.builtin.tools.builtin.delegate import stop_delegate_agents
-
-        set_interrupted()
-        stopped = stop_delegate_agents()
+        stopped = self.gateway._conversation_service.stop_all_agents()
         if stopped:
             return f"已停止。已请求停止 {stopped} 个子 agent。"
         return "已停止。"

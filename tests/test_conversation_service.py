@@ -1,0 +1,199 @@
+"""Shared conversation service behavior."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+import pytest_asyncio
+
+from personal_agent.config import Settings
+from personal_agent.conversation import ConversationService
+from personal_agent.db.database import Database
+from personal_agent.gateway.compression_chain import CompressionChain
+from personal_agent.gateway.session_store import SessionStore
+from personal_agent.models.messages import SessionSource
+from personal_agent.tools.registry import tool_registry
+
+
+class PluginManager:
+    def __init__(self):
+        self.hooks = []
+
+    async def invoke_hook(self, name, *args, **kwargs):
+        self.hooks.append((name, kwargs))
+        return None
+
+
+class Agent:
+    def __init__(self, generation: int | None = None):
+        self._tools_generation = tool_registry.generation if generation is None else generation
+        self._interrupt_requested = False
+
+
+class Ctx:
+    def __init__(self, messages, *, was_compressed=False, should_review_memory=False):
+        self.messages = messages
+        self.was_compressed = was_compressed
+        self.should_review_memory = should_review_memory
+
+
+@pytest_asyncio.fixture
+async def service(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    db = Database(settings.agent_data_dir / "state.db")
+    await db.initialize()
+    chain = CompressionChain(settings.agent_data_dir / "compression_chain.json")
+    chain.load()
+    store = SessionStore(db, settings.agent_data_dir, chain=chain)
+    await store.initialize()
+    manager = PluginManager()
+    svc = ConversationService(
+        settings=settings,
+        plugin_manager=manager,
+        session_store=store,
+        compression_chain=chain,
+        memory_manager=None,
+        agent_cache={"cli:default:local": Agent()},
+    )
+    yield svc, manager, db
+    await db.close()
+
+
+def _source() -> SessionSource:
+    return SessionSource(platform="cli", user_id="local", chat_id="default", user_name="CLI")
+
+
+def _messages(user_text="hello", assistant_text="echo:hello"):
+    return [
+        {"role": "user", "content": [{"type": "text", "text": user_text}]},
+        {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_persists_history_and_invokes_session_hook(service, monkeypatch):
+    svc, manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        assert text == "hello"
+        assert history == []
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx):
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+            "should_review_memory": True,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "hello")
+
+    assert result.final_response == "echo:hello"
+    assert result.completed is True
+    assert result.should_review_memory is True
+    assert manager.hooks[0] == ("on_session_selected", {"session_key": "cli:default:local"})
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+    history = await svc.session_store.load_history(session.session_id)
+    assert [msg["content"][0]["text"] for msg in history] == ["hello", "echo:hello"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_does_not_persist_incomplete_or_overflow_turns(service, monkeypatch):
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx):
+        return {
+            "final_response": "partial",
+            "messages": ctx.messages,
+            "completed": False,
+            "context_overflow": True,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    await svc.run_turn("cli:default:local", _source(), "hello")
+
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+    assert await svc.session_store.load_history(session.session_id) == []
+
+
+@pytest.mark.asyncio
+async def test_run_turn_creates_compressed_session_when_context_was_compressed(service, monkeypatch):
+    svc, _manager, _db = service
+    calls = []
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages(), was_compressed=True)
+
+    async def run_conversation(agent, ctx):
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+        }
+
+    async def create_compressed_session(session_key, source, messages):
+        calls.append((session_key, source, messages))
+        return "compressed-id"
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr(svc.session_store, "create_compressed_session", create_compressed_session)
+
+    result = await svc.run_turn("cli:default:local", _source(), "hello")
+
+    assert result.was_compressed is True
+    assert calls and calls[0][0] == "cli:default:local"
+    assert calls[0][2] == _messages()
+
+
+@pytest.mark.asyncio
+async def test_agent_cache_reuses_and_refreshes_stale_agent(service, monkeypatch):
+    svc, _manager, _db = service
+    created = []
+
+    async def create_agent_runtime(*args, **kwargs):
+        agent = Agent()
+        created.append(agent)
+        return SimpleNamespace(agent=agent)
+
+    monkeypatch.setattr("personal_agent.agent.factory.create_agent_runtime", create_agent_runtime)
+
+    first = await svc.get_or_create_agent("cli:new:local")
+    second = await svc.get_or_create_agent("cli:new:local")
+    first._tools_generation = -1
+    third = await svc.get_or_create_agent("cli:new:local")
+
+    assert first is second
+    assert third is not first
+    assert created == [first, third]
+
+
+def test_agent_cache_operations_and_stop(service, monkeypatch):
+    svc, _manager, _db = service
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        lambda: 0,
+    )
+    svc.agent_cache.clear()
+    svc.agent_cache["a"] = Agent()
+    svc.agent_cache["b"] = Agent()
+
+    svc.move_agent("a", "c")
+    svc.delete_agent("b")
+    stopped = svc.stop_all_agents()
+
+    assert "a" not in svc.agent_cache
+    assert "b" not in svc.agent_cache
+    assert "c" in svc.agent_cache
+    assert svc.agent_cache["c"]._interrupt_requested is True
+    assert isinstance(stopped, int)

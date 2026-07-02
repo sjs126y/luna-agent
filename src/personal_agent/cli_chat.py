@@ -14,6 +14,7 @@ from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import SessionSource
+from personal_agent.conversation import ConversationService
 from personal_agent.runtime import AppRuntime, create_app_runtime
 
 logger = logging.getLogger(__name__)
@@ -33,13 +34,25 @@ class CliChatRuntime:
     memory_manager: MemoryManager
     mcp_manager: object | None = None
     app_runtime: AppRuntime | None = None
+    conversation_service: ConversationService | None = None
     system_prompt_template: str = CLI_SYSTEM_PROMPT
     session_name: str = "default"
     agent_cache: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
-        if self.agent_cache is None:
-            self.agent_cache = {}
+        if self.conversation_service is None:
+            self.conversation_service = ConversationService(
+                settings=self.settings,
+                plugin_manager=self.plugin_manager,
+                session_store=self.session_store,
+                compression_chain=self.compression_chain,
+                memory_manager=self.memory_manager,
+                system_prompt_template=self.system_prompt_template,
+                agent_cache=self.agent_cache,
+            )
+        else:
+            self.conversation_service.system_prompt_template = self.system_prompt_template
+        self.agent_cache = self.conversation_service.agent_cache
 
     @property
     def source(self) -> SessionSource:
@@ -99,60 +112,21 @@ class CliChatRuntime:
                 output_fn(response)
 
     async def run_message(self, text: str) -> str:
-        await self.plugin_manager.invoke_hook("on_session_selected", session_key=self.session_key)
-        session = await self.session_store.get_or_create(self.session_key, self.source)
-        current_id = self.compression_chain.resolve(session.session_id)
-        history = await self.session_store.load_history(current_id)
-        previous_count = len(history)
-        agent = await self.get_or_create_agent()
-
-        from personal_agent.agent.context import build_turn_context
-        from personal_agent.agent.loop import run_conversation
-
-        ctx = await build_turn_context(agent, text, history)
-        result = await run_conversation(agent, ctx)
-
-        if result.get("completed") and not result.get("context_overflow"):
-            if ctx.was_compressed:
-                await self.session_store.create_compressed_session(
-                    self.session_key, self.source, result["messages"]
-                )
-            else:
-                await self.session_store.save_transcript(
-                    current_id, result["messages"], previous_count
-                )
-
-        return result.get("final_response", "") or "..."
+        assert self.conversation_service is not None
+        result = await self.conversation_service.run_turn(self.session_key, self.source, text)
+        return result.final_response or "..."
 
     async def get_or_create_agent(self):
-        assert self.agent_cache is not None
-        key = self.session_key
-        if key in self.agent_cache:
-            agent = self.agent_cache[key]
-            from personal_agent.tools.registry import tool_registry
-
-            if agent._tools_generation == tool_registry.generation:
-                return agent
-            del self.agent_cache[key]
-
-        from personal_agent.agent.factory import create_agent_runtime
-
-        runtime = await create_agent_runtime(
-            self.settings,
-            memory_manager=self.memory_manager,
-            plugin_manager=self.plugin_manager,
-            system_prompt_template=self.system_prompt_template,
-        )
-        self.agent_cache[key] = runtime.agent
-        return runtime.agent
+        assert self.conversation_service is not None
+        return await self.conversation_service.get_or_create_agent(self.session_key)
 
     async def reset_session(self) -> str:
         await self.session_store.reset_session(self.session_key, self.source)
         return "会话已重置。开始新的对话吧。"
 
     async def clear_agent(self) -> None:
-        assert self.agent_cache is not None
-        self.agent_cache.pop(self.session_key, None)
+        assert self.conversation_service is not None
+        self.conversation_service.clear_agent(self.session_key)
 
     async def switch_session(self, name: str) -> str:
         self.session_name = _clean_session_name(name)
@@ -188,10 +162,8 @@ class CliChatRuntime:
         ok = await self.session_store.rename_session(old_key, new_key)
         if not ok:
             return f"无法重命名，会话不存在或目标已存在: {new_key}"
-        assert self.agent_cache is not None
-        agent = self.agent_cache.pop(old_key, None)
-        if agent is not None:
-            self.agent_cache[new_key] = agent
+        assert self.conversation_service is not None
+        self.conversation_service.move_agent(old_key, new_key)
         self.session_name = new_name
         return f"会话已重命名: {old_key} -> {new_key}"
 
@@ -201,8 +173,8 @@ class CliChatRuntime:
         if self.session_store.get(target_key) is None:
             return f"会话不存在: {target_key}"
         await self.session_store.delete_session(target_key)
-        assert self.agent_cache is not None
-        self.agent_cache.pop(target_key, None)
+        assert self.conversation_service is not None
+        self.conversation_service.delete_agent(target_key)
         if target_key == self.session_key:
             self.session_name = "default"
         await self.session_store.get_or_create(self.session_key, self.source)
@@ -212,31 +184,24 @@ class CliChatRuntime:
         return await self.get_or_create_agent()
 
     async def load_history(self) -> list[dict]:
-        session = await self.session_store.get_or_create(self.session_key, self.source)
-        current_id = self.compression_chain.resolve(session.session_id)
-        return await self.session_store.load_history(current_id)
+        assert self.conversation_service is not None
+        return await self.conversation_service.load_history(self.session_key, self.source)
 
     async def export_session(self) -> tuple[int, str]:
-        session = await self.session_store.get_or_create(self.session_key, self.source)
-        current_id = self.compression_chain.resolve(session.session_id)
         export_path = (
             self.settings.agent_data_dir
             / "exports"
             / f"{self.session_key.replace(':', '_')}.jsonl"
         )
-        count = await self.session_store.export(current_id, str(export_path))
+        assert self.conversation_service is not None
+        count = await self.conversation_service.export_session(
+            self.session_key, self.source, export_path
+        )
         return count, str(export_path)
 
     async def stop_agents(self) -> str:
-        assert self.agent_cache is not None
-        for agent in self.agent_cache.values():
-            if hasattr(agent, "_interrupt_requested"):
-                agent._interrupt_requested = True
-        from personal_agent.tools.executor import set_interrupted
-        from personal_agent.plugins.builtin.tools.builtin.delegate import stop_delegate_agents
-
-        set_interrupted()
-        stopped = stop_delegate_agents()
+        assert self.conversation_service is not None
+        stopped = self.conversation_service.stop_all_agents()
         if stopped:
             return f"已停止。已请求停止 {stopped} 个子 agent。"
         return "已停止。"
@@ -275,6 +240,7 @@ async def create_cli_runtime(
         memory_manager=app_runtime.memory_manager,
         mcp_manager=app_runtime.mcp_manager,
         app_runtime=app_runtime,
+        conversation_service=app_runtime.conversation_service,
         session_name=_clean_session_name(session_name),
     )
 

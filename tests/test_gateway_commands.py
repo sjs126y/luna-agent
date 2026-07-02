@@ -12,6 +12,7 @@ from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import MessageEvent, SessionSource
 from personal_agent.plugins.models import CommandEntry
+from personal_agent.conversation import ConversationTurnResult
 
 
 class Memory(MemoryProvider):
@@ -48,6 +49,9 @@ class PluginManager:
         if hasattr(value, "__await__"):
             value = await value
         return value
+
+    async def invoke_hook(self, name, *args, **kwargs):
+        return args[0] if args else None
 
 
 @pytest_asyncio.fixture
@@ -179,6 +183,41 @@ async def test_gateway_help_lists_slash_plugin_commands_only(gateway):
 
     assert "/demo - gateway command (user/demo)" in result
     assert "/local" not in result
+
+
+@pytest.mark.asyncio
+async def test_gateway_before_send_and_memory_review_use_conversation_result(gateway, monkeypatch):
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "base"}]},
+    ]
+    gateway._conversation_service.agent_cache["telegram:c1:u1"] = Agent()
+
+    async def run_turn(session_key, source, text):
+        assert session_key == "telegram:c1:u1"
+        assert text == "hello"
+        return ConversationTurnResult(
+            final_response="base",
+            messages=messages,
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=True,
+            raw={},
+        )
+
+    async def before_send(text, source):
+        return text + "!"
+
+    captured = []
+    gateway.hooks.on_before_send.append(before_send)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn", run_turn)
+    monkeypatch.setattr(gateway, "_spawn_memory_review", lambda agent, msgs: captured.append((agent, msgs)))
+
+    result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
+
+    assert result == "base!"
+    assert captured == [(gateway._conversation_service.agent_cache["telegram:c1:u1"], messages)]
 
 
 class Agent:
