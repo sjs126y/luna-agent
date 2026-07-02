@@ -13,6 +13,7 @@ from typing import Any, Optional
 import typer
 
 from personal_agent.config import Settings
+from personal_agent.config_diagnostics import build_config_report, ensure_config_dirs
 from personal_agent.context_budget import build_context_budget
 from personal_agent.cli_chat import run_cli_once_sync, run_cli_repl_sync
 from personal_agent.main import boot
@@ -30,7 +31,7 @@ app.add_typer(agents_app, name="agents")
 app.add_typer(memory_app, name="memory")
 
 
-_CONFIG_TEMPLATE = """# Personal Agent minimal configuration
+_CONFIG_TEMPLATE_LOCAL = """# Personal Agent minimal configuration
 agent:
   max_iterations: 30
   max_tool_calls_per_turn: 20
@@ -86,6 +87,127 @@ auth:
   admins: []
 """
 
+_CONFIG_TEMPLATE_SERVER = """# Personal Agent server configuration
+agent:
+  max_iterations: 30
+  max_tool_calls_per_turn: 20
+
+agents:
+  max_concurrent_runs: 4
+  max_tool_calls: 10
+  max_tokens: 4096
+  history_limit: 100
+
+storage:
+  data_dir: ./data
+  log_level: INFO
+
+plugins:
+  dirs:
+    - ./plugins
+    - ./data/plugins
+  enabled: []
+  disabled: []
+
+memory:
+  provider: file
+  external_provider: embedding
+  review_interval: 10
+
+compression:
+  threshold_ratio: 0.6
+  tail_token_budget: 20000
+
+sandbox:
+  roots:
+    - ./data
+  blocked:
+    - "**/.env"
+    - "**/.git/**"
+    - "**/.ssh/**"
+  bash_work_dir: ./data
+  bash_restrict_paths: true
+  bash_allow_network: false
+  audit_enabled: true
+
+mcp:
+  enabled: false
+  servers: []
+
+session:
+  expire_days: 30
+  override: {}
+
+auth:
+  enabled: false
+  admins: []
+"""
+
+_CONFIG_TEMPLATE_BOT = """# Personal Agent bot configuration
+agent:
+  max_iterations: 30
+  max_tool_calls_per_turn: 20
+
+agents:
+  max_concurrent_runs: 4
+  max_tool_calls: 10
+  max_tokens: 4096
+  history_limit: 100
+
+storage:
+  data_dir: ./data
+  log_level: INFO
+
+plugins:
+  dirs:
+    - ./plugins
+    - ./data/plugins
+  enabled: []
+  disabled: []
+
+memory:
+  provider: file
+  external_provider: embedding
+  review_interval: 10
+
+compression:
+  threshold_ratio: 0.6
+  tail_token_budget: 20000
+
+sandbox:
+  roots:
+    - ./data
+  blocked:
+    - "**/.env"
+    - "**/.git/**"
+    - "**/.ssh/**"
+  bash_work_dir: ./data
+  bash_restrict_paths: true
+  bash_allow_network: false
+  audit_enabled: true
+
+mcp:
+  enabled: false
+  servers: []
+
+session:
+  expire_days: 30
+  override: {}
+
+auth:
+  enabled: true
+  admins: []
+  allowed_users: []
+"""
+
+_CONFIG_TEMPLATES = {
+    "local": _CONFIG_TEMPLATE_LOCAL,
+    "server": _CONFIG_TEMPLATE_SERVER,
+    "bot": _CONFIG_TEMPLATE_BOT,
+}
+
+_CONFIG_TEMPLATE = _CONFIG_TEMPLATE_LOCAL
+
 
 _ENV_EXAMPLE_TEMPLATE = """# LLM
 LLM_PROVIDER=deepseek
@@ -99,6 +221,28 @@ LLM_MAX_TOKENS=4096
 TELEGRAM_BOT_TOKEN=
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
+WEIXIN_TOKEN=
+WEIXIN_ACCOUNT_ID=
+WEIXIN_USER_ID=
+WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+"""
+
+_ENV_EXAMPLE_TEMPLATE_BOT = """# LLM
+LLM_PROVIDER=deepseek
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
+LLM_API_MODE=auto
+LLM_MAX_TOKENS=4096
+
+# Telegram
+TELEGRAM_BOT_TOKEN=
+
+# Feishu
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+
+# WeChat
 WEIXIN_TOKEN=
 WEIXIN_ACCOUNT_ID=
 WEIXIN_USER_ID=
@@ -142,15 +286,38 @@ def doctor(json_output: bool = typer.Option(False, "--json", help="输出 JSON�
 @app.command("init")
 def init_project(
     target_dir: Path = typer.Option(Path("."), "--dir", "-d", help="生成配置的目录。"),
+    profile: str = typer.Option("local", "--profile", "-p", help="配置模板: local|server|bot。"),
     force: bool = typer.Option(False, "--force", "-f", help="覆盖已存在的文件。"),
+    check: bool = typer.Option(False, "--check", help="只检查当前目录配置，不写配置文件。"),
+    fix_dirs: bool = typer.Option(False, "--fix-dirs", help="创建 data/plugins/system 等基础目录。"),
 ) -> None:
     """Generate a minimal config.yaml and .env.example."""
+    profile = profile.lower().strip()
+    if profile not in _CONFIG_TEMPLATES:
+        _exit_error(f"未知 profile: {profile}，可选: local, server, bot")
+
+    if fix_dirs:
+        created = ensure_config_dirs(target_dir)
+        if created:
+            typer.echo("已创建目录:")
+            for path in created:
+                typer.echo(f"  - {path}")
+        else:
+            typer.echo("基础目录已存在。")
+
+    if check:
+        report = build_config_report(target_dir)
+        typer.echo(format_config_report(report))
+        if not report.get("ok", False):
+            raise typer.Exit(1)
+        return
+
     target_dir.mkdir(parents=True, exist_ok=True)
     results = [
-        _write_template(target_dir / "config.yaml", _CONFIG_TEMPLATE, force=force),
-        _write_template(target_dir / ".env.example", _ENV_EXAMPLE_TEMPLATE, force=force),
+        _write_template(target_dir / "config.yaml", _CONFIG_TEMPLATES[profile], force=force),
+        _write_template(target_dir / ".env.example", _env_example_template(profile), force=force),
     ]
-    typer.echo(f"初始化 Personal Agent 配置: {target_dir}")
+    typer.echo(f"初始化 Personal Agent 配置: {target_dir} ({profile})")
     for path, action in results:
         typer.echo(f"  - {action}: {path}")
 
@@ -544,6 +711,12 @@ def _write_template(path: Path, content: str, *, force: bool) -> tuple[Path, str
     return path, "已覆盖" if existed else "已生成"
 
 
+def _env_example_template(profile: str) -> str:
+    if profile == "bot":
+        return _ENV_EXAMPLE_TEMPLATE_BOT
+    return _ENV_EXAMPLE_TEMPLATE
+
+
 def _runtime_health_report(settings: Settings) -> dict[str, Any]:
     return _run_async_sync(_runtime_health_report_async(settings))
 
@@ -681,6 +854,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
         "mcp_enabled": settings.mcp_enabled,
+        "config": build_config_report(Path(".")),
         "runtime": runtime_health["runtime"],
         "memory": runtime_health["memory"],
         "gateway": runtime_health["runtime"].get("gateway", {}),
@@ -708,6 +882,7 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     runtime = report.get("runtime", {})
     memory = report.get("memory", {})
     gateway = report.get("gateway", {})
+    config = report.get("config", {})
     lines = [
         "Personal Agent 诊断",
         f"总体状态: {'需要注意' if issues else '正常'}",
@@ -732,6 +907,13 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  Gateway 运行: {_yes(runtime.get('gateway_running', False))}",
         f"  cached agents: {runtime.get('cached_agents', 0)}",
         f"  runtime 错误: {runtime.get('error') or '-'}",
+        "",
+        "Config:",
+        f"  config.yaml: {_yes(config.get('files', {}).get('config', {}).get('exists', False))}",
+        f"  .env: {_yes(config.get('files', {}).get('env', {}).get('exists', False))}",
+        f"  LLM key: {_yes(config.get('env', {}).get('llm_api_key_set', False))}",
+        f"  unknown keys: {_list_or_none(config.get('unknown_keys', []))}",
+        f"  warnings: {len(config.get('warnings', []))}",
         "",
         "Gateway:",
         f"  started: {_yes(gateway.get('started', False))}",
@@ -804,6 +986,51 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         lines.extend(f"  - {issue}" for issue in issues)
     else:
         lines.append("  - 无")
+    if config.get("next_steps"):
+        lines.extend(["", "下一步:"])
+        lines.extend(f"  - {step}" for step in config["next_steps"])
+    return "\n".join(lines)
+
+
+def format_config_report(report: dict[str, Any]) -> str:
+    files = report.get("files", {})
+    env = report.get("env", {})
+    lines = [
+        "配置检查",
+        f"目录: {report.get('base_dir') or '-'}",
+        f"总体状态: {'通过' if report.get('ok') else '需要处理'}",
+        "",
+        "文件:",
+        f"  config.yaml: {_status(files.get('config', {}).get('exists', False))} ({files.get('config', {}).get('path', '-')})",
+        f"  .env: {_status(files.get('env', {}).get('exists', False))} ({files.get('env', {}).get('path', '-')})",
+        f"  .env.example: {_status(files.get('env_example', {}).get('exists', False))} ({files.get('env_example', {}).get('path', '-')})",
+        "",
+        "LLM:",
+        f"  provider: {env.get('llm_provider') or '-'}",
+        f"  API key: {_yes(env.get('llm_api_key_set', False))}",
+        f"  base URL: {_yes(env.get('llm_base_url_set', False))}",
+        f"  model: {_yes(env.get('llm_model_set', False))}",
+        f"  缺失环境变量: {_list_or_none(env.get('missing_llm_env', []))}",
+        "",
+        "目录:",
+    ]
+    for item in report.get("directories", []):
+        lines.append(
+            f"  - {item['kind']}: {item['path']} [{_status(item['exists'])}]"
+        )
+    if report.get("unknown_keys"):
+        lines.extend(["", f"未知配置: {_list_or_none(report['unknown_keys'])}"])
+    if report.get("deprecated_keys"):
+        lines.append("")
+        lines.append("已废弃配置:")
+        for item in report["deprecated_keys"]:
+            lines.append(f"  - {item['key']}: {item['message']}")
+    if report.get("warnings"):
+        lines.extend(["", "警告:"])
+        lines.extend(f"  - {warning}" for warning in report["warnings"])
+    if report.get("next_steps"):
+        lines.extend(["", "下一步:"])
+        lines.extend(f"  - {step}" for step in report["next_steps"])
     return "\n".join(lines)
 
 
@@ -984,6 +1211,9 @@ def format_token_budget(data: dict[str, Any]) -> str:
 
 def _doctor_issues(report: dict[str, Any]) -> list[str]:
     issues: list[str] = []
+    for warning in (report.get("config") or {}).get("warnings", []):
+        issues.append(f"配置: {warning}")
+
     runtime = report.get("runtime", {})
     if runtime:
         if not runtime.get("initialized", False):

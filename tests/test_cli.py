@@ -10,6 +10,7 @@ from personal_agent.agents.runtime import AgentRun
 from personal_agent.cli import (
     app,
     build_doctor_report,
+    format_config_report,
     format_doctor_report,
     format_memory_doctor,
     format_memory_entries,
@@ -341,6 +342,7 @@ def test_global_doctor_json_command_contains_runtime_and_memory():
     assert "runtime" in data
     assert "memory" in data
     assert "gateway" in data
+    assert "config" in data
     assert "agents" in data
     assert "plugins" in data
 
@@ -395,6 +397,41 @@ def test_init_command_generates_and_skips_existing_files(tmp_path):
     assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == original
 
 
+def test_init_profiles_generate_distinct_templates(tmp_path):
+    local_dir = tmp_path / "local"
+    bot_dir = tmp_path / "bot"
+
+    local = runner.invoke(app, ["init", "--dir", str(local_dir), "--profile", "local"])
+    bot = runner.invoke(app, ["init", "--dir", str(bot_dir), "--profile", "bot"])
+
+    assert local.exit_code == 0
+    assert bot.exit_code == 0
+    assert "enabled: false" in (local_dir / "config.yaml").read_text(encoding="utf-8")
+    bot_config = (bot_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "# Personal Agent bot configuration" in bot_config
+    assert "enabled: true" in bot_config
+    assert "# Telegram" in (bot_dir / ".env.example").read_text(encoding="utf-8")
+
+
+def test_init_check_reports_missing_config_without_writing(tmp_path):
+    result = runner.invoke(app, ["init", "--check", "--dir", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "配置检查" in result.output
+    assert "缺少 config.yaml" in result.output
+    assert not (tmp_path / "config.yaml").exists()
+
+
+def test_init_fix_dirs_creates_base_directories(tmp_path):
+    result = runner.invoke(app, ["init", "--dir", str(tmp_path), "--fix-dirs"])
+
+    assert result.exit_code == 0
+    assert (tmp_path / "data").exists()
+    assert (tmp_path / "data" / "system").exists()
+    assert (tmp_path / "plugins").exists()
+    assert (tmp_path / "data" / "plugins").exists()
+
+
 def test_init_command_force_overwrites_existing_files(tmp_path):
     config = tmp_path / "config.yaml"
     env = tmp_path / ".env.example"
@@ -407,6 +444,36 @@ def test_init_command_force_overwrites_existing_files(tmp_path):
     assert "已覆盖" in result.output
     assert "storage:" in config.read_text(encoding="utf-8")
     assert "LLM_PROVIDER" in env.read_text(encoding="utf-8")
+
+
+def test_format_config_report_shows_next_steps():
+    report = {
+        "ok": False,
+        "base_dir": "demo",
+        "files": {
+            "config": {"exists": False, "path": "demo/config.yaml"},
+            "env": {"exists": False, "path": "demo/.env"},
+            "env_example": {"exists": True, "path": "demo/.env.example"},
+        },
+        "env": {
+            "llm_provider": "deepseek",
+            "llm_api_key_set": False,
+            "llm_base_url_set": False,
+            "llm_model_set": False,
+            "missing_llm_env": ["LLM_API_KEY"],
+        },
+        "directories": [{"kind": "data_dir", "path": "demo/data", "exists": False, "required": True}],
+        "unknown_keys": ["old"],
+        "deprecated_keys": [],
+        "warnings": ["缺少 config.yaml。"],
+        "next_steps": ["运行 personal-agent init 生成 config.yaml。"],
+    }
+
+    text = format_config_report(report)
+
+    assert "配置检查" in text
+    assert "未知配置: old" in text
+    assert "运行 personal-agent init" in text
 
 
 def test_format_plugin_report_includes_traceback_when_requested():
