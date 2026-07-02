@@ -57,10 +57,28 @@ memory:
   provider: file
   external_provider: none
   review_interval: 10
+  embedding:
+    model: BAAI/bge-small-zh-v1.5
+    relevance_threshold: 0.3
+    max_prefetch: 3
+    chunk_size: 800
 
 compression:
   threshold_ratio: 0.6
   tail_token_budget: 20000
+
+gateway:
+  platform_reconnect_delays:
+    - 1
+    - 2
+    - 5
+    - 10
+    - 30
+    - 60
+  platform_pending_warning_threshold: 10
+  platform_chat_locks_maxsize: 64
+  platform_message_dedupe_max_size: 1024
+  platform_send_max_retries: 2
 
 sandbox:
   roots:
@@ -113,10 +131,28 @@ memory:
   provider: file
   external_provider: embedding
   review_interval: 10
+  embedding:
+    model: BAAI/bge-small-zh-v1.5
+    relevance_threshold: 0.3
+    max_prefetch: 3
+    chunk_size: 800
 
 compression:
   threshold_ratio: 0.6
   tail_token_budget: 20000
+
+gateway:
+  platform_reconnect_delays:
+    - 1
+    - 2
+    - 5
+    - 10
+    - 30
+    - 60
+  platform_pending_warning_threshold: 10
+  platform_chat_locks_maxsize: 64
+  platform_message_dedupe_max_size: 1024
+  platform_send_max_retries: 2
 
 sandbox:
   roots:
@@ -169,10 +205,28 @@ memory:
   provider: file
   external_provider: embedding
   review_interval: 10
+  embedding:
+    model: BAAI/bge-small-zh-v1.5
+    relevance_threshold: 0.3
+    max_prefetch: 3
+    chunk_size: 800
 
 compression:
   threshold_ratio: 0.6
   tail_token_budget: 20000
+
+gateway:
+  platform_reconnect_delays:
+    - 1
+    - 2
+    - 5
+    - 10
+    - 30
+    - 60
+  platform_pending_warning_threshold: 10
+  platform_chat_locks_maxsize: 64
+  platform_message_dedupe_max_size: 1024
+  platform_send_max_retries: 2
 
 sandbox:
   roots:
@@ -1087,6 +1141,11 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  pending messages: {gateway.get('pending_messages', 0)}",
         f"  active adapter sessions: {gateway.get('active_adapter_sessions', 0)}",
         f"  cron enabled: {_yes(gateway.get('cron_enabled', False))}",
+        f"  reconnect delays: {_list_or_none(gateway.get('platform_reconnect_delays', []))}",
+        f"  pending warning threshold: {gateway.get('platform_pending_warning_threshold', 0)}",
+        f"  chat locks maxsize: {gateway.get('platform_chat_locks_maxsize', 0)}",
+        f"  dedupe max size: {gateway.get('platform_message_dedupe_max_size', 0)}",
+        f"  send max retries: {gateway.get('platform_send_max_retries', 0)}",
         "",
         "Memory:",
         f"  builtin provider: {memory.get('builtin_provider') or '-'}",

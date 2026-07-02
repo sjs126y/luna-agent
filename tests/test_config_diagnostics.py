@@ -126,6 +126,47 @@ sandbox:
     assert any("plugins.enabled 必须是字符串列表" in error for error in report["errors"])
 
 
+def test_config_report_accepts_gateway_and_embedding_settings(tmp_path):
+    (tmp_path / "data" / "system").mkdir(parents=True)
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\nLLM_BASE_URL=https://api.deepseek.com\nLLM_MODEL=deepseek-chat\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+gateway:
+  platform_reconnect_delays: [2, 4, 8]
+  platform_pending_warning_threshold: 12
+  platform_chat_locks_maxsize: 32
+  platform_message_dedupe_max_size: 2048
+  platform_send_max_retries: 0
+memory:
+  provider: file
+  external_provider: embedding
+  review_interval: 10
+  embedding:
+    model: demo-model
+    relevance_threshold: 0.25
+    max_prefetch: 5
+    chunk_size: 512
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert report["ok"] is True
+    assert "gateway.platform_reconnect_delays" not in report["unknown_nested_keys"]
+    assert "memory.embedding.model" not in report["unknown_nested_keys"]
+    assert report["errors"] == []
+    assert report["warnings"] == []
+
+
 def test_config_report_warns_about_windows_paths_and_does_not_create_them(tmp_path):
     (tmp_path / "config.yaml").write_text(
         r"""

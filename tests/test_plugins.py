@@ -668,6 +668,48 @@ async def test_external_memory_provider_is_created_by_hook_and_removed_on_disabl
     ) is None
 
 
+@pytest.mark.asyncio
+async def test_external_memory_provider_uses_embedding_settings(tmp_path, monkeypatch):
+    (tmp_path / "data" / "system").mkdir(parents=True)
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+memory:
+  external_provider: embedding
+  embedding:
+    model: demo-model
+    relevance_threshold: 0.42
+    max_prefetch: 5
+    chunk_size: 512
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    settings = Settings()
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+    manager.load_plugin("memory/embedding")
+
+    provider = await manager.invoke_hook(
+        "create_external_memory_provider",
+        settings=settings,
+        data_dir=tmp_path / "memory",
+        force=True,
+    )
+
+    assert provider is not None
+    health = provider.health_snapshot()
+    assert health["model"] == "demo-model"
+    assert health["relevance_threshold"] == 0.42
+    assert health["max_prefetch"] == 5
+    assert health["chunk_size"] == 512
+
+
 def test_memory_provider_doctor_reports_registered_hooks(tmp_path):
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")

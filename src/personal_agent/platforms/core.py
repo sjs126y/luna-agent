@@ -100,6 +100,16 @@ class PlatformRegistry:
 platform_registry = PlatformRegistry()
 
 
+def _int_setting(value, default: int, *, minimum: int = 0) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return default
+    if result < minimum:
+        return default
+    return result
+
+
 # ── BasePlatformAdapter ──────────────────────────────
 
 class BasePlatformAdapter(ABC):
@@ -116,7 +126,26 @@ class BasePlatformAdapter(ABC):
         self._pending_messages: dict[str, list[PendingMessage]] = {}
         self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self._seen_message_keys: OrderedDict[str, None] = OrderedDict()
-        self._dedupe_max_size = MESSAGE_DEDUPE_MAXSIZE
+        self._chat_locks_maxsize = _int_setting(
+            getattr(config, "platform_chat_locks_maxsize", CHAT_LOCKS_MAXSIZE),
+            CHAT_LOCKS_MAXSIZE,
+            minimum=1,
+        )
+        self._pending_warning_threshold = _int_setting(
+            getattr(config, "platform_pending_warning_threshold", PENDING_WARNING_THRESHOLD),
+            PENDING_WARNING_THRESHOLD,
+            minimum=1,
+        )
+        self._dedupe_max_size = _int_setting(
+            getattr(config, "platform_message_dedupe_max_size", MESSAGE_DEDUPE_MAXSIZE),
+            MESSAGE_DEDUPE_MAXSIZE,
+            minimum=1,
+        )
+        self._send_max_retries = _int_setting(
+            getattr(config, "platform_send_max_retries", 2),
+            2,
+            minimum=0,
+        )
         self.hooks = Hooks()
         self._platform_name = type(self).__name__
         self._connected = False
@@ -168,7 +197,7 @@ class BasePlatformAdapter(ABC):
         if session_key in self._active_sessions:
             queue = self._pending_messages.setdefault(session_key, [])
             queue.append(PendingMessage(event, queued_at=_now(), queued_monotonic=time.monotonic()))
-            if len(queue) > PENDING_WARNING_THRESHOLD:
+            if len(queue) > self._pending_warning_threshold:
                 logger.warning(
                     "Platform %s session %s has %d pending messages",
                     self._platform_name,
@@ -211,7 +240,8 @@ class BasePlatformAdapter(ABC):
 
     # ── retry logic ───────────────────────────────────
 
-    async def _send_with_retry(self, chat_id: str, content: str, max_retries: int = 2) -> None:
+    async def _send_with_retry(self, chat_id: str, content: str, max_retries: int | None = None) -> None:
+        max_retries = self._send_max_retries if max_retries is None else max_retries
         for attempt in range(max_retries + 1):
             try:
                 self._send_stats.last_send_at = _now()
@@ -296,7 +326,7 @@ class BasePlatformAdapter(ABC):
 
     def _get_chat_lock(self, chat_id: str) -> asyncio.Lock:
         if chat_id not in self._chat_locks:
-            if len(self._chat_locks) >= CHAT_LOCKS_MAXSIZE:
+            if len(self._chat_locks) >= self._chat_locks_maxsize:
                 self._chat_locks.popitem(last=False)
             self._chat_locks[chat_id] = asyncio.Lock()
         return self._chat_locks[chat_id]
@@ -365,8 +395,11 @@ class BasePlatformAdapter(ABC):
             "pending_by_session": pending_by_session,
             "oldest_pending_age_seconds": round(oldest_pending_age, 3),
             "chat_locks": len(self._chat_locks),
+            "chat_locks_maxsize": self._chat_locks_maxsize,
             "dedupe_size": len(self._seen_message_keys),
             "dedupe_max_size": self._dedupe_max_size,
+            "pending_warning_threshold": self._pending_warning_threshold,
+            "send_max_retries": self._send_max_retries,
             "last_message_at": self._last_message_at,
             "last_response_at": self._last_response_at,
             "send_stats": self._send_stats.snapshot(),

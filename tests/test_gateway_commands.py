@@ -11,6 +11,7 @@ from personal_agent.config import Settings
 from personal_agent.db.database import Database
 from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
 from personal_agent.gateway.gateway import Gateway
+from personal_agent.gateway.state import PlatformRuntime
 from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import MessageEvent, SessionSource
@@ -557,6 +558,40 @@ async def test_base_adapter_dedupe_lru_evicts_old_keys(gateway):
     health = adapter.health_snapshot()
     assert health["dedupe_size"] == 2
     assert health["dedupe_max_size"] == 2
+
+
+def test_base_adapter_uses_gateway_settings(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text(
+        """
+gateway:
+  platform_reconnect_delays: [3, 7, 11]
+  platform_pending_warning_threshold: 4
+  platform_chat_locks_maxsize: 5
+  platform_message_dedupe_max_size: 6
+  platform_send_max_retries: 0
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    settings = Settings()
+    adapter = RecordingAdapter(settings, object())
+
+    assert adapter._chat_locks_maxsize == 5
+    assert adapter._pending_warning_threshold == 4
+    assert adapter._dedupe_max_size == 6
+    assert adapter._send_max_retries == 0
+
+    runtime = PlatformRuntime(name="demo", backoff_delays_seconds=tuple(settings.platform_reconnect_delays))
+    runtime.attempts = 1
+    assert runtime.next_retry_delay() == 3
+    runtime.attempts = 3
+    assert runtime.next_retry_delay() == 11
 
 
 @pytest.mark.asyncio

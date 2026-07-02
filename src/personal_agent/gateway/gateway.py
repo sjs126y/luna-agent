@@ -58,6 +58,7 @@ class Gateway:
         self._session_store = conversation_service.session_store
         self._adapters: list = []
         self._platforms: dict[str, PlatformRuntime] = {}
+        self._platform_backoff_delays = tuple(getattr(config, "platform_reconnect_delays", (1, 2, 5, 10, 30, 60)))
         self._run_state = GatewayRunState()
         self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
         self._session_router = GatewaySessionRouter()
@@ -148,12 +149,21 @@ class Gateway:
             "cron_enabled": self._cron_scheduler is not None,
             "pending_messages": sum(int(item.get("pending_messages", 0)) for item in platforms),
             "active_adapter_sessions": sum(int(item.get("active_sessions", 0)) for item in platforms),
+            "platform_reconnect_delays": list(self._platform_backoff_delays),
+            "platform_pending_warning_threshold": getattr(self.config, "platform_pending_warning_threshold", 10),
+            "platform_chat_locks_maxsize": getattr(self.config, "platform_chat_locks_maxsize", 64),
+            "platform_message_dedupe_max_size": getattr(self.config, "platform_message_dedupe_max_size", 1024),
+            "platform_send_max_retries": getattr(self.config, "platform_send_max_retries", 2),
         }
         data.update(run_health)
         return data
 
     async def _start_platform(self, entry) -> None:
-        runtime = self._platforms.setdefault(entry.name, PlatformRuntime(name=entry.name))
+        runtime = self._platforms.setdefault(
+            entry.name,
+            PlatformRuntime(name=entry.name, backoff_delays_seconds=self._platform_backoff_delays),
+        )
+        runtime.backoff_delays_seconds = self._platform_backoff_delays
         if not entry.check_fn(self.config):
             runtime.mark_skipped("check_fn returned False")
             logger.warning("Platform '%s' skipped: check_fn returned False", entry.name)

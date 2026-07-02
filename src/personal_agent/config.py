@@ -20,6 +20,22 @@ def _load_env(path: str = ".env") -> dict[str, str]:
     return {k: v or "" for k, v in dotenv_values(path).items()}
 
 
+def _load_int_list(value: Any, *, default: list[int], field_name: str) -> list[int]:
+    if value is None:
+        return list(default)
+    if isinstance(value, str):
+        value = [item.strip() for item in value.split(",") if item.strip()]
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of integers")
+    result: list[int] = []
+    for item in value:
+        number = int(item)
+        if number <= 0:
+            raise ValueError(f"{field_name} must contain only positive integers")
+        result.append(number)
+    return result or list(default)
+
+
 class Settings:
     def __init__(self, **overrides: Any) -> None:
         yaml_cfg = _load_yaml()
@@ -78,6 +94,11 @@ class Settings:
         self.memory_provider: str = memory.get("provider", "file")
         self.memory_external_provider: str = memory.get("external_provider", "none")
         self.memory_review_interval: int = memory.get("review_interval", 10)
+        embedding = memory.get("embedding", {})
+        self.memory_embedding_model: str = embedding.get("model", "BAAI/bge-small-zh-v1.5")
+        self.memory_embedding_relevance_threshold: float = embedding.get("relevance_threshold", 0.3)
+        self.memory_embedding_max_prefetch: int = embedding.get("max_prefetch", 3)
+        self.memory_embedding_chunk_size: int = embedding.get("chunk_size", 800)
 
         # ── Cron (from config.yaml) ──
         cron = yaml_cfg.get("cron", {})
@@ -104,6 +125,22 @@ class Settings:
         self.bash_allow_network: bool = sandbox.get("bash_allow_network", False)
         self.file_max_write_bytes: int = sandbox.get("file_max_write_bytes", 100000)
         self.audit_enabled: bool = sandbox.get("audit_enabled", True)
+
+        # ── Gateway (from config.yaml) ──
+        gateway = yaml_cfg.get("gateway", {})
+        self.platform_reconnect_delays: list[int] = _load_int_list(
+            gateway.get("platform_reconnect_delays", [1, 2, 5, 10, 30, 60]),
+            default=[1, 2, 5, 10, 30, 60],
+            field_name="gateway.platform_reconnect_delays",
+        )
+        self.platform_pending_warning_threshold: int = gateway.get(
+            "platform_pending_warning_threshold", 10
+        )
+        self.platform_chat_locks_maxsize: int = gateway.get("platform_chat_locks_maxsize", 64)
+        self.platform_message_dedupe_max_size: int = gateway.get(
+            "platform_message_dedupe_max_size", 1024
+        )
+        self.platform_send_max_retries: int = gateway.get("platform_send_max_retries", 2)
 
         # ── Session (from config.yaml) ──
         session = yaml_cfg.get("session", {})

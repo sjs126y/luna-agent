@@ -120,6 +120,7 @@ class GatewayRunState:
 class PlatformRuntime:
     name: str
     adapter: Any | None = None
+    backoff_delays_seconds: tuple[int, ...] = BACKOFF_DELAYS_SECONDS
     status: str = "skipped"
     attempts: int = 0
     last_attempt_at: str = ""
@@ -171,7 +172,10 @@ class PlatformRuntime:
         self.next_retry_at = ""
 
     def next_retry_delay(self) -> int:
-        return _delay_for_attempt(self.attempts)
+        if not self.backoff_delays_seconds:
+            return _delay_for_attempt(self.attempts)
+        index = max(0, min(self.attempts - 1, len(self.backoff_delays_seconds) - 1))
+        return self.backoff_delays_seconds[index]
 
     def snapshot(self) -> dict[str, Any]:
         adapter_health = (

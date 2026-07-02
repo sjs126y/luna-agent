@@ -16,6 +16,7 @@ KNOWN_TOP_LEVEL_KEYS = {
     "agents",
     "auth",
     "compression",
+    "gateway",
     "cron",
     "mcp",
     "memory",
@@ -32,9 +33,16 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     "agents": {"max_concurrent_runs", "max_tool_calls", "max_tokens", "history_limit"},
     "auth": {"enabled", "admins", "allowed_users"},
     "compression": {"engine", "model", "max_tokens", "tail_token_budget", "threshold_ratio"},
+    "gateway": {
+        "platform_reconnect_delays",
+        "platform_pending_warning_threshold",
+        "platform_chat_locks_maxsize",
+        "platform_message_dedupe_max_size",
+        "platform_send_max_retries",
+    },
     "cron": {"enabled"},
     "mcp": {"enabled", "servers"},
-    "memory": {"provider", "external_provider", "review_interval"},
+    "memory": {"provider", "external_provider", "review_interval", "embedding"},
     "plugins": {"dirs", "enabled", "disabled"},
     "profiles": None,
     "sandbox": {
@@ -327,6 +335,33 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     _positive_int(compression, "tail_token_budget", "compression.tail_token_budget", errors)
     _ratio_value(compression, "threshold_ratio", "compression.threshold_ratio", errors)
 
+    gateway = sections["gateway"]
+    _int_list_or_csv(gateway, "platform_reconnect_delays", "gateway.platform_reconnect_delays", errors)
+    _positive_int(
+        gateway,
+        "platform_pending_warning_threshold",
+        "gateway.platform_pending_warning_threshold",
+        errors,
+    )
+    _positive_int(
+        gateway,
+        "platform_chat_locks_maxsize",
+        "gateway.platform_chat_locks_maxsize",
+        errors,
+    )
+    _positive_int(
+        gateway,
+        "platform_message_dedupe_max_size",
+        "gateway.platform_message_dedupe_max_size",
+        errors,
+    )
+    _non_negative_int(
+        gateway,
+        "platform_send_max_retries",
+        "gateway.platform_send_max_retries",
+        errors,
+    )
+
     memory = sections["memory"]
     _enum_value(memory, "provider", "memory.provider", VALID_MEMORY_PROVIDERS, errors)
     _enum_value(
@@ -337,11 +372,25 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         errors,
     )
     _non_negative_int(memory, "review_interval", "memory.review_interval", errors)
-    for old_key in ("external", "embedding"):
-        if old_key in memory:
-            warnings.append(
-                "检测到旧 memory 配置，请使用 memory.external_provider: embedding 或 none。"
+    legacy_embedding = memory.get("embedding")
+    if "external" in memory or (legacy_embedding is not None and not isinstance(legacy_embedding, dict)):
+        warnings.append(
+            "检测到旧 memory 配置，请使用 memory.external_provider: embedding 或 none。"
+        )
+    embedding = memory.get("embedding")
+    if embedding is not None:
+        if not isinstance(embedding, dict):
+            errors.append("memory.embedding 必须是对象。")
+        else:
+            _string_value(embedding, "model", "memory.embedding.model", errors)
+            _ratio_value(
+                embedding,
+                "relevance_threshold",
+                "memory.embedding.relevance_threshold",
+                errors,
             )
+            _positive_int(embedding, "max_prefetch", "memory.embedding.max_prefetch", errors)
+            _positive_int(embedding, "chunk_size", "memory.embedding.chunk_size", errors)
 
     _bool_value(sections["cron"], "enabled", "cron.enabled", errors)
 
@@ -528,7 +577,7 @@ def _migration_hints(
                 hints.append(
                     f"旧配置 platforms.{name} 请改为 plugins.enabled 添加 platforms/{name}，secret 放入 .env。"
                 )
-    if "external" in memory or "embedding" in memory:
+    if "external" in memory or (memory.get("embedding") is not None and not isinstance(memory.get("embedding"), dict)):
         hints.append("旧 memory external/embedding 配置请改为 memory.external_provider: embedding 或 none。")
     if unknown_keys:
         hints.append(f"确认或移除未知顶层配置: {', '.join(unknown_keys)}。")
@@ -742,3 +791,30 @@ def _string_list_or_csv(section: dict[str, Any], key: str, label: str, errors: l
         return
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         errors.append(f"{label} 必须是字符串列表或逗号分隔字符串。")
+
+
+def _int_list_or_csv(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",") if item.strip()]
+    elif isinstance(value, list):
+        items = value
+    else:
+        errors.append(f"{label} 必须是正整数列表或逗号分隔字符串。")
+        return
+
+    if not items:
+        errors.append(f"{label} 不能为空。")
+        return
+
+    for item in items:
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            errors.append(f"{label} 必须只包含正整数。")
+            return
+        if number <= 0:
+            errors.append(f"{label} 必须只包含正整数。")
+            return

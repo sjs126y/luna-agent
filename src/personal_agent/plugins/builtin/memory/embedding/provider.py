@@ -41,17 +41,29 @@ def get_external_instance():
 DEFAULT_MODEL = "BAAI/bge-small-zh-v1.5"
 RELEVANCE_THRESHOLD = 0.3
 MAX_PREFETCH = 3
+DEFAULT_CHUNK_SIZE = 800
 
 
 class EmbeddingMemoryProvider(MemoryProvider):
     """Semantic memory with ONNX embeddings. No vector DB needed."""
 
-    def __init__(self, data_dir: Path, *, model_name: str = DEFAULT_MODEL) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        *,
+        model_name: str = DEFAULT_MODEL,
+        relevance_threshold: float = RELEVANCE_THRESHOLD,
+        max_prefetch: int = MAX_PREFETCH,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> None:
         self._dir = data_dir
         self._dir.mkdir(parents=True, exist_ok=True)
         self._metadata_path = data_dir / "external_memories.json"
         self._embeddings_path = data_dir / "external_embeddings.npy"
         self._model_name = model_name
+        self._relevance_threshold = relevance_threshold
+        self._max_prefetch = max_prefetch
+        self._chunk_size = chunk_size
         self._model = None  # lazy init — first embed() call downloads model
         self._texts: list[dict] = []       # [{id, text, created_at}]
         self._embeddings: np.ndarray | None = None  # (N, 512)
@@ -101,12 +113,12 @@ class EmbeddingMemoryProvider(MemoryProvider):
         query_normed = query_vec / (np.linalg.norm(query_vec) + 1e-10)
         scores = (emb_norm @ query_normed).flatten()
 
-        top_k = min(MAX_PREFETCH, len(scores))
+        top_k = min(self._max_prefetch, len(scores))
         top_indices = np.argsort(scores)[::-1][:top_k]
 
         results = []
         for i in top_indices:
-            if scores[i] > RELEVANCE_THRESHOLD:
+            if scores[i] > self._relevance_threshold:
                 results.append(self._texts[i]["text"])
         return results
 
@@ -149,7 +161,7 @@ class EmbeddingMemoryProvider(MemoryProvider):
             self._save_to_disk()
         return True
 
-    async def ingest_file(self, file_path: str, chunk_size: int = 800) -> int:
+    async def ingest_file(self, file_path: str, chunk_size: int | None = None) -> int:
         """Chunk a file and embed each chunk. Supports txt, md, pdf, docx, and more.
         Returns number of chunks stored."""
         from pathlib import Path
@@ -158,6 +170,7 @@ class EmbeddingMemoryProvider(MemoryProvider):
             raise FileNotFoundError(f"File not found: {file_path}")
 
         text = _read_file(path)
+        chunk_size = chunk_size or self._chunk_size
         chunks = _chunk_text(text, chunk_size)
         count = 0
         for chunk in chunks:
@@ -176,6 +189,9 @@ class EmbeddingMemoryProvider(MemoryProvider):
             "entries": len(self._texts),
             "embeddings": int(len(self._embeddings)) if self._embeddings is not None else 0,
             "model": self._model_name,
+            "relevance_threshold": self._relevance_threshold,
+            "max_prefetch": self._max_prefetch,
+            "chunk_size": self._chunk_size,
             "model_loaded": self._model is not None,
             "data_dir": str(self._dir),
             "metadata_path": str(self._metadata_path),

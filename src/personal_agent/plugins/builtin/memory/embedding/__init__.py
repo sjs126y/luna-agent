@@ -20,7 +20,13 @@ def _create_external_provider(settings=None, data_dir=None, force: bool = False,
     if root is None:
         return None
 
-    provider = EmbeddingMemoryProvider(root)
+    provider = EmbeddingMemoryProvider(
+        root,
+        model_name=getattr(settings, "memory_embedding_model", "BAAI/bge-small-zh-v1.5"),
+        relevance_threshold=getattr(settings, "memory_embedding_relevance_threshold", 0.3),
+        max_prefetch=getattr(settings, "memory_embedding_max_prefetch", 3),
+        chunk_size=getattr(settings, "memory_embedding_chunk_size", 800),
+    )
     set_external_instance(provider)
     return provider
 
