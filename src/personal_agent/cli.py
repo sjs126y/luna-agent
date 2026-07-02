@@ -414,12 +414,15 @@ def format_plugin_list(reports: list[dict[str, Any]], *, include_summary: bool =
 
 def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> str:
     diagnostics = _plugin_diagnostics(report)
+    manifest_error = report.get("manifest_error") or ""
+    deferred_reason = report.get("deferred_reason") or ""
     lines = [
         f"插件: {report['key']}",
         f"名称: {report['name']} ({report['version']})",
         f"描述: {report['description'] or '-'}",
         f"类型: {report['kind']}  来源: {report['source']}",
         f"路径: {report.get('path') or '-'}",
+        f"Manifest: {_status(report.get('manifest_valid', True))}",
         f"入口: {report['entrypoint']} [{_status(report['entrypoint_importable'])}]",
         f"启用: {_yes(report['enabled'])}  默认启用: {_yes(report['enabled_by_default'])}  延迟加载: {_yes(report['deferred'])}",
         f"状态: {report['status']}",
@@ -429,6 +432,10 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         f"注册数量: {_registration_summary(report['registered'])}",
         "诊断:",
     ]
+    if manifest_error:
+        lines.insert(6, f"Manifest 错误: {manifest_error}")
+    if deferred_reason:
+        lines.insert(10 if manifest_error else 9, f"延迟原因: {deferred_reason}")
     lines.extend(f"  - {item}" for item in diagnostics)
     lines.append("注册项:")
     for group, items in report["registered_items"].items():
@@ -482,7 +489,7 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
             if item != "当前无明显问题。"
         ]
         for item in diagnostics:
-            if item.startswith("延迟加载"):
+            if item.startswith("延迟加载") or item.startswith("建议:"):
                 continue
             issues.append(f"插件 {plugin['key']}: {item}")
     return issues
@@ -527,26 +534,35 @@ def _plugin_issue_summary(report: dict[str, Any]) -> str:
     issues = [
         item
         for item in _plugin_diagnostics(report)
-        if item != "当前无明显问题。" and not item.startswith("延迟加载")
+        if item != "当前无明显问题。" and not item.startswith("延迟加载") and not item.startswith("建议:")
     ]
     return "；".join(issues) if issues else "-"
 
 
 def _plugin_diagnostics(report: dict[str, Any]) -> list[str]:
     diagnostics: list[str] = []
-    if not report["enabled"]:
+    manifest_valid = report.get("manifest_valid", True)
+    manifest_error = report.get("manifest_error") or ""
+    if not manifest_valid:
+        diagnostics.append(f"Manifest 异常: {manifest_error or '未知错误'}")
+    if not report.get("enabled", False):
         diagnostics.append("插件已禁用，不会加载。")
-    if report["missing_env"]:
+    if report.get("missing_env"):
         diagnostics.append(f"缺失环境变量: {_list_or_none(report['missing_env'])}")
-    if not report["entrypoint_importable"]:
+    if manifest_valid and not report.get("entrypoint_importable", True):
         error = report.get("entrypoint_error") or "未知错误"
         diagnostics.append(f"入口不可导入: {error}")
-    if report["error"]:
+    if manifest_valid and report.get("error"):
         diagnostics.append(f"加载错误: {report['error']}")
-    if report["status"] == "ERROR" and not report["error"] and report["entrypoint_error"]:
+    if report.get("status") == "ERROR" and not report.get("error") and report.get("entrypoint_error"):
         diagnostics.append(f"加载错误: {report['entrypoint_error']}")
-    if report["status"] == "DEFERRED":
-        diagnostics.append("延迟加载，当前未 import；平台/MCP 等触发时才会加载。")
+    if report.get("status") == "DEFERRED":
+        reason = report.get("deferred_reason") or "平台/MCP 等触发时才会加载"
+        diagnostics.append(f"延迟加载，当前未 import；{reason}。")
+    for hint in report.get("diagnostic_hints") or []:
+        item = f"建议: {hint}"
+        if item not in diagnostics:
+            diagnostics.append(item)
     if not diagnostics:
         diagnostics.append("当前无明显问题。")
     return diagnostics

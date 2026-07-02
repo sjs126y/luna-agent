@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from collections.abc import Iterable
@@ -266,7 +267,11 @@ class PluginManager:
             self.discover()
         plugin = self._plugins[key]
         missing_env = self._missing_env(plugin.manifest)
-        entrypoint_ok, entrypoint_error = self._check_entrypoint(plugin.manifest)
+        manifest_error = (plugin.error or "") if plugin.manifest.entrypoint == "invalid" else ""
+        if manifest_error:
+            entrypoint_ok, entrypoint_error = False, ""
+        else:
+            entrypoint_ok, entrypoint_error = self._check_entrypoint(plugin.manifest)
         return {
             "key": plugin.key,
             "name": plugin.manifest.name,
@@ -283,12 +288,16 @@ class PluginManager:
             "path": str(plugin.manifest.path) if plugin.manifest.path else "",
             "requires_env": plugin.manifest.requires_env,
             "missing_env": missing_env,
+            "manifest_valid": not manifest_error,
+            "manifest_error": manifest_error,
             "entrypoint_importable": entrypoint_ok,
             "entrypoint_error": entrypoint_error,
+            "deferred_reason": self._deferred_reason(plugin),
             "error": plugin.error or "",
             "error_traceback": plugin.error_traceback or "",
             "registered": plugin.registration_counts(),
             "registered_items": self._registered_items(plugin),
+            "diagnostic_hints": self._diagnostic_hints(plugin, missing_env, entrypoint_ok, entrypoint_error),
         }
 
     def _add_manifest(self, manifest: PluginManifest) -> None:
@@ -296,6 +305,7 @@ class PluginManager:
             existing = self._plugins[manifest.key]
             existing.status = PluginStatus.ERROR
             existing.error = f"Duplicate plugin key: {manifest.key}"
+            existing.error_traceback = None
             return
         enabled = self._resolve_enabled(manifest)
         status = PluginStatus.DISABLED
@@ -346,12 +356,13 @@ class PluginManager:
                 )
                 self._add_manifest(manifest)
             except Exception as exc:
-                key = f"invalid/{manifest_path.parent.name}"
+                key = self._invalid_manifest_key(manifest_path)
                 manifest = PluginManifest(
                     key=key,
                     name=manifest_path.parent.name,
                     version="0",
                     entrypoint="invalid",
+                    source=source or "user",
                     path=manifest_path.parent,
                 )
                 self._plugins[key] = LoadedPlugin(
@@ -371,6 +382,50 @@ class PluginManager:
         if not isinstance(data, dict):
             raise ValueError("Plugin manifest must be an object")
         return data
+
+    def _invalid_manifest_key(self, manifest_path: Path) -> str:
+        raw_base = (manifest_path.parent.name or "manifest").lower()
+        base = re.sub(r"[^a-z0-9_.-]+", "-", raw_base).strip("-._") or "manifest"
+        key = f"invalid/{base}"
+        if key not in self._plugins:
+            return key
+        index = 2
+        while f"{key}-{index}" in self._plugins:
+            index += 1
+        return f"{key}-{index}"
+
+    def _deferred_reason(self, plugin: LoadedPlugin) -> str:
+        if not plugin.deferred:
+            return ""
+        provides = set(plugin.manifest.provides)
+        if "platform" in provides or plugin.manifest.kind == "platform":
+            return "平台插件会在网关解析平台适配器时加载"
+        if "mcp" in provides or plugin.manifest.kind == "mcp":
+            return "MCP 插件会在 MCP 服务器启动时加载"
+        return "插件 manifest 声明了延迟加载"
+
+    def _diagnostic_hints(
+        self,
+        plugin: LoadedPlugin,
+        missing_env: list[str],
+        entrypoint_ok: bool,
+        entrypoint_error: str,
+    ) -> list[str]:
+        hints: list[str] = []
+        if plugin.manifest.entrypoint == "invalid":
+            hints.append(f"修复插件 manifest: {plugin.error or 'invalid manifest'}")
+            return hints
+        if missing_env:
+            hints.append(f"设置缺失环境变量: {', '.join(missing_env)}")
+        if not entrypoint_ok:
+            hints.append(f"修复入口导入: {entrypoint_error}")
+        if plugin.status == PluginStatus.ERROR and plugin.error:
+            hints.append(f"修复插件加载错误: {plugin.error}")
+        if plugin.status == PluginStatus.DEFERRED:
+            hints.append(self._deferred_reason(plugin))
+        if not plugin.enabled:
+            hints.append("插件已被配置或状态禁用")
+        return [hint for hint in hints if hint]
 
     @staticmethod
     def _dedupe_dirs(directories: Iterable[Path]) -> list[Path]:

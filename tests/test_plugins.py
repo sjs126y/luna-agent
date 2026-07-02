@@ -8,7 +8,7 @@ import pytest
 
 from personal_agent.config import Settings
 from personal_agent.plugins.manager import PluginManager
-from personal_agent.plugins.models import CommandEntry, PluginStatus
+from personal_agent.plugins.models import CommandEntry, PluginManifest, PluginStatus
 from personal_agent.tools.registry import tool_registry
 
 
@@ -19,6 +19,96 @@ def _settings(tmp_path, plugins_dir):
         plugins_enabled=["user/sample", "user/protected", "user/missing-env"],
         plugins_disabled=[],
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("key", "User/Sample", "field 'key'"),
+        ("entrypoint", "sample-plugin:register", "field 'entrypoint'"),
+        ("kind", "unknown", "field 'kind'"),
+        ("source", "remote", "field 'source'"),
+        ("requires_env", ["OK", ""], "requires_env"),
+        ("provides", 123, "provides"),
+        ("enabled_by_default", "true", "enabled_by_default"),
+        ("deferred", 1, "deferred"),
+        ("record_import_delta", "yes", "record_import_delta"),
+    ],
+)
+def test_plugin_manifest_schema_rejects_invalid_values(field, value, message):
+    data = {
+        "key": "user/sample",
+        "name": "Sample",
+        "version": "1.0.0",
+        "entrypoint": "sample_plugin:register",
+    }
+    data[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        PluginManifest.from_mapping(data)
+
+
+def test_invalid_manifest_is_preserved_for_doctor(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "Bad Manifest"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: User/Bad
+name: Bad Manifest
+version: 1.0.0
+entrypoint: bad_plugin:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    report = manager.doctor_plugin("invalid/bad-manifest")
+
+    assert report["status"] == "ERROR"
+    assert report["manifest_valid"] is False
+    assert "field 'key'" in report["manifest_error"]
+    assert report["entrypoint_importable"] is False
+    assert report["entrypoint_error"] == ""
+    assert report["enabled"] is False
+    assert any("修复插件 manifest" in hint for hint in report["diagnostic_hints"])
+
+
+def test_non_object_manifest_is_preserved_for_doctor(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "List Manifest"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text("- not-an-object\n", encoding="utf-8")
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    report = manager.doctor_plugin("invalid/list-manifest")
+
+    assert report["manifest_valid"] is False
+    assert "must be an object" in report["manifest_error"]
+    assert report["registered_items"]["tools"] == []
+
+
+def test_plugin_doctor_reports_deferred_reason_and_hint(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+
+    report = manager.doctor_plugin("platforms/telegram")
+
+    assert report["status"] == "DEFERRED"
+    assert report["deferred_reason"] == "平台插件会在网关解析平台适配器时加载"
+    assert "平台插件会在网关解析平台适配器时加载" in report["diagnostic_hints"]
 
 
 def test_plugin_load_registers_and_unloads_entries(tmp_path):

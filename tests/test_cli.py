@@ -265,6 +265,41 @@ def test_format_plugin_report_includes_traceback_when_requested():
     assert "Traceback demo" in text
 
 
+def test_format_plugin_report_includes_manifest_status_and_hints():
+    report = _plugin_report(
+        "invalid/demo",
+        status="ERROR",
+        enabled=False,
+        manifest_valid=False,
+        manifest_error="bad manifest",
+        diagnostic_hints=["修复插件 manifest: bad manifest"],
+    )
+
+    text = format_plugin_report(report, include_traceback=False)
+
+    assert "Manifest: 异常" in text
+    assert "Manifest 错误: bad manifest" in text
+    assert "Manifest 异常: bad manifest" in text
+    assert "建议: 修复插件 manifest: bad manifest" in text
+
+
+def test_format_plugin_report_includes_deferred_reason():
+    report = _plugin_report(
+        "platforms/demo",
+        status="DEFERRED",
+        kind="platform",
+        deferred=True,
+        deferred_reason="平台插件会在网关解析平台适配器时加载",
+        diagnostic_hints=["平台插件会在网关解析平台适配器时加载"],
+    )
+
+    text = format_plugin_report(report, include_traceback=False)
+
+    assert "延迟原因: 平台插件会在网关解析平台适配器时加载" in text
+    assert "延迟加载，当前未 import" in text
+    assert "建议: 平台插件会在网关解析平台适配器时加载" in text
+
+
 def test_format_plugin_list_summarizes_and_groups_reports():
     reports = [
         _plugin_report("builtin/tools", status="LOADED", source="builtin"),
@@ -336,6 +371,10 @@ def _plugin_report(
     error: str = "",
     entrypoint_error: str = "",
     missing_env: list[str] | None = None,
+    manifest_valid: bool = True,
+    manifest_error: str = "",
+    deferred_reason: str = "",
+    diagnostic_hints: list[str] | None = None,
 ) -> dict:
     return {
         "key": key,
@@ -353,6 +392,9 @@ def _plugin_report(
         "provides": [],
         "requires_env": list(missing_env or []),
         "missing_env": list(missing_env or []),
+        "manifest_valid": manifest_valid,
+        "manifest_error": manifest_error,
+        "deferred_reason": deferred_reason,
         "registered": {
             "tools": 0,
             "skills": 0,
@@ -377,4 +419,5 @@ def _plugin_report(
         "error": error,
         "error_traceback": "",
         "path": "",
+        "diagnostic_hints": list(diagnostic_hints or []),
     }

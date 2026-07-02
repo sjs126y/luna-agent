@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -20,6 +21,22 @@ class PluginStatus(str, Enum):
 
 CommandHandler = Callable[..., str | Awaitable[str | None] | None]
 HookCallback = Callable[..., Any | Awaitable[Any]]
+
+PLUGIN_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*$")
+PLUGIN_KIND_VALUES = {
+    "builtin",
+    "platform",
+    "tool",
+    "tools",
+    "skill",
+    "skills",
+    "workflow",
+    "memory",
+    "llm",
+    "mcp",
+    "user",
+}
+PLUGIN_SOURCE_VALUES = {"builtin", "user"}
 
 
 @dataclass
@@ -46,32 +63,91 @@ class PluginManifest:
         source: str = "user",
         path: Path | None = None,
     ) -> "PluginManifest":
+        if not isinstance(data, dict):
+            raise ValueError("Plugin manifest must be an object")
+
         missing = [name for name in ("key", "name", "version", "entrypoint") if not data.get(name)]
         if missing:
             raise ValueError(f"Plugin manifest missing required field(s): {', '.join(missing)}")
 
-        requires_env = data.get("requires_env") or []
-        provides = data.get("provides") or []
-        if isinstance(requires_env, str):
-            requires_env = [requires_env]
-        if isinstance(provides, str):
-            provides = [provides]
+        key = str(data["key"])
+        if not PLUGIN_KEY_RE.fullmatch(key):
+            raise ValueError(
+                "Plugin manifest field 'key' must use lowercase segments "
+                "like 'builtin/tools' or 'platforms/telegram'"
+            )
+
+        entrypoint = str(data["entrypoint"])
+        if not _valid_entrypoint(entrypoint):
+            raise ValueError("Plugin manifest field 'entrypoint' must be 'module' or 'module:function'")
+
+        kind = str(data.get("kind", "user"))
+        if kind not in PLUGIN_KIND_VALUES:
+            raise ValueError(f"Plugin manifest field 'kind' must be one of: {', '.join(sorted(PLUGIN_KIND_VALUES))}")
+
+        manifest_source = str(data.get("source", source))
+        if manifest_source not in PLUGIN_SOURCE_VALUES:
+            raise ValueError(
+                f"Plugin manifest field 'source' must be one of: {', '.join(sorted(PLUGIN_SOURCE_VALUES))}"
+            )
+
+        requires_env = _string_list(data["requires_env"] if "requires_env" in data else [], "requires_env")
+        provides = _string_list(data["provides"] if "provides" in data else [], "provides")
+        enabled_by_default = _bool_field(data, "enabled_by_default", False)
+        deferred = _bool_field(data, "deferred", False)
+        record_import_delta = _bool_field(data, "record_import_delta", True)
 
         return cls(
-            key=str(data["key"]),
+            key=key,
             name=str(data["name"]),
             version=str(data["version"]),
             description=str(data.get("description", "")),
-            kind=str(data.get("kind", "user")),
-            entrypoint=str(data["entrypoint"]),
+            kind=kind,
+            entrypoint=entrypoint,
             requires_env=[str(item) for item in requires_env],
             provides=[str(item) for item in provides],
-            enabled_by_default=bool(data.get("enabled_by_default", False)),
-            source=str(data.get("source", source)),
+            enabled_by_default=enabled_by_default,
+            source=manifest_source,
             path=Path(path) if path else None,
-            deferred=bool(data.get("deferred", False)),
-            record_import_delta=bool(data.get("record_import_delta", True)),
+            deferred=deferred,
+            record_import_delta=record_import_delta,
         )
+
+
+def _string_list(value: Any, field_name: str) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        raise ValueError(f"Plugin manifest field '{field_name}' must be a string or list of strings")
+    if not all(isinstance(item, str) and item for item in value):
+        raise ValueError(f"Plugin manifest field '{field_name}' must contain only non-empty strings")
+    return list(value)
+
+
+def _bool_field(data: dict[str, Any], field_name: str, default: bool) -> bool:
+    if field_name not in data:
+        return default
+    value = data[field_name]
+    if not isinstance(value, bool):
+        raise ValueError(f"Plugin manifest field '{field_name}' must be a boolean")
+    return value
+
+
+def _valid_entrypoint(value: str) -> bool:
+    if not value or value.startswith(":") or value.endswith(":"):
+        return False
+    module, sep, func = value.partition(":")
+    if not _valid_dotted_name(module):
+        return False
+    return not sep or _valid_identifier(func)
+
+
+def _valid_dotted_name(value: str) -> bool:
+    return all(_valid_identifier(part) for part in value.split("."))
+
+
+def _valid_identifier(value: str) -> bool:
+    return bool(value) and value.isidentifier()
 
 
 @dataclass
