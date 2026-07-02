@@ -276,7 +276,11 @@ async def test_sub_agent_uses_runtime_after_setup():
 @pytest.mark.asyncio
 async def test_sub_agent_accepts_allowed_tools_json_string():
     from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, setup_delegate
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        _sub_agent,
+        list_agent_runs,
+        setup_delegate,
+    )
 
     seen = {}
 
@@ -296,7 +300,84 @@ async def test_sub_agent_accepts_allowed_tools_json_string():
     result = await _sub_agent("inspect", allowed_tools='["write"]')
 
     assert result == "runtime-ok"
-    assert seen["tools"] == ["read", "write"]
+    assert seen["tools"] == ["read"]
+    assert list_agent_runs()[0]["denied_tools"] == 1
+
+
+@pytest.mark.asyncio
+async def test_delegate_task_allowlist_only_grants_named_tools():
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import _delegate_task, setup_delegate
+
+    seen = {}
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        seen["tools"] = [tool["name"] for tool in tools]
+        return NormalizedResponse(text="allowlist-ok")
+
+    setup_delegate(
+        call_fn,
+        tools=[
+            {"name": "read", "description": "read", "input_schema": {}},
+            {"name": "grep", "description": "grep", "input_schema": {}},
+            {"name": "calculator", "description": "calculator", "input_schema": {}},
+        ],
+        max_tokens=100,
+    )
+
+    result = await _delegate_task(
+        "inspect",
+        tool_policy="allowlist",
+        allowed_tools='["grep"]',
+    )
+
+    assert "allowlist-ok" in result
+    assert seen["tools"] == ["grep"]
+
+
+@pytest.mark.asyncio
+async def test_delegate_records_denied_tool_calls_in_detail():
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        _delegate_task,
+        format_agent_run,
+        list_agent_runs,
+        setup_delegate,
+    )
+
+    calls = 0
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return NormalizedResponse(
+                text="need write",
+                tool_calls=[{
+                    "id": "toolu_1",
+                    "name": "write",
+                    "input": {"path": "x.txt", "content": "no"},
+                }],
+            )
+        return NormalizedResponse(text="denied-ok")
+
+    setup_delegate(
+        call_fn,
+        tools=[
+            {"name": "read", "description": "read", "input_schema": {}},
+            {"name": "write", "description": "write", "input_schema": {}},
+        ],
+        max_tokens=100,
+    )
+
+    result = await _delegate_task("try write")
+    run_id = list_agent_runs()[0]["run_id"]
+    detail = format_agent_run(run_id)
+
+    assert "denied-ok" in result
+    assert "denied=1" in result
+    assert "拒绝工具调用: 1" in detail
+    assert "write" in detail
 
 
 @pytest.mark.asyncio

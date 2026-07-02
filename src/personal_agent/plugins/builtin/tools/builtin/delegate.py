@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from personal_agent.agents.runtime import AgentRuntime, AgentSpec, DESTRUCTIVE_TOOLS
+from personal_agent.agents.runtime import AgentRuntime, AgentSpec
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 
@@ -74,7 +74,8 @@ def format_agent_runs(limit: int | None = None) -> str:
         lines.append(
             f"- {item['run_id']} [{item['status']}] role={item['role']} "
             f"duration={item['duration']:.2f}s input={usage.get('input_tokens', 0)} "
-            f"output={usage.get('output_tokens', 0)} tools={item['tool_calls']} "
+            f"output={usage.get('output_tokens', 0)} tools={item['executed_tool_calls']} "
+            f"denied={item['denied_tool_calls']} "
             f"task={_shorten(item.get('task', ''), 48)} result={result}"
         )
     return "\n".join(lines)
@@ -85,28 +86,38 @@ def format_agent_run(run_id: str) -> str:
     if run is None:
         return f"未找到子 agent 运行记录: {run_id}"
     usage = run.usage
-    tool_names = [
-        str(call.get("name", ""))
-        for call in run.tool_calls
-        if isinstance(call, dict)
-    ]
+    requested_tool_names = _tool_names(run.tool_calls)
+    executed_tool_names = _tool_names(run.executed_tool_calls)
     lines = [
         f"子 agent 运行: {run.run_id}",
         f"状态: {run.status}",
         f"角色: {run.role or '-'}",
         f"模型: {run.model or '-'}",
+        f"工具策略: {run.tool_policy or '-'}",
+        f"授予工具: {_join_or_dash(run.granted_tools)}",
         f"父 turn: {run.parent_turn_id or '-'}",
         f"耗时: {run.duration:.2f}s",
         f"输入 tokens: {usage.get('input_tokens', 0)}",
         f"输出 tokens: {usage.get('output_tokens', 0)}",
-        f"工具调用: {len(run.tool_calls)}" + (f" ({', '.join(tool_names)})" if tool_names else ""),
+        f"工具请求: {len(run.tool_calls)}" + (f" ({', '.join(requested_tool_names)})" if requested_tool_names else ""),
+        f"已执行工具: {len(run.executed_tool_calls)}" + (f" ({', '.join(executed_tool_names)})" if executed_tool_names else ""),
+        f"拒绝工具调用: {len(run.denied_tool_calls)}",
+    ]
+    if run.denied_tool_calls:
+        lines.extend(_format_denials(run.denied_tool_calls))
+    if run.denied_tools:
+        lines.append(f"策略拒绝工具: {len(run.denied_tools)}")
+        lines.extend(_format_denials(run.denied_tools[:10]))
+        if len(run.denied_tools) > 10:
+            lines.append(f"... 还有 {len(run.denied_tools) - 10} 个工具未展示")
+    lines.extend([
         "",
         "任务:",
         run.task or "-",
         "",
         "结果:",
         run.result or "-",
-    ]
+    ])
     return "\n".join(lines)
 
 
@@ -124,8 +135,9 @@ async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048,
                      allowed_tools=None, allowed_categories=None):
     """Run a single-turn sub-agent.
 
-    allowed_tools: explicit tool names to grant (e.g. ["write", "bash"]).
-                   Default: read-only set.
+    allowed_tools: explicit tool names to grant as an allowlist candidate.
+                   Destructive tools are still blocked unless the runtime is
+                   explicitly authorized by trusted code.
     allowed_categories: shortcut — "all" grants everything grantable,
                         "readonly" (default) gives only safe tools.
     """
@@ -134,7 +146,6 @@ async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048,
 
     output_schema = _parse_schema(schema)
     tool_policy = _tool_policy_from_legacy(allowed_tools, allowed_categories)
-    allow_destructive = _allows_destructive(tool_policy)
     spec = AgentSpec(
         role="sub-agent",
         system_prompt=system_prompt or (
@@ -144,7 +155,7 @@ async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048,
         max_tokens=max_tokens,
         output_schema=output_schema,
     )
-    run = await _agent_runtime.run(prompt, spec, allow_destructive=allow_destructive)
+    run = await _agent_runtime.run(prompt, spec)
     return _format_agent_result(run)
 
 
@@ -153,16 +164,8 @@ def _tool_policy_from_legacy(allowed_tools=None, allowed_categories=None) -> str
         return sorted(_READONLY_TOOLS | _GRANTABLE_TOOLS)
     allowed_tools = _normalize_allowed_tools(allowed_tools)
     if allowed_tools:
-        return sorted(_READONLY_TOOLS | (set(allowed_tools) & _GRANTABLE_TOOLS))
+        return sorted(_READONLY_TOOLS | set(allowed_tools))
     return "readonly"
-
-
-def _allows_destructive(policy: str | list[str]) -> bool:
-    if policy == "all":
-        return True
-    if isinstance(policy, list):
-        return bool(set(policy) & DESTRUCTIVE_TOOLS)
-    return False
 
 
 def _parse_schema(schema: str) -> dict | None:
@@ -182,7 +185,7 @@ def _normalize_allowed_tools(allowed_tools) -> list[str]:
         try:
             value = json.loads(allowed_tools)
         except json.JSONDecodeError:
-            return []
+            return [item.strip() for item in allowed_tools.split(",") if item.strip()]
         return [str(item) for item in value] if isinstance(value, list) else []
     if isinstance(allowed_tools, list):
         return [str(item) for item in allowed_tools]
@@ -245,11 +248,14 @@ async def _sub_pipeline(items_json, stage_prompt, stage_system_prompt=""):
 
 
 async def _delegate_task(task: str, role: str = "assistant", system_prompt: str = "",
-                         tool_policy: str = "readonly", max_tokens: int = 2048) -> str:
+                         tool_policy: str = "readonly", allowed_tools: str = "",
+                         max_tokens: int = 2048) -> str:
+    normalized_allowed_tools = _normalize_allowed_tools(allowed_tools)
     spec = AgentSpec(
         role=role,
         system_prompt=system_prompt,
-        tool_policy=tool_policy or "readonly",
+        tool_policy=_normalize_tool_policy(tool_policy, normalized_allowed_tools),
+        allowed_tools=normalized_allowed_tools,
         max_tokens=max_tokens,
     )
     run = await _agent_runtime.run(task, spec)
@@ -298,11 +304,13 @@ def _format_agent_run(run) -> str:
     if run.status != "completed":
         return run.result
     usage = run.usage
+    denied = len(run.denied_tool_calls)
+    executed = len(run.executed_tool_calls)
     return (
         f"{run.result}\n\n"
         f"[agent_run id={run.run_id} status={run.status} "
         f"duration={run.duration:.2f}s input={usage.get('input_tokens', 0)} "
-        f"output={usage.get('output_tokens', 0)}]"
+        f"output={usage.get('output_tokens', 0)} tools={executed} denied={denied}]"
     )
 
 
@@ -321,9 +329,51 @@ def _agent_run_summary(run) -> dict:
         "status": run.status,
         "duration": round(run.duration, 3),
         "usage": dict(run.usage),
+        "granted_tools": list(run.granted_tools),
         "tool_calls": len(run.tool_calls),
+        "executed_tool_calls": len(run.executed_tool_calls),
+        "denied_tool_calls": len(run.denied_tool_calls),
+        "denied_tools": len(run.denied_tools),
         "result": run.result,
     }
+
+
+def _normalize_tool_policy(tool_policy: str | list[str], allowed_tools: list[str]) -> str | list[str]:
+    if isinstance(tool_policy, list):
+        return [str(name) for name in tool_policy]
+    value = str(tool_policy or "readonly").strip()
+    lowered = value.lower()
+    if lowered in {"none", "readonly", "allowlist", "all"}:
+        return lowered
+    if lowered.startswith("allowlist:"):
+        return value
+    parsed_tools = _normalize_allowed_tools(value)
+    if parsed_tools:
+        allowed_tools[:] = parsed_tools
+        return "allowlist"
+    return "readonly"
+
+
+def _tool_names(calls: list[dict]) -> list[str]:
+    return [
+        str(call.get("name", ""))
+        for call in calls
+        if isinstance(call, dict) and call.get("name")
+    ]
+
+
+def _join_or_dash(values: list[str]) -> str:
+    return ", ".join(values) if values else "-"
+
+
+def _format_denials(denials: list[dict]) -> list[str]:
+    lines = []
+    for item in denials:
+        name = str(item.get("name", ""))
+        reason = str(item.get("reason", ""))
+        phase = str(item.get("phase", "call"))
+        lines.append(f"  - {name or '-'} ({phase}): {reason or '-'}")
+    return lines
 
 
 def _shorten(text: str, max_chars: int) -> str:
@@ -343,7 +393,8 @@ tool_registry.register(ToolEntry(
         "task": {"type": "string", "description": "The exact task to delegate."},
         "role": {"type": "string", "description": "Short role name for the sub-agent."},
         "system_prompt": {"type": "string", "description": "Optional system prompt override."},
-        "tool_policy": {"type": "string", "description": "readonly, none, or all. Destructive tools remain blocked by default."},
+        "tool_policy": {"type": "string", "description": "readonly, none, allowlist, or all. Destructive tools remain blocked unless trusted runtime code explicitly authorizes them."},
+        "allowed_tools": {"type": "string", "description": "JSON array or comma-separated names used when tool_policy=allowlist."},
         "max_tokens": {"type": "integer", "description": "Max output tokens."},
     }, "required": ["task"]},
     handler=_delegate_task,
@@ -393,17 +444,16 @@ tool_registry.register(ToolEntry(
     description=(
         "Spawn a focused sub-agent. Call MULTIPLE TIMES in one turn to run in PARALLEL. "
         "By default sub-agents are READ-ONLY (read, grep, glob, web_search, etc.). "
-        "To grant write access, set allowed_tools='[\"write\",\"edit\"]' or "
-        "allowed_categories='all' for full access. "
-        "Sub-agents inherit the main agent's /allow permissions for destructive tools."
+        "allowed_tools narrows or extends the requested allowlist, but destructive tools "
+        "remain blocked unless trusted runtime code explicitly authorizes them."
     ),
     schema={"type": "object", "properties": {
         "prompt": {"type": "string", "description": "Task prompt."},
         "system_prompt": {"type": "string", "description": "Optional role/persona."},
         "schema": {"type": "string", "description": "Optional JSON schema for structured output."},
         "max_tokens": {"type": "integer", "description": "Max output tokens (default 2048)."},
-        "allowed_tools": {"type": "string", "description": "JSON array of tool names to grant, e.g. '[\"write\",\"bash\"]'. Default: read-only."},
-        "allowed_categories": {"type": "string", "description": "Shorthand: 'all' for full access, 'readonly' (default) for safe tools only."},
+        "allowed_tools": {"type": "string", "description": "JSON array or comma-separated tool names. Destructive names are still blocked by default."},
+        "allowed_categories": {"type": "string", "description": "Shorthand: 'all' requests all tools; destructive tools are still blocked by default."},
     }, "required": ["prompt"]},
     handler=_sub_agent, toolset="builtin", is_parallel_safe=True))
 

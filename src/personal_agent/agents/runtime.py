@@ -58,10 +58,27 @@ class AgentSpec:
     system_prompt: str = ""
     model: str = ""
     tool_policy: str | list[str] = "readonly"
+    allowed_tools: list[str] = field(default_factory=list)
     memory_policy: str = "none"
     timeout: float = 180.0
     max_tokens: int = 2048
     output_schema: dict | None = None
+
+
+@dataclass
+class ToolDecision:
+    name: str
+    allowed: bool
+    reason: str = ""
+    phase: str = "selection"
+
+
+@dataclass
+class ToolCallDecision:
+    call_id: str
+    name: str
+    allowed: bool
+    reason: str = ""
 
 
 @dataclass
@@ -73,6 +90,10 @@ class AgentRun:
     task: str = ""
     tool_policy: str | list[str] = "readonly"
     model: str = ""
+    granted_tools: list[str] = field(default_factory=list)
+    denied_tools: list[dict] = field(default_factory=list)
+    executed_tool_calls: list[dict] = field(default_factory=list)
+    denied_tool_calls: list[dict] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
@@ -129,7 +150,17 @@ class AgentRuntime:
             self._record_run(run)
             return run
 
-        tools = self._select_tools(spec.tool_policy, allow_destructive=allow_destructive)
+        tools, tool_decisions = self._select_tools(
+            spec.tool_policy,
+            allowed_tools=spec.allowed_tools,
+            allow_destructive=allow_destructive,
+        )
+        run.granted_tools = [str(tool.get("name", "")) for tool in tools if tool.get("name")]
+        run.denied_tools = [
+            asdict(decision)
+            for decision in tool_decisions
+            if not decision.allowed
+        ]
         system_prompt = spec.system_prompt or f"You are a focused {spec.role}. Complete the delegated task."
         messages = [{"role": "user", "content": [{"type": "text", "text": task}]}]
         run.messages = messages
@@ -147,7 +178,27 @@ class AgentRuntime:
             self._accumulate_usage(run.usage, response.usage)
             if response.tool_calls:
                 run.tool_calls.extend(response.tool_calls)
-                await self._execute_tools(response, messages, allow_destructive=allow_destructive)
+                call_decisions = self._authorize_tool_calls(
+                    response.tool_calls,
+                    granted_tools=set(run.granted_tools),
+                    allow_destructive=allow_destructive,
+                )
+                run.executed_tool_calls.extend(
+                    _summarize_tool_call(call)
+                    for call in response.tool_calls
+                    if call_decisions.get(str(call.get("id", "")), ToolCallDecision("", "", False)).allowed
+                )
+                run.denied_tool_calls.extend(
+                    asdict(decision)
+                    for decision in call_decisions.values()
+                    if not decision.allowed
+                )
+                await self._execute_tools(
+                    response,
+                    messages,
+                    tool_authorizations=call_decisions,
+                    allow_destructive=allow_destructive,
+                )
                 response = await asyncio.wait_for(
                     self.call_fn(
                         messages=messages + [{
@@ -226,22 +277,121 @@ class AgentRuntime:
         with self._run_store_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(run), ensure_ascii=False) + "\n")
 
-    def _select_tools(self, policy: str | list[str], *, allow_destructive: bool) -> list[dict]:
-        if policy == "none":
-            allowed: set[str] = set()
-        elif policy == "all":
-            allowed = {tool.get("name", "") for tool in self.tools}
-        elif policy == "readonly":
-            allowed = set(READONLY_TOOLS)
-        elif isinstance(policy, list):
-            allowed = set(policy)
-        else:
-            allowed = set(READONLY_TOOLS)
+    def _select_tools(
+        self,
+        policy: str | list[str],
+        *,
+        allowed_tools: list[str],
+        allow_destructive: bool,
+    ) -> tuple[list[dict], list[ToolDecision]]:
+        allowed, policy_name = self._allowed_tool_names(policy, allowed_tools)
+        selected: list[dict] = []
+        decisions: list[ToolDecision] = []
 
-        if not allow_destructive:
-            allowed -= DESTRUCTIVE_TOOLS
-        allowed -= NEVER_DELEGATE
-        return [tool for tool in self.tools if tool.get("name") in allowed]
+        for tool in self.tools:
+            name = str(tool.get("name", ""))
+            if not name:
+                continue
+            reason = self._tool_denial_reason(
+                name,
+                allowed=allowed,
+                policy_name=policy_name,
+                allow_destructive=allow_destructive,
+            )
+            if reason:
+                decisions.append(ToolDecision(name=name, allowed=False, reason=reason))
+                continue
+            decisions.append(ToolDecision(name=name, allowed=True))
+            selected.append(tool)
+
+        return selected, decisions
+
+    def _allowed_tool_names(
+        self,
+        policy: str | list[str],
+        allowed_tools: list[str],
+    ) -> tuple[set[str], str]:
+        all_tool_names = {str(tool.get("name", "")) for tool in self.tools if tool.get("name")}
+        if isinstance(policy, list):
+            return {str(name) for name in policy}, "allowlist"
+
+        value = str(policy or "readonly").strip()
+        lowered = value.lower()
+        if lowered == "none":
+            return set(), "none"
+        if lowered == "all":
+            return all_tool_names, "all"
+        if lowered == "allowlist":
+            return {str(name) for name in allowed_tools}, "allowlist"
+        if lowered.startswith("allowlist:"):
+            names = [name.strip() for name in value.split(":", 1)[1].split(",")]
+            return {name for name in names if name}, "allowlist"
+        if lowered == "readonly":
+            return set(READONLY_TOOLS), "readonly"
+        return set(READONLY_TOOLS), "readonly"
+
+    def _tool_denial_reason(
+        self,
+        name: str,
+        *,
+        allowed: set[str],
+        policy_name: str,
+        allow_destructive: bool,
+    ) -> str:
+        if name in NEVER_DELEGATE:
+            return "recursive delegation tools are not available to sub-agents"
+        if name in DESTRUCTIVE_TOOLS and not allow_destructive:
+            return "destructive tool requires explicit sub-agent authorization"
+        if self._registered_tool_is_destructive(name) and not allow_destructive:
+            return "destructive tool requires explicit sub-agent authorization"
+        if name not in allowed:
+            if policy_name == "none":
+                return "tool_policy=none grants no tools"
+            if policy_name == "allowlist":
+                return "tool is not in the allowlist"
+            if policy_name == "readonly":
+                return "tool is not part of the readonly policy"
+            return "tool is not granted by policy"
+        return ""
+
+    def _authorize_tool_calls(
+        self,
+        tool_calls: list[dict],
+        *,
+        granted_tools: set[str],
+        allow_destructive: bool,
+    ) -> dict[str, ToolCallDecision]:
+        decisions: dict[str, ToolCallDecision] = {}
+        for index, call in enumerate(tool_calls):
+            call_id = str(call.get("id", f"tool-{index}"))
+            name = str(call.get("name", ""))
+            reason = ""
+            if not name:
+                reason = "tool call has no name"
+            elif name not in granted_tools:
+                reason = "tool was not granted to this sub-agent"
+            elif name in NEVER_DELEGATE:
+                reason = "recursive delegation tools are not available to sub-agents"
+            elif name in DESTRUCTIVE_TOOLS and not allow_destructive:
+                reason = "destructive tool requires explicit sub-agent authorization"
+            elif self._registered_tool_is_destructive(name) and not allow_destructive:
+                reason = "destructive tool requires explicit sub-agent authorization"
+            decisions[call_id] = ToolCallDecision(
+                call_id=call_id,
+                name=name,
+                allowed=not reason,
+                reason=reason,
+            )
+        return decisions
+
+    def _registered_tool_is_destructive(self, name: str) -> bool:
+        try:
+            from personal_agent.tools.registry import tool_registry
+
+            entry = tool_registry.get(name)
+            return bool(entry and entry.is_destructive)
+        except Exception:
+            return False
 
     async def _coerce_schema(
         self,
@@ -283,7 +433,14 @@ class AgentRuntime:
             pass
         return f"Error: could not produce valid JSON. Raw: {text[:500]}"
 
-    async def _execute_tools(self, response, messages: list[dict], *, allow_destructive: bool) -> None:
+    async def _execute_tools(
+        self,
+        response,
+        messages: list[dict],
+        *,
+        tool_authorizations: dict[str, ToolCallDecision],
+        allow_destructive: bool,
+    ) -> None:
         from personal_agent.tools.executor import execute_tool_calls
 
         blocks = []
@@ -305,7 +462,39 @@ class AgentRuntime:
             _destructive_calls_this_turn: int = 0
             _max_destructive_per_turn: int = 3
 
-        await execute_tool_calls(response.tool_calls, messages, agent=_SubAgentCtx())
+        executable: list[dict] = []
+        result_by_id: dict[str, str] = {}
+        for index, tool_call in enumerate(response.tool_calls):
+            call_id = str(tool_call.get("id", f"tool-{index}"))
+            decision = tool_authorizations.get(call_id)
+            if decision is None or not decision.allowed:
+                reason = decision.reason if decision else "tool call was not authorized"
+                result_by_id[call_id] = (
+                    f"Error: sub-agent tool call '{tool_call.get('name', '')}' denied: {reason}"
+                )
+                continue
+            executable.append(tool_call)
+
+        if executable:
+            executed_messages: list[dict] = []
+            await execute_tool_calls(executable, executed_messages, agent=_SubAgentCtx())
+            for message in reversed(executed_messages):
+                if message.get("role") != "user":
+                    continue
+                for block in message.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        result_by_id[str(block.get("tool_use_id", ""))] = str(block.get("content", ""))
+                break
+
+        result_blocks = []
+        for index, tool_call in enumerate(response.tool_calls):
+            call_id = str(tool_call.get("id", f"tool-{index}"))
+            result_blocks.append({
+                "type": "tool_result",
+                "tool_use_id": call_id,
+                "content": result_by_id.get(call_id, "Error: tool execution skipped"),
+            })
+        messages.append({"role": "user", "content": result_blocks})
 
     def _accumulate_usage(self, target: dict[str, int], usage: dict[str, int]) -> None:
         for key in ("input_tokens", "output_tokens"):
@@ -329,6 +518,13 @@ def _extract_json(text: str, schema: dict) -> dict | None:
         except json.JSONDecodeError:
             pass
     return None
+
+
+def _summarize_tool_call(call: dict) -> dict:
+    return {
+        "id": str(call.get("id", "")),
+        "name": str(call.get("name", "")),
+    }
 
 
 def _validate_schema(obj: Any, schema: dict) -> bool:

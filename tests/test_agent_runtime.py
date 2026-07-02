@@ -37,6 +37,8 @@ async def test_agent_runtime_defaults_to_readonly_tools():
     assert run.tool_policy == "readonly"
     assert run.result == "done"
     assert run.usage == {"input_tokens": 3, "output_tokens": 2}
+    assert run.granted_tools == ["read"]
+    assert [item["name"] for item in run.denied_tools] == ["write", "delegate_task"]
     assert seen_tool_names == [["read"]]
 
 
@@ -61,6 +63,13 @@ async def test_agent_runtime_blocks_destructive_even_with_all_policy():
 
     assert run.status == "completed"
     assert seen_tool_names == [["read"]]
+    assert run.granted_tools == ["read"]
+    assert run.denied_tools == [{
+        "name": "bash",
+        "allowed": False,
+        "reason": "destructive tool requires explicit sub-agent authorization",
+        "phase": "selection",
+    }]
 
 
 @pytest.mark.asyncio
@@ -88,6 +97,80 @@ async def test_agent_runtime_allows_destructive_when_explicitly_authorized():
 
     assert run.status == "completed"
     assert seen_tool_names == [["read", "bash"]]
+    assert run.granted_tools == ["read", "bash"]
+    assert run.denied_tools == []
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_allowlist_only_grants_named_tools():
+    seen_tool_names = []
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        seen_tool_names.append([tool["name"] for tool in tools])
+        return NormalizedResponse(text="done")
+
+    runtime = AgentRuntime(
+        call_fn=call_fn,
+        tools=[
+            {"name": "read", "description": "read", "input_schema": {}},
+            {"name": "grep", "description": "grep", "input_schema": {}},
+            {"name": "calculator", "description": "calculator", "input_schema": {}},
+        ],
+        max_tokens=100,
+    )
+
+    run = await runtime.run(
+        "inspect with grep only",
+        AgentSpec(role="reviewer", tool_policy="allowlist", allowed_tools=["grep"]),
+    )
+
+    assert run.status == "completed"
+    assert seen_tool_names == [["grep"]]
+    assert run.granted_tools == ["grep"]
+    assert [item["name"] for item in run.denied_tools] == ["read", "calculator"]
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_denies_ungranted_tool_call_and_continues():
+    call_count = 0
+    final_messages = []
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        nonlocal call_count, final_messages
+        call_count += 1
+        if call_count == 1:
+            return NormalizedResponse(
+                text="need write",
+                tool_calls=[{
+                    "id": "toolu_1",
+                    "name": "write",
+                    "input": {"path": "x.txt", "content": "no"},
+                }],
+            )
+        final_messages = messages
+        return NormalizedResponse(text="handled denied tool")
+
+    runtime = AgentRuntime(
+        call_fn=call_fn,
+        tools=[
+            {"name": "read", "description": "read", "input_schema": {}},
+            {"name": "write", "description": "write", "input_schema": {}},
+        ],
+        max_tokens=100,
+    )
+
+    run = await runtime.run("try unsafe tool", AgentSpec(role="assistant"))
+
+    assert run.status == "completed"
+    assert run.result == "handled denied tool"
+    assert run.executed_tool_calls == []
+    assert run.denied_tool_calls == [{
+        "call_id": "toolu_1",
+        "name": "write",
+        "allowed": False,
+        "reason": "tool was not granted to this sub-agent",
+    }]
+    assert "denied" in final_messages[-2]["content"][0]["content"]
 
 
 @pytest.mark.asyncio
