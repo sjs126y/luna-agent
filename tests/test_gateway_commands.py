@@ -260,7 +260,7 @@ async def test_gateway_before_send_and_memory_review_use_conversation_result(gat
 
 
 def test_gateway_health_snapshot_reports_runtime_state(gateway):
-    gateway._running_agents["telegram:c1:u1"] = True
+    gateway._run_state.begin("telegram:c1:u1", _event("hello").source)
     gateway._agent_cache["telegram:c1:u1"] = Agent()
 
     health = gateway.health_snapshot()
@@ -268,6 +268,8 @@ def test_gateway_health_snapshot_reports_runtime_state(gateway):
     assert health["running_agents"] == 1
     assert health["cached_agents"] == 1
     assert health["running_agent_sessions"] == ["telegram:c1:u1"]
+    assert health["running_agent_runs"][0]["status"] == "running"
+    assert health["longest_running_seconds"] >= 0
 
 
 @pytest.mark.asyncio
@@ -291,8 +293,13 @@ async def test_gateway_start_records_platform_health(gateway, monkeypatch):
     platforms = {item["name"]: item for item in health["platforms"]}
 
     assert platforms["good"]["connected"] is True
+    assert platforms["good"]["status"] == "connected"
     assert platforms["bad"]["last_connect_error"] == "RuntimeError: connect boom"
+    assert platforms["bad"]["status"] == "reconnecting"
+    assert platforms["bad"]["attempts"] == 1
+    assert platforms["bad"]["next_retry_at"]
     assert platforms["skip"]["skipped_reason"] == "check_fn returned False"
+    assert platforms["skip"]["status"] == "skipped"
     assert health["adapter_count"] == 1
 
     await gateway.stop()
@@ -308,6 +315,37 @@ async def test_base_adapter_health_records_send_failure(gateway):
 
     health = adapter.health_snapshot()
     assert health["last_send_error"] == "send failed"
+    assert health["send_stats"]["failed_count"] == 1
+    assert health["send_stats"]["last_error"] == "send failed"
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_health_records_pending_queue(gateway):
+    adapter = FakeAdapter(gateway.config, gateway.db)
+    event = _event("hello")
+
+    adapter._active_sessions["telegram:c1:u1"] = True
+    adapter.handle_message(event)
+
+    health = adapter.health_snapshot()
+
+    assert health["active_session_keys"] == ["telegram:c1:u1"]
+    assert health["pending_messages"] == 1
+    assert health["pending_by_session"] == {"telegram:c1:u1": 1}
+    assert health["oldest_pending_age_seconds"] >= 0
+    assert health["last_message_at"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_stop_marks_active_run(gateway):
+    gateway._run_state.begin("telegram:c1:u1", _event("hello").source)
+
+    stopped = await gateway._handle_command(_event("/stop"), "telegram:c1:u1")
+    health = gateway.health_snapshot()
+
+    assert stopped == "已停止。"
+    assert health["stop_requested_agents"] == 1
+    assert health["running_agent_runs"][0]["status"] == "stopping"
 
 
 class Agent:

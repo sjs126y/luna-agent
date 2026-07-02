@@ -648,11 +648,29 @@ def test_format_doctor_report_includes_summary_and_issues():
             "enabled": True,
             "command_found": False,
         }],
-        "platforms": [],
+        "platforms": [{
+            "key": "platforms/telegram",
+            "name": "Telegram",
+            "status": "DEFERRED",
+            "missing_env": [],
+            "enabled": True,
+            "health": {
+                "name": "telegram",
+                "status": "reconnecting",
+                "connected": False,
+                "attempts": 2,
+                "pending_messages": 3,
+                "next_retry_at": "2026-07-02T10:00:00",
+                "last_connect_error": "RuntimeError: no token",
+                "last_send_error": "",
+            },
+        }],
         "gateway": {
             "started": True,
             "adapter_count": 1,
             "running_agents": 0,
+            "stop_requested_agents": 0,
+            "longest_running_seconds": 0,
             "pending_messages": 0,
             "active_adapter_sessions": 0,
             "cron_enabled": False,
@@ -679,6 +697,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
     assert "MCP 服务器 demo 的命令不可用: missing-cmd" in text
+    assert "runtime=reconnecting connected=否 attempts=2 pending=3" in text
     assert "平台 telegram 连接失败: RuntimeError: no token" in text
     assert "插件 user/demo: 加载错误: boom" in text
 

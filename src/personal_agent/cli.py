@@ -919,6 +919,8 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  started: {_yes(gateway.get('started', False))}",
         f"  adapters: {gateway.get('adapter_count', 0)}",
         f"  running agents: {gateway.get('running_agents', 0)}",
+        f"  stop requested: {gateway.get('stop_requested_agents', 0)}",
+        f"  longest running seconds: {gateway.get('longest_running_seconds', 0)}",
         f"  pending messages: {gateway.get('pending_messages', 0)}",
         f"  active adapter sessions: {gateway.get('active_adapter_sessions', 0)}",
         f"  cron enabled: {_yes(gateway.get('cron_enabled', False))}",
@@ -960,11 +962,21 @@ def format_doctor_report(report: dict[str, Any]) -> str:
             missing = _list_or_none(platform["missing_env"])
             health = platform.get("health") or {}
             connected = _yes(bool(health.get("connected", False))) if health else "-"
-            error = health.get("last_connect_error") or health.get("last_send_error") or "-"
+            error = (
+                health.get("last_connect_error")
+                or health.get("last_send_error")
+                or health.get("last_error")
+                or "-"
+            )
+            runtime_status = health.get("status") or "-"
+            attempts = health.get("attempts", 0)
+            next_retry = health.get("next_retry_at") or "-"
+            pending = health.get("pending_messages", 0)
             lines.append(
                 f"  - {platform['key']}: 状态={platform['status']} "
                 f"启用={_yes(platform['enabled'])} 缺失环境变量={missing} "
-                f"connected={connected} error={error}"
+                f"runtime={runtime_status} connected={connected} attempts={attempts} "
+                f"pending={pending} next_retry={next_retry} error={error}"
             )
     else:
         lines.append("  - 无")
@@ -1239,8 +1251,9 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
             issues.append(f"MCP 服务器 {server['name']} 的命令不可用: {server['command'] or '-'}")
 
     for platform in (report.get("gateway") or {}).get("platforms", []):
-        if platform.get("last_connect_error"):
-            issues.append(f"平台 {platform.get('name') or '-'} 连接失败: {platform['last_connect_error']}")
+        connect_error = platform.get("last_connect_error") or platform.get("last_error")
+        if connect_error:
+            issues.append(f"平台 {platform.get('name') or '-'} 连接失败: {connect_error}")
         if platform.get("last_send_error"):
             issues.append(f"平台 {platform.get('name') or '-'} 发送失败: {platform['last_send_error']}")
 

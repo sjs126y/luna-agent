@@ -12,6 +12,7 @@ from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation import ConversationCommandRuntime, ConversationService
 from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
+from personal_agent.gateway.state import GatewayRunState, PlatformRuntime
 from personal_agent.memory.review import MemoryReviewService
 
 logger = logging.getLogger(__name__)
@@ -56,8 +57,8 @@ class Gateway:
         self._auth_manager = AuthManager(config, config.agent_data_dir)
         self._session_store = conversation_service.session_store
         self._adapters: list = []
-        self._platform_health: dict[str, dict] = {}
-        self._running_agents: dict[str, bool] = {}
+        self._platforms: dict[str, PlatformRuntime] = {}
+        self._run_state = GatewayRunState()
         self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
         self._session_router = GatewaySessionRouter()
         self._session_override = self._session_router.overrides
@@ -72,6 +73,7 @@ class Gateway:
 
     async def start(self) -> None:
         self._started = True
+        self._shutdown_event = asyncio.Event()
         self._compression_chain.load()
         self._session_router.overrides.update(self.config.session_override)
         await self._session_store.initialize()
@@ -94,42 +96,12 @@ class Gateway:
             self._cron_scheduler = None
 
         for entry in platform_registry.list():
-            if entry.check_fn(self.config):
-                adapter = entry.factory(self.config, self.db)
-                adapter.set_message_handler(self._handle_message)
-                try:
-                    await adapter.connect()
-                except Exception as exc:
-                    error = f"{type(exc).__name__}: {exc}"
-                    if hasattr(adapter, "mark_connect_error"):
-                        adapter.mark_connect_error(error, name=entry.name)
-                    self._platform_health[entry.name] = _platform_error_health(entry.name, adapter, error)
-                    logger.exception("Platform '%s' connect failed", entry.name)
-                    continue
-                if hasattr(adapter, "mark_connected"):
-                    adapter.mark_connected(name=entry.name)
-                self._adapters.append(adapter)
-                if hasattr(adapter, "health_snapshot"):
-                    self._platform_health[entry.name] = adapter.health_snapshot()
-                logger.info("Platform '%s' connected", entry.name)
-            else:
-                self._platform_health[entry.name] = {
-                    "name": entry.name,
-                    "adapter": "",
-                    "connected": False,
-                    "available": False,
-                    "skipped_reason": "check_fn returned False",
-                    "last_connect_error": "",
-                    "last_send_error": "",
-                    "active_sessions": 0,
-                    "pending_messages": 0,
-                    "pending_session_count": 0,
-                }
-                logger.warning("Platform '%s' skipped: check_fn returned False", entry.name)
+            await self._start_platform(entry)
 
         logger.info("Gateway started with %d platform(s)", len(self._adapters))
 
     async def stop(self) -> None:
+        self._started = False
         if self._cron_scheduler:
             self._cron_scheduler.stop()
         mcp = getattr(self, '_mcp_manager', None)
@@ -138,6 +110,15 @@ class Gateway:
                 await mcp.stop()
             except Exception:
                 logger.exception("Error stopping MCP manager")
+        reconnect_tasks = [
+            runtime.reconnect_task
+            for runtime in self._platforms.values()
+            if runtime.reconnect_task is not None and not runtime.reconnect_task.done()
+        ]
+        for task in reconnect_tasks:
+            task.cancel()
+        if reconnect_tasks:
+            await asyncio.gather(*reconnect_tasks, return_exceptions=True)
         for adapter in self._adapters:
             try:
                 await adapter.disconnect()
@@ -146,30 +127,97 @@ class Gateway:
             finally:
                 if hasattr(adapter, "mark_disconnected"):
                     adapter.mark_disconnected()
+        for runtime in self._platforms.values():
+            runtime.mark_stopped()
         self._shutdown_event.set()
-        self._started = False
 
     async def wait_for_shutdown(self) -> None:
         await self._shutdown_event.wait()
 
     def health_snapshot(self) -> dict:
-        platform_health = dict(self._platform_health)
-        for adapter in self._adapters:
-            if hasattr(adapter, "health_snapshot"):
-                data = adapter.health_snapshot()
-                platform_health[str(data.get("name") or type(adapter).__name__)] = data
-        platforms = [platform_health[key] for key in sorted(platform_health)]
-        return {
+        platforms = [
+            self._platforms[key].snapshot()
+            for key in sorted(self._platforms)
+        ]
+        run_health = self._run_state.snapshot()
+        data = {
             "started": self._started,
             "adapter_count": len(self._adapters),
             "platforms": platforms,
-            "running_agents": len(self._running_agents),
-            "running_agent_sessions": sorted(self._running_agents),
             "cached_agents": len(self._agent_cache),
             "cron_enabled": self._cron_scheduler is not None,
             "pending_messages": sum(int(item.get("pending_messages", 0)) for item in platforms),
             "active_adapter_sessions": sum(int(item.get("active_sessions", 0)) for item in platforms),
         }
+        data.update(run_health)
+        return data
+
+    async def _start_platform(self, entry) -> None:
+        runtime = self._platforms.setdefault(entry.name, PlatformRuntime(name=entry.name))
+        if not entry.check_fn(self.config):
+            runtime.mark_skipped("check_fn returned False")
+            logger.warning("Platform '%s' skipped: check_fn returned False", entry.name)
+            return
+
+        connected = await self._try_connect_platform(entry, runtime)
+        if not connected:
+            self._schedule_platform_reconnect(entry, runtime)
+
+    async def _try_connect_platform(self, entry, runtime: PlatformRuntime) -> bool:
+        runtime.mark_connecting()
+        adapter = None
+        try:
+            adapter = entry.factory(self.config, self.db)
+            adapter.set_message_handler(self._handle_message)
+            await adapter.connect()
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            if adapter is not None and hasattr(adapter, "mark_connect_error"):
+                adapter.mark_connect_error(error, name=entry.name)
+            runtime.mark_error(error, adapter)
+            logger.exception("Platform '%s' connect failed", entry.name)
+            return False
+
+        if hasattr(adapter, "mark_connected"):
+            adapter.mark_connected(name=entry.name)
+        if adapter not in self._adapters:
+            self._adapters.append(adapter)
+        runtime.mark_connected(adapter)
+        logger.info("Platform '%s' connected", entry.name)
+        return True
+
+    def _schedule_platform_reconnect(self, entry, runtime: PlatformRuntime) -> None:
+        if not self._started:
+            return
+        task = runtime.reconnect_task
+        if task is not None and not task.done():
+            return
+        delay = runtime.next_retry_delay()
+        runtime.mark_reconnecting(delay)
+        runtime.reconnect_task = asyncio.create_task(
+            self._reconnect_platform(entry, runtime),
+            name=f"gateway-platform-reconnect:{entry.name}",
+        )
+
+    async def _reconnect_platform(self, entry, runtime: PlatformRuntime) -> None:
+        try:
+            while self._started:
+                delay = runtime.next_retry_delay()
+                runtime.mark_reconnecting(delay)
+                await asyncio.sleep(delay)
+                if not self._started:
+                    return
+                if not entry.check_fn(self.config):
+                    runtime.mark_skipped("check_fn returned False")
+                    return
+                connected = await self._try_connect_platform(entry, runtime)
+                if connected:
+                    return
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if runtime.reconnect_task is asyncio.current_task():
+                runtime.reconnect_task = None
 
     # ── message handling ──────────────────────────────
 
@@ -216,15 +264,20 @@ class Gateway:
             # cmd_result is None → continue to agent (skill injection, etc.)
 
         # 4. Busy check
-        if session_key in self._running_agents:
+        if self._run_state.is_running(session_key):
             return "我正在处理你上一条消息，请稍候..."
 
         # 5. Mark running → process → cleanup
-        self._running_agents[session_key] = True
+        self._run_state.begin(session_key, event.source)
         try:
-            return await self._handle_message_with_agent(event, session_key)
+            response = await self._handle_message_with_agent(event, session_key)
+            self._run_state.complete(session_key)
+            return response
+        except Exception as exc:
+            self._run_state.fail(session_key, f"{type(exc).__name__}: {exc}")
+            raise
         finally:
-            self._running_agents.pop(session_key, None)
+            self._run_state.end(session_key)
 
     # ── agent dispatch ────────────────────────────────
 
@@ -339,21 +392,9 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
             "session_key": self._session_key,
         }
 
+    async def stop_agents(self) -> str:
+        self.gateway._run_state.request_stop(self._session_key)
+        return await super().stop_agents()
+
     def session_list_current_key(self) -> str:
         return self.gateway._session_router.current_for_list(self.event.source)
-
-
-def _platform_error_health(name: str, adapter, error: str) -> dict:
-    data = adapter.health_snapshot() if hasattr(adapter, "health_snapshot") else {}
-    data.update({
-        "name": name,
-        "adapter": type(adapter).__name__,
-        "connected": False,
-        "available": True,
-        "last_connect_error": error,
-    })
-    data.setdefault("last_send_error", "")
-    data.setdefault("active_sessions", 0)
-    data.setdefault("pending_messages", 0)
-    data.setdefault("pending_session_count", 0)
-    return data
