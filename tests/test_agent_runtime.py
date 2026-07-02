@@ -68,6 +68,7 @@ async def test_agent_runtime_blocks_destructive_even_with_all_policy():
         "name": "bash",
         "allowed": False,
         "reason": "destructive tool requires explicit sub-agent authorization",
+        "category": "policy",
         "phase": "selection",
     }]
 
@@ -186,13 +187,44 @@ async def test_agent_runtime_denies_ungranted_tool_call_and_continues():
         "name": "write",
         "allowed": False,
         "reason": "tool was not granted to this sub-agent",
+        "category": "policy",
+    }]
+    assert run.tool_results == [{
+        "id": "toolu_1",
+        "name": "write",
+        "input_summary": '{"content": "no", "path": "x.txt"}',
+        "result_summary": "Error: sub-agent tool call 'write' denied: tool was not granted to this sub-agent",
+        "denied": True,
+        "denial_category": "policy",
+        "denial_reason": "tool was not granted to this sub-agent",
     }]
     assert "denied" in final_messages[-2]["content"][0]["content"]
 
 
 @pytest.mark.asyncio
 async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
     calls = 0
+    original_read = tool_registry.get("read")
+    original_grep = tool_registry.get("grep")
+
+    async def dummy_tool():
+        return "ok"
+
+    tool_registry.register(ToolEntry(
+        name="read",
+        description="read",
+        schema={},
+        handler=dummy_tool,
+    ))
+    tool_registry.register(ToolEntry(
+        name="grep",
+        description="grep",
+        schema={},
+        handler=dummy_tool,
+    ))
 
     async def call_fn(messages, system_prompt, tools, max_tokens):
         nonlocal calls
@@ -207,27 +239,74 @@ async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
             )
         return NormalizedResponse(text="quota handled")
 
-    runtime = AgentRuntime(
-        call_fn=call_fn,
-        tools=[
-            {"name": "read", "description": "read", "input_schema": {}},
-            {"name": "grep", "description": "grep", "input_schema": {}},
-        ],
-        max_tokens=100,
-        max_tool_calls=1,
-    )
+    try:
+        runtime = AgentRuntime(
+            call_fn=call_fn,
+            tools=[
+                {"name": "read", "description": "read", "input_schema": {}},
+                {"name": "grep", "description": "grep", "input_schema": {}},
+            ],
+            max_tokens=100,
+            max_tool_calls=1,
+        )
 
-    run = await runtime.run("use tools", AgentSpec(role="assistant"))
+        run = await runtime.run("use tools", AgentSpec(role="assistant"))
+    finally:
+        if original_read is None:
+            tool_registry.unregister("read")
+        else:
+            tool_registry.register(original_read)
+        if original_grep is None:
+            tool_registry.unregister("grep")
+        else:
+            tool_registry.register(original_grep)
 
     assert run.status == "completed"
     assert run.result == "quota handled"
-    assert run.executed_tool_calls == [{"id": "toolu_1", "name": "read"}]
+    assert run.executed_tool_calls == [{
+        "id": "toolu_1",
+        "name": "read",
+        "input_summary": "{}",
+    }]
     assert run.denied_tool_calls == [{
         "call_id": "toolu_2",
         "name": "grep",
         "allowed": False,
         "reason": "sub-agent tool call quota exceeded (1)",
+        "category": "quota",
     }]
+    assert run.tool_results[0]["result_summary"] == "ok"
+    assert run.tool_results[1]["denial_category"] == "quota"
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_records_executor_denied_tool_result():
+    calls = 0
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return NormalizedResponse(
+                text="need tool",
+                tool_calls=[{"id": "toolu_1", "name": "read", "input": {"path": "x"}}],
+            )
+        return NormalizedResponse(text="executor handled")
+
+    runtime = AgentRuntime(
+        call_fn=call_fn,
+        tools=[{"name": "read", "description": "read", "input_schema": {}}],
+        max_tokens=100,
+    )
+
+    run = await runtime.run("use missing executor tool", AgentSpec(role="assistant"))
+
+    assert run.status == "completed"
+    assert run.executed_tool_calls == []
+    assert run.denied_tool_calls[0]["category"] == "executor"
+    assert "unknown tool" in run.denied_tool_calls[0]["reason"]
+    assert run.tool_results[0]["denied"] is True
+    assert run.tool_results[0]["denial_category"] == "executor"
 
 
 @pytest.mark.asyncio

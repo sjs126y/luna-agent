@@ -123,7 +123,7 @@ def test_agents_json_commands(monkeypatch):
     monkeypatch.setattr(
         "personal_agent.plugins.builtin.tools.builtin.delegate.list_agent_runs",
         lambda limit=None: [{
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": "abc123",
             "status": "completed",
             "role": "reviewer",
@@ -142,7 +142,7 @@ def test_agents_json_commands(monkeypatch):
     assert json.loads(listed.output)[0]["run_id"] == "abc123"
     assert shown.exit_code == 0
     data = json.loads(shown.output)
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     assert data["run_id"] == "abc123"
     assert data["result"] == "ok"
 
@@ -172,7 +172,7 @@ def test_agents_export_command(monkeypatch, tmp_path):
     assert "已导出子 agent" in result.output
     data = json.loads(output.read_text(encoding="utf-8"))
     assert data["run_id"] == "abc123"
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
 
 
 def test_agents_show_missing_outputs_chinese_error(monkeypatch):

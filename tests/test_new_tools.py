@@ -376,7 +376,10 @@ async def test_delegate_records_denied_tool_calls_in_detail():
 
     assert "denied-ok" in result
     assert "denied=1" in result
+    assert "状态: completed (已完成)" in detail
     assert "拒绝工具调用: 1" in detail
+    assert "工具结果摘要: 1" in detail
+    assert "category=policy" in detail
     assert "write" in detail
 
 
@@ -406,6 +409,8 @@ async def test_delegate_lists_agent_run_summaries():
     assert runs[0]["task"] == "summarize"
     assert runs[0]["status"] == "completed"
     assert runs[0]["usage"] == {"input_tokens": 1, "output_tokens": 2}
+    assert runs[0]["schema_version"] == 2
+    assert runs[0]["status_description"] == "已完成"
     assert runs[0]["tool_calls"] == 0
     assert runs[0]["run_id"] in format_agent_runs()
     assert "summary-ok" in format_agent_run(runs[0]["run_id"])

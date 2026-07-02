@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-AGENT_RUN_SCHEMA_VERSION = 1
+AGENT_RUN_SCHEMA_VERSION = 2
 
 READONLY_TOOLS = {
     "read",
@@ -72,6 +72,7 @@ class ToolDecision:
     name: str
     allowed: bool
     reason: str = ""
+    category: str = "policy"
     phase: str = "selection"
 
 
@@ -81,6 +82,7 @@ class ToolCallDecision:
     name: str
     allowed: bool
     reason: str = ""
+    category: str = "policy"
 
 
 @dataclass
@@ -98,6 +100,7 @@ class AgentRun:
     denied_tools: list[dict] = field(default_factory=list)
     executed_tool_calls: list[dict] = field(default_factory=list)
     denied_tool_calls: list[dict] = field(default_factory=list)
+    tool_results: list[dict] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
@@ -212,6 +215,13 @@ class AgentRuntime:
                     granted_tools=set(run.granted_tools),
                     allow_destructive=allow_destructive,
                 )
+                await self._execute_tools(
+                    response,
+                    messages,
+                    run=run,
+                    tool_authorizations=call_decisions,
+                    allow_destructive=allow_destructive,
+                )
                 run.executed_tool_calls.extend(
                     _summarize_tool_call(call)
                     for call in response.tool_calls
@@ -221,12 +231,6 @@ class AgentRuntime:
                     asdict(decision)
                     for decision in call_decisions.values()
                     if not decision.allowed
-                )
-                await self._execute_tools(
-                    response,
-                    messages,
-                    tool_authorizations=call_decisions,
-                    allow_destructive=allow_destructive,
                 )
                 response = await asyncio.wait_for(
                     self.call_fn(
@@ -338,14 +342,14 @@ class AgentRuntime:
             name = str(tool.get("name", ""))
             if not name:
                 continue
-            reason = self._tool_denial_reason(
+            reason, category = self._tool_denial(
                 name,
                 allowed=allowed,
                 policy_name=policy_name,
                 allow_destructive=allow_destructive,
             )
             if reason:
-                decisions.append(ToolDecision(name=name, allowed=False, reason=reason))
+                decisions.append(ToolDecision(name=name, allowed=False, reason=reason, category=category))
                 continue
             decisions.append(ToolDecision(name=name, allowed=True))
             selected.append(tool)
@@ -376,29 +380,29 @@ class AgentRuntime:
             return set(READONLY_TOOLS), "readonly"
         return set(READONLY_TOOLS), "readonly"
 
-    def _tool_denial_reason(
+    def _tool_denial(
         self,
         name: str,
         *,
         allowed: set[str],
         policy_name: str,
         allow_destructive: bool,
-    ) -> str:
+    ) -> tuple[str, str]:
         if name in NEVER_DELEGATE:
-            return "recursive delegation tools are not available to sub-agents"
+            return "recursive delegation tools are not available to sub-agents", "policy"
         if name in DESTRUCTIVE_TOOLS and not allow_destructive:
-            return "destructive tool requires explicit sub-agent authorization"
+            return "destructive tool requires explicit sub-agent authorization", "policy"
         if self._registered_tool_is_destructive(name) and not allow_destructive:
-            return "destructive tool requires explicit sub-agent authorization"
+            return "destructive tool requires explicit sub-agent authorization", "policy"
         if name not in allowed:
             if policy_name == "none":
-                return "tool_policy=none grants no tools"
+                return "tool_policy=none grants no tools", "policy"
             if policy_name == "allowlist":
-                return "tool is not in the allowlist"
+                return "tool is not in the allowlist", "policy"
             if policy_name == "readonly":
-                return "tool is not part of the readonly policy"
-            return "tool is not granted by policy"
-        return ""
+                return "tool is not part of the readonly policy", "policy"
+            return "tool is not granted by policy", "policy"
+        return "", ""
 
     def _authorize_tool_calls(
         self,
@@ -412,8 +416,10 @@ class AgentRuntime:
             call_id = str(call.get("id", f"tool-{index}"))
             name = str(call.get("name", ""))
             reason = ""
+            category = "policy"
             if index >= self.max_tool_calls:
                 reason = f"sub-agent tool call quota exceeded ({self.max_tool_calls})"
+                category = "quota"
             elif not name:
                 reason = "tool call has no name"
             elif name not in granted_tools:
@@ -429,6 +435,7 @@ class AgentRuntime:
                 name=name,
                 allowed=not reason,
                 reason=reason,
+                category=category,
             )
         return decisions
 
@@ -486,6 +493,7 @@ class AgentRuntime:
         response,
         messages: list[dict],
         *,
+        run: AgentRun,
         tool_authorizations: dict[str, ToolCallDecision],
         allow_destructive: bool,
     ) -> None:
@@ -515,6 +523,7 @@ class AgentRuntime:
         agent_ctx._max_tool_calls_per_turn = self.max_tool_calls
 
         executable: list[dict] = []
+        executable_ids: set[str] = set()
         result_by_id: dict[str, str] = {}
         for index, tool_call in enumerate(response.tool_calls):
             call_id = str(tool_call.get("id", f"tool-{index}"))
@@ -526,6 +535,7 @@ class AgentRuntime:
                 )
                 continue
             executable.append(tool_call)
+            executable_ids.add(call_id)
 
         if executable:
             executed_messages: list[dict] = []
@@ -537,6 +547,26 @@ class AgentRuntime:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
                         result_by_id[str(block.get("tool_use_id", ""))] = str(block.get("content", ""))
                 break
+
+        for tool_call in response.tool_calls:
+            call_id = str(tool_call.get("id", ""))
+            result = result_by_id.get(call_id, "Error: tool execution skipped")
+            decision = tool_authorizations.get(call_id)
+            if decision and decision.allowed and call_id in executable_ids and _looks_like_error(result):
+                decision.allowed = False
+                decision.reason = result
+                decision.category = "executor"
+            result_summary = {
+                "id": call_id,
+                "name": str(tool_call.get("name", "")),
+                "input_summary": _summarize_value(tool_call.get("input", {})),
+                "result_summary": _summarize_text(result),
+            }
+            if decision and not decision.allowed:
+                result_summary["denied"] = True
+                result_summary["denial_category"] = decision.category
+                result_summary["denial_reason"] = decision.reason
+            run.tool_results.append(result_summary)
 
         result_blocks = []
         for index, tool_call in enumerate(response.tool_calls):
@@ -576,7 +606,27 @@ def _summarize_tool_call(call: dict) -> dict:
     return {
         "id": str(call.get("id", "")),
         "name": str(call.get("name", "")),
+        "input_summary": _summarize_value(call.get("input", {})),
     }
+
+
+def _looks_like_error(text: str) -> bool:
+    return str(text).strip().lower().startswith("error:")
+
+
+def _summarize_value(value: Any, *, max_chars: int = 500) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        text = str(value)
+    return _summarize_text(text, max_chars=max_chars)
+
+
+def _summarize_text(text: str, *, max_chars: int = 500) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 3)] + "..."
 
 
 def _validate_schema(obj: Any, schema: dict) -> bool:

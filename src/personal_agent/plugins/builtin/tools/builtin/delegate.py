@@ -107,7 +107,7 @@ def format_agent_run(run_id: str) -> str:
     executed_tool_names = _tool_names(run.executed_tool_calls)
     lines = [
         f"子 agent 运行: {run.run_id}",
-        f"状态: {run.status}",
+        f"状态: {run.status} ({_status_description(run.status)})",
         f"角色: {run.role or '-'}",
         f"模型: {run.model or '-'}",
         f"工具策略: {run.tool_policy or '-'}",
@@ -121,6 +121,9 @@ def format_agent_run(run_id: str) -> str:
         f"已执行工具: {len(run.executed_tool_calls)}" + (f" ({', '.join(executed_tool_names)})" if executed_tool_names else ""),
         f"拒绝工具调用: {len(run.denied_tool_calls)}",
     ]
+    if run.tool_results:
+        lines.append(f"工具结果摘要: {len(run.tool_results)}")
+        lines.extend(_format_tool_results(run.tool_results))
     if run.denied_tool_calls:
         lines.extend(_format_denials(run.denied_tool_calls))
     if run.denied_tools:
@@ -338,6 +341,7 @@ def _format_agent_result(run) -> str:
 
 def _agent_run_summary(run) -> dict:
     return {
+        "schema_version": run.schema_version,
         "run_id": run.run_id,
         "parent_turn_id": run.parent_turn_id,
         "role": run.role,
@@ -345,6 +349,7 @@ def _agent_run_summary(run) -> dict:
         "tool_policy": run.tool_policy,
         "model": run.model,
         "status": run.status,
+        "status_description": _status_description(run.status),
         "duration": round(run.duration, 3),
         "usage": dict(run.usage),
         "limits": dict(run.limits),
@@ -352,6 +357,7 @@ def _agent_run_summary(run) -> dict:
         "tool_calls": len(run.tool_calls),
         "executed_tool_calls": len(run.executed_tool_calls),
         "denied_tool_calls": len(run.denied_tool_calls),
+        "tool_results": len(run.tool_results),
         "denied_tools": len(run.denied_tools),
         "result": run.result,
     }
@@ -397,8 +403,40 @@ def _format_denials(denials: list[dict]) -> list[str]:
         name = str(item.get("name", ""))
         reason = str(item.get("reason", ""))
         phase = str(item.get("phase", "call"))
-        lines.append(f"  - {name or '-'} ({phase}): {reason or '-'}")
+        category = str(item.get("category", "policy"))
+        lines.append(f"  - {name or '-'} ({category}/{phase}): {reason or '-'}")
     return lines
+
+
+def _format_tool_results(results: list[dict]) -> list[str]:
+    lines = []
+    for item in results:
+        status = "denied" if item.get("denied") else "ok"
+        name = str(item.get("name", ""))
+        input_summary = _shorten(str(item.get("input_summary", "")), 80)
+        result_summary = _shorten(str(item.get("result_summary", "")), 120)
+        suffix = ""
+        if item.get("denied"):
+            suffix = (
+                f" category={item.get('denial_category', '-')}"
+                f" reason={_shorten(str(item.get('denial_reason', '')), 80)}"
+            )
+        lines.append(
+            f"  - {name or '-'} [{status}] input={input_summary or '-'} "
+            f"result={result_summary or '-'}{suffix}"
+        )
+    return lines
+
+
+def _status_description(status: str) -> str:
+    return {
+        "completed": "已完成",
+        "running": "运行中",
+        "timeout": "超时",
+        "cancelled": "已停止",
+        "quota_exceeded": "超过配额",
+        "error": "错误",
+    }.get(status, "未知状态")
 
 
 def _shorten(text: str, max_chars: int) -> str:
