@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+AGENT_RUN_SCHEMA_VERSION = 1
+
 READONLY_TOOLS = {
     "read",
     "grep",
@@ -86,6 +88,7 @@ class AgentRun:
     run_id: str
     parent_turn_id: str
     status: str
+    schema_version: int = AGENT_RUN_SCHEMA_VERSION
     role: str = ""
     task: str = ""
     tool_policy: str | list[str] = "readonly"

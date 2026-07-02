@@ -6,6 +6,7 @@ import json
 
 from typer.testing import CliRunner
 
+from personal_agent.agents.runtime import AgentRun
 from personal_agent.cli import app, build_doctor_report, format_plugin_report
 
 
@@ -64,6 +65,10 @@ def test_chat_once_option_runs_once(monkeypatch):
 def test_agents_list_show_clear_commands(monkeypatch):
     monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
     monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        lambda run_id: AgentRun(run_id=run_id, parent_turn_id="", status="completed"),
+    )
+    monkeypatch.setattr(
         "personal_agent.plugins.builtin.tools.builtin.delegate.format_agent_runs",
         lambda limit=None: f"runs:{limit}",
     )
@@ -86,6 +91,85 @@ def test_agents_list_show_clear_commands(monkeypatch):
     assert "run:abc123" in shown.output
     assert cleared.exit_code == 0
     assert "已清理 3 条" in cleared.output
+
+
+def test_agents_json_commands(monkeypatch):
+    run = AgentRun(
+        run_id="abc123",
+        parent_turn_id="turn1",
+        status="completed",
+        role="reviewer",
+        task="inspect",
+        result="ok",
+        usage={"input_tokens": 1, "output_tokens": 2},
+    )
+    monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.list_agent_runs",
+        lambda limit=None: [{
+            "schema_version": 1,
+            "run_id": "abc123",
+            "status": "completed",
+            "role": "reviewer",
+            "task": "inspect",
+        }],
+    )
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        lambda run_id: run if run_id == "abc123" else None,
+    )
+
+    listed = runner.invoke(app, ["agents", "list", "--json"])
+    shown = runner.invoke(app, ["agents", "show", "abc123", "--json"])
+
+    assert listed.exit_code == 0
+    assert json.loads(listed.output)[0]["run_id"] == "abc123"
+    assert shown.exit_code == 0
+    data = json.loads(shown.output)
+    assert data["schema_version"] == 1
+    assert data["run_id"] == "abc123"
+    assert data["result"] == "ok"
+
+
+def test_agents_export_command(monkeypatch, tmp_path):
+    run = AgentRun(
+        run_id="abc123",
+        parent_turn_id="turn1",
+        status="completed",
+        role="reviewer",
+        task="inspect",
+        result="ok",
+    )
+    output = tmp_path / "run.json"
+    monkeypatch.setattr(
+        "personal_agent.cli._load_agent_run_store",
+        lambda: type("SettingsStub", (), {"agent_data_dir": tmp_path})(),
+    )
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        lambda run_id: run if run_id == "abc123" else None,
+    )
+
+    result = runner.invoke(app, ["agents", "export", "abc123", "--output", str(output)])
+
+    assert result.exit_code == 0
+    assert "已导出子 agent" in result.output
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["run_id"] == "abc123"
+    assert data["schema_version"] == 1
+
+
+def test_agents_show_missing_outputs_chinese_error(monkeypatch):
+    monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        lambda run_id: None,
+    )
+
+    result = runner.invoke(app, ["agents", "show", "missing"])
+
+    assert result.exit_code == 1
+    assert "错误: 未找到子 agent 运行记录: missing" in result.stderr
 
 
 def test_plugins_info_command_shows_registered_items():

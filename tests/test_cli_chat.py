@@ -216,8 +216,34 @@ async def test_cli_plugin_command_and_skill_command(runtime):
 async def test_cli_repl_exits_on_blank(runtime):
     outputs = []
     inputs = iter(["hello", ""])
+    prompts = []
 
-    await runtime.repl(input_fn=lambda prompt: next(inputs), output_fn=outputs.append)
+    def input_fn(prompt):
+        prompts.append(prompt)
+        return next(inputs)
+
+    await runtime.repl(input_fn=input_fn, output_fn=outputs.append)
 
     assert "Personal Agent CLI" in outputs[0]
+    assert "当前会话: cli:default:local" in outputs[0]
+    assert prompts == ["cli:default:local >>> ", "cli:default:local >>> "]
     assert "echo:hello" in outputs
+
+
+@pytest.mark.asyncio
+async def test_cli_repl_prompt_tracks_session_switch(runtime):
+    outputs = []
+    inputs = iter(["/session work", ""])
+    prompts = []
+
+    def input_fn(prompt):
+        prompts.append(prompt)
+        return next(inputs)
+
+    await runtime.repl(input_fn=input_fn, output_fn=outputs.append)
+
+    assert prompts == [
+        "cli:default:local >>> ",
+        "cli:work:local >>> ",
+    ]
+    assert any("会话已切换: cli:work:local" in output for output in outputs)

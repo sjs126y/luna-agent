@@ -75,17 +75,22 @@ class CliChatRuntime:
         input_fn: Callable[[str], str] = input,
         output_fn: Callable[[str], None] = print,
     ) -> None:
-        output_fn("Personal Agent CLI。输入 exit/quit 或空行退出，/help 查看命令。")
+        output_fn(f"Personal Agent CLI。当前会话: {self.session_key}。输入 exit/quit 或空行退出，/help 查看命令。")
         while True:
             try:
-                text = input_fn(">>> ")
+                text = input_fn(f"{self.session_key} >>> ")
             except (EOFError, KeyboardInterrupt):
                 output_fn("")
                 break
             text = text.strip()
             if not text or text.lower() in {"exit", "quit"}:
                 break
-            response = await self.run_once(text)
+            try:
+                response = await self.run_once(text)
+            except Exception as exc:
+                logger.exception("CLI turn failed")
+                output_fn(f"错误: 本轮对话失败: {exc}")
+                continue
             if response:
                 output_fn(response)
 

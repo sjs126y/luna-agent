@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -34,10 +35,13 @@ def chat(
 ) -> None:
     """Interactive multi-turn chat loop."""
     one_shot = once or message
-    if one_shot:
-        run_cli_once_sync(one_shot, session_name=session)
-    else:
-        run_cli_repl_sync(session_name=session)
+    try:
+        if one_shot:
+            run_cli_once_sync(one_shot, session_name=session)
+        else:
+            run_cli_repl_sync(session_name=session)
+    except Exception as exc:
+        _exit_error(f"CLI 运行失败: {exc}")
 
 
 @app.command()
@@ -177,19 +181,57 @@ def agents_run(prompt: str) -> None:
 
 
 @agents_app.command("list")
-def agents_list(limit: int = typer.Option(20, "--limit", "-n", help="显示最近 N 条记录。")) -> None:
+def agents_list(
+    limit: int = typer.Option(20, "--limit", "-n", help="显示最近 N 条记录。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
     _load_agent_run_store()
-    from personal_agent.plugins.builtin.tools.builtin.delegate import format_agent_runs
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        format_agent_runs,
+        list_agent_runs,
+    )
 
-    typer.echo(format_agent_runs(limit=limit))
+    if json_output:
+        typer.echo(_json_dumps(list_agent_runs(limit=limit)))
+    else:
+        typer.echo(format_agent_runs(limit=limit))
 
 
 @agents_app.command("show")
-def agents_show(run_id: str) -> None:
+def agents_show(
+    run_id: str,
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
     _load_agent_run_store()
-    from personal_agent.plugins.builtin.tools.builtin.delegate import format_agent_run
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        format_agent_run,
+        get_agent_run,
+    )
 
-    typer.echo(format_agent_run(run_id))
+    run = get_agent_run(run_id)
+    if run is None:
+        _exit_error(f"未找到子 agent 运行记录: {run_id}")
+    if json_output:
+        typer.echo(_json_dumps(_agent_run_to_dict(run)))
+    else:
+        typer.echo(format_agent_run(run_id))
+
+
+@agents_app.command("export")
+def agents_export(
+    run_id: str,
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="导出 JSON 文件路径。"),
+) -> None:
+    settings = _load_agent_run_store()
+    from personal_agent.plugins.builtin.tools.builtin.delegate import get_agent_run
+
+    run = get_agent_run(run_id)
+    if run is None:
+        _exit_error(f"未找到子 agent 运行记录: {run_id}")
+    target = output or settings.agent_data_dir / "exports" / f"agent_run_{run_id}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_json_dumps(_agent_run_to_dict(run)) + "\n", encoding="utf-8")
+    typer.echo(f"已导出子 agent 运行记录: {target}")
 
 
 @agents_app.command("clear")
@@ -218,11 +260,12 @@ def _plugin_manager(settings: Settings | None = None) -> PluginManager:
     return manager
 
 
-def _load_agent_run_store(settings: Settings | None = None) -> None:
+def _load_agent_run_store(settings: Settings | None = None) -> Settings:
     settings = settings or Settings()
     from personal_agent.plugins.builtin.tools.builtin.delegate import load_agent_runs
 
     load_agent_runs(settings.agent_data_dir / "agent_runs.jsonl")
+    return settings
 
 
 def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
@@ -410,6 +453,21 @@ def _status(ok: bool) -> str:
 def _list_or_none(items) -> str:
     values = list(items or [])
     return ", ".join(str(item) for item in values) if values else "无"
+
+
+def _agent_run_to_dict(run) -> dict[str, Any]:
+    if is_dataclass(run):
+        return asdict(run)
+    return dict(run)
+
+
+def _json_dumps(data: Any) -> str:
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def _exit_error(message: str) -> None:
+    typer.secho(f"错误: {message}", fg=typer.colors.RED, err=True)
+    raise typer.Exit(1)
 
 
 def run() -> None:
