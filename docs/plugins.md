@@ -175,6 +175,13 @@ Hook 由 `PluginManager` 直接管理：
 
 插件 command 使用 `CommandEntry`，`scope` 支持 `slash`、`cli`、`both`。
 
+命令路由规则：
+
+- 用户输入 `/xxx` 时先匹配核心命令，再匹配插件命令。
+- Gateway 只会执行 `scope="slash"` 或 `scope="both"` 的插件命令。
+- CLI chat 会优先执行 `scope="cli"`，也兼容 `scope="slash"` 和 `scope="both"`，避免旧插件默认 scope 失效。
+- `/help` 会展示当前入口可见的插件命令。
+
 插件不能覆盖核心 slash command：
 
 - `/stop`

@@ -314,6 +314,10 @@ class _GatewayCommandRuntime:
         return self._session_key
 
     @property
+    def plugin_command_scopes(self) -> tuple[str]:
+        return ("slash",)
+
+    @property
     def source(self):
         return self.event.source
 

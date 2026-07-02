@@ -36,7 +36,12 @@ class PluginManager:
         self.commands = {}
 
     def get_command(self, name, *, scope="slash"):
-        return self.commands.get(name)
+        entry = self.commands.get(name)
+        if entry is None:
+            return None
+        if entry.scope not in {scope, "both"}:
+            return None
+        return entry
 
     async def execute_command(self, name, **kwargs):
         value = self.commands[name].handler(**kwargs)
@@ -131,6 +136,49 @@ async def test_gateway_plugin_command_receives_gateway_kwargs(gateway):
     result = await gateway._handle_command(_event("/demo hi"), "telegram:c1:u1")
 
     assert result == "hi:telegram:c1:u1"
+
+
+@pytest.mark.asyncio
+async def test_gateway_does_not_run_cli_only_plugin_command(gateway):
+    async def handler(args="", **kwargs):
+        return "should-not-run"
+
+    gateway.plugin_manager.commands["local"] = CommandEntry(
+        name="local",
+        description="local only",
+        handler=handler,
+        scope="cli",
+    )
+
+    result = await gateway._handle_command(_event("/local hi"), "telegram:c1:u1")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_help_lists_slash_plugin_commands_only(gateway):
+    async def handler(args="", **kwargs):
+        return "ok"
+
+    gateway.plugin_manager.commands["demo"] = CommandEntry(
+        name="demo",
+        description="gateway command",
+        handler=handler,
+        scope="slash",
+        plugin_key="user/demo",
+    )
+    gateway.plugin_manager.commands["local"] = CommandEntry(
+        name="local",
+        description="local only",
+        handler=handler,
+        scope="cli",
+        plugin_key="user/local",
+    )
+
+    result = await gateway._handle_command(_event("/help"), "telegram:c1:u1")
+
+    assert "/demo - gateway command (user/demo)" in result
+    assert "/local" not in result
 
 
 class Agent:

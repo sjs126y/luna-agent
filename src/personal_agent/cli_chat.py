@@ -55,6 +55,10 @@ class CliChatRuntime:
     def session_key(self) -> str:
         return f"cli:{self.session_name}:local"
 
+    @property
+    def plugin_command_scopes(self) -> tuple[str, str]:
+        return ("cli", "slash")
+
     async def close(self) -> None:
         if self.app_runtime is not None:
             await self.app_runtime.close()

@@ -92,16 +92,21 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         return CommandResult.reply(await _agents(args))
 
     if command_name == "help":
-        return CommandResult.reply(help_text())
+        return CommandResult.reply(help_text(runtime))
 
     plugin_manager = runtime.plugin_manager
     plugin_command = None
+    plugin_scope = "slash"
     if plugin_manager is not None:
-        plugin_command = plugin_manager.get_command(command_name, scope="slash")
+        plugin_command, plugin_scope = _find_plugin_command(
+            plugin_manager,
+            command_name,
+            _plugin_command_scopes(runtime),
+        )
     if plugin_command is not None:
         value = await plugin_manager.execute_command(
             plugin_command.name,
-            scope="slash",
+            scope=plugin_scope,
             **runtime.plugin_command_kwargs(args),
         )
         return CommandResult.reply(value or "")
@@ -121,6 +126,22 @@ def _parse_command(text: str) -> tuple[str, str] | None:
         return None
     command_name, _, args = body.partition(" ")
     return command_name, args.strip()
+
+
+def _plugin_command_scopes(runtime: CommandRuntime) -> tuple[str, ...]:
+    scopes = getattr(runtime, "plugin_command_scopes", ("slash",))
+    if isinstance(scopes, str):
+        scopes = (scopes,)
+    cleaned = tuple(scope for scope in scopes if scope in {"slash", "cli", "both"})
+    return cleaned or ("slash",)
+
+
+def _find_plugin_command(plugin_manager, name: str, scopes: tuple[str, ...]):
+    for scope in scopes:
+        command = plugin_manager.get_command(name, scope=scope)
+        if command is not None:
+            return command, scope
+    return None, scopes[0] if scopes else "slash"
 
 
 async def _call_optional(runtime: CommandRuntime, name: str, *args, **kwargs):
@@ -279,17 +300,40 @@ async def _prepare_skill(runtime: CommandRuntime, text: str) -> str | None:
     return parts[1] if len(parts) > 1 else "你好"
 
 
-def help_text() -> str:
-    return (
-        "可用命令:\n"
-        "/new - 重置当前会话\n"
-        "/session [current|list|switch <name>|rename <name>|delete [name]] - 管理会话\n"
-        "/usage - 查看当前会话上下文预算\n"
-        "/allow [write|bash|all] - 授权危险操作\n"
-        "/stop - 停止当前处理\n"
-        "/export - 导出当前会话 JSONL\n"
-        "/agents [list|show|clear] - 查看子 agent 运行记录\n"
-        "/help - 显示此帮助\n"
-        "/<skill-name> [message] - 加载技能后发送消息\n"
-        "exit / quit / 空行 - 退出 CLI"
-    )
+def help_text(runtime: CommandRuntime | None = None) -> str:
+    lines = [
+        "可用命令:",
+        "/new - 重置当前会话",
+        "/session [current|list|switch <name>|rename <name>|delete [name]] - 管理会话",
+        "/usage - 查看当前会话上下文预算",
+        "/allow [write|bash|all] - 授权危险操作",
+        "/stop - 停止当前处理",
+        "/export - 导出当前会话 JSONL",
+        "/agents [list|show|clear] - 查看子 agent 运行记录",
+        "/help - 显示此帮助",
+        "/<skill-name> [message] - 加载技能后发送消息",
+        "exit / quit / 空行 - 退出 CLI",
+    ]
+    plugin_lines = _plugin_command_help_lines(runtime)
+    if plugin_lines:
+        lines.extend(["", "插件命令:", *plugin_lines])
+    return "\n".join(lines)
+
+
+def _plugin_command_help_lines(runtime: CommandRuntime | None) -> list[str]:
+    if runtime is None or runtime.plugin_manager is None:
+        return []
+    commands = getattr(runtime.plugin_manager, "commands", {})
+    if not isinstance(commands, dict):
+        return []
+    scopes = set(_plugin_command_scopes(runtime))
+    lines = []
+    for name, entry in sorted(commands.items()):
+        entry_scope = getattr(entry, "scope", "slash")
+        if entry_scope != "both" and entry_scope not in scopes:
+            continue
+        description = getattr(entry, "description", "") or "插件命令"
+        plugin_key = getattr(entry, "plugin_key", "")
+        suffix = f" ({plugin_key})" if plugin_key else ""
+        lines.append(f"/{name} - {description}{suffix}")
+    return lines

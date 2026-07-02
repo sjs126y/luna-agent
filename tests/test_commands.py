@@ -41,7 +41,12 @@ class PluginManager:
         self.commands = {}
 
     def get_command(self, name, *, scope="slash"):
-        return self.commands.get(name)
+        entry = self.commands.get(name)
+        if entry is None:
+            return None
+        if entry.scope not in {scope, "both"}:
+            return None
+        return entry
 
     async def execute_command(self, name, **kwargs):
         value = self.commands[name].handler(**kwargs)
@@ -178,6 +183,20 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     )
     result = await handle_slash_command(runtime, "/demo hi")
     assert result.response == "plugin:hi:cli:default:local"
+
+    runtime.plugin_command_scopes = ("cli", "slash")
+    runtime.plugin_manager.commands["local"] = CommandEntry(
+        name="local",
+        description="local command",
+        handler=plugin_handler,
+        scope="cli",
+    )
+    result = await handle_slash_command(runtime, "/local only")
+    assert result.response == "plugin:only:cli:default:local"
+
+    result = await handle_slash_command(runtime, "/help")
+    assert "/local - local command" in result.response
+    assert "/demo - demo" in result.response
 
     from personal_agent.skills.registry import skill_registry
 

@@ -58,7 +58,12 @@ class DummyPluginManager:
         return None
 
     def get_command(self, name, *, scope="slash"):
-        return self.commands.get(name)
+        entry = self.commands.get(name)
+        if entry is None:
+            return None
+        if entry.scope not in {scope, "both"}:
+            return None
+        return entry
 
     async def execute_command(self, name, **kwargs):
         entry = self.commands[name]
@@ -221,8 +226,34 @@ async def test_cli_plugin_command_and_skill_command(runtime):
         description="demo",
         handler=plugin_handler,
     )
+    runtime.plugin_manager.commands["local"] = CommandEntry(
+        name="local",
+        description="local only",
+        handler=plugin_handler,
+        scope="cli",
+    )
 
     assert await runtime.handle_command("/demo hi") == "plugin:hi:cli:default:local"
+    assert await runtime.handle_command("/local hi") == "plugin:hi:cli:default:local"
+
+
+@pytest.mark.asyncio
+async def test_cli_help_lists_visible_plugin_commands(runtime):
+    async def plugin_handler(args="", **kwargs):
+        return "ok"
+
+    runtime.plugin_manager.commands["local"] = CommandEntry(
+        name="local",
+        description="local only",
+        handler=plugin_handler,
+        scope="cli",
+        plugin_key="user/local",
+    )
+
+    help_text = await runtime.handle_command("/help")
+
+    assert "插件命令:" in help_text
+    assert "/local - local only (user/local)" in help_text
 
 
 @pytest.mark.asyncio
