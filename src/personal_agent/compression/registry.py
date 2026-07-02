@@ -46,3 +46,5 @@ class CompressionRegistry:
 
 compression_registry = CompressionRegistry()
 
+# Import built-in implementations so direct registry imports are populated.
+import personal_agent.compression.simple  # noqa: F401

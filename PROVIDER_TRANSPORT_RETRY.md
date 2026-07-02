@@ -579,7 +579,7 @@ _register_transports()
         from personal_agent.agent.agent import init_agent
         from personal_agent.llm.provider import provider_registry
         from personal_agent.llm.transport_registry import transport_registry
-        from personal_agent.compression.simple import SimpleCompressor
+        from personal_agent.compression import compression_registry
 
         # Resolve provider via registry
         provider_name = self.config.llm_provider
@@ -592,7 +592,13 @@ _register_transports()
         transport = transport_registry.get(api_mode, provider)
         logger.debug("Agent transport: provider=%s api_mode=%s", provider_name, api_mode)
 
-        compressor = SimpleCompressor() if self.config.compressor_engine == "simple" else None
+        compressor = (
+            compression_registry.get(self.config.compressor_engine)(
+                self.config, provider, api_mode
+            )
+            if self.config.compressor_engine not in {"none", "off", "disabled"}
+            else None
+        )
 
         agent = init_agent(
             transport, provider,
@@ -653,13 +659,13 @@ _register_transports()
 
 **改动类型**：修改现有文件，在 boot() 的 import triggers 区域加上 llm 模块
 
-在 `import personal_agent.adapters.feishu` 附近加一行：
+在 `import personal_agent.plugins.builtin.platforms.feishu` 附近加一行：
 
 ```python
     import personal_agent.llm              # noqa: F401 — trigger transport/provider registration
 ```
 
-放在 `import personal_agent.adapters.feishu` 之前即可。
+放在 `import personal_agent.plugins.builtin.platforms.feishu` 之前即可。
 
 ---
 
