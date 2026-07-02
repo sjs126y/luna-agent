@@ -127,11 +127,21 @@ def test_agents_json_commands(monkeypatch):
     monkeypatch.setattr(
         "personal_agent.plugins.builtin.tools.builtin.delegate.list_agent_runs",
         lambda limit=None: [{
-            "schema_version": 2,
+            "schema_version": 3,
             "run_id": "abc123",
             "status": "completed",
             "role": "reviewer",
             "task": "inspect",
+        }],
+    )
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.list_active_agent_runs",
+        lambda: [{
+            "run_id": "active1",
+            "status": "running",
+            "role": "researcher",
+            "task": "active",
+            "active": True,
         }],
     )
     monkeypatch.setattr(
@@ -143,10 +153,12 @@ def test_agents_json_commands(monkeypatch):
     shown = runner.invoke(app, ["agents", "show", "abc123", "--json"])
 
     assert listed.exit_code == 0
-    assert json.loads(listed.output)[0]["run_id"] == "abc123"
+    listed_data = json.loads(listed.output)
+    assert listed_data["runs"][0]["run_id"] == "abc123"
+    assert listed_data["active_runs"][0]["run_id"] == "active1"
     assert shown.exit_code == 0
     data = json.loads(shown.output)
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert data["run_id"] == "abc123"
     assert data["result"] == "ok"
 
@@ -176,7 +188,7 @@ def test_agents_export_command(monkeypatch, tmp_path):
     assert "已导出子 agent" in result.output
     data = json.loads(output.read_text(encoding="utf-8"))
     assert data["run_id"] == "abc123"
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
 
 
 def test_agents_show_missing_outputs_chinese_error(monkeypatch):

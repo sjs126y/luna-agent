@@ -8,11 +8,12 @@ import re
 import time
 import uuid
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-AGENT_RUN_SCHEMA_VERSION = 2
+AGENT_RUN_SCHEMA_VERSION = 3
 
 READONLY_TOOLS = {
     "read",
@@ -83,6 +84,7 @@ class ToolCallDecision:
     allowed: bool
     reason: str = ""
     category: str = "policy"
+    phase: str = "call"
 
 
 @dataclass
@@ -105,6 +107,13 @@ class AgentRun:
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
     duration: float = 0.0
+    started_at: str = ""
+    finished_at: str = ""
+    error_type: str = ""
+    error_message: str = ""
+    stop_requested: bool = False
+    quota: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     result: str = ""
 
 
@@ -146,6 +155,8 @@ class AgentRuntime:
         parent_turn_id: str = "",
         allow_destructive: bool = False,
     ) -> AgentRun:
+        started = time.monotonic()
+        effective_max_tokens = self._clamp_max_tokens(spec.max_tokens)
         run = AgentRun(
             run_id=uuid.uuid4().hex[:12],
             parent_turn_id=parent_turn_id,
@@ -155,25 +166,36 @@ class AgentRuntime:
             tool_policy=spec.tool_policy,
             model=spec.model,
             limits={
-                "max_tokens": self._clamp_max_tokens(spec.max_tokens),
+                "max_tokens": effective_max_tokens,
                 "timeout": spec.timeout,
                 "max_tool_calls": self.max_tool_calls,
                 "max_concurrent_runs": self.max_concurrent_runs,
             },
+            quota={
+                "max_tokens": effective_max_tokens,
+                "used_tokens": 0,
+                "over_token_quota": False,
+            },
+            started_at=_utc_now(),
         )
-        started = time.monotonic()
 
         if self.call_fn is None:
             run.status = "error"
+            run.error_type = "runtime"
+            run.error_message = "agent runtime is not initialized"
             run.result = "Error: agent runtime is not initialized"
+            self._finish_run(run, started)
             self._record_run(run)
             return run
         if len(self._active_runs) >= self.max_concurrent_runs:
             run.status = "quota_exceeded"
+            run.error_type = "quota"
+            run.error_message = f"max concurrent sub-agents ({self.max_concurrent_runs})"
             run.result = (
                 "Error: delegated agent quota exceeded: "
                 f"max concurrent sub-agents ({self.max_concurrent_runs})"
             )
+            self._finish_run(run, started)
             self._record_run(run)
             return run
 
@@ -203,13 +225,16 @@ class AgentRuntime:
                     messages=messages,
                     system_prompt=system_prompt,
                     tools=tools,
-                    max_tokens=self._clamp_max_tokens(spec.max_tokens),
+                    max_tokens=effective_max_tokens,
                 ),
                 timeout=spec.timeout,
             )
             self._accumulate_usage(run.usage, response.usage)
             if response.tool_calls:
                 run.tool_calls.extend(response.tool_calls)
+            if self._mark_token_quota_if_exceeded(run):
+                return run
+            if response.tool_calls:
                 call_decisions = self._authorize_tool_calls(
                     response.tool_calls,
                     granted_tools=set(run.granted_tools),
@@ -240,11 +265,13 @@ class AgentRuntime:
                         }],
                         system_prompt=system_prompt,
                         tools=[],
-                        max_tokens=self._clamp_max_tokens(spec.max_tokens),
+                        max_tokens=effective_max_tokens,
                     ),
                     timeout=min(spec.timeout, 120.0),
                 )
                 self._accumulate_usage(run.usage, response.usage)
+                if self._mark_token_quota_if_exceeded(run):
+                    return run
             text = (response.text or "").strip()
             if spec.output_schema:
                 text = await self._coerce_schema(
@@ -252,34 +279,63 @@ class AgentRuntime:
                     spec.output_schema,
                     messages,
                     system_prompt,
-                    self._clamp_max_tokens(spec.max_tokens),
+                    effective_max_tokens,
                     spec.timeout,
                     run,
                 )
+                if self._mark_token_quota_if_exceeded(run):
+                    return run
             run.status = "completed"
             run.result = text
         except asyncio.CancelledError:
             run.status = "cancelled"
+            run.error_type = "cancelled"
+            run.error_message = "delegated agent stopped"
             run.result = "Error: delegated agent stopped"
         except asyncio.TimeoutError:
             run.status = "timeout"
+            run.error_type = "timeout"
+            run.error_message = "delegated agent timed out"
             run.result = "Error: delegated agent timed out"
         except Exception as exc:
             run.status = "error"
+            run.error_type = type(exc).__name__
+            run.error_message = str(exc)
             run.result = f"Error: delegated agent failed: {exc}"
         finally:
-            run.duration = time.monotonic() - started
             run.messages = messages
             self._active_runs.pop(run.run_id, None)
             self._active_tasks.pop(run.run_id, None)
+            self._finish_run(run, started)
             self._record_run(run)
         return run
 
     def active_count(self) -> int:
         return len(self._active_runs)
 
+    def list_active_runs(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "run_id": run.run_id,
+                "parent_turn_id": run.parent_turn_id,
+                "status": run.status,
+                "role": run.role,
+                "task": run.task,
+                "started_at": run.started_at,
+                "duration": round(_seconds_since(run.started_at), 3),
+                "usage": dict(run.usage),
+                "limits": dict(run.limits),
+                "quota": dict(run.quota),
+                "stop_requested": bool(run.stop_requested),
+                "active": True,
+            }
+            for run in self._active_runs.values()
+        ]
+
     def cancel_all(self) -> int:
         count = len(self._active_tasks)
+        for run in self._active_runs.values():
+            run.stop_requested = True
         for task in list(self._active_tasks.values()):
             task.cancel()
         return count
@@ -316,7 +372,7 @@ class AgentRuntime:
                 if not line.strip():
                     continue
                 data = json.loads(line)
-                self._runs.append(AgentRun(**data))
+                self._runs.append(_agent_run_from_dict(data))
         except Exception:
             self._runs.clear()
 
@@ -389,11 +445,11 @@ class AgentRuntime:
         allow_destructive: bool,
     ) -> tuple[str, str]:
         if name in NEVER_DELEGATE:
-            return "recursive delegation tools are not available to sub-agents", "policy"
+            return "recursive delegation tools are not available to sub-agents", "recursive"
         if name in DESTRUCTIVE_TOOLS and not allow_destructive:
-            return "destructive tool requires explicit sub-agent authorization", "policy"
+            return "destructive tool requires explicit sub-agent authorization", "destructive"
         if self._registered_tool_is_destructive(name) and not allow_destructive:
-            return "destructive tool requires explicit sub-agent authorization", "policy"
+            return "destructive tool requires explicit sub-agent authorization", "destructive"
         if name not in allowed:
             if policy_name == "none":
                 return "tool_policy=none grants no tools", "policy"
@@ -422,14 +478,18 @@ class AgentRuntime:
                 category = "quota"
             elif not name:
                 reason = "tool call has no name"
-            elif name not in granted_tools:
-                reason = "tool was not granted to this sub-agent"
+                category = "invalid"
             elif name in NEVER_DELEGATE:
                 reason = "recursive delegation tools are not available to sub-agents"
+                category = "recursive"
             elif name in DESTRUCTIVE_TOOLS and not allow_destructive:
                 reason = "destructive tool requires explicit sub-agent authorization"
+                category = "destructive"
             elif self._registered_tool_is_destructive(name) and not allow_destructive:
                 reason = "destructive tool requires explicit sub-agent authorization"
+                category = "destructive"
+            elif name not in granted_tools:
+                reason = "tool was not granted to this sub-agent"
             decisions[call_id] = ToolCallDecision(
                 call_id=call_id,
                 name=name,
@@ -566,6 +626,7 @@ class AgentRuntime:
                 result_summary["denied"] = True
                 result_summary["denial_category"] = decision.category
                 result_summary["denial_reason"] = decision.reason
+                result_summary["denial_phase"] = decision.phase
             run.tool_results.append(result_summary)
 
         result_blocks = []
@@ -579,8 +640,64 @@ class AgentRuntime:
         messages.append({"role": "user", "content": result_blocks})
 
     def _accumulate_usage(self, target: dict[str, int], usage: dict[str, int]) -> None:
-        for key in ("input_tokens", "output_tokens"):
-            target[key] = target.get(key, 0) + int(usage.get(key, 0) or 0)
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            if key in usage or key in target:
+                target[key] = target.get(key, 0) + int(usage.get(key, 0) or 0)
+        self._sync_quota_usage(target)
+
+    def _sync_quota_usage(self, usage: dict[str, int]) -> int:
+        if usage.get("total_tokens"):
+            return int(usage.get("total_tokens", 0) or 0)
+        return int(usage.get("input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0)
+
+    def _mark_token_quota_if_exceeded(self, run: AgentRun) -> bool:
+        used = self._sync_quota_usage(run.usage)
+        max_tokens = int(run.quota.get("max_tokens", run.limits.get("max_tokens", self.max_tokens)) or self.max_tokens)
+        run.quota.update({
+            "max_tokens": max_tokens,
+            "used_tokens": used,
+            "over_token_quota": used > max_tokens,
+        })
+        if used <= max_tokens:
+            return False
+        run.status = "quota_exceeded"
+        run.error_type = "quota"
+        run.error_message = f"token quota exceeded ({used}/{max_tokens})"
+        run.result = f"Error: delegated agent quota exceeded: token quota exceeded ({used}/{max_tokens})"
+        return True
+
+    def _finish_run(self, run: AgentRun, started: float) -> None:
+        run.duration = time.monotonic() - started
+        run.finished_at = _utc_now()
+        if run.status in {"running", "completed"}:
+            self._mark_token_quota_if_exceeded(run)
+        else:
+            used = self._sync_quota_usage(run.usage)
+            max_tokens = int(run.quota.get("max_tokens", run.limits.get("max_tokens", self.max_tokens)) or self.max_tokens)
+            run.quota.update({
+                "max_tokens": max_tokens,
+                "used_tokens": used,
+                "over_token_quota": used > max_tokens,
+            })
+        run.diagnostics = self._build_diagnostics(run)
+
+    def _build_diagnostics(self, run: AgentRun) -> dict[str, Any]:
+        denial_categories = _denial_categories(run)
+        return {
+            "schema_version": run.schema_version,
+            "status": run.status,
+            "error_type": run.error_type,
+            "error_message": run.error_message,
+            "stop_requested": bool(run.stop_requested),
+            "quota": dict(run.quota),
+            "denial_categories": denial_categories,
+            "tool_calls_requested": len(run.tool_calls),
+            "tool_calls_executed": len(run.executed_tool_calls),
+            "tool_calls_denied": len(run.denied_tool_calls),
+            "tools_denied_by_policy": len(run.denied_tools),
+            "tool_results": len(run.tool_results),
+            "usage": dict(run.usage),
+        }
 
 
 def _extract_json(text: str, schema: dict) -> dict | None:
@@ -615,6 +732,8 @@ def _looks_like_error(text: str) -> bool:
 
 
 def _summarize_value(value: Any, *, max_chars: int = 500) -> str:
+    if isinstance(value, (bytes, bytearray)):
+        return f"[bytes: {len(value)}]"
     try:
         text = json.dumps(value, ensure_ascii=False, sort_keys=True)
     except TypeError:
@@ -635,3 +754,33 @@ def _validate_schema(obj: Any, schema: dict) -> bool:
     if not isinstance(obj, dict):
         return False
     return all(key in obj for key in schema.get("required", []))
+
+
+def _denial_categories(run: AgentRun) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in [*run.denied_tool_calls, *run.denied_tools]:
+        category = str(item.get("category", "policy") or "policy")
+        counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+def _agent_run_from_dict(data: dict[str, Any]) -> AgentRun:
+    allowed = {item.name for item in fields(AgentRun)}
+    filtered = {key: value for key, value in data.items() if key in allowed}
+    return AgentRun(**filtered)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _seconds_since(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        started = datetime.fromisoformat(value)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+    except ValueError:
+        return 0.0

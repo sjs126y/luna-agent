@@ -37,6 +37,12 @@ async def test_agent_runtime_defaults_to_readonly_tools():
     assert run.tool_policy == "readonly"
     assert run.result == "done"
     assert run.usage == {"input_tokens": 3, "output_tokens": 2}
+    assert run.schema_version == 3
+    assert run.started_at
+    assert run.finished_at
+    assert run.quota == {"max_tokens": 100, "used_tokens": 5, "over_token_quota": False}
+    assert run.diagnostics["status"] == "completed"
+    assert run.diagnostics["denial_categories"] == {"destructive": 1, "recursive": 1}
     assert run.granted_tools == ["read"]
     assert [item["name"] for item in run.denied_tools] == ["write", "delegate_task"]
     assert seen_tool_names == [["read"]]
@@ -68,7 +74,7 @@ async def test_agent_runtime_blocks_destructive_even_with_all_policy():
         "name": "bash",
         "allowed": False,
         "reason": "destructive tool requires explicit sub-agent authorization",
-        "category": "policy",
+        "category": "destructive",
         "phase": "selection",
     }]
 
@@ -149,6 +155,37 @@ async def test_agent_runtime_clamps_max_tokens():
 
 
 @pytest.mark.asyncio
+async def test_agent_runtime_marks_token_quota_exceeded_and_skips_followup():
+    calls = 0
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        nonlocal calls
+        calls += 1
+        return NormalizedResponse(
+            text="need tool",
+            usage={"input_tokens": 60, "output_tokens": 50},
+            tool_calls=[{"id": "toolu_1", "name": "read", "input": {}}],
+        )
+
+    runtime = AgentRuntime(
+        call_fn=call_fn,
+        tools=[{"name": "read", "description": "read", "input_schema": {}}],
+        max_tokens=100,
+    )
+
+    run = await runtime.run("too many tokens", AgentSpec(role="assistant"))
+
+    assert calls == 1
+    assert run.status == "quota_exceeded"
+    assert run.error_type == "quota"
+    assert "token quota exceeded" in run.error_message
+    assert run.quota == {"max_tokens": 100, "used_tokens": 110, "over_token_quota": True}
+    assert run.tool_calls == [{"id": "toolu_1", "name": "read", "input": {}}]
+    assert run.executed_tool_calls == []
+    assert run.diagnostics["quota"]["over_token_quota"] is True
+
+
+@pytest.mark.asyncio
 async def test_agent_runtime_denies_ungranted_tool_call_and_continues():
     call_count = 0
     final_messages = []
@@ -186,17 +223,19 @@ async def test_agent_runtime_denies_ungranted_tool_call_and_continues():
         "call_id": "toolu_1",
         "name": "write",
         "allowed": False,
-        "reason": "tool was not granted to this sub-agent",
-        "category": "policy",
+        "reason": "destructive tool requires explicit sub-agent authorization",
+        "category": "destructive",
+        "phase": "call",
     }]
     assert run.tool_results == [{
         "id": "toolu_1",
         "name": "write",
         "input_summary": '{"content": "no", "path": "x.txt"}',
-        "result_summary": "Error: sub-agent tool call 'write' denied: tool was not granted to this sub-agent",
+        "result_summary": "Error: sub-agent tool call 'write' denied: destructive tool requires explicit sub-agent authorization",
         "denied": True,
-        "denial_category": "policy",
-        "denial_reason": "tool was not granted to this sub-agent",
+        "denial_category": "destructive",
+        "denial_reason": "destructive tool requires explicit sub-agent authorization",
+        "denial_phase": "call",
     }]
     assert "denied" in final_messages[-2]["content"][0]["content"]
 
@@ -274,6 +313,7 @@ async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
         "allowed": False,
         "reason": "sub-agent tool call quota exceeded (1)",
         "category": "quota",
+        "phase": "call",
     }]
     assert run.tool_results[0]["result_summary"] == "ok"
     assert run.tool_results[1]["denial_category"] == "quota"
@@ -406,6 +446,11 @@ async def test_agent_runtime_rejects_runs_over_concurrency_quota():
     first_task = asyncio.create_task(runtime.run("first", AgentSpec(role="assistant")))
     await started.wait()
 
+    active = runtime.list_active_runs()
+    assert len(active) == 1
+    assert active[0]["task"] == "first"
+    assert active[0]["active"] is True
+
     second = await runtime.run("second", AgentSpec(role="assistant"))
     release.set()
     first = await first_task
@@ -433,7 +478,10 @@ async def test_agent_runtime_cancel_all_marks_active_run_cancelled():
 
     assert stopped == 1
     assert run.status == "cancelled"
+    assert run.stop_requested is True
+    assert run.error_type == "cancelled"
     assert run.result == "Error: delegated agent stopped"
+    assert run.diagnostics["stop_requested"] is True
     assert runtime.active_count() == 0
 
 
@@ -453,3 +501,20 @@ async def test_agent_runtime_persists_runs_to_jsonl(tmp_path):
     assert loaded.get_run(run.run_id).task == "persist me"
     loaded.clear_runs()
     assert not path.exists()
+
+
+def test_agent_runtime_loads_legacy_run_records(tmp_path):
+    path = tmp_path / "legacy.jsonl"
+    path.write_text(
+        '{"schema_version":2,"run_id":"old","parent_turn_id":"","status":"completed","result":"ok"}\n',
+        encoding="utf-8",
+    )
+
+    runtime = AgentRuntime(run_store_path=path)
+    run = runtime.get_run("old")
+
+    assert run is not None
+    assert run.schema_version == 2
+    assert run.result == "ok"
+    assert run.quota == {}
+    assert run.diagnostics == {}

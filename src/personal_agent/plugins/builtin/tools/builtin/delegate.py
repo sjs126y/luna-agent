@@ -64,6 +64,10 @@ def list_agent_runs(limit: int | None = None) -> list[dict]:
     return [_agent_run_summary(run) for run in _agent_runtime.list_runs(limit=limit)]
 
 
+def list_active_agent_runs() -> list[dict]:
+    return _agent_runtime.list_active_runs()
+
+
 def get_agent_run(run_id: str):
     return _agent_runtime.get_run(run_id)
 
@@ -84,17 +88,37 @@ def active_delegate_agents() -> int:
 
 def format_agent_runs(limit: int | None = None) -> str:
     runs = list_agent_runs(limit=limit)
-    if not runs:
+    active_runs = list_active_agent_runs()
+    if not runs and not active_runs:
         return "暂无子 agent 运行记录。"
-    lines = ["子 agent 运行记录:"]
+    lines = []
+    if active_runs:
+        lines.append("运行中的子 agent:")
+        for item in active_runs:
+            usage = item.get("usage", {})
+            lines.append(
+                f"- {item['run_id']} [running] role={item.get('role') or '-'} "
+                f"duration={item.get('duration', 0):.2f}s "
+                f"used={item.get('quota', {}).get('used_tokens', 0)}/"
+                f"{item.get('quota', {}).get('max_tokens', 0)} "
+                f"stop_requested={_yes(bool(item.get('stop_requested')))} "
+                f"input={usage.get('input_tokens', 0)} output={usage.get('output_tokens', 0)} "
+                f"task={_shorten(item.get('task', ''), 48)}"
+            )
+    if runs:
+        if lines:
+            lines.append("")
+        lines.append("子 agent 运行记录:")
     for item in runs:
         usage = item["usage"]
         result = _shorten(item.get("result", ""), 80)
+        quota = item.get("quota", {})
         lines.append(
             f"- {item['run_id']} [{item['status']}] role={item['role']} "
             f"duration={item['duration']:.2f}s input={usage.get('input_tokens', 0)} "
             f"output={usage.get('output_tokens', 0)} tools={item['executed_tool_calls']} "
-            f"denied={item['denied_tool_calls']} "
+            f"denied={item['denied_tool_calls']} quota={quota.get('used_tokens', 0)}/"
+            f"{quota.get('max_tokens', 0)} "
             f"task={_shorten(item.get('task', ''), 48)} result={result}"
         )
     return "\n".join(lines)
@@ -115,13 +139,20 @@ def format_agent_run(run_id: str) -> str:
         f"工具策略: {run.tool_policy or '-'}",
         f"授予工具: {_join_or_dash(run.granted_tools)}",
         f"运行限制: {_format_limits(run.limits)}",
+        f"配额: {_format_quota(run.quota)}",
         f"父 turn: {run.parent_turn_id or '-'}",
+        f"开始时间: {run.started_at or '-'}",
+        f"结束时间: {run.finished_at or '-'}",
         f"耗时: {run.duration:.2f}s",
+        f"stop requested: {_yes(run.stop_requested)}",
+        f"错误类型: {run.error_type or '-'}",
+        f"错误信息: {run.error_message or '-'}",
         f"输入 tokens: {usage.get('input_tokens', 0)}",
         f"输出 tokens: {usage.get('output_tokens', 0)}",
         f"工具请求: {len(run.tool_calls)}" + (f" ({', '.join(requested_tool_names)})" if requested_tool_names else ""),
         f"已执行工具: {len(run.executed_tool_calls)}" + (f" ({', '.join(executed_tool_names)})" if executed_tool_names else ""),
         f"拒绝工具调用: {len(run.denied_tool_calls)}",
+        f"拒绝分类: {_format_category_counts(run.diagnostics.get('denial_categories') or _denial_categories(run))}",
     ]
     if run.tool_results:
         lines.append(f"工具结果摘要: {len(run.tool_results)}")
@@ -352,9 +383,17 @@ def _agent_run_summary(run) -> dict:
         "model": run.model,
         "status": run.status,
         "status_description": _status_description(run.status),
+        "active": False,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
         "duration": round(run.duration, 3),
         "usage": dict(run.usage),
         "limits": dict(run.limits),
+        "quota": dict(run.quota),
+        "error_type": run.error_type,
+        "error_message": run.error_message,
+        "stop_requested": run.stop_requested,
+        "diagnostics": dict(run.diagnostics),
         "granted_tools": list(run.granted_tools),
         "tool_calls": len(run.tool_calls),
         "executed_tool_calls": len(run.executed_tool_calls),
@@ -412,6 +451,21 @@ def _format_limits(limits: dict) -> str:
     return ", ".join(f"{key}={value}" for key, value in limits.items())
 
 
+def _format_quota(quota: dict) -> str:
+    if not quota:
+        return "-"
+    used = quota.get("used_tokens", 0)
+    max_tokens = quota.get("max_tokens", 0)
+    over = " over=true" if quota.get("over_token_quota") else ""
+    return f"tokens={used}/{max_tokens}{over}"
+
+
+def _format_category_counts(counts: dict) -> str:
+    if not counts:
+        return "-"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+
+
 def _format_denials(denials: list[dict]) -> list[str]:
     lines = []
     for item in denials:
@@ -434,6 +488,7 @@ def _format_tool_results(results: list[dict]) -> list[str]:
         if item.get("denied"):
             suffix = (
                 f" category={item.get('denial_category', '-')}"
+                f" phase={item.get('denial_phase', '-')}"
                 f" reason={_shorten(str(item.get('denial_reason', '')), 80)}"
             )
         lines.append(
@@ -459,6 +514,10 @@ def _shorten(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max(0, max_chars - 1)] + "…"
+
+
+def _yes(value: bool) -> str:
+    return "是" if value else "否"
 
 
 tool_registry.register(ToolEntry(

@@ -377,13 +377,17 @@ async def test_delegate_records_denied_tool_calls_in_detail():
 
     assert "denied-ok" in result
     assert "denied=1" in result
-    assert summary["denial_categories"] == {"policy": 2}
+    assert summary["denial_categories"] == {"destructive": 2}
     assert summary["denied_tool_call_details"][0]["name"] == "write"
+    assert summary["denied_tool_call_details"][0]["phase"] == "call"
     assert summary["tool_result_summaries"][0]["denied"] is True
     assert "状态: completed (已完成)" in detail
+    assert "配额: tokens=0/100" in detail
+    assert "错误类型: -" in detail
     assert "拒绝工具调用: 1" in detail
     assert "工具结果摘要: 1" in detail
-    assert "category=policy" in detail
+    assert "category=destructive" in detail
+    assert "phase=call" in detail
     assert "write" in detail
 
 
@@ -413,8 +417,10 @@ async def test_delegate_lists_agent_run_summaries():
     assert runs[0]["task"] == "summarize"
     assert runs[0]["status"] == "completed"
     assert runs[0]["usage"] == {"input_tokens": 1, "output_tokens": 2}
-    assert runs[0]["schema_version"] == 2
+    assert runs[0]["schema_version"] == 3
     assert runs[0]["status_description"] == "已完成"
+    assert runs[0]["quota"] == {"max_tokens": 100, "used_tokens": 3, "over_token_quota": False}
+    assert runs[0]["diagnostics"]["status"] == "completed"
     assert runs[0]["tool_calls"] == 0
     assert runs[0]["run_id"] in format_agent_runs()
     assert "summary-ok" in format_agent_run(runs[0]["run_id"])
@@ -474,6 +480,7 @@ async def test_delegate_stop_cancels_running_agent():
     assert stopped == 1
     assert "stopped" in result
     assert runs[0]["status"] == "cancelled"
+    assert runs[0]["stop_requested"] is True
 
 
 # ── tools are registered ────────────────────────────────

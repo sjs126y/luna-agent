@@ -536,11 +536,15 @@ def agents_list(
     _load_agent_run_store()
     from personal_agent.plugins.builtin.tools.builtin.delegate import (
         format_agent_runs,
+        list_active_agent_runs,
         list_agent_runs,
     )
 
     if json_output:
-        typer.echo(_json_dumps(list_agent_runs(limit=limit)))
+        typer.echo(_json_dumps({
+            "runs": list_agent_runs(limit=limit),
+            "active_runs": list_active_agent_runs(),
+        }))
     else:
         typer.echo(format_agent_runs(limit=limit))
 
