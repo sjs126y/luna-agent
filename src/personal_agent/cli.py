@@ -22,10 +22,12 @@ app = typer.Typer(help="Personal Agent")
 plugins_app = typer.Typer(help="Manage plugins")
 tokens_app = typer.Typer(help="Estimate token/context usage")
 agents_app = typer.Typer(help="Run controlled agent helpers")
+memory_app = typer.Typer(help="Inspect and manage memory")
 
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(tokens_app, name="tokens")
 app.add_typer(agents_app, name="agents")
+app.add_typer(memory_app, name="memory")
 
 
 _CONFIG_TEMPLATE = """# Personal Agent minimal configuration
@@ -367,6 +369,91 @@ def agents_workflow(name: str, args: str = "{}") -> None:
     asyncio.run(_run())
 
 
+@memory_app.command("doctor")
+def memory_doctor(json_output: bool = typer.Option(False, "--json", help="输出 JSON。")) -> None:
+    """Show memory provider and review diagnostics."""
+    async def _run() -> None:
+        report = await _memory_report()
+        if json_output:
+            typer.echo(_json_dumps(report))
+        else:
+            typer.echo(format_memory_doctor(report))
+
+    asyncio.run(_run())
+
+
+@memory_app.command("list")
+def memory_list(
+    target: str = typer.Option("all", "--target", "-t", help="all|memory|user|external"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """List memory entries."""
+    async def _run() -> None:
+        entries = await _memory_entries(target=target)
+        if json_output:
+            typer.echo(_json_dumps(entries))
+        else:
+            typer.echo(format_memory_entries(entries))
+
+    asyncio.run(_run())
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str,
+    target: str = typer.Option("all", "--target", "-t", help="all|memory|user|external"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """Search memory entries."""
+    async def _run() -> None:
+        entries = await _memory_search_entries(query, target=target)
+        if json_output:
+            typer.echo(_json_dumps(entries))
+        else:
+            typer.echo(format_memory_entries(entries, title="记忆搜索结果"))
+
+    asyncio.run(_run())
+
+
+@memory_app.command("show")
+def memory_show(
+    identifier: str,
+    target: str = typer.Option("all", "--target", "-t", help="all|memory|user|external"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """Show one memory entry by id or index."""
+    async def _run() -> None:
+        entry = await _memory_entry(identifier, target=target)
+        if entry is None:
+            _exit_error(f"未找到记忆: {identifier}")
+        if json_output:
+            typer.echo(_json_dumps(entry))
+        else:
+            typer.echo(format_memory_entry(entry))
+
+    asyncio.run(_run())
+
+
+@memory_app.command("delete")
+def memory_delete(
+    identifier: str,
+    target: str = typer.Option("all", "--target", "-t", help="all|memory|user|external"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认。"),
+) -> None:
+    """Delete one memory entry by id or index."""
+    if not yes and not typer.confirm(f"确认删除记忆 {identifier}?"):
+        typer.echo("已取消。")
+        return
+
+    async def _run() -> None:
+        deleted = await _memory_delete(identifier, target=target)
+        if not deleted:
+            _exit_error(f"未找到或无法删除记忆: {identifier}")
+        typer.echo(f"已删除记忆: {identifier}")
+
+    asyncio.run(_run())
+
+
 def _plugin_manager(settings: Settings | None = None) -> PluginManager:
     settings = settings or Settings()
     manager = PluginManager(settings)
@@ -395,6 +482,59 @@ def _load_agent_run_store(settings: Settings | None = None) -> Settings:
     return settings
 
 
+async def _with_app_runtime(callback):
+    from personal_agent.runtime import create_app_runtime
+
+    runtime = await create_app_runtime(Settings())
+    try:
+        return await callback(runtime)
+    finally:
+        await runtime.close()
+
+
+async def _memory_report() -> dict[str, Any]:
+    async def _collect(runtime):
+        memory = await runtime.memory_manager.health_snapshot()
+        memory.update({
+            "provider": runtime.settings.memory_provider,
+            "external_provider_config": runtime.settings.memory_external_provider,
+            "review_service": type(runtime.memory_review_service).__name__,
+            "review_enabled": bool(getattr(runtime.memory_review_service, "enabled", False)),
+            "review": runtime.memory_review_service.health_snapshot(),
+        })
+        return memory
+
+    return await _with_app_runtime(_collect)
+
+
+async def _memory_entries(*, target: str) -> list[dict[str, Any]]:
+    async def _collect(runtime):
+        return await runtime.memory_manager.list_entries(target=target)
+
+    return await _with_app_runtime(_collect)
+
+
+async def _memory_search_entries(query: str, *, target: str) -> list[dict[str, Any]]:
+    async def _collect(runtime):
+        return await runtime.memory_manager.search_entries(query, target=target)
+
+    return await _with_app_runtime(_collect)
+
+
+async def _memory_entry(identifier: str, *, target: str) -> dict[str, Any] | None:
+    async def _collect(runtime):
+        return await runtime.memory_manager.get_entry(identifier, target=target)
+
+    return await _with_app_runtime(_collect)
+
+
+async def _memory_delete(identifier: str, *, target: str) -> bool:
+    async def _collect(runtime):
+        return await runtime.memory_manager.delete(identifier, target=target)
+
+    return await _with_app_runtime(_collect)
+
+
 def _write_template(path: Path, content: str, *, force: bool) -> tuple[Path, str]:
     existed = path.exists()
     if existed and not force:
@@ -419,19 +559,14 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
             "initialized": True,
             "error": "",
         })
-        memory = {
+        memory = await runtime.memory_manager.health_snapshot()
+        memory.update({
             "provider": settings.memory_provider,
             "external_provider_config": settings.memory_external_provider,
-            "builtin_available": runtime.memory_manager.builtin is not None,
-            "builtin_provider": type(runtime.memory_manager.builtin).__name__,
-            "external_provider": (
-                type(runtime.memory_manager.external).__name__
-                if runtime.memory_manager.external is not None else ""
-            ),
-            "external_available": runtime.memory_manager.external is not None,
             "review_service": type(runtime.memory_review_service).__name__,
             "review_enabled": bool(getattr(runtime.memory_review_service, "enabled", False)),
-        }
+            "review": runtime.memory_review_service.health_snapshot(),
+        })
         plugins = [
             runtime.plugin_manager.doctor_plugin(plugin.key)
             for plugin in runtime.plugin_manager.list_plugins()
@@ -452,6 +587,7 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
                 "mcp_running": False,
                 "gateway_created": False,
                 "gateway_running": False,
+                "gateway": {},
                 "plugins": 0,
                 "cached_agents": 0,
                 "closed": True,
@@ -465,6 +601,9 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
                 "external_available": False,
                 "review_service": "",
                 "review_enabled": False,
+                "providers": {},
+                "review": {},
+                "last_errors": {},
             },
             "_plugins": None,
         }
@@ -530,6 +669,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
             "status": plugin["status"],
             "missing_env": plugin["missing_env"],
             "enabled": plugin["enabled"],
+            "health": _platform_health_for_plugin(runtime_health["runtime"].get("gateway", {}), plugin),
         }
         for plugin in plugins
         if plugin.get("kind") == "platform"
@@ -543,6 +683,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "mcp_enabled": settings.mcp_enabled,
         "runtime": runtime_health["runtime"],
         "memory": runtime_health["memory"],
+        "gateway": runtime_health["runtime"].get("gateway", {}),
         "agents": {
             "max_concurrent_runs": settings.agent_runtime_max_concurrent_runs,
             "max_tool_calls": settings.agent_runtime_max_tool_calls,
@@ -566,6 +707,7 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     plugin_summary = _plugin_status_summary(report["plugins"])
     runtime = report.get("runtime", {})
     memory = report.get("memory", {})
+    gateway = report.get("gateway", {})
     lines = [
         "Personal Agent 诊断",
         f"总体状态: {'需要注意' if issues else '正常'}",
@@ -591,11 +733,23 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  cached agents: {runtime.get('cached_agents', 0)}",
         f"  runtime 错误: {runtime.get('error') or '-'}",
         "",
+        "Gateway:",
+        f"  started: {_yes(gateway.get('started', False))}",
+        f"  adapters: {gateway.get('adapter_count', 0)}",
+        f"  running agents: {gateway.get('running_agents', 0)}",
+        f"  pending messages: {gateway.get('pending_messages', 0)}",
+        f"  active adapter sessions: {gateway.get('active_adapter_sessions', 0)}",
+        f"  cron enabled: {_yes(gateway.get('cron_enabled', False))}",
+        "",
         "Memory:",
         f"  builtin provider: {memory.get('builtin_provider') or '-'}",
         f"  external provider: {memory.get('external_provider') or '-'}",
         f"  review service: {memory.get('review_service') or '-'}",
         f"  review enabled: {_yes(memory.get('review_enabled', False))}",
+        f"  builtin entries: {memory.get('providers', {}).get('builtin', {}).get('entries', 0)}",
+        f"  external entries: {memory.get('providers', {}).get('external', {}).get('entries', 0)}",
+        f"  review active: {_yes(memory.get('review', {}).get('active', False))}",
+        f"  review last error: {memory.get('review', {}).get('last_error') or '-'}",
         "",
         "Agents:",
         f"  max concurrent runs: {report.get('agents', {}).get('max_concurrent_runs', 0)}",
@@ -622,9 +776,13 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     if report["platforms"]:
         for platform in report["platforms"]:
             missing = _list_or_none(platform["missing_env"])
+            health = platform.get("health") or {}
+            connected = _yes(bool(health.get("connected", False))) if health else "-"
+            error = health.get("last_connect_error") or health.get("last_send_error") or "-"
             lines.append(
                 f"  - {platform['key']}: 状态={platform['status']} "
-                f"启用={_yes(platform['enabled'])} 缺失环境变量={missing}"
+                f"启用={_yes(platform['enabled'])} 缺失环境变量={missing} "
+                f"connected={connected} error={error}"
             )
     else:
         lines.append("  - 无")
@@ -647,6 +805,84 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     else:
         lines.append("  - 无")
     return "\n".join(lines)
+
+
+def format_memory_doctor(report: dict[str, Any]) -> str:
+    providers = report.get("providers", {})
+    builtin = providers.get("builtin", {})
+    external = providers.get("external", {})
+    review = report.get("review", {})
+    lines = [
+        "Memory 诊断",
+        f"builtin provider: {report.get('builtin_provider') or '-'} [{_status(bool(report.get('builtin_available')))}]",
+        f"external provider: {report.get('external_provider') or '-'} [{_status(bool(report.get('external_available')))}]",
+        f"配置 builtin: {report.get('provider') or '-'}",
+        f"配置 external: {report.get('external_provider_config') or '-'}",
+        "",
+        "Providers:",
+        _format_memory_provider("builtin", builtin),
+        _format_memory_provider("external", external),
+        "",
+        "Review:",
+        f"  service: {report.get('review_service') or '-'}",
+        f"  enabled: {_yes(review.get('enabled', report.get('review_enabled', False)))}",
+        f"  active: {_yes(review.get('active', False))}",
+        f"  cancel requested: {_yes(review.get('cancel_requested', False))}",
+        f"  spawn count: {review.get('spawn_count', 0)}",
+        f"  saved count: {review.get('saved_count', 0)}",
+        f"  last started: {review.get('last_started') or '-'}",
+        f"  last finished: {review.get('last_finished') or '-'}",
+        f"  last error: {review.get('last_error') or '-'}",
+    ]
+    errors = report.get("last_errors") or {}
+    if errors:
+        lines.extend(["", "最近错误:"])
+        lines.extend(f"  - {name}: {error}" for name, error in errors.items())
+    return "\n".join(lines)
+
+
+def _format_memory_provider(name: str, data: dict[str, Any]) -> str:
+    if not data:
+        return f"  - {name}: 未配置"
+    parts = [
+        f"  - {name}: {data.get('provider') or '-'}",
+        f"available={_yes(bool(data.get('available')))}",
+        f"entries={data.get('entries', 0)}",
+    ]
+    if data.get("memory_entries") is not None:
+        parts.append(f"memory={data.get('memory_entries', 0)}")
+    if data.get("user_entries") is not None:
+        parts.append(f"user={data.get('user_entries', 0)}")
+    if data.get("model"):
+        parts.append(f"model={data.get('model')}")
+    if data.get("last_error"):
+        parts.append(f"error={data.get('last_error')}")
+    return " ".join(parts)
+
+
+def format_memory_entries(entries: list[dict[str, Any]], *, title: str = "记忆列表") -> str:
+    if not entries:
+        return f"{title}: 无"
+    lines = [f"{title}: {len(entries)} 条"]
+    for entry in entries:
+        label = entry.get("id") or entry.get("index") or "-"
+        provider = entry.get("provider") or "-"
+        target = entry.get("target") or "-"
+        text = _short_text(str(entry.get("text", "")), 120)
+        lines.append(f"- {label} [{provider}/{target}] {text}")
+    return "\n".join(lines)
+
+
+def format_memory_entry(entry: dict[str, Any]) -> str:
+    return "\n".join([
+        f"记忆: {entry.get('id') or entry.get('index') or '-'}",
+        f"provider: {entry.get('provider') or '-'}",
+        f"target: {entry.get('target') or '-'}",
+        f"created_at: {entry.get('created_at') or '-'}",
+        f"path: {entry.get('path') or '-'}",
+        "",
+        str(entry.get("text", "")),
+    ])
 
 
 def format_plugin_list(reports: list[dict[str, Any]], *, include_summary: bool = True) -> str:
@@ -758,6 +994,11 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
     memory = report.get("memory", {})
     if memory and not memory.get("builtin_available", False):
         issues.append("内置 memory provider 不可用。")
+    for name, provider in (memory.get("providers") or {}).items():
+        if provider and provider.get("last_error"):
+            issues.append(f"Memory provider {name} 错误: {provider['last_error']}")
+    if (memory.get("review") or {}).get("last_error"):
+        issues.append(f"Memory review 错误: {memory['review']['last_error']}")
 
     for root in report["sandbox"]["roots"]:
         if not root["exists"]:
@@ -766,6 +1007,12 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
     for server in report["mcp_servers"]:
         if server["enabled"] and not server["command_found"]:
             issues.append(f"MCP 服务器 {server['name']} 的命令不可用: {server['command'] or '-'}")
+
+    for platform in (report.get("gateway") or {}).get("platforms", []):
+        if platform.get("last_connect_error"):
+            issues.append(f"平台 {platform.get('name') or '-'} 连接失败: {platform['last_connect_error']}")
+        if platform.get("last_send_error"):
+            issues.append(f"平台 {platform.get('name') or '-'} 发送失败: {platform['last_send_error']}")
 
     tokenizer = report["tokenizer"]
     if tokenizer.get("fallback_active"):
@@ -817,6 +1064,14 @@ def _plugin_group_label(report: dict[str, Any]) -> str:
     if source == "builtin" or key.startswith("builtin/"):
         return "内置插件"
     return "用户插件"
+
+
+def _platform_health_for_plugin(gateway: dict[str, Any], plugin: dict[str, Any]) -> dict[str, Any]:
+    name = str(plugin.get("key", "")).split("/")[-1]
+    for item in gateway.get("platforms", []) or []:
+        if item.get("name") == name:
+            return dict(item)
+    return {}
 
 
 def _plugin_issue_summary(report: dict[str, Any]) -> str:
@@ -886,6 +1141,13 @@ def _entrypoint_status_text(report: dict[str, Any]) -> str:
 def _list_or_none(items) -> str:
     values = list(items or [])
     return ", ".join(str(item) for item in values) if values else "无"
+
+
+def _short_text(text: str, max_chars: int) -> str:
+    value = " ".join(str(text).split())
+    if len(value) <= max_chars:
+        return value
+    return value[: max(0, max_chars - 1)] + "…"
 
 
 def _agent_run_to_dict(run) -> dict[str, Any]:

@@ -85,6 +85,12 @@ class BasePlatformAdapter(ABC):
         self._pending_messages: dict[str, list[MessageEvent]] = {}
         self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self.hooks = Hooks()
+        self._platform_name = type(self).__name__
+        self._connected = False
+        self._last_connected_at = ""
+        self._last_disconnected_at = ""
+        self._last_connect_error = ""
+        self._last_send_error = ""
 
     # ── abstract methods (subclass MUST implement) ───
 
@@ -153,9 +159,11 @@ class BasePlatformAdapter(ABC):
             try:
                 result = await self.send(chat_id, content)
                 if result.success:
+                    self._last_send_error = ""
                     return
 
                 error_lower = (result.error or "").lower()
+                self._last_send_error = result.error or "send failed"
 
                 # Timeout → never retry (message may have been delivered)
                 if "timeout" in error_lower or "timed out" in error_lower:
@@ -176,10 +184,12 @@ class BasePlatformAdapter(ABC):
                     logger.error("Send failed after %d retries: %s", max_retries, result.error)
 
             except asyncio.TimeoutError:
+                self._last_send_error = "timeout"
                 logger.error("Send timeout (attempt %d) — not retrying", attempt + 1)
                 return
             except Exception as exc:
                 error_msg = str(exc).lower()
+                self._last_send_error = f"{type(exc).__name__}: {exc}"
                 # Timeout in exception → don't retry
                 if "timeout" in error_msg or "timed out" in error_msg:
                     logger.error("Send timeout exception (attempt %d)", attempt + 1)
@@ -204,6 +214,38 @@ class BasePlatformAdapter(ABC):
         """Optional typing indicator — override in subclass if platform supports it."""
         pass
 
+    def mark_connected(self, *, name: str | None = None) -> None:
+        if name:
+            self._platform_name = name
+        self._connected = True
+        self._last_connected_at = _now()
+        self._last_connect_error = ""
+
+    def mark_disconnected(self) -> None:
+        self._connected = False
+        self._last_disconnected_at = _now()
+
+    def mark_connect_error(self, error: str, *, name: str | None = None) -> None:
+        if name:
+            self._platform_name = name
+        self._connected = False
+        self._last_connect_error = error
+        self._last_disconnected_at = _now()
+
+    def health_snapshot(self) -> dict:
+        return {
+            "name": self._platform_name,
+            "adapter": type(self).__name__,
+            "connected": self._connected,
+            "last_connected_at": self._last_connected_at,
+            "last_disconnected_at": self._last_disconnected_at,
+            "last_connect_error": self._last_connect_error,
+            "last_send_error": self._last_send_error,
+            "active_sessions": len(self._active_sessions),
+            "pending_messages": sum(len(items) for items in self._pending_messages.values()),
+            "pending_session_count": len(self._pending_messages),
+        }
+
 
 def _strip_formatting(text: str) -> str:
     """Remove common Markdown formatting characters."""
@@ -213,3 +255,7 @@ def _strip_formatting(text: str) -> str:
     text = re.sub(r'`(.+?)`', r'\1', text)
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
     return text
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S")

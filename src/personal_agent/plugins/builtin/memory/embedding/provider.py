@@ -18,6 +18,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -112,6 +113,42 @@ class EmbeddingMemoryProvider(MemoryProvider):
     async def load_all(self) -> list[str]:
         return [t["text"] for t in self._texts]
 
+    async def list_entries(self, *, target: str = "all") -> list[dict[str, Any]]:
+        return [
+            {
+                "id": str(item.get("id", index)),
+                "index": index,
+                "target": "external",
+                "text": str(item.get("text", "")),
+                "created_at": str(item.get("created_at", "")),
+            }
+            for index, item in enumerate(self._texts, start=1)
+        ]
+
+    async def search_entries(self, query: str, *, target: str = "all") -> list[dict[str, Any]]:
+        results = await self.search(query)
+        entries = await self.list_entries(target=target)
+        by_text: dict[str, list[dict[str, Any]]] = {}
+        for entry in entries:
+            by_text.setdefault(str(entry.get("text", "")), []).append(entry)
+        matched: list[dict[str, Any]] = []
+        for text in results:
+            bucket = by_text.get(text)
+            if bucket:
+                matched.append(bucket.pop(0))
+        return matched
+
+    async def delete(self, identifier: str, *, target: str = "external") -> bool:
+        index = self._resolve_index(identifier)
+        if index is None:
+            return False
+        async with self._lock:
+            del self._texts[index]
+            if self._embeddings is not None and len(self._embeddings) > index:
+                self._embeddings = np.delete(self._embeddings, index, axis=0)
+            self._save_to_disk()
+        return True
+
     async def ingest_file(self, file_path: str, chunk_size: int = 800) -> int:
         """Chunk a file and embed each chunk. Supports txt, md, pdf, docx, and more.
         Returns number of chunks stored."""
@@ -131,6 +168,20 @@ class EmbeddingMemoryProvider(MemoryProvider):
 
     def get_system_prompt_text(self) -> str:
         return ""  # external memories go via prefetch → api_messages
+
+    def health_snapshot(self) -> dict[str, Any]:
+        return {
+            "provider": type(self).__name__,
+            "available": True,
+            "entries": len(self._texts),
+            "embeddings": int(len(self._embeddings)) if self._embeddings is not None else 0,
+            "model": self._model_name,
+            "model_loaded": self._model is not None,
+            "data_dir": str(self._dir),
+            "metadata_path": str(self._metadata_path),
+            "embeddings_path": str(self._embeddings_path),
+            "last_error": "",
+        }
 
     # ── internals ────────────────────────────────────
 
@@ -172,6 +223,20 @@ class EmbeddingMemoryProvider(MemoryProvider):
         )
         if self._embeddings is not None:
             np.save(self._embeddings_path, self._embeddings)
+
+    def _resolve_index(self, identifier: str) -> int | None:
+        raw = str(identifier).strip()
+        if raw.startswith("external:"):
+            raw = raw.split(":", 1)[1]
+        for index, item in enumerate(self._texts):
+            if str(item.get("id", "")) == raw:
+                return index
+        try:
+            numeric = int(raw)
+        except ValueError:
+            return None
+        index = numeric - 1
+        return index if 0 <= index < len(self._texts) else None
 
 
 def _fix_windows_symlinks(cache_dir: str) -> None:

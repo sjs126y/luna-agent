@@ -75,6 +75,7 @@ def test_memory_review_maybe_spawn_gates_and_starts_thread(monkeypatch):
         final_response="ok",
     ) is True
     assert started == [(True, "mem-review")]
+    assert service.health_snapshot()["spawn_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -100,6 +101,23 @@ async def test_memory_review_calls_transport_with_recent_messages_and_tools(monk
     assert call["tools"] == agent.tools
     assert call["max_tokens"] == 512
     assert executed == [(tool_calls, call["messages"], agent)]
+
+
+@pytest.mark.asyncio
+async def test_memory_review_records_status_and_errors():
+    ok_service = MemoryReviewService()
+    await ok_service.review(agent=Agent(Transport()), messages=_messages(1))
+
+    assert ok_service.health_snapshot()["active"] is False
+    assert ok_service.health_snapshot()["last_finished"]
+    assert ok_service.health_snapshot()["last_error"] == ""
+
+    bad_service = MemoryReviewService()
+    await bad_service.review(agent=Agent(Transport(exc=RuntimeError("boom"))), messages=_messages(1))
+
+    assert bad_service.health_snapshot()["last_error"] == "RuntimeError: boom"
+    assert bad_service.cancel() is False
+    assert bad_service.health_snapshot()["cancel_requested"] is True
 
 
 @pytest.mark.asyncio

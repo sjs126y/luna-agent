@@ -11,6 +11,8 @@ from personal_agent.cli import (
     app,
     build_doctor_report,
     format_doctor_report,
+    format_memory_doctor,
+    format_memory_entries,
     format_plugin_list,
     format_plugin_report,
     format_plugin_validation_report,
@@ -189,6 +191,55 @@ def test_agents_show_missing_outputs_chinese_error(monkeypatch):
     assert "错误: 未找到子 agent 运行记录: missing" in result.stderr
 
 
+def test_memory_cli_commands(monkeypatch):
+    async def report():
+        return {
+            "builtin_available": True,
+            "builtin_provider": "FileMemoryProvider",
+            "external_available": False,
+            "external_provider": "",
+            "provider": "file",
+            "external_provider_config": "none",
+            "review_service": "MemoryReviewService",
+            "review_enabled": True,
+            "providers": {
+                "builtin": {"provider": "FileMemoryProvider", "available": True, "entries": 1},
+                "external": {"provider": "", "available": False, "entries": 0},
+            },
+            "review": {"enabled": True, "active": False, "spawn_count": 1, "saved_count": 0},
+            "last_errors": {},
+        }
+
+    async def entries(target="all"):
+        return [{"id": "memory:1", "index": 1, "provider": "builtin", "target": "memory", "text": "hello"}]
+
+    async def search(query, target="all"):
+        return [{"id": "memory:1", "index": 1, "provider": "builtin", "target": "memory", "text": query}]
+
+    async def entry(identifier, target="all"):
+        return {"id": identifier, "provider": "builtin", "target": "memory", "text": "hello"}
+
+    async def delete(identifier, target="all"):
+        return identifier == "memory:1"
+
+    monkeypatch.setattr("personal_agent.cli._memory_report", report)
+    monkeypatch.setattr("personal_agent.cli._memory_entries", entries)
+    monkeypatch.setattr("personal_agent.cli._memory_search_entries", search)
+    monkeypatch.setattr("personal_agent.cli._memory_entry", entry)
+    monkeypatch.setattr("personal_agent.cli._memory_delete", delete)
+
+    assert runner.invoke(app, ["memory", "doctor"]).exit_code == 0
+    listed = runner.invoke(app, ["memory", "list", "--json"])
+    searched = runner.invoke(app, ["memory", "search", "needle"])
+    shown = runner.invoke(app, ["memory", "show", "memory:1"])
+    deleted = runner.invoke(app, ["memory", "delete", "memory:1", "--yes"])
+
+    assert json.loads(listed.output)[0]["id"] == "memory:1"
+    assert "needle" in searched.output
+    assert "记忆: memory:1" in shown.output
+    assert "已删除记忆: memory:1" in deleted.output
+
+
 def test_plugins_info_command_shows_registered_items():
     result = runner.invoke(app, ["plugins", "info", "builtin/skills", "--load"])
 
@@ -289,6 +340,7 @@ def test_global_doctor_json_command_contains_runtime_and_memory():
     data = json.loads(result.output)
     assert "runtime" in data
     assert "memory" in data
+    assert "gateway" in data
     assert "agents" in data
     assert "plugins" in data
 
@@ -442,6 +494,35 @@ def test_format_plugin_report_includes_deferred_reason():
     assert "建议: 平台插件会在网关解析平台适配器时加载" in text
 
 
+def test_format_memory_doctor_and_entries():
+    report = {
+        "builtin_available": True,
+        "builtin_provider": "FileMemoryProvider",
+        "external_available": False,
+        "external_provider": "",
+        "provider": "file",
+        "external_provider_config": "none",
+        "review_service": "MemoryReviewService",
+        "review_enabled": True,
+        "providers": {
+            "builtin": {"provider": "FileMemoryProvider", "available": True, "entries": 2, "memory_entries": 1, "user_entries": 1},
+            "external": {"provider": "", "available": False, "entries": 0},
+        },
+        "review": {"enabled": True, "active": False, "spawn_count": 2, "saved_count": 1, "last_error": ""},
+        "last_errors": {},
+    }
+    entries = [{"id": "memory:1", "provider": "builtin", "target": "memory", "text": "hello memory"}]
+
+    doctor_text = format_memory_doctor(report)
+    list_text = format_memory_entries(entries)
+
+    assert "Memory 诊断" in doctor_text
+    assert "FileMemoryProvider" in doctor_text
+    assert "spawn count: 2" in doctor_text
+    assert "记忆列表: 1 条" in list_text
+    assert "memory:1" in list_text
+
+
 def test_format_plugin_validation_report_wraps_plugin_report():
     report = _plugin_report("user/demo", status="LOADED")
     report.update({
@@ -501,6 +582,19 @@ def test_format_doctor_report_includes_summary_and_issues():
             "command_found": False,
         }],
         "platforms": [],
+        "gateway": {
+            "started": True,
+            "adapter_count": 1,
+            "running_agents": 0,
+            "pending_messages": 0,
+            "active_adapter_sessions": 0,
+            "cron_enabled": False,
+            "platforms": [{
+                "name": "telegram",
+                "last_connect_error": "RuntimeError: no token",
+                "last_send_error": "",
+            }],
+        },
         "plugins": [_plugin_report("user/demo", status="ERROR", error="boom")],
         "tokenizer": {
             "tiktoken_available": True,
@@ -518,6 +612,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
     assert "MCP 服务器 demo 的命令不可用: missing-cmd" in text
+    assert "平台 telegram 连接失败: RuntimeError: no token" in text
     assert "插件 user/demo: 加载错误: boom" in text
 
 

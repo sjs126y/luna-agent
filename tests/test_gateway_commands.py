@@ -7,6 +7,7 @@ import pytest_asyncio
 
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
+from personal_agent.adapters.base import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
 from personal_agent.gateway.gateway import Gateway
 from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
@@ -52,6 +53,9 @@ class PluginManager:
 
     async def invoke_hook(self, name, *args, **kwargs):
         return args[0] if args else None
+
+    def list_plugins(self):
+        return []
 
 
 @pytest_asyncio.fixture
@@ -255,6 +259,57 @@ async def test_gateway_before_send_and_memory_review_use_conversation_result(gat
     }]
 
 
+def test_gateway_health_snapshot_reports_runtime_state(gateway):
+    gateway._running_agents["telegram:c1:u1"] = True
+    gateway._agent_cache["telegram:c1:u1"] = Agent()
+
+    health = gateway.health_snapshot()
+
+    assert health["running_agents"] == 1
+    assert health["cached_agents"] == 1
+    assert health["running_agent_sessions"] == ["telegram:c1:u1"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_start_records_platform_health(gateway, monkeypatch):
+    class GoodAdapter(FakeAdapter):
+        async def connect(self) -> None:
+            self.connected_called = True
+
+    class BadAdapter(FakeAdapter):
+        async def connect(self) -> None:
+            raise RuntimeError("connect boom")
+
+    monkeypatch.setattr(platform_registry, "_entries", {
+        "good": PlatformEntry("good", lambda config, db: GoodAdapter(config, db), lambda config: True),
+        "bad": PlatformEntry("bad", lambda config, db: BadAdapter(config, db), lambda config: True),
+        "skip": PlatformEntry("skip", lambda config, db: GoodAdapter(config, db), lambda config: False),
+    })
+
+    await gateway.start()
+    health = gateway.health_snapshot()
+    platforms = {item["name"]: item for item in health["platforms"]}
+
+    assert platforms["good"]["connected"] is True
+    assert platforms["bad"]["last_connect_error"] == "RuntimeError: connect boom"
+    assert platforms["skip"]["skipped_reason"] == "check_fn returned False"
+    assert health["adapter_count"] == 1
+
+    await gateway.stop()
+    stopped = {item["name"]: item for item in gateway.health_snapshot()["platforms"]}
+    assert stopped["good"]["connected"] is False
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_health_records_send_failure(gateway):
+    adapter = FailingSendAdapter(gateway.config, gateway.db)
+
+    await adapter._send_with_retry("chat", "hello", max_retries=0)
+
+    health = adapter.health_snapshot()
+    assert health["last_send_error"] == "send failed"
+
+
 class Agent:
     session_api_calls = 0
     session_prompt_tokens = 0
@@ -278,6 +333,25 @@ class Agent:
     def __init__(self):
         self._destructive_allowed = set()
         self._interrupt_requested = False
+
+
+class FakeAdapter(BasePlatformAdapter):
+    async def connect(self) -> None:
+        return None
+
+    async def disconnect(self) -> None:
+        return None
+
+    async def send(self, chat_id: str, content: str) -> SendResult:
+        return SendResult(success=True, message_id="ok")
+
+    async def get_chat_info(self, chat_id: str) -> ChatInfo:
+        return ChatInfo(chat_id=chat_id)
+
+
+class FailingSendAdapter(FakeAdapter):
+    async def send(self, chat_id: str, content: str) -> SendResult:
+        return SendResult(success=False, error="send failed")
 
 
 @pytest.mark.asyncio

@@ -103,6 +103,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["db_open"] is True
         assert health["gateway_created"] is False
         assert health["gateway_running"] is False
+        assert health["gateway"] == {}
         assert health["cached_agents"] == 0
     finally:
         await runtime.close()
@@ -184,6 +185,7 @@ async def test_app_runtime_gateway_lifecycle(tmp_path, monkeypatch):
         assert started_gateway is gateway
         assert started == [gateway]
         assert runtime.health_snapshot()["gateway_running"] is True
+        assert "gateway" in runtime.health_snapshot()
 
         await runtime.stop_gateway()
         assert stopped == [gateway]

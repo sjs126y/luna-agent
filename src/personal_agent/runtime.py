@@ -91,6 +91,7 @@ class AppRuntime:
             "mcp_running": self.mcp_manager is not None,
             "gateway_created": self.gateway is not None,
             "gateway_running": bool(self.gateway is not None and self.gateway_started),
+            "gateway": self.gateway.health_snapshot() if self.gateway is not None else {},
             "plugins": len(self.plugin_manager.list_plugins()),
             "cached_agents": len(self.conversation_service.agent_cache),
             "closed": self.closed,

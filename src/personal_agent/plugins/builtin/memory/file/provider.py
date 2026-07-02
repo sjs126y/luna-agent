@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from personal_agent.memory.base import MemoryProvider
 
@@ -75,6 +76,39 @@ class FileMemoryProvider(MemoryProvider):
     async def load_all(self) -> list[str]:
         return self._read_entries("MEMORY.md") + self._read_entries("USER.md")
 
+    async def list_entries(self, *, target: str = "all") -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        targets = _target_names(target)
+        for name in targets:
+            filename = _target_filename(name)
+            for index, text in enumerate(self._read_entries(filename), start=1):
+                entries.append({
+                    "id": f"{name}:{index}",
+                    "index": index,
+                    "target": name,
+                    "text": text,
+                    "path": str(self._dir / filename),
+                })
+        return entries
+
+    async def search_entries(self, query: str, *, target: str = "all") -> list[dict[str, Any]]:
+        query_lower = query.lower()
+        return [
+            entry
+            for entry in await self.list_entries(target=target)
+            if query_lower in str(entry.get("text", "")).lower()
+        ]
+
+    async def delete(self, identifier: str, *, target: str = "memory") -> bool:
+        target_name, index = _parse_identifier(identifier, default_target=target)
+        filename = _target_filename(target_name)
+        entries = self._read_entries(filename)
+        if index < 1 or index > len(entries):
+            return False
+        del entries[index - 1]
+        self._write_entries(filename, entries)
+        return True
+
     def get_system_prompt_text(self) -> str:
         """Combine all .md files from data/system/ into system prompt.
 
@@ -123,6 +157,26 @@ class FileMemoryProvider(MemoryProvider):
                 entries.append(part)
         return entries
 
+    def _write_entries(self, filename: str, entries: list[str]) -> None:
+        path = self._dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = _SEPARATOR.join(entry.strip() for entry in entries if entry.strip())
+        path.write_text((text + "\n") if text else "", encoding="utf-8")
+
+    def health_snapshot(self) -> dict[str, Any]:
+        memory_entries = self._read_entries("MEMORY.md")
+        user_entries = self._read_entries("USER.md")
+        return {
+            "provider": type(self).__name__,
+            "available": True,
+            "entries": len(memory_entries) + len(user_entries),
+            "memory_entries": len(memory_entries),
+            "user_entries": len(user_entries),
+            "system_dir": str(self._dir),
+            "profile": _profile_map.get(_current_session_key, ""),
+            "last_error": "",
+        }
+
 
 def _read_md(path) -> str:
     """Read a .md file, trying UTF-8, then GBK, then replace bad bytes."""
@@ -151,6 +205,34 @@ def _file_title(stem: str) -> str:
         "BOOTSTRAP": "引导上下文",
     }
     return TITLES.get(stem.upper(), stem)
+
+
+def _target_names(target: str) -> list[str]:
+    value = str(target or "all").lower()
+    if value in {"all", "builtin"}:
+        return ["memory", "user"]
+    if value in {"memory", "user"}:
+        return [value]
+    return []
+
+
+def _target_filename(target: str) -> str:
+    value = str(target or "memory").lower()
+    if value == "user":
+        return "USER.md"
+    if value in {"memory", "builtin", "all"}:
+        return "MEMORY.md"
+    raise ValueError(f"Invalid file memory target: {target}")
+
+
+def _parse_identifier(identifier: str, *, default_target: str) -> tuple[str, int]:
+    raw = str(identifier).strip()
+    target = default_target
+    value = raw
+    if ":" in raw:
+        target, value = raw.split(":", 1)
+    target = "memory" if target in {"all", "builtin", "external"} else target
+    return target, int(value)
 
 
 # ── memory tool ──────────────────────────────────────
