@@ -96,7 +96,27 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
                 f"平台 {item['name']} 缺少环境变量: {', '.join(item['missing_env'])}"
             )
 
-    next_steps = _next_steps(config_path, env_path, missing_llm_env, directories, warnings)
+    migration_hints = _migration_hints(
+        unknown_keys=unknown_keys,
+        deprecated_keys=deprecated_keys,
+        platform_env=platform_env,
+    )
+    recommended_commands = _recommended_commands(
+        config_path=config_path,
+        env_path=env_path,
+        env_example_path=env_example_path,
+        missing_llm_env=missing_llm_env,
+        directories=directories,
+        warnings=warnings,
+    )
+    next_steps = _next_steps(
+        config_path,
+        env_path,
+        env_example_path,
+        missing_llm_env,
+        directories,
+        warnings,
+    )
     return {
         "ok": not warnings,
         "base_dir": str(base),
@@ -116,6 +136,8 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         "directories": directories,
         "unknown_keys": unknown_keys,
         "deprecated_keys": deprecated_keys,
+        "migration_hints": migration_hints,
+        "recommended_commands": recommended_commands,
         "warnings": warnings,
         "next_steps": next_steps,
     }
@@ -211,6 +233,7 @@ def _enabled_platforms(config: dict[str, Any], env: dict[str, str]) -> set[str]:
 def _next_steps(
     config_path: Path,
     env_path: Path,
+    env_example_path: Path,
     missing_llm_env: list[str],
     directories: list[dict[str, Any]],
     warnings: list[str],
@@ -218,8 +241,10 @@ def _next_steps(
     steps: list[str] = []
     if not config_path.exists():
         steps.append("运行 personal-agent init 生成 config.yaml。")
+    if not env_example_path.exists():
+        steps.append("运行 personal-agent init 生成 .env.example。")
     if not env_path.exists():
-        steps.append("根据 .env.example 创建 .env。")
+        steps.append("根据 .env.example 创建 .env，或运行 personal-agent init --copy-env。")
     if missing_llm_env:
         steps.append(f"在 .env 中填写 {', '.join(missing_llm_env)}。")
     if any(not item["exists"] and item["required"] for item in directories):
@@ -229,6 +254,67 @@ def _next_steps(
     if not steps:
         steps.append("配置检查通过，可以运行 personal-agent chat 或 personal-agent serve。")
     return steps
+
+
+def _migration_hints(
+    *,
+    unknown_keys: list[str],
+    deprecated_keys: list[dict[str, str]],
+    platform_env: list[dict[str, Any]],
+) -> list[str]:
+    hints: list[str] = []
+    for item in deprecated_keys:
+        key = item["key"]
+        if key == "llm":
+            hints.append("将顶层 llm 配置迁移到 .env 的 LLM_PROVIDER/LLM_API_KEY/LLM_BASE_URL/LLM_MODEL。")
+        elif key in {"platform", "platforms"}:
+            hints.append(
+                "删除顶层 platform/platforms；平台 secret 放到 .env，平台插件 key 使用 platforms/telegram 等。"
+            )
+    if unknown_keys:
+        hints.append(f"确认或移除未知顶层配置: {', '.join(unknown_keys)}。")
+    for item in platform_env:
+        if item["enabled"] and item["missing_env"]:
+            hints.append(
+                f"平台 {item['name']} 已启用但缺少 env: {', '.join(item['missing_env'])}。"
+            )
+    return _dedupe(hints)
+
+
+def _recommended_commands(
+    *,
+    config_path: Path,
+    env_path: Path,
+    env_example_path: Path,
+    missing_llm_env: list[str],
+    directories: list[dict[str, Any]],
+    warnings: list[str],
+) -> list[str]:
+    commands: list[str] = []
+    if not config_path.exists() or not env_example_path.exists():
+        commands.append("personal-agent init")
+    if not env_path.exists():
+        if env_example_path.exists():
+            commands.append("cp .env.example .env")
+        commands.append("personal-agent init --copy-env")
+    if any(not item["exists"] and item["required"] for item in directories):
+        commands.append("personal-agent init --fix-dirs")
+    if missing_llm_env:
+        commands.append("编辑 .env，填写 LLM_API_KEY")
+    if warnings:
+        commands.append("personal-agent doctor")
+    return _dedupe(commands)
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        result.append(item)
+        seen.add(item)
+    return result
 
 
 def _string_or_list(value: Any) -> list[str]:

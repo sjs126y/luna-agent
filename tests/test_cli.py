@@ -400,17 +400,64 @@ def test_init_command_generates_and_skips_existing_files(tmp_path):
 def test_init_profiles_generate_distinct_templates(tmp_path):
     local_dir = tmp_path / "local"
     bot_dir = tmp_path / "bot"
+    telegram_dir = tmp_path / "telegram"
 
     local = runner.invoke(app, ["init", "--dir", str(local_dir), "--profile", "local"])
     bot = runner.invoke(app, ["init", "--dir", str(bot_dir), "--profile", "bot"])
+    telegram = runner.invoke(app, ["init", "--dir", str(telegram_dir), "--profile", "telegram"])
 
     assert local.exit_code == 0
     assert bot.exit_code == 0
+    assert telegram.exit_code == 0
     assert "enabled: false" in (local_dir / "config.yaml").read_text(encoding="utf-8")
     bot_config = (bot_dir / "config.yaml").read_text(encoding="utf-8")
     assert "# Personal Agent bot configuration" in bot_config
     assert "enabled: true" in bot_config
     assert "# Telegram" in (bot_dir / ".env.example").read_text(encoding="utf-8")
+    telegram_config = (telegram_dir / "config.yaml").read_text(encoding="utf-8")
+    telegram_env = (telegram_dir / ".env.example").read_text(encoding="utf-8")
+    assert "# Personal Agent telegram bot configuration" in telegram_config
+    assert "platforms/telegram" in telegram_config
+    assert "TELEGRAM_BOT_TOKEN" in telegram_env
+    assert "FEISHU_APP_ID" not in telegram_env
+
+
+def test_init_platform_profiles_generate_platform_specific_env(tmp_path):
+    cases = {
+        "feishu": ("platforms/feishu", "FEISHU_APP_ID", "TELEGRAM_BOT_TOKEN"),
+        "wechat": ("platforms/wechat", "WEIXIN_ACCOUNT_ID", "FEISHU_APP_ID"),
+    }
+    for profile, (plugin_key, expected_env, absent_env) in cases.items():
+        target = tmp_path / profile
+        result = runner.invoke(app, ["init", "--dir", str(target), "--profile", profile])
+
+        assert result.exit_code == 0
+        assert plugin_key in (target / "config.yaml").read_text(encoding="utf-8")
+        env_example = (target / ".env.example").read_text(encoding="utf-8")
+        assert expected_env in env_example
+        assert absent_env not in env_example
+
+
+def test_init_copy_env_creates_and_respects_existing_env(tmp_path):
+    result = runner.invoke(app, ["init", "--dir", str(tmp_path), "--profile", "telegram", "--copy-env"])
+
+    assert result.exit_code == 0
+    env_path = tmp_path / ".env"
+    assert env_path.exists()
+    assert "TELEGRAM_BOT_TOKEN" in env_path.read_text(encoding="utf-8")
+
+    env_path.write_text("CUSTOM=1\n", encoding="utf-8")
+    second = runner.invoke(app, ["init", "--dir", str(tmp_path), "--profile", "telegram", "--copy-env"])
+
+    assert second.exit_code == 0
+    assert "已跳过" in second.output
+    assert env_path.read_text(encoding="utf-8") == "CUSTOM=1\n"
+
+    forced = runner.invoke(app, ["init", "--dir", str(tmp_path), "--profile", "telegram", "--copy-env", "--force"])
+
+    assert forced.exit_code == 0
+    assert "已覆盖" in forced.output
+    assert "TELEGRAM_BOT_TOKEN" in env_path.read_text(encoding="utf-8")
 
 
 def test_init_check_reports_missing_config_without_writing(tmp_path):
@@ -465,6 +512,8 @@ def test_format_config_report_shows_next_steps():
         "directories": [{"kind": "data_dir", "path": "demo/data", "exists": False, "required": True}],
         "unknown_keys": ["old"],
         "deprecated_keys": [],
+        "migration_hints": ["确认或移除未知顶层配置: old。"],
+        "recommended_commands": ["personal-agent init"],
         "warnings": ["缺少 config.yaml。"],
         "next_steps": ["运行 personal-agent init 生成 config.yaml。"],
     }
@@ -473,6 +522,8 @@ def test_format_config_report_shows_next_steps():
 
     assert "配置检查" in text
     assert "未知配置: old" in text
+    assert "迁移建议" in text
+    assert "推荐命令" in text
     assert "运行 personal-agent init" in text
 
 

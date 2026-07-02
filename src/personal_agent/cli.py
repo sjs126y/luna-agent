@@ -200,12 +200,25 @@ auth:
   allowed_users: []
 """
 
+
+def _platform_config_template(platform: str) -> str:
+    return (
+        _CONFIG_TEMPLATE_BOT
+        .replace("# Personal Agent bot configuration", f"# Personal Agent {platform} bot configuration")
+        .replace("  enabled: []", f"  enabled:\n    - platforms/{platform}")
+    )
+
+
 _CONFIG_TEMPLATES = {
     "local": _CONFIG_TEMPLATE_LOCAL,
     "server": _CONFIG_TEMPLATE_SERVER,
     "bot": _CONFIG_TEMPLATE_BOT,
+    "telegram": _platform_config_template("telegram"),
+    "feishu": _platform_config_template("feishu"),
+    "wechat": _platform_config_template("wechat"),
 }
 
+_PROFILE_LIST = ", ".join(sorted(_CONFIG_TEMPLATES))
 _CONFIG_TEMPLATE = _CONFIG_TEMPLATE_LOCAL
 
 
@@ -249,6 +262,53 @@ WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
 """
 
+_ENV_EXAMPLE_TEMPLATE_TELEGRAM = """# LLM
+LLM_PROVIDER=deepseek
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
+LLM_API_MODE=auto
+LLM_MAX_TOKENS=4096
+
+# Telegram
+TELEGRAM_BOT_TOKEN=
+"""
+
+_ENV_EXAMPLE_TEMPLATE_FEISHU = """# LLM
+LLM_PROVIDER=deepseek
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
+LLM_API_MODE=auto
+LLM_MAX_TOKENS=4096
+
+# Feishu
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+"""
+
+_ENV_EXAMPLE_TEMPLATE_WECHAT = """# LLM
+LLM_PROVIDER=deepseek
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
+LLM_API_MODE=auto
+LLM_MAX_TOKENS=4096
+
+# WeChat
+WEIXIN_TOKEN=
+WEIXIN_ACCOUNT_ID=
+WEIXIN_USER_ID=
+WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+"""
+
+_ENV_EXAMPLE_TEMPLATES = {
+    "bot": _ENV_EXAMPLE_TEMPLATE_BOT,
+    "telegram": _ENV_EXAMPLE_TEMPLATE_TELEGRAM,
+    "feishu": _ENV_EXAMPLE_TEMPLATE_FEISHU,
+    "wechat": _ENV_EXAMPLE_TEMPLATE_WECHAT,
+}
+
 
 @app.command()
 def chat(
@@ -286,15 +346,16 @@ def doctor(json_output: bool = typer.Option(False, "--json", help="输出 JSON�
 @app.command("init")
 def init_project(
     target_dir: Path = typer.Option(Path("."), "--dir", "-d", help="生成配置的目录。"),
-    profile: str = typer.Option("local", "--profile", "-p", help="配置模板: local|server|bot。"),
+    profile: str = typer.Option("local", "--profile", "-p", help="配置模板: local|server|bot|telegram|feishu|wechat。"),
     force: bool = typer.Option(False, "--force", "-f", help="覆盖已存在的文件。"),
     check: bool = typer.Option(False, "--check", help="只检查当前目录配置，不写配置文件。"),
     fix_dirs: bool = typer.Option(False, "--fix-dirs", help="创建 data/plugins/system 等基础目录。"),
+    copy_env: bool = typer.Option(False, "--copy-env", help="从 .env.example 生成占位 .env。"),
 ) -> None:
     """Generate a minimal config.yaml and .env.example."""
     profile = profile.lower().strip()
     if profile not in _CONFIG_TEMPLATES:
-        _exit_error(f"未知 profile: {profile}，可选: local, server, bot")
+        _exit_error(f"未知 profile: {profile}，可选: {_PROFILE_LIST}")
 
     if fix_dirs:
         created = ensure_config_dirs(target_dir)
@@ -317,6 +378,10 @@ def init_project(
         _write_template(target_dir / "config.yaml", _CONFIG_TEMPLATES[profile], force=force),
         _write_template(target_dir / ".env.example", _env_example_template(profile), force=force),
     ]
+    if copy_env:
+        results.append(
+            _write_template(target_dir / ".env", _env_example_template(profile), force=force)
+        )
     typer.echo(f"初始化 Personal Agent 配置: {target_dir} ({profile})")
     for path, action in results:
         typer.echo(f"  - {action}: {path}")
@@ -712,9 +777,7 @@ def _write_template(path: Path, content: str, *, force: bool) -> tuple[Path, str
 
 
 def _env_example_template(profile: str) -> str:
-    if profile == "bot":
-        return _ENV_EXAMPLE_TEMPLATE_BOT
-    return _ENV_EXAMPLE_TEMPLATE
+    return _ENV_EXAMPLE_TEMPLATES.get(profile, _ENV_EXAMPLE_TEMPLATE)
 
 
 def _runtime_health_report(settings: Settings) -> dict[str, Any]:
@@ -1001,6 +1064,9 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     if config.get("next_steps"):
         lines.extend(["", "下一步:"])
         lines.extend(f"  - {step}" for step in config["next_steps"])
+    if config.get("recommended_commands"):
+        lines.extend(["", "推荐命令:"])
+        lines.extend(f"  - {command}" for command in config["recommended_commands"])
     return "\n".join(lines)
 
 
@@ -1037,12 +1103,18 @@ def format_config_report(report: dict[str, Any]) -> str:
         lines.append("已废弃配置:")
         for item in report["deprecated_keys"]:
             lines.append(f"  - {item['key']}: {item['message']}")
+    if report.get("migration_hints"):
+        lines.extend(["", "迁移建议:"])
+        lines.extend(f"  - {hint}" for hint in report["migration_hints"])
     if report.get("warnings"):
         lines.extend(["", "警告:"])
         lines.extend(f"  - {warning}" for warning in report["warnings"])
     if report.get("next_steps"):
         lines.extend(["", "下一步:"])
         lines.extend(f"  - {step}" for step in report["next_steps"])
+    if report.get("recommended_commands"):
+        lines.extend(["", "推荐命令:"])
+        lines.extend(f"  - {command}" for command in report["recommended_commands"])
     return "\n".join(lines)
 
 
