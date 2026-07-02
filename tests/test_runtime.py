@@ -213,7 +213,7 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
         mcp_servers=[{"name": "config", "command": "python", "args": [], "enabled": True}],
     )
 
-    from personal_agent.plugins.manager import PluginManager
+    from personal_agent.plugins.core.manager import PluginManager
 
     plugin_manager = PluginManager(settings)
     plugin_manager.discover()

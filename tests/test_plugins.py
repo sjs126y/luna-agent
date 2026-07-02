@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from personal_agent.config import Settings
-from personal_agent.plugins.manager import PluginManager
+from personal_agent.plugins.core.manager import PluginManager
 from personal_agent.plugins.models import CommandEntry, PluginManifest, PluginStatus
 from personal_agent.tools.registry import tool_registry
 

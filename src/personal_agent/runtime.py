@@ -13,7 +13,7 @@ from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.memory.review import MemoryReviewService
-from personal_agent.plugins.manager import PluginManager
+from personal_agent.plugins.core.manager import PluginManager
 from personal_agent.tools.audit import set_audit_path
 from personal_agent.tools.sandbox import init_sandbox
 from personal_agent.conversation import ConversationService

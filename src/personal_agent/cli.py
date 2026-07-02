@@ -17,7 +17,7 @@ from personal_agent.config_diagnostics import build_config_report, ensure_config
 from personal_agent.context_budget import build_context_budget
 from personal_agent.cli_chat import run_cli_once_sync, run_cli_repl_sync
 from personal_agent.main import boot
-from personal_agent.plugins.manager import PluginManager
+from personal_agent.plugins.core.manager import PluginManager
 
 app = typer.Typer(help="Personal Agent")
 plugins_app = typer.Typer(help="Manage plugins")
