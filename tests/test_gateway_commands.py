@@ -238,12 +238,21 @@ async def test_gateway_before_send_and_memory_review_use_conversation_result(gat
     captured = []
     gateway.hooks.on_before_send.append(before_send)
     monkeypatch.setattr(gateway._conversation_service, "run_turn", run_turn)
-    monkeypatch.setattr(gateway, "_spawn_memory_review", lambda agent, msgs: captured.append((agent, msgs)))
+    monkeypatch.setattr(
+        gateway._memory_review_service,
+        "maybe_spawn",
+        lambda **kwargs: captured.append(kwargs) or True,
+    )
 
     result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
 
     assert result == "base!"
-    assert captured == [(gateway._conversation_service.agent_cache["telegram:c1:u1"], messages)]
+    assert captured == [{
+        "agent": gateway._conversation_service.agent_cache["telegram:c1:u1"],
+        "messages": messages,
+        "should_review": True,
+        "final_response": "base!",
+    }]
 
 
 class Agent:

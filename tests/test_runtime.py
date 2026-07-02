@@ -96,8 +96,14 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert runtime.memory_manager.get_system_prompt_text() == "memory-ok"
         assert runtime.conversation_service.session_store is runtime.session_store
         assert runtime.conversation_service.memory_manager is runtime.memory_manager
+        assert runtime.memory_review_service is not None
         assert (runtime.system_dir / "AGENT.md").exists()
         assert runtime.mcp_manager is None
+        health = runtime.health_snapshot()
+        assert health["db_open"] is True
+        assert health["gateway_created"] is False
+        assert health["gateway_running"] is False
+        assert health["cached_agents"] == 0
     finally:
         await runtime.close()
 
@@ -142,6 +148,53 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
         await create_app_runtime(settings)
 
     assert stopped == [True]
+
+
+@pytest.mark.asyncio
+async def test_app_runtime_gateway_lifecycle(tmp_path, monkeypatch):
+    plugins_dir = tmp_path / "plugins"
+    _write_memory_plugin(plugins_dir / "memory")
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[plugins_dir],
+        plugins_enabled=["user/memory"],
+        plugins_disabled=["memory/file", "memory/embedding"],
+        mcp_enabled=False,
+    )
+    started = []
+    stopped = []
+
+    async def start(self):
+        started.append(self)
+
+    async def stop(self):
+        stopped.append(self)
+
+    monkeypatch.setattr("personal_agent.gateway.gateway.Gateway.start", start)
+    monkeypatch.setattr("personal_agent.gateway.gateway.Gateway.stop", stop)
+
+    runtime = await create_app_runtime(settings)
+    try:
+        gateway = runtime.create_gateway(system_prompt_template="system")
+        assert runtime.gateway is gateway
+        assert gateway._conversation_service is runtime.conversation_service
+        assert gateway._memory_review_service is runtime.memory_review_service
+
+        started_gateway = await runtime.start_gateway(system_prompt_template="system")
+        assert started_gateway is gateway
+        assert started == [gateway]
+        assert runtime.health_snapshot()["gateway_running"] is True
+
+        await runtime.stop_gateway()
+        assert stopped == [gateway]
+        assert runtime.gateway is None
+        assert runtime.gateway_started is False
+
+        await runtime.close()
+        await runtime.close()
+        assert runtime.closed is True
+    finally:
+        await runtime.close()
 
 
 @pytest.mark.asyncio

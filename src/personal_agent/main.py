@@ -8,7 +8,6 @@ import signal
 import sys
 
 from personal_agent.config import Settings
-from personal_agent.gateway.gateway import Gateway
 from personal_agent.runtime import create_app_runtime, ensure_system_files
 
 logger = logging.getLogger("personal_agent")
@@ -86,14 +85,7 @@ async def boot() -> None:
         "3. 用中文回复，保持简洁有条理\n"
         "4. 工具返回的结果要如实转述，不要编造"
     )
-    gateway = Gateway(
-        runtime.settings,
-        runtime.db,
-        runtime.memory_manager,
-        system_prompt_template=system_prompt,
-        plugin_manager=runtime.plugin_manager,
-        conversation_service=runtime.conversation_service,
-    )
+    gateway = runtime.create_gateway(system_prompt_template=system_prompt)
 
     # ── 7.5. Default hooks — non-restrictive utility hooks ──
 
@@ -120,13 +112,13 @@ async def boot() -> None:
     gateway.hooks.on_before_send.append(_truncate_response)
 
     # ── 8. Start ───────────────────────────────────────
-    await gateway.start()
+    await runtime.start_gateway(system_prompt_template=system_prompt)
 
     # ── 9. Wait for shutdown ──────────────────────────
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown(gateway)))
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown(runtime)))
         except NotImplementedError:
             pass
 
@@ -138,13 +130,12 @@ async def boot() -> None:
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Interrupted, shutting down...")
     finally:
-        await gateway.stop()
         await runtime.close()
 
 
-async def _shutdown(gateway: Gateway) -> None:
+async def _shutdown(runtime) -> None:
     logger.info("Shutting down...")
-    await gateway.stop()
+    await runtime.stop_gateway()
 
 
 def main() -> None:

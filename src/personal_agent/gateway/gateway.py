@@ -12,6 +12,7 @@ from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation import ConversationCommandRuntime, ConversationService
 from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
+from personal_agent.memory.review import MemoryReviewService
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class Gateway:
         system_prompt_template: str = "",
         plugin_manager=None,
         conversation_service: ConversationService | None = None,
+        memory_review_service: MemoryReviewService | None = None,
     ) -> None:
         self.config = config
         self.db = db
@@ -49,6 +51,7 @@ class Gateway:
             if conversation_service.agent_cache_max is None:
                 conversation_service.agent_cache_max = 128
         self._conversation_service = conversation_service
+        self._memory_review_service = memory_review_service or MemoryReviewService()
         self._compression_chain = conversation_service.compression_chain
         self._auth_manager = AuthManager(config, config.agent_data_dir)
         self._session_store = conversation_service.session_store
@@ -194,8 +197,12 @@ class Gateway:
 
         # Background memory review (Hermes-style nudge)
         agent = self._conversation_service.get_cached_agent(session_key)
-        if turn.should_review_memory and final and agent is not None:
-            self._spawn_memory_review(agent, turn.messages)
+        self._memory_review_service.maybe_spawn(
+            agent=agent,
+            messages=turn.messages,
+            should_review=turn.should_review_memory,
+            final_response=final,
+        )
 
         return final or "..."
 
@@ -215,51 +222,6 @@ class Gateway:
             event.text = result.continue_text
             return None
         return result.response
-
-    # ── memory review ────────────────────────────────
-
-    _MEMORY_REVIEW_PROMPT = (
-        "Review this conversation and save anything worth remembering.\n\n"
-        "Focus on:\n"
-        "1. Has the user revealed personal details, preferences, or facts worth keeping?\n"
-        "2. Has the user expressed expectations about how you should behave?\n\n"
-        "If something stands out, call the memory tool to save it. "
-        "Use target='user' for preferences, target='memory' for facts.\n"
-        "If nothing is worth saving, just reply 'Nothing to save.' and stop."
-    )
-
-    def _spawn_memory_review(self, agent, messages: list[dict]) -> None:
-        """Spawn a lightweight background review to extract memories."""
-        import threading
-
-        def _run():
-            import asyncio as _asyncio
-            _asyncio.run(self._do_memory_review(agent, list(messages)))
-
-        t = threading.Thread(target=_run, daemon=True, name="mem-review")
-        t.start()
-        logger.debug("Memory review spawned")
-
-    async def _do_memory_review(self, agent, messages: list[dict]) -> None:
-        """Run a quick LLM call to review conversation and save memories."""
-        try:
-            review_messages = list(messages[-12:])  # last 12 messages only
-            review_messages.append({
-                "role": "user",
-                "content": [{"type": "text", "text": self._MEMORY_REVIEW_PROMPT}],
-            })
-            response = await agent._transport.call(
-                messages=review_messages,
-                system_prompt="你是一个记忆管理助手。判断对话中是否有值得保存的信息。",
-                tools=agent.tools,
-                max_tokens=512,
-            )
-            if response.tool_calls:
-                from personal_agent.tools.executor import execute_tool_calls
-                await execute_tool_calls(response.tool_calls, review_messages, agent=agent)
-                logger.info("Memory review: %d memories saved", len(response.tool_calls))
-        except Exception:
-            pass  # best-effort, never block the turn
 
     # ── auth ──────────────────────────────────────────
     # Auth is now handled by AuthManager — see gateway/auth.py

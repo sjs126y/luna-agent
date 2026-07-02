@@ -12,6 +12,7 @@ from personal_agent.db.database import Database
 from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.memory.manager import MemoryManager
+from personal_agent.memory.review import MemoryReviewService
 from personal_agent.plugins.manager import PluginManager
 from personal_agent.tools.audit import set_audit_path
 from personal_agent.tools.sandbox import init_sandbox
@@ -29,16 +30,71 @@ class AppRuntime:
     session_store: SessionStore
     memory_manager: MemoryManager
     conversation_service: ConversationService
+    memory_review_service: MemoryReviewService
     mcp_manager: Any | None
     data_dir: Path
     system_dir: Path
+    gateway: Any | None = None
+    gateway_started: bool = False
+    closed: bool = False
+
+    def create_gateway(self, system_prompt_template: str = ""):
+        if self.gateway is not None:
+            return self.gateway
+
+        from personal_agent.gateway.gateway import Gateway
+
+        self.gateway = Gateway(
+            self.settings,
+            self.db,
+            self.memory_manager,
+            system_prompt_template=system_prompt_template,
+            plugin_manager=self.plugin_manager,
+            conversation_service=self.conversation_service,
+            memory_review_service=self.memory_review_service,
+        )
+        self.gateway_started = False
+        return self.gateway
+
+    async def start_gateway(self, system_prompt_template: str = ""):
+        gateway = self.create_gateway(system_prompt_template=system_prompt_template)
+        if not self.gateway_started:
+            await gateway.start()
+            self.gateway_started = True
+        return gateway
+
+    async def stop_gateway(self) -> None:
+        gateway = self.gateway
+        self.gateway = None
+        was_started = self.gateway_started
+        self.gateway_started = False
+        if gateway is not None and was_started:
+            await gateway.stop()
 
     async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        await self.stop_gateway()
+        await self.memory_review_service.close()
         mcp_manager = self.mcp_manager
         self.mcp_manager = None
         if mcp_manager is not None:
             await mcp_manager.stop()
         await self.db.close()
+
+    def health_snapshot(self) -> dict[str, Any]:
+        return {
+            "data_dir": str(self.data_dir),
+            "db_open": getattr(self.db, "_conn", None) is not None,
+            "mcp_enabled": bool(self.settings.mcp_enabled),
+            "mcp_running": self.mcp_manager is not None,
+            "gateway_created": self.gateway is not None,
+            "gateway_running": bool(self.gateway is not None and self.gateway_started),
+            "plugins": len(self.plugin_manager.list_plugins()),
+            "cached_agents": len(self.conversation_service.agent_cache),
+            "closed": self.closed,
+        }
 
 
 async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
@@ -70,6 +126,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         system_dir = data_dir / "system"
         ensure_system_files(system_dir)
         memory_manager = await create_memory_manager(settings, plugin_manager, system_dir, data_dir)
+        memory_review_service = MemoryReviewService()
         conversation_service = ConversationService(
             settings=settings,
             plugin_manager=plugin_manager,
@@ -92,6 +149,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         session_store=session_store,
         memory_manager=memory_manager,
         conversation_service=conversation_service,
+        memory_review_service=memory_review_service,
         mcp_manager=mcp_manager,
         data_dir=data_dir,
         system_dir=system_dir,
