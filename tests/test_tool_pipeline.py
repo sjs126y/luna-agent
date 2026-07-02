@@ -272,6 +272,165 @@ async def test_exec_one_unknown_tool():
     assert "unknown" in result.lower()
 
 
+@pytest.mark.asyncio
+async def test_execute_tool_call_result_structured_success_and_error():
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("structured_demo")
+
+    async def handler(value):
+        return {"value": value}
+
+    tool_registry.register(ToolEntry(
+        name="structured_demo",
+        description="structured",
+        schema={},
+        handler=handler,
+    ))
+
+    try:
+        result = await execute_tool_call_result({
+            "id": "call-1",
+            "name": "structured_demo",
+            "input": {"value": 7},
+        })
+        unknown = await execute_tool_call_result({"id": "bad", "name": "missing_demo", "input": {}})
+    finally:
+        if original is None:
+            tool_registry.unregister("structured_demo")
+        else:
+            tool_registry.register(original)
+
+    assert result.status == "success"
+    assert result.tool_name == "structured_demo"
+    assert result.tool_use_id == "call-1"
+    assert result.content == '{"value": 7}'
+    assert result.input_summary == '{"value": 7}'
+    assert format_tool_result(result) == '{"value": 7}'
+    assert unknown.status == "error"
+    assert unknown.category == "unknown_tool"
+    assert "unknown tool" in format_tool_result(unknown)
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_result_timeout_and_interrupt():
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import (
+        clear_interrupted,
+        execute_tool_call_result,
+        set_interrupted,
+    )
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("slow_demo")
+
+    async def slow():
+        await asyncio.sleep(1)
+        return "late"
+
+    tool_registry.register(ToolEntry(
+        name="slow_demo",
+        description="slow",
+        schema={},
+        handler=slow,
+    ))
+
+    try:
+        timed_out = await execute_tool_call_result(
+            {"id": "slow-1", "name": "slow_demo", "input": {}},
+            timeout=0.01,
+        )
+        set_interrupted()
+        interrupted = await execute_tool_call_result({"id": "slow-2", "name": "slow_demo", "input": {}})
+    finally:
+        clear_interrupted()
+        if original is None:
+            tool_registry.unregister("slow_demo")
+        else:
+            tool_registry.register(original)
+
+    assert timed_out.status == "timeout"
+    assert timed_out.category == "timeout"
+    assert "timed out" in timed_out.error
+    assert interrupted.status == "interrupted"
+    assert interrupted.category == "interrupt"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_preserves_order_and_records_agent_summary():
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_calls
+    from personal_agent.tools.registry import tool_registry
+
+    agent = MockAgent()
+    original_first = tool_registry.get("parallel_first")
+    original_second = tool_registry.get("parallel_second")
+
+    async def first():
+        await asyncio.sleep(0.02)
+        return "first"
+
+    async def second():
+        return "second"
+
+    tool_registry.register(ToolEntry(
+        name="parallel_first",
+        description="first",
+        schema={},
+        handler=first,
+        is_parallel_safe=True,
+    ))
+    tool_registry.register(ToolEntry(
+        name="parallel_second",
+        description="second",
+        schema={},
+        handler=second,
+        is_parallel_safe=True,
+    ))
+
+    messages = []
+    try:
+        results = await execute_tool_calls(
+            [
+                {"id": "a", "name": "parallel_first", "input": {}},
+                {"id": "b", "name": "parallel_second", "input": {}},
+            ],
+            messages,
+            agent=agent,
+        )
+    finally:
+        if original_first is None:
+            tool_registry.unregister("parallel_first")
+        else:
+            tool_registry.register(original_first)
+        if original_second is None:
+            tool_registry.unregister("parallel_second")
+        else:
+            tool_registry.register(original_second)
+
+    assert [item.status for item in results] == ["success", "success"]
+    assert messages[-1]["content"] == [
+        {"type": "tool_result", "tool_use_id": "a", "content": "first"},
+        {"type": "tool_result", "tool_use_id": "b", "content": "second"},
+    ]
+    assert [item["tool_name"] for item in agent._last_tool_results] == [
+        "parallel_first",
+        "parallel_second",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bridge_tool_call_uses_executor_precheck_for_web_fetch():
+    import personal_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
+    from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
+
+    result = await _tool_call("web_fetch", {"url": "http://127.0.0.1/admin"})
+
+    assert "private" in result.lower() or "blocked" in result.lower() or "unsafe" in result.lower()
+
+
 # ── Audit module ───────────────────────────────────────
 
 

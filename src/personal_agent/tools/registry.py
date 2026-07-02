@@ -215,7 +215,24 @@ async def dispatch_tool_describe(name: str) -> str:
 
 async def dispatch_tool_call(name: str, arguments: dict) -> str:
     """Execute a tool by name."""
-    return await tool_registry.dispatch(name, arguments)
+    entry = tool_registry.get(name)
+    if entry is None:
+        return f"Error: unknown tool '{name}'"
+    if name == "tool_call":
+        return "Error: tool_call cannot call itself"
+    if entry.is_destructive:
+        return (
+            f"Error: destructive tool '{name}' cannot be called via tool_call. "
+            f"Send /allow to authorize it, then call '{name}' directly in your next response."
+        )
+    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+
+    result = await execute_tool_call_result({
+        "id": f"tool_call:{name}",
+        "name": name,
+        "input": arguments or {},
+    })
+    return format_tool_result(result)
 
 
 # ── BM25 ──────────────────────────────────────────────

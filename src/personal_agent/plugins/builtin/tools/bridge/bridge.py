@@ -13,8 +13,6 @@ from personal_agent.tools.registry import (
     dispatch_tool_describe,
 )
 
-MAX_RESULT_CHARS = 8000
-
 
 async def _tool_search(query: str) -> str:
     return await dispatch_tool_search(query)
@@ -31,10 +29,13 @@ async def _tool_call(name: str, arguments: dict) -> str:
     """Fallback: execute a deferrable tool by name. Only works for safe tools —
     destructive tools are blocked and must be called directly with /allow."""
     from personal_agent.tools.registry import tool_registry as _tr
+    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
 
     entry = _tr.get(name)
     if entry is None:
         return f"Error: unknown tool '{name}'"
+    if name == "tool_call":
+        return "Error: tool_call cannot call itself"
 
     # Destructive tools must go through the full executor pipeline
     # (scope gate + checkpoint + hooks), not through this shortcut
@@ -44,16 +45,12 @@ async def _tool_call(name: str, arguments: dict) -> str:
             f"Send /allow to authorize it, then call '{name}' directly in your next response."
         )
 
-    # Safe tools: execute with truncation matching executor post-processing
-    try:
-        result = await entry.handler(**arguments)
-    except Exception as exc:
-        result = f"Error: {exc}"
-
-    if len(result) > MAX_RESULT_CHARS:
-        result = result[:MAX_RESULT_CHARS] + f"\n\n...({len(result) - MAX_RESULT_CHARS} more chars truncated)"
-
-    return result
+    result = await execute_tool_call_result({
+        "id": f"tool_call:{name}",
+        "name": name,
+        "input": arguments or {},
+    })
+    return format_tool_result(result)
 
 
 tool_registry.register(ToolEntry(

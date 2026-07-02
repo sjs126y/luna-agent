@@ -57,6 +57,7 @@ class Agent:
     _last_skill_injection: str = ""
     _last_skill_summaries: str = ""
     _last_memory_injections: str = ""
+    _last_tool_results: list[dict] = field(default_factory=list)
 
     # ── memory review (Hermes-style background nudge) ──
     _turns_since_memory: int = 0

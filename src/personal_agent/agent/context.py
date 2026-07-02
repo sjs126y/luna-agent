@@ -52,6 +52,9 @@ async def build_turn_context(
     agent._last_skill_injection = ""
     agent._last_skill_summaries = ""
     agent._last_memory_injections = ""
+    agent._last_tool_results = []
+    from personal_agent.tools.executor import clear_interrupted
+    clear_interrupted()
 
     # Refresh tools (if registry changed)
     from personal_agent.agent.agent import _refresh_tools, _build_system_prompt

@@ -5,27 +5,60 @@ Parallel/serial execution with individual fault isolation.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import time as _time_module
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from personal_agent.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 8000
+DEFAULT_TOOL_TIMEOUT_SECONDS = 120.0
+
+ToolExecutionStatus = Literal["success", "error", "denied", "timeout", "interrupted", "skipped"]
+
+
+@dataclass
+class ToolExecutionResult:
+    tool_name: str
+    tool_use_id: str
+    status: ToolExecutionStatus
+    category: str = ""
+    content: str = ""
+    error: str = ""
+    duration: float = 0.0
+    input_summary: str = ""
+    output_summary: str = ""
+    attempts: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 # ── Interrupt support ────────────────────────────────
 # Long-running tools (bash, execute_code) check this to abort early.
 # Set by Gateway on /stop, cleared each turn.
 _interrupted: bool = False
+_active_tool_executions: int = 0
 
 
 def set_interrupted() -> None:
     global _interrupted
     _interrupted = True
+
+
+def interrupt_active_tool_executions() -> bool:
+    """Interrupt running tools without leaking stop state into future calls."""
+    global _interrupted
+    if _active_tool_executions <= 0:
+        _interrupted = False
+        return False
+    _interrupted = True
+    return True
 
 
 def clear_interrupted() -> None:
@@ -43,74 +76,84 @@ async def execute_tool_calls(
     *,
     agent: Any = None,
     hooks: Any = None,
-) -> None:
-    clear_interrupted()
+) -> list[ToolExecutionResult]:
     """Execute all tool calls, append results to messages in original order.
 
     Adjacent parallel-safe tools run concurrently; sequential tools act as
-    barriers that preserve LLM ordering. Example: [bash, grep, write] →
-    bash first (barrier), then grep+write concurrently.
+    barriers that preserve LLM ordering. Destructive tools are always barriers.
     """
-    results: dict[int, str] = {}
+    results: dict[int, ToolExecutionResult] = {}
 
     i = 0
     while i < len(tool_calls):
-        entry = tool_registry.get(tool_calls[i]["name"])
+        current = tool_calls[i]
+        entry = tool_registry.get(str(current.get("name", "")))
 
-        if entry and entry.is_parallel_safe:
-            # Collect adjacent parallel-safe tools into a batch
+        if entry and entry.is_parallel_safe and not entry.is_destructive:
+            # Collect adjacent safe parallel tools into a batch.
             batch: list[tuple[int, dict]] = []
             while i < len(tool_calls):
-                e = tool_registry.get(tool_calls[i]["name"])
-                if e and e.is_parallel_safe:
+                e = tool_registry.get(str(tool_calls[i].get("name", "")))
+                if e and e.is_parallel_safe and not e.is_destructive:
                     batch.append((i, tool_calls[i]))
                     i += 1
                 else:
                     break
 
-            # Split batch: destructive first (write before read in same batch)
-            destructive_batch = [(idx, tc) for idx, tc in batch
-                                 if tool_registry.get(tc["name"]) and tool_registry.get(tc["name"]).is_destructive]
-            safe_batch = [(idx, tc) for idx, tc in batch
-                          if not (tool_registry.get(tc["name"]) and tool_registry.get(tc["name"]).is_destructive)]
-
-            async def _run_batch(items):
-                if len(items) == 1:
-                    idx, tc = items[0]
-                    try:
-                        results[idx] = await _exec_one(tc, agent=agent, hooks=hooks)
-                    except Exception as exc:
-                        results[idx] = f"Error: {exc}"
-                elif items:
-                    tasks = [asyncio.to_thread(_exec_one_sync, tc, agent, hooks) for _, tc in items]
-                    gathered = await asyncio.gather(*tasks, return_exceptions=True)
-                    for j, (idx, _tc) in enumerate(items):
-                        r = gathered[j]
-                        results[idx] = f"Error: {r}" if isinstance(r, Exception) else r
-
-            await _run_batch(destructive_batch)  # writes first
-            await _run_batch(safe_batch)          # reads after
+            gathered = await asyncio.gather(
+                *[execute_tool_call_result(tc, agent=agent, hooks=hooks) for _, tc in batch],
+                return_exceptions=True,
+            )
+            for j, (idx, tc) in enumerate(batch):
+                item = gathered[j]
+                if isinstance(item, ToolExecutionResult):
+                    results[idx] = item
+                elif isinstance(item, BaseException):
+                    results[idx] = _result(
+                        tc,
+                        status="error",
+                        category="executor",
+                        error=f"{type(item).__name__}: {item}",
+                    )
+                else:
+                    results[idx] = _result(tc, content=str(item))
         else:
             idx, tc = i, tool_calls[i]
-            try:
-                results[idx] = await _exec_one(tc, agent=agent, hooks=hooks)
-            except Exception as exc:
-                results[idx] = f"Error: {exc}"
+            results[idx] = await execute_tool_call_result(tc, agent=agent, hooks=hooks)
             i += 1
 
     # ── append ALL results as ONE user message (Anthropic requires this) ──
     result_blocks = []
+    ordered_results: list[ToolExecutionResult] = []
     for i, tc in enumerate(tool_calls):
-        result_text = results.get(i, "Error: tool execution skipped")
+        result = results.get(i) or _result(tc, status="skipped", category="executor", error="tool execution skipped")
+        ordered_results.append(result)
         result_blocks.append({
             "type": "tool_result",
-            "tool_use_id": tc["id"],
-            "content": result_text,
+            "tool_use_id": result.tool_use_id,
+            "content": format_tool_result(result),
         })
     messages.append({"role": "user", "content": result_blocks})
+    if agent is not None:
+        try:
+            agent._last_tool_results = [result.as_dict() for result in ordered_results]
+        except Exception:
+            pass
+    return ordered_results
 
 
 async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
+    """Compatibility wrapper that returns only the tool-result string."""
+    return format_tool_result(await execute_tool_call_result(tc, agent=agent, hooks=hooks))
+
+
+async def execute_tool_call_result(
+    tc: dict,
+    *,
+    agent: Any = None,
+    hooks: Any = None,
+    timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
+) -> ToolExecutionResult:
     """Execute a single tool call through the security pipeline.
 
     Order matters — hard rejections first, then user-facing gates:
@@ -119,78 +162,266 @@ async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
       ③ checkpoint — backup before destructive write
       ④ pre-hook → dispatch → post-process
     """
+    started = _time_module.monotonic()
+    tc = _normalize_tool_call(tc)
+    name = tc["name"]
 
-    entry = tool_registry.get(tc["name"])
+    if is_interrupted():
+        return _result(
+            tc,
+            status="interrupted",
+            category="interrupt",
+            error="tool execution interrupted",
+            started=started,
+        )
+
+    entry = tool_registry.get(name)
     if entry is None:
-        return f"Error: unknown tool '{tc['name']}'"
+        return _result(
+            tc,
+            status="error",
+            category="unknown_tool",
+            error=f"unknown tool '{name}'",
+            started=started,
+        )
 
     # ── ① pre-check: hard rejections, NEVER ask user ──
-    pre_error = _pre_check(tc, entry)
+    try:
+        pre_error = _pre_check(tc, entry)
+    except Exception as exc:
+        return _result(
+            tc,
+            status="error",
+            category="precheck",
+            error=f"{type(exc).__name__}: {exc}",
+            started=started,
+        )
     if pre_error:
-        return pre_error
+        return _result(tc, status="denied", category="precheck", error=pre_error, started=started)
 
     # ── ② scope gate: may ask user (/allow) ────────────
-    gate_error = _scope_gate(tc, entry, agent)
+    try:
+        gate_error = _scope_gate(tc, entry, agent)
+    except Exception as exc:
+        return _result(
+            tc,
+            status="error",
+            category="scope_gate",
+            error=f"{type(exc).__name__}: {exc}",
+            started=started,
+        )
     if gate_error:
-        return gate_error
+        return _result(
+            tc,
+            status="denied",
+            category=_classify_gate_error(gate_error),
+            error=gate_error,
+            started=started,
+        )
 
     # ── ③ checkpoint (destructive file tools) ──────────
-    if tc["name"] in ("write", "edit"):
+    if name in ("write", "edit"):
         _checkpoint_file_write(tc)
 
     # ── 1. pre-hook ──────────────────────────────────
     if hooks:
-        result = await hooks.fire("on_before_tool_exec", tc, entry)
-        if result is None:
-            return "Error: tool execution blocked"
-        if isinstance(result, dict):
-            tc = result
+        try:
+            hook_result = await hooks.fire("on_before_tool_exec", tc, entry)
+        except Exception as exc:
+            return _result(
+                tc,
+                status="error",
+                category="hook",
+                error=f"before hook failed: {type(exc).__name__}: {exc}",
+                started=started,
+            )
+        if hook_result is None:
+            return _result(tc, status="denied", category="hook", error="tool execution blocked", started=started)
+        if isinstance(hook_result, dict):
+            modified = _normalize_tool_call(hook_result)
+            if modified["name"] != name:
+                return _result(
+                    tc,
+                    status="denied",
+                    category="hook",
+                    error="before hook cannot change tool name",
+                    started=started,
+                )
+            tc = modified
 
     # ── 2. dispatch (with retry for idempotent tools) ──
     max_attempts = 2 if not entry.is_destructive else 1  # retry safe tools once
     last_exc = None
+    attempts = 0
     for attempt in range(max_attempts):
+        attempts = attempt + 1
+        if is_interrupted():
+            return _result(
+                tc,
+                status="interrupted",
+                category="interrupt",
+                error="tool execution interrupted",
+                attempts=attempts,
+                started=started,
+            )
         try:
-            result = await entry.handler(**tc["input"])
+            raw_result = await _run_handler(entry.handler, tc["input"], timeout=timeout)
+            result = _coerce_tool_output(raw_result)
             break
+        except asyncio.TimeoutError:
+            return _result(
+                tc,
+                status="timeout",
+                category="timeout",
+                error=f"tool '{name}' timed out after {timeout:g}s",
+                attempts=attempts,
+                started=started,
+            )
         except Exception as exc:
             last_exc = exc
             if attempt < max_attempts - 1 and _is_retryable(exc):
-                logger.warning("Tool '%s' failed (attempt %d/2): %s", tc["name"], attempt + 1, exc)
+                logger.warning("Tool '%s' failed (attempt %d/2): %s", name, attempt + 1, exc)
                 await asyncio.sleep(0.5 * (attempt + 1))  # brief backoff
                 continue
-            logger.exception("Tool dispatch failed for '%s'", tc["name"])
+            logger.exception("Tool dispatch failed for '%s'", name)
     else:
         # All attempts failed
-        result = f"Error: {last_exc}"
+        return _result(
+            tc,
+            status="error",
+            category="handler",
+            error=str(last_exc or "tool dispatch failed"),
+            attempts=attempts,
+            started=started,
+        )
 
     # ── 3. post-process ──────────────────────────────
     if len(result) > MAX_RESULT_CHARS:
         result = result[:MAX_RESULT_CHARS] + f"\n\n...({len(result) - MAX_RESULT_CHARS} more chars truncated)"
 
+    status: ToolExecutionStatus = "success"
+    category = ""
+    error = ""
     if hooks:
-        modified = await hooks.fire("on_after_tool_exec", tc, result)
-        if isinstance(modified, str):
-            result = modified
+        try:
+            modified = await hooks.fire("on_after_tool_exec", tc, result)
+            if isinstance(modified, str):
+                result = modified
+        except Exception as exc:
+            status = "error"
+            category = "hook"
+            error = f"after hook failed: {type(exc).__name__}: {exc}"
 
-    logger.debug("Tool '%s' done: %d chars", tc["name"], len(result))
-    return result
+    logger.debug("Tool '%s' done: %d chars", name, len(result))
+    return _result(
+        tc,
+        status=status,
+        category=category,
+        content=result,
+        error=error,
+        attempts=attempts,
+        started=started,
+    )
 
 
-def _exec_one_sync(tc: dict, agent: Any = None, hooks: Any = None) -> str:
-    """Synchronous wrapper for thread-pool execution. Fresh event loop per thread.
-    Handles Windows ProactorEventLoop quirks gracefully."""
+def format_tool_result(result: ToolExecutionResult) -> str:
+    if result.content:
+        return result.content
+    if result.error:
+        return result.error if result.error.lower().startswith("error:") else f"Error: {result.error}"
+    return "Error: tool execution produced no result"
+
+
+def _normalize_tool_call(tc: dict) -> dict:
+    name = str(tc.get("name", ""))
+    tool_use_id = str(tc.get("id") or tc.get("tool_use_id") or name or "tool")
+    raw_input = tc.get("input", {})
+    if raw_input is None:
+        raw_input = {}
+    if not isinstance(raw_input, dict):
+        raw_input = {"value": raw_input}
+    return {
+        "id": tool_use_id,
+        "name": name,
+        "input": raw_input,
+    }
+
+
+def _result(
+    tc: dict,
+    *,
+    status: ToolExecutionStatus = "success",
+    category: str = "",
+    content: str = "",
+    error: str = "",
+    attempts: int = 0,
+    started: float | None = None,
+) -> ToolExecutionResult:
+    normalized = _normalize_tool_call(tc)
+    result_text = _coerce_tool_output(content) if content else ""
+    error_text = _coerce_tool_output(error) if error else ""
+    visible = result_text or error_text
+    if len(visible) > MAX_RESULT_CHARS:
+        visible = visible[:MAX_RESULT_CHARS] + f"\n\n...({len(visible) - MAX_RESULT_CHARS} more chars truncated)"
+        if result_text:
+            result_text = visible
+        else:
+            error_text = visible
+    duration = 0.0 if started is None else max(0.0, _time_module.monotonic() - started)
+    return ToolExecutionResult(
+        tool_name=normalized["name"],
+        tool_use_id=normalized["id"],
+        status=status,
+        category=category,
+        content=result_text,
+        error=error_text,
+        duration=duration,
+        input_summary=_summarize_value(normalized["input"]),
+        output_summary=_summarize_text(visible),
+        attempts=attempts,
+    )
+
+
+def _coerce_tool_output(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return f"[bytes: {len(value)}]"
     try:
-        return asyncio.run(_exec_one(tc, agent=agent, hooks=hooks))
-    except RuntimeError as e:
-        if "event loop" in str(e).lower():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(_exec_one(tc, agent=agent, hooks=hooks))
-            finally:
-                loop.close()
-        raise
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return str(value)
+
+
+def _summarize_value(value: Any, max_chars: int = 500) -> str:
+    return _summarize_text(_coerce_tool_output(value), max_chars=max_chars)
+
+
+def _summarize_text(value: Any, max_chars: int = 500) -> str:
+    text = " ".join(str(value).split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 3)] + "..."
+
+
+def _classify_gate_error(message: str) -> str:
+    text = str(message).lower()
+    if "authorization" in text or "/allow" in text:
+        return "authorization"
+    if "limit" in text:
+        return "quota"
+    if "unavailable" in text or "dependency" in text:
+        return "dependency"
+    return "scope_gate"
+
+
+async def _run_handler(handler: Any, kwargs: dict[str, Any], *, timeout: float) -> Any:
+    global _active_tool_executions
+    _active_tool_executions += 1
+    try:
+        return await asyncio.wait_for(handler(**kwargs), timeout=timeout)
+    finally:
+        _active_tool_executions = max(0, _active_tool_executions - 1)
 
 
 # ── pre-check: hard blocks (NEVER ask user) ─────────
