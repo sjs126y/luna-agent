@@ -321,12 +321,23 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
 
 
 def format_doctor_report(report: dict[str, Any]) -> str:
+    issues = _doctor_issues(report)
+    plugin_summary = _plugin_status_summary(report["plugins"])
     lines = [
         "Personal Agent 诊断",
+        f"总体状态: {'需要注意' if issues else '正常'}",
         f"数据目录: {report['data_dir']}",
         f"日志级别: {report['log_level']}",
         f"LLM: {report['llm_provider']} / {report['llm_model']}",
         f"MCP: {_yes(report['mcp_enabled'])}",
+        (
+            "插件概览: "
+            f"总数={plugin_summary['total']} "
+            f"已加载={plugin_summary['loaded']} "
+            f"延迟={plugin_summary['deferred']} "
+            f"禁用={plugin_summary['disabled']} "
+            f"错误={plugin_summary['error']}"
+        ),
         "",
         "Sandbox:",
     ]
@@ -365,32 +376,50 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         "",
         "插件:",
     ])
-    lines.append(format_plugin_list(report["plugins"]))
-    error_plugins = [plugin for plugin in report["plugins"] if plugin["status"] == "ERROR"]
-    if error_plugins:
-        lines.extend(["", "错误插件:"])
-        for plugin in error_plugins:
-            lines.append(f"  - {plugin['key']}: {plugin['error'] or plugin['entrypoint_error']}")
+    lines.append(format_plugin_list(report["plugins"], include_summary=False))
+    lines.extend(["", "需要注意:"])
+    if issues:
+        lines.extend(f"  - {issue}" for issue in issues)
+    else:
+        lines.append("  - 无")
     return "\n".join(lines)
 
 
-def format_plugin_list(reports: list[dict[str, Any]]) -> str:
-    lines = ["插件\t状态\t启用\t延迟\t注册项\t错误"]
-    for report in reports:
+def format_plugin_list(reports: list[dict[str, Any]], *, include_summary: bool = True) -> str:
+    summary = _plugin_status_summary(reports)
+    lines: list[str] = []
+    if include_summary:
         lines.append(
-            f"{report['key']}\t{report['status']}\t{_yes(report['enabled'])}\t"
-            f"{_yes(report['deferred'])}\t{_registration_summary(report['registered'])}\t"
-            f"{report['error'] or report['entrypoint_error'] or '-'}"
+            "插件概览: "
+            f"总数={summary['total']} "
+            f"已加载={summary['loaded']} "
+            f"延迟={summary['deferred']} "
+            f"禁用={summary['disabled']} "
+            f"错误={summary['error']}"
         )
+    for group, grouped_reports in _group_plugins(reports).items():
+        if lines:
+            lines.append("")
+        lines.append(f"{group}:")
+        for report in grouped_reports:
+            lines.append(
+                f"  - {report['key']} [{report['status']}] "
+                f"启用={_yes(report['enabled'])} "
+                f"延迟={_yes(report['deferred'])} "
+                f"注册={_registration_summary(report['registered'])} "
+                f"问题={_plugin_issue_summary(report)}"
+            )
     return "\n".join(lines)
 
 
 def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> str:
+    diagnostics = _plugin_diagnostics(report)
     lines = [
         f"插件: {report['key']}",
         f"名称: {report['name']} ({report['version']})",
         f"描述: {report['description'] or '-'}",
         f"类型: {report['kind']}  来源: {report['source']}",
+        f"路径: {report.get('path') or '-'}",
         f"入口: {report['entrypoint']} [{_status(report['entrypoint_importable'])}]",
         f"启用: {_yes(report['enabled'])}  默认启用: {_yes(report['enabled_by_default'])}  延迟加载: {_yes(report['deferred'])}",
         f"状态: {report['status']}",
@@ -398,8 +427,10 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         f"需要环境变量: {_list_or_none(report['requires_env'])}",
         f"缺失环境变量: {_list_or_none(report['missing_env'])}",
         f"注册数量: {_registration_summary(report['registered'])}",
-        "注册项:",
+        "诊断:",
     ]
+    lines.extend(f"  - {item}" for item in diagnostics)
+    lines.append("注册项:")
     for group, items in report["registered_items"].items():
         lines.append(f"  {group}: {_list_or_none(items)}")
     if report["error"] or report["entrypoint_error"]:
@@ -428,6 +459,97 @@ def format_token_budget(data: dict[str, Any]) -> str:
         marker = " (已达到)" if data.get("over_compression_threshold") else ""
         lines.append(f"compression threshold: {data['compression_threshold']:,}{marker}")
     return "\n".join(lines)
+
+
+def _doctor_issues(report: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for root in report["sandbox"]["roots"]:
+        if not root["exists"]:
+            issues.append(f"Sandbox root 不存在: {root['path']}")
+
+    for server in report["mcp_servers"]:
+        if server["enabled"] and not server["command_found"]:
+            issues.append(f"MCP 服务器 {server['name']} 的命令不可用: {server['command'] or '-'}")
+
+    tokenizer = report["tokenizer"]
+    if tokenizer.get("fallback_active"):
+        issues.append("Tokenizer 正在使用 fallback 估算，token 数可能不够精确。")
+
+    for plugin in report["plugins"]:
+        diagnostics = [
+            item
+            for item in _plugin_diagnostics(plugin)
+            if item != "当前无明显问题。"
+        ]
+        for item in diagnostics:
+            if item.startswith("延迟加载"):
+                continue
+            issues.append(f"插件 {plugin['key']}: {item}")
+    return issues
+
+
+def _plugin_status_summary(reports: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total": len(reports),
+        "loaded": sum(1 for report in reports if report["status"] == "LOADED"),
+        "deferred": sum(1 for report in reports if report["status"] == "DEFERRED"),
+        "disabled": sum(1 for report in reports if not report["enabled"] or report["status"] == "DISABLED"),
+        "error": sum(1 for report in reports if report["status"] == "ERROR"),
+    }
+
+
+def _group_plugins(reports: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for report in reports:
+        groups.setdefault(_plugin_group_label(report), []).append(report)
+    return {
+        group: sorted(items, key=lambda item: item["key"])
+        for group, items in groups.items()
+    }
+
+
+def _plugin_group_label(report: dict[str, Any]) -> str:
+    key = str(report.get("key", ""))
+    kind = str(report.get("kind", ""))
+    source = str(report.get("source", ""))
+    if key.startswith("platforms/") or kind == "platform":
+        return "平台插件"
+    if key.startswith("memory/"):
+        return "记忆插件"
+    if key.startswith("workflows/"):
+        return "工作流插件"
+    if source == "builtin" or key.startswith("builtin/"):
+        return "内置插件"
+    return "用户插件"
+
+
+def _plugin_issue_summary(report: dict[str, Any]) -> str:
+    issues = [
+        item
+        for item in _plugin_diagnostics(report)
+        if item != "当前无明显问题。" and not item.startswith("延迟加载")
+    ]
+    return "；".join(issues) if issues else "-"
+
+
+def _plugin_diagnostics(report: dict[str, Any]) -> list[str]:
+    diagnostics: list[str] = []
+    if not report["enabled"]:
+        diagnostics.append("插件已禁用，不会加载。")
+    if report["missing_env"]:
+        diagnostics.append(f"缺失环境变量: {_list_or_none(report['missing_env'])}")
+    if not report["entrypoint_importable"]:
+        error = report.get("entrypoint_error") or "未知错误"
+        diagnostics.append(f"入口不可导入: {error}")
+    if report["error"]:
+        diagnostics.append(f"加载错误: {report['error']}")
+    if report["status"] == "ERROR" and not report["error"] and report["entrypoint_error"]:
+        diagnostics.append(f"加载错误: {report['entrypoint_error']}")
+    if report["status"] == "DEFERRED":
+        diagnostics.append("延迟加载，当前未 import；平台/MCP 等触发时才会加载。")
+    if not diagnostics:
+        diagnostics.append("当前无明显问题。")
+    return diagnostics
 
 
 def _registration_summary(counts: dict[str, int]) -> str:

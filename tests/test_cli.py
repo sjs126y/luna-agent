@@ -7,7 +7,13 @@ import json
 from typer.testing import CliRunner
 
 from personal_agent.agents.runtime import AgentRun
-from personal_agent.cli import app, build_doctor_report, format_plugin_report
+from personal_agent.cli import (
+    app,
+    build_doctor_report,
+    format_doctor_report,
+    format_plugin_list,
+    format_plugin_report,
+)
 
 
 runner = CliRunner()
@@ -34,6 +40,16 @@ def test_plugins_list_json_command():
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert any(plugin["key"] == "builtin/tools" for plugin in data)
+
+
+def test_plugins_list_command_shows_summary_and_groups():
+    result = runner.invoke(app, ["plugins", "list"])
+
+    assert result.exit_code == 0
+    assert "插件概览:" in result.output
+    assert "内置插件:" in result.output
+    assert "平台插件:" in result.output
+    assert "builtin/tools" in result.output
 
 
 def test_chat_positional_message_runs_once(monkeypatch):
@@ -242,5 +258,123 @@ def test_format_plugin_report_includes_traceback_when_requested():
     }
 
     text = format_plugin_report(report, include_traceback=True)
+    assert "诊断:" in text
+    assert "入口不可导入" in text
+    assert "加载错误: boom" in text
     assert "错误: boom" in text
     assert "Traceback demo" in text
+
+
+def test_format_plugin_list_summarizes_and_groups_reports():
+    reports = [
+        _plugin_report("builtin/tools", status="LOADED", source="builtin"),
+        _plugin_report("platforms/telegram", status="DEFERRED", kind="platform"),
+        _plugin_report(
+            "user/demo",
+            status="ERROR",
+            source="user",
+            error="boom",
+            missing_env=["DEMO_TOKEN"],
+        ),
+    ]
+
+    text = format_plugin_list(reports)
+
+    assert "插件概览: 总数=3 已加载=1 延迟=1 禁用=0 错误=1" in text
+    assert "内置插件:" in text
+    assert "平台插件:" in text
+    assert "用户插件:" in text
+    assert "问题=缺失环境变量: DEMO_TOKEN；加载错误: boom" in text
+
+
+def test_format_doctor_report_includes_summary_and_issues():
+    report = {
+        "data_dir": "data",
+        "log_level": "INFO",
+        "llm_provider": "deepseek",
+        "llm_model": "deepseek-v4-flash",
+        "mcp_enabled": True,
+        "sandbox": {
+            "roots": [{"path": "/missing", "exists": False}],
+            "blocked_count": 1,
+            "bash_work_dir": "data",
+        },
+        "mcp_servers": [{
+            "name": "demo",
+            "command": "missing-cmd",
+            "enabled": True,
+            "command_found": False,
+        }],
+        "platforms": [],
+        "plugins": [_plugin_report("user/demo", status="ERROR", error="boom")],
+        "tokenizer": {
+            "tiktoken_available": True,
+            "fallback_active": False,
+            "default_encoding": "cl100k_base",
+            "cached_encodings": {},
+        },
+    }
+
+    text = format_doctor_report(report)
+
+    assert "总体状态: 需要注意" in text
+    assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
+    assert "需要注意:" in text
+    assert "Sandbox root 不存在: /missing" in text
+    assert "MCP 服务器 demo 的命令不可用: missing-cmd" in text
+    assert "插件 user/demo: 加载错误: boom" in text
+
+
+def _plugin_report(
+    key: str,
+    *,
+    status: str = "DISCOVERED",
+    kind: str = "user",
+    source: str = "user",
+    enabled: bool = True,
+    deferred: bool = False,
+    error: str = "",
+    entrypoint_error: str = "",
+    missing_env: list[str] | None = None,
+) -> dict:
+    return {
+        "key": key,
+        "name": key,
+        "version": "1.0.0",
+        "description": "",
+        "kind": kind,
+        "source": source,
+        "entrypoint": "demo:register",
+        "entrypoint_importable": not entrypoint_error,
+        "enabled": enabled,
+        "enabled_by_default": enabled,
+        "deferred": deferred,
+        "status": status,
+        "provides": [],
+        "requires_env": list(missing_env or []),
+        "missing_env": list(missing_env or []),
+        "registered": {
+            "tools": 0,
+            "skills": 0,
+            "workflows": 0,
+            "platforms": 0,
+            "mcp_servers": 0,
+            "hooks": 0,
+            "commands": 0,
+            "middleware": 0,
+        },
+        "registered_items": {
+            "tools": [],
+            "skills": [],
+            "workflows": [],
+            "platforms": [],
+            "mcp_servers": [],
+            "hooks": [],
+            "commands": [],
+            "middleware": [],
+        },
+        "entrypoint_error": entrypoint_error,
+        "error": error,
+        "error_traceback": "",
+        "path": "",
+    }
