@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 CHAT_LOCKS_MAXSIZE = 64
 PENDING_WARNING_THRESHOLD = 10
+MESSAGE_DEDUPE_MAXSIZE = 1024
 
 
 # ── result types ─────────────────────────────────────
@@ -114,6 +115,8 @@ class BasePlatformAdapter(ABC):
         self._active_sessions: dict[str, bool] = {}
         self._pending_messages: dict[str, list[PendingMessage]] = {}
         self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        self._seen_message_keys: OrderedDict[str, None] = OrderedDict()
+        self._dedupe_max_size = MESSAGE_DEDUPE_MAXSIZE
         self.hooks = Hooks()
         self._platform_name = type(self).__name__
         self._connected = False
@@ -152,8 +155,16 @@ class BasePlatformAdapter(ABC):
 
     def handle_message(self, event: MessageEvent) -> None:
         """Entry point. Returns in ~200us. Schedules background processing."""
-        session_key = self._make_session_key(event.source)
         self._last_message_at = _now()
+        if self._is_duplicate_message(event):
+            logger.info(
+                "Platform %s dropped duplicate message id=%s",
+                self._platform_name,
+                event.message_id,
+            )
+            return
+
+        session_key = self._make_session_key(event.source)
         if session_key in self._active_sessions:
             queue = self._pending_messages.setdefault(session_key, [])
             queue.append(PendingMessage(event, queued_at=_now(), queued_monotonic=time.monotonic()))
@@ -175,7 +186,10 @@ class BasePlatformAdapter(ABC):
             chat_id = event.source.chat_id or session_key
             lock = self._get_chat_lock(chat_id)
             async with lock:
-                await self._send_typing(event.source.chat_id)
+                try:
+                    await self._send_typing(event.source.chat_id)
+                except Exception:
+                    logger.exception("Typing indicator failed for session %s", session_key)
                 response = None
                 if self._message_handler:
                     response = await self._message_handler(event)
@@ -221,14 +235,12 @@ class BasePlatformAdapter(ABC):
                 if attempt < max_retries:
                     self._send_stats.retry_count += 1
                     # Format error → strip Markdown, retry with plain text
-                    if "parse" in error_lower or "format" in error_lower or "markdown" in error_lower:
+                    if self._is_format_error(error_lower):
                         content = _strip_formatting(content)
-                        delay = 0.5  # short delay for format fix
-                    else:
-                        delay = (2 ** attempt) + random.uniform(0, 1)
+                    delay = self._send_retry_delay(attempt, error_lower)
                     logger.warning("Send failed (attempt %d/%d): %s, retrying in %.1fs",
                                    attempt + 1, max_retries, result.error, delay)
-                    await asyncio.sleep(delay)
+                    await self._sleep_before_retry(delay)
                 else:
                     self._record_send_failure(result.error or "send failed")
                     logger.error("Send failed after %d retries: %s", max_retries, result.error)
@@ -249,7 +261,7 @@ class BasePlatformAdapter(ABC):
                 if attempt < max_retries:
                     self._send_stats.retry_count += 1
                     logger.warning("Send exception (attempt %d/%d): %s", attempt + 1, max_retries, exc)
-                    await asyncio.sleep((2 ** attempt) + random.uniform(0, 1))
+                    await self._sleep_before_retry(self._send_retry_delay(attempt, error_msg))
                 else:
                     self._record_send_failure(self._last_send_error)
 
@@ -257,6 +269,30 @@ class BasePlatformAdapter(ABC):
 
     def _make_session_key(self, source) -> str:
         return f"{source.platform}:{source.chat_id}:{source.user_id}"
+
+    def _message_dedupe_key(self, event: MessageEvent) -> str:
+        message_id = str(event.message_id or "").strip()
+        if not message_id:
+            return ""
+        source = event.source
+        return ":".join([
+            str(getattr(source, "platform", "")),
+            str(getattr(source, "chat_id", "")),
+            str(getattr(source, "user_id", "")),
+            message_id,
+        ])
+
+    def _is_duplicate_message(self, event: MessageEvent) -> bool:
+        key = self._message_dedupe_key(event)
+        if not key:
+            return False
+        if key in self._seen_message_keys:
+            self._seen_message_keys.move_to_end(key)
+            return True
+        self._seen_message_keys[key] = None
+        while len(self._seen_message_keys) > self._dedupe_max_size:
+            self._seen_message_keys.popitem(last=False)
+        return False
 
     def _get_chat_lock(self, chat_id: str) -> asyncio.Lock:
         if chat_id not in self._chat_locks:
@@ -268,6 +304,18 @@ class BasePlatformAdapter(ABC):
     async def _send_typing(self, chat_id: str) -> None:
         """Optional typing indicator — override in subclass if platform supports it."""
         pass
+
+    def _send_retry_delay(self, attempt: int, error_lower: str) -> float:
+        if self._is_format_error(error_lower):
+            return 0.5
+        return (2 ** attempt) + random.uniform(0, 1)
+
+    async def _sleep_before_retry(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+
+    @staticmethod
+    def _is_format_error(error_lower: str) -> bool:
+        return "parse" in error_lower or "format" in error_lower or "markdown" in error_lower
 
     def _record_send_failure(self, error: str) -> None:
         self._send_stats.failed_count += 1
@@ -317,6 +365,8 @@ class BasePlatformAdapter(ABC):
             "pending_by_session": pending_by_session,
             "oldest_pending_age_seconds": round(oldest_pending_age, 3),
             "chat_locks": len(self._chat_locks),
+            "dedupe_size": len(self._seen_message_keys),
+            "dedupe_max_size": self._dedupe_max_size,
             "last_message_at": self._last_message_at,
             "last_response_at": self._last_response_at,
             "send_stats": self._send_stats.snapshot(),

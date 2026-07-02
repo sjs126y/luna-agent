@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 import pytest_asyncio
 
@@ -75,16 +77,33 @@ async def gateway(tmp_path):
     await db.close()
 
 
-def _event(text: str) -> MessageEvent:
+def _event(
+    text: str,
+    *,
+    platform: str = "telegram",
+    user_id: str = "u1",
+    chat_id: str = "c1",
+    message_id: str | None = None,
+) -> MessageEvent:
     return MessageEvent(
         text=text,
         source=SessionSource(
-            platform="telegram",
-            user_id="u1",
-            chat_id="c1",
+            platform=platform,
+            user_id=user_id,
+            chat_id=chat_id,
             user_name="User",
         ),
+        message_id=message_id,
     )
+
+
+async def _wait_until(predicate, *, timeout: float = 1.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    assert predicate()
 
 
 @pytest.mark.asyncio
@@ -337,6 +356,265 @@ async def test_base_adapter_health_records_pending_queue(gateway):
 
 
 @pytest.mark.asyncio
+async def test_base_adapter_handler_failure_drains_pending_queue(gateway):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    calls = []
+
+    async def handler(event):
+        calls.append(event.text)
+        if event.text == "first":
+            raise RuntimeError("handler boom")
+        return f"ok:{event.text}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("first", message_id="m1"))
+    adapter.handle_message(_event("second", message_id="m2"))
+
+    await _wait_until(lambda: adapter.sent_contents == ["ok:second"])
+
+    health = adapter.health_snapshot()
+    assert calls == ["first", "second"]
+    assert health["active_sessions"] == 0
+    assert health["pending_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_typing_failure_does_not_block_message(gateway):
+    adapter = TypingFailAdapter(gateway.config, gateway.db)
+
+    async def handler(event):
+        return f"ok:{event.text}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("hello", message_id="m1"))
+
+    await _wait_until(lambda: adapter.sent_contents == ["ok:hello"])
+    assert adapter.health_snapshot()["active_sessions"] == 0
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_send_failure_drains_pending_queue(gateway):
+    adapter = AlwaysFailSendAdapter(gateway.config, gateway.db)
+    handled = []
+
+    async def handler(event):
+        handled.append(event.text)
+        return f"reply:{event.text}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("first", message_id="m1"))
+    adapter.handle_message(_event("second", message_id="m2"))
+
+    await _wait_until(lambda: handled == ["first", "second"] and adapter.send_attempts == 6)
+
+    health = adapter.health_snapshot()
+    assert health["active_sessions"] == 0
+    assert health["pending_messages"] == 0
+    assert health["last_send_error"] == "send failed"
+    assert health["send_stats"]["failed_count"] == 2
+    assert health["send_stats"]["retry_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_format_send_error_strips_formatting_and_retries(gateway):
+    adapter = SequenceSendAdapter(gateway.config, gateway.db, [
+        SendResult(success=False, error="markdown parse error"),
+        SendResult(success=True, message_id="ok"),
+    ])
+
+    await adapter._send_with_retry("chat", "**hello** `code` [link](https://example.test)")
+
+    assert adapter.sent_contents == [
+        "**hello** `code` [link](https://example.test)",
+        "hello code link",
+    ]
+    assert adapter.sleep_delays == [0.5]
+    health = adapter.health_snapshot()
+    assert health["send_stats"]["sent_count"] == 1
+    assert health["send_stats"]["retry_count"] == 1
+    assert health["send_stats"]["failed_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_timeout_send_error_does_not_retry(gateway):
+    adapter = SequenceSendAdapter(gateway.config, gateway.db, [
+        SendResult(success=False, error="request timeout"),
+    ])
+
+    await adapter._send_with_retry("chat", "hello")
+
+    assert adapter.sent_contents == ["hello"]
+    health = adapter.health_snapshot()
+    assert health["send_stats"]["retry_count"] == 0
+    assert health["send_stats"]["failed_count"] == 1
+    assert health["last_send_error"] == "request timeout"
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_send_exception_retries_to_limit(gateway):
+    adapter = SequenceSendAdapter(gateway.config, gateway.db, [
+        RuntimeError("temporary"),
+        RuntimeError("temporary"),
+        RuntimeError("temporary"),
+    ])
+
+    await adapter._send_with_retry("chat", "hello", max_retries=2)
+
+    assert adapter.sent_contents == ["hello", "hello", "hello"]
+    assert len(adapter.sleep_delays) == 2
+    health = adapter.health_snapshot()
+    assert health["send_stats"]["retry_count"] == 2
+    assert health["send_stats"]["failed_count"] == 1
+    assert "RuntimeError: temporary" in health["last_send_error"]
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_deduplicates_same_message_id(gateway):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    handled = []
+
+    async def handler(event):
+        handled.append(event.message_id)
+        return f"ok:{event.message_id}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("hello", message_id="same"))
+    adapter.handle_message(_event("hello duplicate", message_id="same"))
+
+    await _wait_until(lambda: adapter.sent_contents == ["ok:same"])
+
+    health = adapter.health_snapshot()
+    assert handled == ["same"]
+    assert health["dedupe_size"] == 1
+    assert health["active_sessions"] == 0
+    assert health["pending_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_dedupes_only_when_message_id_is_present(gateway):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    handled = []
+
+    async def handler(event):
+        handled.append(event.text)
+        return f"ok:{event.text}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("first"))
+    adapter.handle_message(_event("second"))
+
+    await _wait_until(lambda: adapter.sent_contents == ["ok:first", "ok:second"])
+
+    assert handled == ["first", "second"]
+    assert adapter.health_snapshot()["dedupe_size"] == 0
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_dedupe_key_includes_platform_chat_and_user(gateway):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    handled = []
+
+    async def handler(event):
+        handled.append((
+            event.source.platform,
+            event.source.chat_id,
+            event.source.user_id,
+            event.message_id,
+        ))
+        return "ok"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("a", platform="telegram", chat_id="c1", user_id="u1", message_id="same"))
+    adapter.handle_message(_event("b", platform="telegram", chat_id="c2", user_id="u1", message_id="same"))
+    adapter.handle_message(_event("c", platform="telegram", chat_id="c1", user_id="u2", message_id="same"))
+    adapter.handle_message(_event("d", platform="feishu", chat_id="c1", user_id="u1", message_id="same"))
+
+    await _wait_until(lambda: len(adapter.sent_contents) == 4)
+
+    assert len(handled) == 4
+    assert adapter.health_snapshot()["dedupe_size"] == 4
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_dedupe_lru_evicts_old_keys(gateway):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    adapter._dedupe_max_size = 2
+    handled = []
+
+    async def handler(event):
+        handled.append(event.message_id)
+        return f"ok:{event.message_id}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("one", message_id="m1"))
+    adapter.handle_message(_event("two", message_id="m2"))
+    adapter.handle_message(_event("three", message_id="m3"))
+    adapter.handle_message(_event("one again", message_id="m1"))
+
+    await _wait_until(lambda: len(adapter.sent_contents) == 4)
+
+    assert handled == ["m1", "m2", "m3", "m1"]
+    health = adapter.health_snapshot()
+    assert health["dedupe_size"] == 2
+    assert health["dedupe_max_size"] == 2
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_same_session_messages_are_serialized(gateway):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    handled = []
+
+    async def handler(event):
+        handled.append(f"start:{event.text}")
+        await asyncio.sleep(0.02)
+        handled.append(f"end:{event.text}")
+        return f"reply:{event.text}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("one", message_id="m1"))
+    adapter.handle_message(_event("two", message_id="m2"))
+    adapter.handle_message(_event("three", message_id="m3"))
+
+    await _wait_until(lambda: adapter.sent_contents == ["reply:one", "reply:two", "reply:three"])
+
+    assert handled == [
+        "start:one", "end:one",
+        "start:two", "end:two",
+        "start:three", "end:three",
+    ]
+    health = adapter.health_snapshot()
+    assert health["active_sessions"] == 0
+    assert health["pending_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_different_sessions_can_run_concurrently(gateway):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    started = []
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(event):
+        started.append(event.source.chat_id)
+        if len(started) == 2:
+            both_started.set()
+        await release.wait()
+        return f"reply:{event.source.chat_id}"
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("one", chat_id="c1", message_id="m1"))
+    adapter.handle_message(_event("two", chat_id="c2", message_id="m2"))
+
+    await asyncio.wait_for(both_started.wait(), timeout=1)
+    assert sorted(started) == ["c1", "c2"]
+    assert adapter.health_snapshot()["active_sessions"] == 2
+
+    release.set()
+    await _wait_until(lambda: sorted(adapter.sent_contents) == ["reply:c1", "reply:c2"])
+    assert adapter.health_snapshot()["active_sessions"] == 0
+
+
+@pytest.mark.asyncio
 async def test_gateway_stop_marks_active_run(gateway):
     gateway._run_state.begin("telegram:c1:u1", _event("hello").source)
 
@@ -390,6 +668,49 @@ class FakeAdapter(BasePlatformAdapter):
 class FailingSendAdapter(FakeAdapter):
     async def send(self, chat_id: str, content: str) -> SendResult:
         return SendResult(success=False, error="send failed")
+
+
+class RecordingAdapter(FakeAdapter):
+    def __init__(self, config, db):
+        super().__init__(config, db)
+        self.sent_contents = []
+        self.sleep_delays = []
+
+    async def send(self, chat_id: str, content: str) -> SendResult:
+        self.sent_contents.append(content)
+        return SendResult(success=True, message_id="ok")
+
+    async def _sleep_before_retry(self, delay: float) -> None:
+        self.sleep_delays.append(delay)
+
+
+class TypingFailAdapter(RecordingAdapter):
+    async def _send_typing(self, chat_id: str) -> None:
+        raise RuntimeError("typing boom")
+
+
+class AlwaysFailSendAdapter(RecordingAdapter):
+    def __init__(self, config, db):
+        super().__init__(config, db)
+        self.send_attempts = 0
+
+    async def send(self, chat_id: str, content: str) -> SendResult:
+        self.send_attempts += 1
+        self.sent_contents.append(content)
+        return SendResult(success=False, error="send failed")
+
+
+class SequenceSendAdapter(RecordingAdapter):
+    def __init__(self, config, db, outcomes):
+        super().__init__(config, db)
+        self.outcomes = list(outcomes)
+
+    async def send(self, chat_id: str, content: str) -> SendResult:
+        self.sent_contents.append(content)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
 
 @pytest.mark.asyncio
