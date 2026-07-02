@@ -14,7 +14,7 @@ from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import SessionSource
-from personal_agent.conversation import ConversationService
+from personal_agent.conversation import ConversationCommandRuntime, ConversationService
 from personal_agent.runtime import AppRuntime, create_app_runtime
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ CLI_SYSTEM_PROMPT = (
 
 
 @dataclass
-class CliChatRuntime:
+class CliChatRuntime(ConversationCommandRuntime):
     settings: Settings
     plugin_manager: object
     db: Database
@@ -116,38 +116,11 @@ class CliChatRuntime:
         result = await self.conversation_service.run_turn(self.session_key, self.source, text)
         return result.final_response or "..."
 
-    async def get_or_create_agent(self):
-        assert self.conversation_service is not None
-        return await self.conversation_service.get_or_create_agent(self.session_key)
-
-    async def reset_session(self) -> str:
-        assert self.conversation_service is not None
-        await self.conversation_service.reset_session(self.session_key, self.source)
-        return "会话已重置。开始新的对话吧。"
-
-    async def clear_agent(self) -> None:
-        assert self.conversation_service is not None
-        self.conversation_service.clear_agent(self.session_key)
-
     async def switch_session(self, name: str) -> str:
         self.session_name = _clean_session_name(name)
         assert self.conversation_service is not None
         await self.conversation_service.ensure_session(self.session_key, self.source)
         return f"会话已切换: {self.session_key}"
-
-    async def list_sessions(self) -> str:
-        assert self.conversation_service is not None
-        return await self.conversation_service.session_list_summary(
-            platform="cli",
-            user_id="local",
-            current_key=self.session_key,
-        )
-
-    async def current_session(self) -> str:
-        assert self.conversation_service is not None
-        return await self.conversation_service.current_session_summary(
-            self.session_key, self.source
-        )
 
     async def rename_session(self, name: str) -> str:
         old_key = self.session_key
@@ -173,37 +146,6 @@ class CliChatRuntime:
             self.session_name = "default"
         await self.conversation_service.ensure_session(self.session_key, self.source)
         return f"会话已删除: {target_key}\n当前会话: {self.session_key}"
-
-    async def get_agent(self):
-        return await self.get_or_create_agent()
-
-    async def load_history(self) -> list[dict]:
-        assert self.conversation_service is not None
-        return await self.conversation_service.load_history(self.session_key, self.source)
-
-    async def export_session(self) -> tuple[int, str]:
-        assert self.conversation_service is not None
-        export_path = self.conversation_service.default_export_path(self.session_key)
-        count = await self.conversation_service.export_session(
-            self.session_key, self.source, export_path
-        )
-        return count, str(export_path)
-
-    async def usage(self, *, current_user_message: str = "") -> str:
-        assert self.conversation_service is not None
-        return await self.conversation_service.usage_summary(
-            self.session_key,
-            self.source,
-            current_user_message=current_user_message,
-            create_agent=True,
-        )
-
-    async def stop_agents(self) -> str:
-        assert self.conversation_service is not None
-        stopped = self.conversation_service.stop_all_agents()
-        if stopped:
-            return f"已停止。已请求停止 {stopped} 个子 agent。"
-        return "已停止。"
 
     def plugin_command_kwargs(self, args: str) -> dict:
         return {

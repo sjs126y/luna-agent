@@ -9,7 +9,7 @@ from collections import OrderedDict
 from personal_agent.adapters.base import platform_registry
 from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
-from personal_agent.conversation import ConversationService
+from personal_agent.conversation import ConversationCommandRuntime, ConversationService
 from personal_agent.gateway.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -267,13 +267,18 @@ class Gateway:
     # Auth is now handled by AuthManager — see gateway/auth.py
 
 
-class _GatewayCommandRuntime:
+class _GatewayCommandRuntime(ConversationCommandRuntime):
+    reset_session_response = "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
+    usage_create_agent = False
+    allow_all_cached_agents = True
+
     def __init__(self, gateway: Gateway, event, session_key: str) -> None:
         self.gateway = gateway
         self.event = event
         self._session_key = session_key
         self.settings = gateway.config
         self.plugin_manager = gateway.plugin_manager
+        self.conversation_service = gateway._conversation_service
 
     @property
     def session_key(self) -> str:
@@ -287,16 +292,6 @@ class _GatewayCommandRuntime:
     def source(self):
         return self.event.source
 
-    async def get_agent(self):
-        return await self.gateway._conversation_service.get_or_create_agent(self._session_key)
-
-    async def reset_session(self) -> str:
-        await self.gateway._conversation_service.reset_session(self._session_key, self.event.source)
-        return "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
-
-    async def clear_agent(self) -> None:
-        self.gateway._conversation_service.clear_agent(self._session_key)
-
     async def switch_session(self, name: str) -> str:
         base_key = self._base_key()
         platform, user_id = self._platform_user()
@@ -305,21 +300,6 @@ class _GatewayCommandRuntime:
         await self.gateway._conversation_service.ensure_session(new_key, self.event.source)
         self._session_key = new_key
         return f"会话已切换: {new_key}"
-
-    async def list_sessions(self) -> str:
-        base_key = self._base_key()
-        current = self.gateway._session_override.get(base_key, base_key)
-        platform, user_id = self._platform_user()
-        return await self.gateway._conversation_service.session_list_summary(
-            platform=platform,
-            user_id=user_id,
-            current_key=current,
-        )
-
-    async def current_session(self) -> str:
-        return await self.gateway._conversation_service.current_session_summary(
-            self._session_key, self.event.source
-        )
 
     async def rename_session(self, name: str) -> str:
         old_key = self._session_key
@@ -355,37 +335,6 @@ class _GatewayCommandRuntime:
             await self.gateway._conversation_service.ensure_session(base_key, self.event.source)
         return f"会话已删除: {target_key}\n当前会话: {self._session_key}"
 
-    async def load_history(self) -> list[dict]:
-        return await self.gateway._conversation_service.load_history(self._session_key, self.event.source)
-
-    async def export_session(self) -> tuple[int, str]:
-        export_path = self.gateway._conversation_service.default_export_path(self._session_key)
-        count = await self.gateway._conversation_service.export_session(
-            self._session_key, self.event.source, export_path
-        )
-        return count, str(export_path)
-
-    async def usage(self, *, current_user_message: str = "") -> str:
-        return await self.gateway._conversation_service.usage_summary(
-            self._session_key,
-            self.event.source,
-            current_user_message=current_user_message,
-            create_agent=False,
-            empty_message="暂无会话数据。",
-        )
-
-    async def allow_category(self, category: str) -> str:
-        for agent in self.gateway._conversation_service.agent_cache.values():
-            if hasattr(agent, "_destructive_allowed"):
-                agent._destructive_allowed.add(category)
-        return f"已授权 {category} 操作，本轮对话内有效。"
-
-    async def stop_agents(self) -> str:
-        stopped = self.gateway._conversation_service.stop_all_agents()
-        if stopped:
-            return f"已停止。已请求停止 {stopped} 个子 agent。"
-        return "已停止。"
-
     def plugin_command_kwargs(self, args: str) -> dict:
         return {
             "event": self.event,
@@ -396,6 +345,10 @@ class _GatewayCommandRuntime:
 
     def _base_key(self) -> str:
         return f"{self.event.source.platform}:{self.event.source.chat_id}:{self.event.source.user_id}"
+
+    def session_list_current_key(self) -> str:
+        base_key = self._base_key()
+        return self.gateway._session_override.get(base_key, base_key)
 
     def _platform_user(self) -> tuple[str, str]:
         parts = self._base_key().split(":", 2)
