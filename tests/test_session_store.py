@@ -63,6 +63,32 @@ async def test_delete_session_removes_compression_descendants(store):
 
 
 @pytest.mark.asyncio
+async def test_multiple_compressions_preserve_full_chain(store):
+    session_store, db, chain = store
+    entry = await session_store.get_or_create("cli:default:local", _source())
+    first_id = await session_store.create_compressed_session(
+        "cli:default:local",
+        _source(),
+        [{"role": "user", "content": [{"type": "text", "text": "summary 1"}]}],
+    )
+    second_id = await session_store.create_compressed_session(
+        "cli:default:local",
+        _source(),
+        [{"role": "user", "content": [{"type": "text", "text": "summary 2"}]}],
+    )
+
+    assert chain.get_chain(entry.session_id) == [entry.session_id, first_id, second_id]
+    assert chain.resolve(entry.session_id) == second_id
+
+    await session_store.delete_session("cli:default:local")
+
+    assert await db.get_message_count(entry.session_id) == 0
+    assert await db.get_message_count(first_id) == 0
+    assert await db.get_message_count(second_id) == 0
+    assert chain.get_chain(entry.session_id) == [entry.session_id]
+
+
+@pytest.mark.asyncio
 async def test_expire_sessions_removes_compression_descendants(store):
     session_store, db, chain = store
     entry = await session_store.get_or_create("cli:old:local", _source("old"))

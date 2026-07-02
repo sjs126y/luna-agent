@@ -39,6 +39,29 @@ class FailingTransport(MockTransport):
         raise RuntimeError("transport boom")
 
 
+class ProbeCompressor:
+    threshold_tokens = 1
+    protect_head = 2
+    protect_tail = 6
+    last_prompt_tokens = 0
+
+    def __init__(self, *, should=False):
+        self.should = should
+        self.seen_token_count = 0
+        self.updated_usage = None
+
+    def should_compress(self, token_count, messages):
+        self.seen_token_count = token_count
+        return self.should
+
+    async def compress(self, messages, system_prompt, transport):
+        return messages
+
+    def update_from_response(self, response):
+        self.updated_usage = response.usage
+        self.last_prompt_tokens = response.usage.get("input_tokens", 0)
+
+
 @pytest.fixture
 def provider():
     return ProviderProfile(name="test", base_url="http://test", api_key="k", model="m")
@@ -58,6 +81,95 @@ async def test_simple_response(provider):
     assert result["completed"]
     assert result["api_calls"] == 1
     assert result["messages"][-1]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_updates_compressor_usage(provider):
+    compressor = ProbeCompressor()
+    transport = MockTransport([
+        NormalizedResponse(text="Hello!", finish_reason="end_turn",
+                          usage={"input_tokens": 42, "output_tokens": 3}),
+    ])
+    agent = init_agent(transport, provider, compressor=compressor)
+    ctx = await build_turn_context(agent, "Hi")
+
+    await run_conversation(agent, ctx)
+
+    assert compressor.last_prompt_tokens == 42
+    assert compressor.updated_usage == {"input_tokens": 42, "output_tokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_build_turn_context_counts_ephemeral_injections_once(provider, monkeypatch):
+    class Memory:
+        def __init__(self):
+            self.calls = 0
+
+        def get_system_prompt_text(self):
+            return ""
+
+        async def prefetch(self, user_message):
+            self.calls += 1
+            return [{
+                "role": "user",
+                "content": [{"type": "text", "text": f"[相关记忆] {user_message} " + "m" * 400}],
+            }]
+
+    memory = Memory()
+    compressor = ProbeCompressor(should=False)
+    transport = MockTransport([NormalizedResponse(text="ok", usage={"input_tokens": 1})])
+    agent = init_agent(transport, provider, compressor=compressor, memory_manager=memory)
+    agent._pending_skill_injection = "[技能注入] " + "i" * 400
+    monkeypatch.setattr(
+        "personal_agent.agent.context._load_skill_summaries",
+        lambda: "[技能摘要] " + "s" * 400,
+    )
+
+    ctx = await build_turn_context(agent, "remember me")
+    assert memory.calls == 1
+    assert ctx.skill_summaries.startswith("[技能摘要]")
+    assert ctx.skill_injection.startswith("[技能注入]")
+    assert ctx.memory_injections_text.startswith("[相关记忆]")
+    assert compressor.seen_token_count > 250
+    assert agent._last_skill_summaries == ctx.skill_summaries
+    assert agent._last_skill_injection == ctx.skill_injection
+    assert agent._last_memory_injections == ctx.memory_injections_text
+
+    from personal_agent.agent.loop import _build_api_messages
+
+    api_messages = await _build_api_messages(agent, ctx)
+
+    assert any("[相关记忆]" in block.get("text", "")
+               for msg in api_messages for block in msg.get("content", []))
+    assert memory.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_build_turn_context_detects_same_length_compression(provider):
+    class SameLengthCompressor(ProbeCompressor):
+        def __init__(self):
+            super().__init__(should=True)
+
+        async def compress(self, messages, system_prompt, transport):
+            result = [dict(message) for message in messages]
+            result[0] = {
+                "role": result[0]["role"],
+                "content": [{"type": "text", "text": "compressed old message"}],
+            }
+            return result
+
+    compressor = SameLengthCompressor()
+    agent = init_agent(MockTransport([]), provider, compressor=compressor)
+
+    ctx = await build_turn_context(
+        agent,
+        "current",
+        history=[{"role": "user", "content": [{"type": "text", "text": "old message"}]}],
+    )
+
+    assert len(ctx.messages) == 2
+    assert ctx.was_compressed is True
+    assert ctx.current_turn_user_idx == 1
 
 
 @pytest.mark.asyncio

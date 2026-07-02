@@ -29,6 +29,9 @@ class TurnContext:
     was_compressed: bool = False            # True if compression ran this turn
     pre_compress_message_count: int = 0     # message count before compression
     skill_injection: str | None = None      # from /skill-name, injected to api_messages
+    skill_summaries: str = ""               # ephemeral, injected to api_messages
+    memory_prefetch_messages: list[dict] = field(default_factory=list)  # ephemeral
+    memory_injections_text: str = ""        # for /usage diagnostics
 
 
 async def build_turn_context(
@@ -79,19 +82,32 @@ async def build_turn_context(
         "role": "user",
         "content": [{"type": "text", "text": user_message}],
     })
-    user_idx = len(messages) - 1
-
-    # Token check + compression
-    pre_count = len(messages)
-    messages = await _check_and_compress(agent, messages)
-    was_compressed = len(messages) != pre_count
-
     # Consume pending skill injection (set by Gateway /skill-name)
     skill_injection = None
     if agent._pending_skill_injection:
         skill_injection = agent._pending_skill_injection
-        agent._last_skill_injection = skill_injection
         agent._pending_skill_injection = None  # consumed, won't leak to next turn
+
+    skill_summaries = _load_skill_summaries()
+    memory_prefetch_messages, memory_injections_text = await _prefetch_memory(agent, user_message)
+    agent._last_skill_summaries = skill_summaries or ""
+    agent._last_skill_injection = skill_injection or ""
+    agent._last_memory_injections = memory_injections_text or ""
+
+    # Token check + compression. Ephemeral injections count toward the request
+    # budget but are not persisted into compressed history.
+    pre_count = len(messages)
+    pre_compress_messages = copy.deepcopy(messages)
+    messages = await _check_and_compress(
+        agent,
+        messages,
+        extra_context_text="\n".join(
+            part for part in (skill_summaries, skill_injection or "", memory_injections_text)
+            if part
+        ),
+    )
+    was_compressed = messages != pre_compress_messages
+    user_idx = max(0, len(messages) - 1)
 
     turn_id = f"{uuid.uuid4().hex[:8]}"
 
@@ -106,11 +122,19 @@ async def build_turn_context(
         was_compressed=was_compressed,
         pre_compress_message_count=pre_count,
         skill_injection=skill_injection,
+        skill_summaries=skill_summaries,
+        memory_prefetch_messages=memory_prefetch_messages,
+        memory_injections_text=memory_injections_text,
         should_review_memory=should_review,
     )
 
 
-async def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
+async def _check_and_compress(
+    agent,
+    messages: list[dict],
+    *,
+    extra_context_text: str = "",
+) -> list[dict]:
     """If estimated tokens exceed threshold, compress via ContextEngine."""
     if agent._compressor is None:
         return messages
@@ -120,6 +144,10 @@ async def _check_and_compress(agent, messages: list[dict]) -> list[dict]:
         count_messages_tokens(messages, model=model)
         + count_messages_tokens([], agent._cached_system_prompt or "", model=model)
         + count_tools_tokens(agent.tools, model=model)
+        + count_messages_tokens([{
+            "role": "user",
+            "content": [{"type": "text", "text": extra_context_text}],
+        }], model=model)
     )
 
     if not agent._compressor.should_compress(total, messages):
@@ -143,3 +171,27 @@ def _truncate(messages: list[dict], head: int = 2, tail: int = 6) -> list[dict]:
     if len(messages) <= head + tail:
         return messages
     return messages[:head] + messages[-tail:]
+
+
+def _load_skill_summaries() -> str:
+    try:
+        from personal_agent.skills.registry import skill_registry
+
+        return skill_registry.get_summaries() or ""
+    except Exception:
+        return ""
+
+
+async def _prefetch_memory(agent, user_message: str) -> tuple[list[dict], str]:
+    memory_manager = getattr(agent, "_memory_manager", None)
+    if memory_manager is None:
+        return [], ""
+    try:
+        from personal_agent.context_budget import message_text
+
+        prefetched = await memory_manager.prefetch(user_message)
+        messages = [item for item in prefetched if item]
+        text = "\n".join(message_text(item) for item in messages)
+        return messages, text
+    except Exception:
+        return [], ""

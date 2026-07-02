@@ -100,8 +100,8 @@ class ContextCompressor(ContextEngine):
         # Measure effectiveness
         before_tokens = self.last_prompt_tokens
         summary_msg = {
-            "role": "system",
-            "content": [{"type": "text", "text": f"[对话历史摘要]\n{summary}"}],
+            "role": "user",
+            "content": [{"type": "text", "text": f"[系统生成的对话历史摘要]\n{summary}"}],
         }
         compressed = head + [summary_msg] + tail
         after_tokens = count_messages_tokens(compressed, model=self.model) + count_messages_tokens([], system_prompt, model=self.model)

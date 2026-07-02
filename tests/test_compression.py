@@ -379,12 +379,36 @@ async def test_compress_full_summary():
 
     # Should return compressed: head(2) + summary_msg(1) + tail(2) = 5
     assert len(result) == 5
-    # Summary msg should be role=system with [对话历史摘要]
+    # Summary msg should be provider-safe user context, not a system message in history.
     summary_msg = result[2]
-    assert summary_msg["role"] == "system"
+    assert summary_msg["role"] == "user"
     assert "对话历史摘要" in summary_msg["content"][0]["text"]
     # Previous summary stored for iterative update
     assert c._previous_summary is not None
+
+
+@pytest.mark.asyncio
+async def test_compress_summary_is_safe_for_anthropic_messages():
+    from personal_agent.llm.provider import ProviderProfile
+    from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+
+    mock_transport = AsyncMock()
+    mock_transport.call.return_value = NormalizedResponse(
+        text="压缩摘要", tool_calls=[], usage={},
+        finish_reason="end_turn", stop_reason="end_turn", model="test",
+    )
+    c = ContextCompressor(threshold_ratio=0.01, protect_head=2, protect_tail=2)
+    c.last_prompt_tokens = 50000
+
+    compressed = await c.compress(_make_long_history(20), "", mock_transport, protect_head=2, protect_tail=2)
+    converted = AnthropicMessagesTransport(ProviderProfile(
+        name="test",
+        base_url="https://example.test",
+        api_key="k",
+        model="claude-test",
+    )).convert_messages(compressed)
+
+    assert all(message.get("role") != "system" for message in converted)
 
 
 @pytest.mark.asyncio

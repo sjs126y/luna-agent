@@ -103,6 +103,11 @@ async def run_conversation(agent, ctx) -> dict:
         agent.session_prompt_tokens += response.usage.get("input_tokens", 0)
         agent.session_completion_tokens += response.usage.get("output_tokens", 0)
         agent.session_api_calls += 1
+        if agent._compressor is not None:
+            try:
+                agent._compressor.update_from_response(response)
+            except Exception:
+                logger.exception("Compressor usage update failed")
 
         # ── hooks: on_after_llm_call ──
         modified = await agent.hooks.fire("on_after_llm_call", response, response.usage)
@@ -224,14 +229,10 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
     """Build messages for LLM: messages + injections. NOT persisted."""
     msgs = list(ctx.messages)
 
-    # Skills summaries: lightweight list of available skills (Tier 1)
-    from personal_agent.skills.registry import skill_registry
-    summaries = skill_registry.get_summaries()
-    agent._last_skill_summaries = summaries or ""
-    if summaries:
+    if ctx.skill_summaries:
         msgs.insert(0, {
             "role": "user",
-            "content": [{"type": "text", "text": summaries}],
+            "content": [{"type": "text", "text": ctx.skill_summaries}],
         })
 
     # Skill injection: /skill-name content, injected ONCE then consumed
@@ -243,17 +244,7 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
         ctx.skill_injection = None  # consumed — won't inject again this turn
 
     # Memory prefetch: external provider results injected as prefix
-    memory_injections = []
-    if agent._memory_manager:
-        try:
-            from personal_agent.context_budget import message_text
-
-            prefetched = await agent._memory_manager.prefetch(ctx.original_user_message)
-            for p in prefetched:
-                msgs.insert(0, p)
-                memory_injections.append(message_text(p))
-        except Exception:
-            pass  # prefetch failure never blocks the turn
-    agent._last_memory_injections = "\n".join(text for text in memory_injections if text)
+    for message in reversed(ctx.memory_prefetch_messages):
+        msgs.insert(0, message)
 
     return msgs

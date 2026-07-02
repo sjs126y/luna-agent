@@ -126,6 +126,7 @@ class SessionStore:
         old_entry = self._index.get(session_key)
         if old_entry is None:
             return ""
+        current_id = self._chain.resolve(old_entry.session_id) if self._chain else old_entry.session_id
 
         new_id = str(uuid.uuid4())
         entry = SessionEntry(
@@ -148,10 +149,10 @@ class SessionStore:
 
         # Link chain
         if self._chain:
-            self._chain.link(old_entry.session_id, new_id)
+            self._chain.link(current_id, new_id)
 
         logger.info("Compressed session: %s → %s (%d messages)",
-                     old_entry.session_id[:8], new_id[:8], len(compressed_messages))
+                     current_id[:8], new_id[:8], len(compressed_messages))
         return new_id
 
     def get(self, session_key: str) -> SessionEntry | None:
