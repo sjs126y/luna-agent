@@ -437,6 +437,36 @@ async def test_delegate_persists_agent_runs(tmp_path):
     reset_delegate()
 
 
+@pytest.mark.asyncio
+async def test_delegate_stop_cancels_running_agent():
+    from personal_agent.models.messages import NormalizedResponse
+    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+        _delegate_task,
+        list_agent_runs,
+        setup_delegate,
+        stop_delegate_agents,
+    )
+
+    started = asyncio.Event()
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        started.set()
+        await asyncio.sleep(60)
+        return NormalizedResponse(text="late")
+
+    setup_delegate(call_fn, tools=[], max_tokens=100)
+    task = asyncio.create_task(_delegate_task("slow"))
+    await started.wait()
+
+    stopped = stop_delegate_agents()
+    result = await task
+    runs = list_agent_runs()
+
+    assert stopped == 1
+    assert "stopped" in result
+    assert runs[0]["status"] == "cancelled"
+
+
 # ── tools are registered ────────────────────────────────
 
 

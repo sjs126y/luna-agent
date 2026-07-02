@@ -93,6 +93,7 @@ class AgentRun:
     task: str = ""
     tool_policy: str | list[str] = "readonly"
     model: str = ""
+    limits: dict[str, int | float] = field(default_factory=dict)
     granted_tools: list[str] = field(default_factory=list)
     denied_tools: list[dict] = field(default_factory=list)
     executed_tool_calls: list[dict] = field(default_factory=list)
@@ -113,13 +114,19 @@ class AgentRuntime:
         call_fn: Callable | None = None,
         tools: list[dict] | None = None,
         max_tokens: int = 4096,
+        max_concurrent_runs: int = 4,
+        max_tool_calls: int = 10,
         history_limit: int = 100,
         run_store_path: Path | None = None,
     ) -> None:
         self.call_fn = call_fn
         self.tools = tools or []
-        self.max_tokens = max_tokens
+        self.max_tokens = max(1, int(max_tokens))
+        self.max_concurrent_runs = max(1, int(max_concurrent_runs))
+        self.max_tool_calls = max(0, int(max_tool_calls))
         self._runs: deque[AgentRun] = deque(maxlen=max(1, history_limit))
+        self._active_runs: dict[str, AgentRun] = {}
+        self._active_tasks: dict[str, asyncio.Task] = {}
         self._run_store_path = Path(run_store_path) if run_store_path else None
         self._load_runs()
 
@@ -144,6 +151,12 @@ class AgentRuntime:
             task=task,
             tool_policy=spec.tool_policy,
             model=spec.model,
+            limits={
+                "max_tokens": self._clamp_max_tokens(spec.max_tokens),
+                "timeout": spec.timeout,
+                "max_tool_calls": self.max_tool_calls,
+                "max_concurrent_runs": self.max_concurrent_runs,
+            },
         )
         started = time.monotonic()
 
@@ -152,6 +165,19 @@ class AgentRuntime:
             run.result = "Error: agent runtime is not initialized"
             self._record_run(run)
             return run
+        if len(self._active_runs) >= self.max_concurrent_runs:
+            run.status = "quota_exceeded"
+            run.result = (
+                "Error: delegated agent quota exceeded: "
+                f"max concurrent sub-agents ({self.max_concurrent_runs})"
+            )
+            self._record_run(run)
+            return run
+
+        current_task = asyncio.current_task()
+        self._active_runs[run.run_id] = run
+        if current_task is not None:
+            self._active_tasks[run.run_id] = current_task
 
         tools, tool_decisions = self._select_tools(
             spec.tool_policy,
@@ -174,7 +200,7 @@ class AgentRuntime:
                     messages=messages,
                     system_prompt=system_prompt,
                     tools=tools,
-                    max_tokens=min(spec.max_tokens, self.max_tokens),
+                    max_tokens=self._clamp_max_tokens(spec.max_tokens),
                 ),
                 timeout=spec.timeout,
             )
@@ -210,7 +236,7 @@ class AgentRuntime:
                         }],
                         system_prompt=system_prompt,
                         tools=[],
-                        max_tokens=min(spec.max_tokens, self.max_tokens),
+                        max_tokens=self._clamp_max_tokens(spec.max_tokens),
                     ),
                     timeout=min(spec.timeout, 120.0),
                 )
@@ -222,12 +248,15 @@ class AgentRuntime:
                     spec.output_schema,
                     messages,
                     system_prompt,
-                    min(spec.max_tokens, self.max_tokens),
+                    self._clamp_max_tokens(spec.max_tokens),
                     spec.timeout,
                     run,
                 )
             run.status = "completed"
             run.result = text
+        except asyncio.CancelledError:
+            run.status = "cancelled"
+            run.result = "Error: delegated agent stopped"
         except asyncio.TimeoutError:
             run.status = "timeout"
             run.result = "Error: delegated agent timed out"
@@ -237,8 +266,19 @@ class AgentRuntime:
         finally:
             run.duration = time.monotonic() - started
             run.messages = messages
+            self._active_runs.pop(run.run_id, None)
+            self._active_tasks.pop(run.run_id, None)
             self._record_run(run)
         return run
+
+    def active_count(self) -> int:
+        return len(self._active_runs)
+
+    def cancel_all(self) -> int:
+        count = len(self._active_tasks)
+        for task in list(self._active_tasks.values()):
+            task.cancel()
+        return count
 
     def list_runs(self, *, limit: int | None = None) -> list[AgentRun]:
         runs = list(self._runs)
@@ -256,6 +296,9 @@ class AgentRuntime:
         self._runs.clear()
         if self._run_store_path and self._run_store_path.exists():
             self._run_store_path.unlink()
+
+    def _clamp_max_tokens(self, requested: int) -> int:
+        return max(1, min(int(requested or self.max_tokens), self.max_tokens))
 
     def _record_run(self, run: AgentRun) -> None:
         self._runs.append(run)
@@ -369,7 +412,9 @@ class AgentRuntime:
             call_id = str(call.get("id", f"tool-{index}"))
             name = str(call.get("name", ""))
             reason = ""
-            if not name:
+            if index >= self.max_tool_calls:
+                reason = f"sub-agent tool call quota exceeded ({self.max_tool_calls})"
+            elif not name:
                 reason = "tool call has no name"
             elif name not in granted_tools:
                 reason = "tool was not granted to this sub-agent"
@@ -459,11 +504,15 @@ class AgentRuntime:
         messages.append({"role": "assistant", "content": blocks})
 
         class _SubAgentCtx:
-            _destructive_allowed: set[str] = {"all"} if allow_destructive else set()
+            _destructive_allowed: set[str] = set()
             _tool_calls_this_turn: int = 0
-            _max_tool_calls_per_turn: int = 10
+            _max_tool_calls_per_turn: int = 0
             _destructive_calls_this_turn: int = 0
             _max_destructive_per_turn: int = 3
+
+        agent_ctx = _SubAgentCtx()
+        agent_ctx._destructive_allowed = {"all"} if allow_destructive else set()
+        agent_ctx._max_tool_calls_per_turn = self.max_tool_calls
 
         executable: list[dict] = []
         result_by_id: dict[str, str] = {}
@@ -480,7 +529,7 @@ class AgentRuntime:
 
         if executable:
             executed_messages: list[dict] = []
-            await execute_tool_calls(executable, executed_messages, agent=_SubAgentCtx())
+            await execute_tool_calls(executable, executed_messages, agent=agent_ctx)
             for message in reversed(executed_messages):
                 if message.get("role") != "user":
                     continue

@@ -24,7 +24,14 @@ _agent_runtime: AgentRuntime = AgentRuntime()
 _run_store_path: Path | None = None
 
 
-def setup_delegate(call_fn, tools, max_tokens=4096, run_store_path: Path | None = None):
+def setup_delegate(
+    call_fn,
+    tools,
+    max_tokens=4096,
+    run_store_path: Path | None = None,
+    max_concurrent_runs: int = 4,
+    max_tool_calls: int = 10,
+):
     global _delegate_call, _agent_runtime, _run_store_path
     _delegate_call = call_fn
     _run_store_path = Path(run_store_path) if run_store_path else _run_store_path
@@ -32,6 +39,8 @@ def setup_delegate(call_fn, tools, max_tokens=4096, run_store_path: Path | None 
         call_fn=call_fn,
         tools=tools,
         max_tokens=max_tokens,
+        max_concurrent_runs=max_concurrent_runs,
+        max_tool_calls=max_tool_calls,
         run_store_path=_run_store_path,
     )
 
@@ -61,6 +70,14 @@ def clear_agent_runs() -> int:
     count = len(_agent_runtime.list_runs())
     _agent_runtime.clear_runs()
     return count
+
+
+def stop_delegate_agents() -> int:
+    return _agent_runtime.cancel_all()
+
+
+def active_delegate_agents() -> int:
+    return _agent_runtime.active_count()
 
 
 def format_agent_runs(limit: int | None = None) -> str:
@@ -95,6 +112,7 @@ def format_agent_run(run_id: str) -> str:
         f"模型: {run.model or '-'}",
         f"工具策略: {run.tool_policy or '-'}",
         f"授予工具: {_join_or_dash(run.granted_tools)}",
+        f"运行限制: {_format_limits(run.limits)}",
         f"父 turn: {run.parent_turn_id or '-'}",
         f"耗时: {run.duration:.2f}s",
         f"输入 tokens: {usage.get('input_tokens', 0)}",
@@ -329,6 +347,7 @@ def _agent_run_summary(run) -> dict:
         "status": run.status,
         "duration": round(run.duration, 3),
         "usage": dict(run.usage),
+        "limits": dict(run.limits),
         "granted_tools": list(run.granted_tools),
         "tool_calls": len(run.tool_calls),
         "executed_tool_calls": len(run.executed_tool_calls),
@@ -364,6 +383,12 @@ def _tool_names(calls: list[dict]) -> list[str]:
 
 def _join_or_dash(values: list[str]) -> str:
     return ", ".join(values) if values else "-"
+
+
+def _format_limits(limits: dict) -> str:
+    if not limits:
+        return "-"
+    return ", ".join(f"{key}={value}" for key, value in limits.items())
 
 
 def _format_denials(denials: list[dict]) -> list[str]:

@@ -178,3 +178,17 @@ async def test_gateway_allow_and_stop_apply_to_cached_agents(gateway):
     assert stopped == "已停止。"
     assert all("write" in agent._destructive_allowed for agent in gateway._agent_cache.values())
     assert all(agent._interrupt_requested for agent in gateway._agent_cache.values())
+
+
+@pytest.mark.asyncio
+async def test_gateway_stop_reports_delegate_agent_count(gateway, monkeypatch):
+    gateway._agent_cache["telegram:c1:u1"] = Agent()
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        lambda: 3,
+    )
+
+    stopped = await gateway._handle_command(_event("/stop"), "telegram:c1:u1")
+
+    assert stopped == "已停止。已请求停止 3 个子 agent。"
+    assert all(agent._interrupt_requested for agent in gateway._agent_cache.values())

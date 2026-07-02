@@ -468,8 +468,12 @@ class _GatewayCommandRuntime:
             if hasattr(agent, "_interrupt_requested"):
                 agent._interrupt_requested = True
         from personal_agent.tools.executor import set_interrupted
+        from personal_agent.plugins.builtin.tools.builtin.delegate import stop_delegate_agents
 
         set_interrupted()
+        stopped = stop_delegate_agents()
+        if stopped:
+            return f"已停止。已请求停止 {stopped} 个子 agent。"
         return "已停止。"
 
     def plugin_command_kwargs(self, args: str) -> dict:

@@ -131,6 +131,23 @@ async def test_agent_runtime_allowlist_only_grants_named_tools():
 
 
 @pytest.mark.asyncio
+async def test_agent_runtime_clamps_max_tokens():
+    seen = []
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        seen.append(max_tokens)
+        return NormalizedResponse(text="done")
+
+    runtime = AgentRuntime(call_fn=call_fn, tools=[], max_tokens=50)
+
+    run = await runtime.run("large request", AgentSpec(role="assistant", max_tokens=500))
+
+    assert run.status == "completed"
+    assert seen == [50]
+    assert run.limits["max_tokens"] == 50
+
+
+@pytest.mark.asyncio
 async def test_agent_runtime_denies_ungranted_tool_call_and_continues():
     call_count = 0
     final_messages = []
@@ -171,6 +188,46 @@ async def test_agent_runtime_denies_ungranted_tool_call_and_continues():
         "reason": "tool was not granted to this sub-agent",
     }]
     assert "denied" in final_messages[-2]["content"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
+    calls = 0
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return NormalizedResponse(
+                text="need tools",
+                tool_calls=[
+                    {"id": "toolu_1", "name": "read", "input": {}},
+                    {"id": "toolu_2", "name": "grep", "input": {}},
+                ],
+            )
+        return NormalizedResponse(text="quota handled")
+
+    runtime = AgentRuntime(
+        call_fn=call_fn,
+        tools=[
+            {"name": "read", "description": "read", "input_schema": {}},
+            {"name": "grep", "description": "grep", "input_schema": {}},
+        ],
+        max_tokens=100,
+        max_tool_calls=1,
+    )
+
+    run = await runtime.run("use tools", AgentSpec(role="assistant"))
+
+    assert run.status == "completed"
+    assert run.result == "quota handled"
+    assert run.executed_tool_calls == [{"id": "toolu_1", "name": "read"}]
+    assert run.denied_tool_calls == [{
+        "call_id": "toolu_2",
+        "name": "grep",
+        "allowed": False,
+        "reason": "sub-agent tool call quota exceeded (1)",
+    }]
 
 
 @pytest.mark.asyncio
@@ -254,6 +311,51 @@ async def test_agent_runtime_parallel_runs_keep_distinct_messages():
     assert first.result == "one"
     assert second.result == "two"
     assert len(runtime.list_runs()) == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_rejects_runs_over_concurrency_quota():
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        started.set()
+        await release.wait()
+        return NormalizedResponse(text="done")
+
+    runtime = AgentRuntime(call_fn=call_fn, tools=[], max_tokens=100, max_concurrent_runs=1)
+    first_task = asyncio.create_task(runtime.run("first", AgentSpec(role="assistant")))
+    await started.wait()
+
+    second = await runtime.run("second", AgentSpec(role="assistant"))
+    release.set()
+    first = await first_task
+
+    assert first.status == "completed"
+    assert second.status == "quota_exceeded"
+    assert "max concurrent sub-agents (1)" in second.result
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_cancel_all_marks_active_run_cancelled():
+    started = asyncio.Event()
+
+    async def call_fn(messages, system_prompt, tools, max_tokens):
+        started.set()
+        await asyncio.sleep(60)
+        return NormalizedResponse(text="late")
+
+    runtime = AgentRuntime(call_fn=call_fn, tools=[], max_tokens=100)
+    task = asyncio.create_task(runtime.run("slow", AgentSpec(role="assistant")))
+    await started.wait()
+
+    stopped = runtime.cancel_all()
+    run = await task
+
+    assert stopped == 1
+    assert run.status == "cancelled"
+    assert run.result == "Error: delegated agent stopped"
+    assert runtime.active_count() == 0
 
 
 @pytest.mark.asyncio

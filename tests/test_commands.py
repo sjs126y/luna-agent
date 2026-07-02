@@ -196,6 +196,20 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_shared_command_stop_reports_delegate_agent_count(tmp_path, monkeypatch):
+    runtime = Runtime(tmp_path)
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        lambda: 2,
+    )
+
+    result = await handle_slash_command(runtime, "/stop")
+
+    assert result.response == "已停止。已请求停止 2 个子 agent。"
+    assert runtime.agent._interrupt_requested
+
+
+@pytest.mark.asyncio
 async def test_shared_command_uses_exact_command_names(tmp_path):
     runtime = Runtime(tmp_path)
 

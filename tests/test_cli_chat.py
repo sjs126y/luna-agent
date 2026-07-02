@@ -166,6 +166,19 @@ async def test_cli_session_switch_list_usage_export_and_allow(runtime):
 
 
 @pytest.mark.asyncio
+async def test_cli_stop_reports_delegate_agent_count(runtime, monkeypatch):
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        lambda: 2,
+    )
+
+    stopped = await runtime.handle_command("/stop")
+
+    assert stopped == "已停止。已请求停止 2 个子 agent。"
+    assert all(agent._interrupt_requested for agent in runtime.agent_cache.values())
+
+
+@pytest.mark.asyncio
 async def test_cli_session_current_rename_and_delete(runtime):
     await runtime.run_once("hello")
     old_agent = runtime.agent_cache[runtime.session_key]
