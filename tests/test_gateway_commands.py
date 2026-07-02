@@ -9,7 +9,7 @@ import pytest_asyncio
 
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
-from personal_agent.adapters.base import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
+from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
 from personal_agent.gateway.gateway import Gateway
 from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager

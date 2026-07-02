@@ -1,7 +1,4 @@
-"""Compatibility shim for legacy platform imports.
-
-New code should import platform types from :mod:`personal_agent.platforms.core`.
-"""
+"""Platform runtime public API."""
 
 from personal_agent.platforms.core import (
     BasePlatformAdapter,

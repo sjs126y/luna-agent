@@ -1382,12 +1382,14 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         f"路径: {report.get('path') or '-'}",
         f"Manifest 文件: {report.get('manifest_path') or '-'}",
         f"Manifest: {_status(report.get('manifest_valid', True))}",
+        f"Manifest 未知字段: {_list_or_none(report.get('manifest_unknown_fields', []))}",
         f"入口: {report['entrypoint']} [{_entrypoint_status_text(report)}]",
         f"启用: {_yes(report['enabled'])}  默认启用: {_yes(report['enabled_by_default'])}  延迟加载: {_yes(report['deferred'])}",
         f"状态: {report['status']}",
         f"提供能力: {_list_or_none(report['provides'])}",
         f"需要环境变量: {_list_or_none(report['requires_env'])}",
         f"缺失环境变量: {_list_or_none(report['missing_env'])}",
+        f"来源边界: 声明={report.get('declared_source') or report.get('source') or '-'} 实际={report.get('source') or '-'} 路径={report.get('source_boundary') or '-'}",
         f"注册数量: {_registration_summary(report['registered'])}",
         "诊断:",
     ]
@@ -1572,6 +1574,10 @@ def _plugin_diagnostics(report: dict[str, Any]) -> list[str]:
         diagnostics.append(f"加载错误: {report['error']}")
     if report.get("status") == "ERROR" and not report.get("error") and report.get("entrypoint_error"):
         diagnostics.append(f"加载错误: {report['entrypoint_error']}")
+    for warning in report.get("manifest_warnings") or []:
+        diagnostics.append(f"Manifest 警告: {warning}")
+    for warning in report.get("boundary_warnings") or []:
+        diagnostics.append(f"边界警告: {warning}")
     if report.get("status") == "DEFERRED":
         reason = report.get("deferred_reason") or "平台/MCP 等触发时才会加载"
         diagnostics.append(f"延迟加载，当前未 import；{reason}。")

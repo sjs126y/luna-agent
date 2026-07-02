@@ -80,6 +80,8 @@ class PluginManager:
             self._discover_dir(Path(directory), source=source, recursive=True)
 
         for plugin in self._plugins.values():
+            if plugin.status == PluginStatus.ERROR:
+                continue
             plugin.enabled = self._resolve_enabled(plugin.manifest)
             if not plugin.enabled and plugin.status != PluginStatus.ERROR:
                 plugin.status = PluginStatus.DISABLED
@@ -149,7 +151,7 @@ class PluginManager:
         self._remove_plugin_commands(key)
         self._remove_plugin_hooks(key)
 
-        from personal_agent.adapters.base import platform_registry
+        from personal_agent.platforms.core import platform_registry
         from personal_agent.skills.registry import skill_registry
         from personal_agent.tools.registry import tool_registry
         from personal_agent.workflow.registry import workflow_registry
@@ -295,6 +297,7 @@ class PluginManager:
             "status": plugin.status.value,
             "deferred": plugin.deferred,
             "source": plugin.manifest.source,
+            "declared_source": plugin.manifest.declared_source or plugin.manifest.source,
             "path": str(plugin.manifest.path) if plugin.manifest.path else "",
             "manifest_path": self._manifest_path(plugin),
             "source_boundary": self._source_boundary(plugin),
@@ -302,6 +305,9 @@ class PluginManager:
             "missing_env": missing_env,
             "manifest_valid": not manifest_error,
             "manifest_error": manifest_error,
+            "manifest_unknown_fields": list(plugin.manifest.unknown_fields),
+            "manifest_warnings": self._manifest_warnings(plugin),
+            "boundary_warnings": self._boundary_warnings(plugin),
             "entrypoint_checked": entrypoint_checked,
             "entrypoint_importable": entrypoint_ok,
             "entrypoint_error": entrypoint_error,
@@ -363,16 +369,18 @@ class PluginManager:
             existing.error = f"Duplicate plugin key: {manifest.key}"
             existing.error_traceback = None
             return
+        boundary_error = self._manifest_boundary_error(manifest)
         enabled = self._resolve_enabled(manifest)
-        status = PluginStatus.DISABLED
-        if enabled:
+        status = PluginStatus.ERROR if boundary_error else PluginStatus.DISABLED
+        if enabled and not boundary_error:
             status = PluginStatus.DEFERRED if manifest.deferred else PluginStatus.DISCOVERED
         self._plugins[manifest.key] = LoadedPlugin(
             key=manifest.key,
             manifest=manifest,
             status=status,
             deferred=manifest.deferred,
-            enabled=enabled,
+            enabled=enabled and not boundary_error,
+            error=boundary_error or None,
         )
 
     def _discover_dir(
@@ -405,10 +413,8 @@ class PluginManager:
         for manifest_path in manifest_files:
             try:
                 data = self._read_manifest_file(manifest_path)
-                manifest_data = dict(data)
-                manifest_data["source"] = source or "user"
                 manifest = PluginManifest.from_mapping(
-                    manifest_data,
+                    data,
                     source=source or "user",
                     path=manifest_path.parent,
                 )
@@ -514,7 +520,68 @@ class PluginManager:
             hints.append(self._deferred_reason(plugin))
         if not plugin.enabled:
             hints.append("插件已被配置或状态禁用")
+        hints.extend(self._manifest_warnings(plugin))
+        hints.extend(self._boundary_warnings(plugin))
         return [hint for hint in hints if hint]
+
+    def _manifest_warnings(self, plugin: LoadedPlugin) -> list[str]:
+        manifest = plugin.manifest
+        if manifest.entrypoint == "invalid":
+            return []
+        warnings: list[str] = []
+        if manifest.unknown_fields:
+            warnings.append(f"Manifest 包含未知字段: {', '.join(manifest.unknown_fields)}")
+        provides = set(manifest.provides)
+        if manifest.kind == "platform" and "platform" not in provides:
+            warnings.append("kind 为 platform 时建议 provides 包含 platform。")
+        if manifest.kind == "mcp" and "mcp" not in provides:
+            warnings.append("kind 为 mcp 时建议 provides 包含 mcp。")
+        if (manifest.kind in {"platform", "mcp"} or provides.intersection({"platform", "mcp"})) and not manifest.deferred:
+            warnings.append("platform/MCP 插件建议设置 deferred: true，避免启动时 eager import。")
+        bad_env = [
+            name for name in manifest.requires_env
+            if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)
+        ]
+        if bad_env:
+            warnings.append(f"requires_env 建议使用大写环境变量名: {', '.join(bad_env)}")
+        return self._dedupe_strings(warnings)
+
+    def _boundary_warnings(self, plugin: LoadedPlugin) -> list[str]:
+        manifest = plugin.manifest
+        if manifest.entrypoint == "invalid":
+            return []
+        warnings: list[str] = []
+        boundary = self._source_boundary(plugin)
+        declared = manifest.declared_source or manifest.source
+        if declared != manifest.source:
+            warnings.append(
+                f"Manifest 声明 source={declared}，实际按扫描边界识别为 {manifest.source}。"
+            )
+        if boundary != "unknown" and manifest.source != boundary:
+            warnings.append(
+                f"Manifest source={manifest.source} 与路径边界 {boundary} 不一致。"
+            )
+        if manifest.source == "user" and manifest.kind == "builtin":
+            warnings.append("用户插件不应声明 kind: builtin。")
+        if manifest.source == "user" and manifest.key.startswith("builtin/"):
+            warnings.append("用户插件不能使用 builtin/* 插件 key。")
+        return self._dedupe_strings(warnings)
+
+    def _manifest_boundary_error(self, manifest: PluginManifest) -> str:
+        if manifest.source == "user" and manifest.key.startswith("builtin/"):
+            return f"User plugin cannot use reserved builtin key: {manifest.key}"
+        return ""
+
+    @staticmethod
+    def _dedupe_strings(items: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            if item in seen:
+                continue
+            result.append(item)
+            seen.add(item)
+        return result
 
     @staticmethod
     def _dedupe_dirs(directories: Iterable[Path]) -> list[Path]:
@@ -636,7 +703,7 @@ class PluginManager:
         return "user"
 
     def _registry_snapshot(self) -> dict[str, set[str]]:
-        from personal_agent.adapters.base import platform_registry
+        from personal_agent.platforms.core import platform_registry
         from personal_agent.skills.registry import skill_registry
         from personal_agent.tools.registry import tool_registry
         from personal_agent.workflow.registry import workflow_registry

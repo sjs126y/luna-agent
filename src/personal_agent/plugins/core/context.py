@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from personal_agent.adapters.base import PlatformEntry
+    from personal_agent.platforms.core import PlatformEntry
     from personal_agent.mcp.client import MCPServerConfig
     from personal_agent.plugins.core.manager import PluginManager
     from personal_agent.plugins.core.models import CommandEntry, LoadedPlugin
@@ -48,7 +48,7 @@ class PluginContext:
             self.plugin.workflows_registered.append(defn.name)
 
     def register_platform(self, entry: PlatformEntry) -> None:
-        from personal_agent.adapters.base import platform_registry
+        from personal_agent.platforms.core import platform_registry
 
         platform_registry.register(entry)
         if entry.name not in self.plugin.platforms_registered:

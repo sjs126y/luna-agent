@@ -1,4 +1,23 @@
-"""Adapters — import triggers self-registration into PlatformRegistry."""
+"""Legacy adapter package.
 
-from personal_agent.adapters import feishu    # noqa: F401
-from personal_agent.adapters import telegram  # noqa: F401
+Platform adapters are registered by platform plugins. New code should import
+platform runtime types from :mod:`personal_agent.platforms`.
+"""
+
+from personal_agent.platforms import (
+    BasePlatformAdapter,
+    ChatInfo,
+    PlatformEntry,
+    PlatformRegistry,
+    SendResult,
+    platform_registry,
+)
+
+__all__ = [
+    "BasePlatformAdapter",
+    "ChatInfo",
+    "PlatformEntry",
+    "PlatformRegistry",
+    "SendResult",
+    "platform_registry",
+]

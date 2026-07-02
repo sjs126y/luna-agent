@@ -227,8 +227,79 @@ enabled_by_default: true
     report = manager.doctor_plugin("user/pretend-builtin")
 
     assert report["source"] == "user"
+    assert report["declared_source"] == "builtin"
     assert report["source_boundary"] == "user"
+    assert any("source=builtin" in item for item in report["boundary_warnings"])
     assert report["manifest_path"].endswith("plugin.yaml")
+
+
+def test_user_plugin_cannot_use_reserved_builtin_key(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "reserved"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: builtin/pretend
+name: Reserved Builtin Key
+version: 1.0.0
+entrypoint: reserved_plugin:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "reserved_plugin.py").write_text("def register(ctx): pass\n", encoding="utf-8")
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.discover()
+    report = manager.doctor_plugin("builtin/pretend")
+
+    assert report["status"] == "ERROR"
+    assert report["enabled"] is False
+    assert "reserved builtin key" in report["error"]
+    assert any("builtin/*" in item for item in report["boundary_warnings"])
+
+
+def test_plugin_doctor_reports_manifest_warnings(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "platformish"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/platformish
+name: Platformish
+version: 1.0.0
+kind: platform
+entrypoint: platformish:register
+requires_env:
+  - lower_case_env
+typo_field: ignored
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "platformish.py").write_text("def register(ctx): pass\n", encoding="utf-8")
+
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.discover()
+    report = manager.doctor_plugin("user/platformish", check_entrypoint=False)
+
+    assert report["manifest_unknown_fields"] == ["typo_field"]
+    assert any("provides 包含 platform" in item for item in report["manifest_warnings"])
+    assert any("deferred: true" in item for item in report["manifest_warnings"])
+    assert any("大写环境变量名" in item for item in report["manifest_warnings"])
+    assert report["status"] == "DISCOVERED"
 
 
 def test_plugin_load_registers_and_unloads_entries(tmp_path):

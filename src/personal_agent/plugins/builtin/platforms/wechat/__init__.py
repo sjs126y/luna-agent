@@ -14,7 +14,7 @@ async def _wechat_qr_login(settings=None, **kwargs):
 
 
 def register(ctx) -> None:
-    from personal_agent.adapters.base import PlatformEntry
+    from personal_agent.platforms.core import PlatformEntry
     from .adapter import WeChatAdapter
 
     def _factory(config, db):

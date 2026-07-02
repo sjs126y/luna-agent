@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections import OrderedDict
 
-from personal_agent.adapters.base import platform_registry
+from personal_agent.platforms.core import platform_registry
 from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation import ConversationCommandRuntime, ConversationService

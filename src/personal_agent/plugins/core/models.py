@@ -37,6 +37,20 @@ PLUGIN_KIND_VALUES = {
     "user",
 }
 PLUGIN_SOURCE_VALUES = {"builtin", "user"}
+PLUGIN_MANIFEST_FIELDS = {
+    "key",
+    "name",
+    "version",
+    "description",
+    "kind",
+    "entrypoint",
+    "requires_env",
+    "provides",
+    "enabled_by_default",
+    "source",
+    "deferred",
+    "record_import_delta",
+}
 
 
 @dataclass
@@ -51,9 +65,11 @@ class PluginManifest:
     provides: list[str] = field(default_factory=list)
     enabled_by_default: bool = False
     source: str = "user"
+    declared_source: str = ""
     path: Path | None = None
     deferred: bool = False
     record_import_delta: bool = True
+    unknown_fields: list[str] = field(default_factory=list)
 
     @classmethod
     def from_mapping(
@@ -85,17 +101,19 @@ class PluginManifest:
         if kind not in PLUGIN_KIND_VALUES:
             raise ValueError(f"Plugin manifest field 'kind' must be one of: {', '.join(sorted(PLUGIN_KIND_VALUES))}")
 
-        manifest_source = str(data.get("source", source))
-        if manifest_source not in PLUGIN_SOURCE_VALUES:
+        declared_source = str(data.get("source", source))
+        if declared_source not in PLUGIN_SOURCE_VALUES:
             raise ValueError(
                 f"Plugin manifest field 'source' must be one of: {', '.join(sorted(PLUGIN_SOURCE_VALUES))}"
             )
+        effective_source = source if source in PLUGIN_SOURCE_VALUES else declared_source
 
         requires_env = _string_list(data["requires_env"] if "requires_env" in data else [], "requires_env")
         provides = _string_list(data["provides"] if "provides" in data else [], "provides")
         enabled_by_default = _bool_field(data, "enabled_by_default", False)
         deferred = _bool_field(data, "deferred", False)
         record_import_delta = _bool_field(data, "record_import_delta", True)
+        unknown_fields = sorted(key for key in data if key not in PLUGIN_MANIFEST_FIELDS)
 
         return cls(
             key=key,
@@ -107,10 +125,12 @@ class PluginManifest:
             requires_env=[str(item) for item in requires_env],
             provides=[str(item) for item in provides],
             enabled_by_default=enabled_by_default,
-            source=manifest_source,
+            source=effective_source,
+            declared_source=declared_source,
             path=Path(path) if path else None,
             deferred=deferred,
             record_import_delta=record_import_delta,
+            unknown_fields=unknown_fields,
         )
 
 

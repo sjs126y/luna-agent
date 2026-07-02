@@ -2,7 +2,7 @@
 
 
 def register(ctx) -> None:
-    from personal_agent.adapters.base import PlatformEntry
+    from personal_agent.platforms.core import PlatformEntry
     from .adapter import TelegramAdapter
 
     def _factory(config, db):

@@ -19,7 +19,7 @@ from typing import Any
 
 import aiohttp
 
-from personal_agent.adapters.base import BasePlatformAdapter, ChatInfo, SendResult
+from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
 from personal_agent.models.messages import MessageEvent, SessionSource
 
 logger = logging.getLogger(__name__)
