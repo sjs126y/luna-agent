@@ -51,7 +51,19 @@ class Service:
         self.usage_kwargs = kwargs
         return "usage"
 
-    def stop_all_agents(self):
+    def allow_agent_category(self, session_key, category):
+        agent = self.agent_cache.get(session_key)
+        if agent is None:
+            return False
+        agent._destructive_allowed.add(category)
+        return True
+
+    def allow_all_cached_agents(self, category):
+        for agent in self.agent_cache.values():
+            agent._destructive_allowed.add(category)
+        return len(self.agent_cache)
+
+    def request_stop(self, session_key=None):
         return 2
 
 

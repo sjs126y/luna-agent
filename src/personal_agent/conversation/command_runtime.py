@@ -56,14 +56,15 @@ class ConversationCommandRuntime:
 
     async def allow_category(self, category: str) -> str:
         if self.allow_all_cached_agents:
-            for agent in self.conversation_service.agent_cache.values():
-                self._allow_agent_category(agent, category)
+            self.conversation_service.allow_all_cached_agents(category)
         else:
-            self._allow_agent_category(await self.get_agent(), category)
+            if not self.conversation_service.allow_agent_category(self.session_key, category):
+                await self.get_agent()
+                self.conversation_service.allow_agent_category(self.session_key, category)
         return f"已授权 {category} 操作，本轮对话内有效。"
 
     async def stop_agents(self) -> str:
-        stopped = self.conversation_service.stop_all_agents()
+        stopped = self.conversation_service.request_stop(None)
         if stopped:
             return f"已停止。已请求停止 {stopped} 个子 agent。"
         return "已停止。"
@@ -73,8 +74,3 @@ class ConversationCommandRuntime:
 
     def session_list_current_key(self) -> str:
         return self.session_key
-
-    @staticmethod
-    def _allow_agent_category(agent, category: str) -> None:
-        if hasattr(agent, "_destructive_allowed"):
-            agent._destructive_allowed.add(category)

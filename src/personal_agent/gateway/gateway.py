@@ -10,6 +10,7 @@ from personal_agent.adapters.base import platform_registry
 from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation import ConversationCommandRuntime, ConversationService
+from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,8 @@ class Gateway:
         self._adapters: list = []
         self._running_agents: dict[str, bool] = {}
         self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
-        self._session_override: dict[str, str] = {}  # platform:user → custom chat_id
+        self._session_router = GatewaySessionRouter()
+        self._session_override = self._session_router.overrides
         self._cron_scheduler = None
         self.hooks = Hooks()
         self.plugin_manager = plugin_manager
@@ -65,7 +67,7 @@ class Gateway:
 
     async def start(self) -> None:
         self._compression_chain.load()
-        self._session_override.update(self.config.session_override)  # config defaults
+        self._session_router.overrides.update(self.config.session_override)
         await self._session_store.initialize()
         await self._session_store.expire_sessions(self.config.session_expire_days)
 
@@ -132,11 +134,7 @@ class Gateway:
             trace_id.reset(token)
 
     async def _handle_message_inner(self, event) -> str | None:
-        session_key = f"{event.source.platform}:{event.source.chat_id}:{event.source.user_id}"
-        # Apply session override if set (via /session command)
-        override = self._session_override.get(session_key)
-        if override:
-            session_key = override
+        session_key = self._session_router.active_key(event.source)
 
         # 1. Hook: on_message_received (only if hooks registered)
         if self.hooks.on_message_received:
@@ -195,7 +193,7 @@ class Gateway:
                 final = hook_result
 
         # Background memory review (Hermes-style nudge)
-        agent = self._conversation_service.agent_cache.get(session_key)
+        agent = self._conversation_service.get_cached_agent(session_key)
         if turn.should_review_memory and final and agent is not None:
             self._spawn_memory_review(agent, turn.messages)
 
@@ -293,43 +291,33 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
         return self.event.source
 
     async def switch_session(self, name: str) -> str:
-        base_key = self._base_key()
-        platform, user_id = self._platform_user()
-        new_key = f"{platform}:{name}:{user_id}"
-        self.gateway._session_override[base_key] = new_key
+        new_key = self.gateway._session_router.switch(self.event.source, name)
         await self.gateway._conversation_service.ensure_session(new_key, self.event.source)
         self._session_key = new_key
         return f"会话已切换: {new_key}"
 
     async def rename_session(self, name: str) -> str:
         old_key = self._session_key
-        platform, user_id = self._platform_user()
-        new_key = f"{platform}:{name}:{user_id}"
+        new_key = self.gateway._session_router.named_key(self.event.source, name)
         if new_key == old_key:
             return f"会话已是: {new_key}"
         ok = await self.gateway._conversation_service.rename_session(old_key, new_key)
         if not ok:
             return f"无法重命名，会话不存在或目标已存在: {new_key}"
-        base_key = self._base_key()
-        if old_key == base_key:
-            self.gateway._session_override[base_key] = new_key
-        else:
-            for key, value in list(self.gateway._session_override.items()):
-                if value == old_key:
-                    self.gateway._session_override[key] = new_key
+        self.gateway._session_router.rename(self.event.source, old_key, new_key)
         self._session_key = new_key
         return f"会话已重命名: {old_key} -> {new_key}"
 
     async def delete_session(self, name: str | None = None) -> str:
-        base_key = self._base_key()
-        platform, user_id = self._platform_user()
-        target_key = self._session_key if name is None else f"{platform}:{name}:{user_id}"
+        target_key = (
+            self._session_key
+            if name is None
+            else self.gateway._session_router.named_key(self.event.source, name)
+        )
         if self.gateway._session_store.get(target_key) is None:
             return f"会话不存在: {target_key}"
         await self.gateway._conversation_service.delete_session(target_key)
-        for key, value in list(self.gateway._session_override.items()):
-            if key == target_key or value == target_key:
-                del self.gateway._session_override[key]
+        base_key = self.gateway._session_router.delete(self.event.source, target_key)
         if target_key == self._session_key:
             self._session_key = base_key
             await self.gateway._conversation_service.ensure_session(base_key, self.event.source)
@@ -343,15 +331,5 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
             "session_key": self._session_key,
         }
 
-    def _base_key(self) -> str:
-        return f"{self.event.source.platform}:{self.event.source.chat_id}:{self.event.source.user_id}"
-
     def session_list_current_key(self) -> str:
-        base_key = self._base_key()
-        return self.gateway._session_override.get(base_key, base_key)
-
-    def _platform_user(self) -> tuple[str, str]:
-        parts = self._base_key().split(":", 2)
-        platform = parts[0]
-        user_id = parts[2] if len(parts) > 2 else ""
-        return platform, user_id
+        return self.gateway._session_router.current_for_list(self.event.source)

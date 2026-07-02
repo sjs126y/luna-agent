@@ -224,30 +224,73 @@ class ConversationService:
             f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
         )
 
-    def resolve_session_id(self, session_id: str) -> str:
-        if self.compression_chain is None:
-            return session_id
-        return self.compression_chain.resolve(session_id)
+    def get_cached_agent(self, session_key: str):
+        return self.agent_cache.get(session_key)
 
-    def clear_agent(self, session_key: str) -> None:
+    def has_cached_agent(self, session_key: str) -> bool:
+        return session_key in self.agent_cache
+
+    def invalidate_agent(self, session_key: str) -> None:
         self.agent_cache.pop(session_key, None)
 
-    def delete_agent(self, session_key: str) -> None:
-        self.clear_agent(session_key)
-
-    def move_agent(self, old_key: str, new_key: str) -> None:
+    def rename_cached_agent(self, old_key: str, new_key: str) -> None:
         if old_key == new_key:
             return
         agent = self.agent_cache.pop(old_key, None)
         if agent is not None:
             self.agent_cache[new_key] = agent
 
-    def stop_all_agents(self) -> int:
-        for agent in self.agent_cache.values():
-            if hasattr(agent, "_interrupt_requested"):
+    def iter_cached_agents(self):
+        return iter(self.agent_cache.values())
+
+    def allow_agent_category(self, session_key: str, category: str) -> bool:
+        agent = self.get_cached_agent(session_key)
+        if agent is None:
+            return False
+        self._allow_agent_category(agent, category)
+        return True
+
+    def allow_all_cached_agents(self, category: str) -> int:
+        count = 0
+        for agent in self.iter_cached_agents():
+            self._allow_agent_category(agent, category)
+            count += 1
+        return count
+
+    def request_stop(self, session_key: str | None = None) -> int:
+        agents = (
+            [self.get_cached_agent(session_key)]
+            if session_key is not None
+            else list(self.iter_cached_agents())
+        )
+        for agent in agents:
+            if agent is not None and hasattr(agent, "_interrupt_requested"):
                 agent._interrupt_requested = True
+
         from personal_agent.tools.executor import set_interrupted
         from personal_agent.plugins.builtin.tools.builtin.delegate import stop_delegate_agents
 
         set_interrupted()
         return int(stop_delegate_agents() or 0)
+
+    def resolve_session_id(self, session_id: str) -> str:
+        if self.compression_chain is None:
+            return session_id
+        return self.compression_chain.resolve(session_id)
+
+    def clear_agent(self, session_key: str) -> None:
+        self.invalidate_agent(session_key)
+
+    def delete_agent(self, session_key: str) -> None:
+        self.invalidate_agent(session_key)
+
+    def move_agent(self, old_key: str, new_key: str) -> None:
+        self.rename_cached_agent(old_key, new_key)
+
+    def stop_all_agents(self) -> int:
+        return self.request_stop(None)
+
+    @staticmethod
+    def _allow_agent_category(agent, category: str) -> None:
+        if hasattr(agent, "_destructive_allowed"):
+            agent._destructive_allowed.add(category)

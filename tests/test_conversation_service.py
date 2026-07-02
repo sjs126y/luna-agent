@@ -48,6 +48,7 @@ class Agent:
     def __init__(self, generation: int | None = None):
         self._tools_generation = tool_registry.generation if generation is None else generation
         self._interrupt_requested = False
+        self._destructive_allowed = set()
 
 
 class Ctx:
@@ -207,6 +208,29 @@ def test_agent_cache_operations_and_stop(service, monkeypatch):
     svc.agent_cache["a"] = Agent()
     svc.agent_cache["b"] = Agent()
 
+    assert svc.get_cached_agent("a") is svc.agent_cache["a"]
+    assert svc.has_cached_agent("a") is True
+    svc.rename_cached_agent("a", "c")
+    svc.invalidate_agent("b")
+    stopped = svc.request_stop()
+
+    assert "a" not in svc.agent_cache
+    assert "b" not in svc.agent_cache
+    assert "c" in svc.agent_cache
+    assert svc.agent_cache["c"]._interrupt_requested is True
+    assert isinstance(stopped, int)
+
+
+def test_agent_cache_compat_methods_delegate_to_new_api(service, monkeypatch):
+    svc, _manager, _db = service
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        lambda: 0,
+    )
+    svc.agent_cache.clear()
+    svc.agent_cache["a"] = Agent()
+    svc.agent_cache["b"] = Agent()
+
     svc.move_agent("a", "c")
     svc.delete_agent("b")
     stopped = svc.stop_all_agents()
@@ -216,6 +240,37 @@ def test_agent_cache_operations_and_stop(service, monkeypatch):
     assert "c" in svc.agent_cache
     assert svc.agent_cache["c"]._interrupt_requested is True
     assert isinstance(stopped, int)
+
+
+def test_agent_cache_allow_category_helpers(service):
+    svc, _manager, _db = service
+    svc.agent_cache.clear()
+    svc.agent_cache["a"] = Agent()
+    svc.agent_cache["b"] = Agent()
+
+    assert svc.allow_agent_category("a", "write") is True
+    assert svc.allow_agent_category("missing", "write") is False
+    count = svc.allow_all_cached_agents("bash")
+
+    assert count == 2
+    assert svc.agent_cache["a"]._destructive_allowed == {"write", "bash"}
+    assert svc.agent_cache["b"]._destructive_allowed == {"bash"}
+
+
+def test_request_stop_can_target_one_cached_agent(service, monkeypatch):
+    svc, _manager, _db = service
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        lambda: 0,
+    )
+    svc.agent_cache.clear()
+    svc.agent_cache["a"] = Agent()
+    svc.agent_cache["b"] = Agent()
+
+    svc.request_stop("a")
+
+    assert svc.agent_cache["a"]._interrupt_requested is True
+    assert svc.agent_cache["b"]._interrupt_requested is False
 
 
 @pytest.mark.asyncio

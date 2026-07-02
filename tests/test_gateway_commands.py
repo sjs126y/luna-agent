@@ -95,6 +95,32 @@ async def test_gateway_session_command_uses_shared_service(gateway):
 
 
 @pytest.mark.asyncio
+async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypatch):
+    await gateway._handle_command(_event("/session work"), "telegram:c1:u1")
+    captured = []
+
+    async def run_turn(session_key, source, text):
+        captured.append((session_key, text))
+        return ConversationTurnResult(
+            final_response="ok",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(gateway._conversation_service, "run_turn", run_turn)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    result = await gateway._handle_message_inner(_event("hello"))
+
+    assert result == "ok"
+    assert captured == [("telegram:work:u1", "hello")]
+
+
+@pytest.mark.asyncio
 async def test_gateway_session_current_rename_and_delete(gateway):
     await gateway._session_store.get_or_create("telegram:c1:u1", _event("hello").source)
     gateway._agent_cache["telegram:c1:u1"] = Agent()
