@@ -121,7 +121,8 @@ class CliChatRuntime:
         return await self.conversation_service.get_or_create_agent(self.session_key)
 
     async def reset_session(self) -> str:
-        await self.session_store.reset_session(self.session_key, self.source)
+        assert self.conversation_service is not None
+        await self.conversation_service.reset_session(self.session_key, self.source)
         return "会话已重置。开始新的对话吧。"
 
     async def clear_agent(self) -> None:
@@ -130,27 +131,22 @@ class CliChatRuntime:
 
     async def switch_session(self, name: str) -> str:
         self.session_name = _clean_session_name(name)
-        await self.session_store.get_or_create(self.session_key, self.source)
+        assert self.conversation_service is not None
+        await self.conversation_service.ensure_session(self.session_key, self.source)
         return f"会话已切换: {self.session_key}"
 
     async def list_sessions(self) -> str:
-        sessions = await self.session_store.list_user_sessions("cli", "local")
-        lines = [f"当前会话: {self.session_key}", "你的会话列表:"]
-        for item in sessions[:10]:
-            marker = " <-" if item["session_key"] == self.session_key else ""
-            lines.append(f"  {item['session_key']}{marker} ({item.get('message_count', 0)} 条消息)")
-        if len(lines) == 2:
-            lines.append("  无")
-        return "\n".join(lines)
+        assert self.conversation_service is not None
+        return await self.conversation_service.session_list_summary(
+            platform="cli",
+            user_id="local",
+            current_key=self.session_key,
+        )
 
     async def current_session(self) -> str:
-        session = await self.session_store.get_or_create(self.session_key, self.source)
-        current_id = self.compression_chain.resolve(session.session_id)
-        count = len(await self.session_store.load_history(current_id))
-        return (
-            f"当前会话: {self.session_key}\n"
-            f"session id: {current_id[:8]}\n"
-            f"消息数: {count}"
+        assert self.conversation_service is not None
+        return await self.conversation_service.current_session_summary(
+            self.session_key, self.source
         )
 
     async def rename_session(self, name: str) -> str:
@@ -159,25 +155,23 @@ class CliChatRuntime:
         new_key = f"cli:{new_name}:local"
         if new_key == old_key:
             return f"会话已是: {new_key}"
-        ok = await self.session_store.rename_session(old_key, new_key)
+        assert self.conversation_service is not None
+        ok = await self.conversation_service.rename_session(old_key, new_key)
         if not ok:
             return f"无法重命名，会话不存在或目标已存在: {new_key}"
-        assert self.conversation_service is not None
-        self.conversation_service.move_agent(old_key, new_key)
         self.session_name = new_name
         return f"会话已重命名: {old_key} -> {new_key}"
 
     async def delete_session(self, name: str | None = None) -> str:
         target_name = _clean_session_name(name) if name else self.session_name
         target_key = f"cli:{target_name}:local"
+        assert self.conversation_service is not None
         if self.session_store.get(target_key) is None:
             return f"会话不存在: {target_key}"
-        await self.session_store.delete_session(target_key)
-        assert self.conversation_service is not None
-        self.conversation_service.delete_agent(target_key)
+        await self.conversation_service.delete_session(target_key)
         if target_key == self.session_key:
             self.session_name = "default"
-        await self.session_store.get_or_create(self.session_key, self.source)
+        await self.conversation_service.ensure_session(self.session_key, self.source)
         return f"会话已删除: {target_key}\n当前会话: {self.session_key}"
 
     async def get_agent(self):
@@ -188,16 +182,21 @@ class CliChatRuntime:
         return await self.conversation_service.load_history(self.session_key, self.source)
 
     async def export_session(self) -> tuple[int, str]:
-        export_path = (
-            self.settings.agent_data_dir
-            / "exports"
-            / f"{self.session_key.replace(':', '_')}.jsonl"
-        )
         assert self.conversation_service is not None
+        export_path = self.conversation_service.default_export_path(self.session_key)
         count = await self.conversation_service.export_session(
             self.session_key, self.source, export_path
         )
         return count, str(export_path)
+
+    async def usage(self, *, current_user_message: str = "") -> str:
+        assert self.conversation_service is not None
+        return await self.conversation_service.usage_summary(
+            self.session_key,
+            self.source,
+            current_user_message=current_user_message,
+            create_agent=True,
+        )
 
     async def stop_agents(self) -> str:
         assert self.conversation_service is not None

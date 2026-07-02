@@ -113,10 +113,116 @@ class ConversationService:
         current_id = self.resolve_session_id(session.session_id)
         return await self.session_store.load_history(current_id)
 
+    async def ensure_session(self, session_key: str, source) -> None:
+        await self.session_store.get_or_create(session_key, source)
+
+    async def reset_session(self, session_key: str, source) -> str:
+        new_id = await self.session_store.reset_session(session_key, source)
+        self.clear_agent(session_key)
+        return new_id
+
+    async def rename_session(self, old_key: str, new_key: str) -> bool:
+        ok = await self.session_store.rename_session(old_key, new_key)
+        if ok:
+            self.move_agent(old_key, new_key)
+        return ok
+
+    async def delete_session(self, session_key: str) -> bool:
+        if self.session_store.get(session_key) is None:
+            return False
+        await self.session_store.delete_session(session_key)
+        self.delete_agent(session_key)
+        return True
+
+    async def session_list_summary(
+        self,
+        *,
+        platform: str,
+        user_id: str,
+        current_key: str,
+        limit: int = 10,
+    ) -> str:
+        sessions = await self.session_store.list_user_sessions(platform, user_id)
+        lines = [f"当前会话: {current_key}", "你的会话列表:"]
+        for item in sessions[:limit]:
+            marker = " <-" if item["session_key"] == current_key else ""
+            lines.append(f"  {item['session_key']}{marker} ({item.get('message_count', 0)} 条消息)")
+        if len(lines) == 2:
+            lines.append("  无")
+        return "\n".join(lines)
+
+    async def current_session_summary(self, session_key: str, source) -> str:
+        session = await self.session_store.get_or_create(session_key, source)
+        current_id = self.resolve_session_id(session.session_id)
+        count = len(await self.session_store.load_history(current_id))
+        return (
+            f"当前会话: {session_key}\n"
+            f"session id: {current_id[:8]}\n"
+            f"消息数: {count}"
+        )
+
     async def export_session(self, session_key: str, source, export_path: Path) -> int:
         session = await self.session_store.get_or_create(session_key, source)
         current_id = self.resolve_session_id(session.session_id)
         return await self.session_store.export(current_id, str(export_path))
+
+    def default_export_path(self, session_key: str) -> Path:
+        return self.settings.agent_data_dir / "exports" / f"{session_key.replace(':', '_')}.jsonl"
+
+    async def usage_summary(
+        self,
+        session_key: str,
+        source,
+        *,
+        current_user_message: str = "",
+        create_agent: bool = True,
+        empty_message: str | None = None,
+    ) -> str:
+        agent = self.agent_cache.get(session_key)
+        if agent is None:
+            if not create_agent:
+                return empty_message or "暂无会话数据。"
+            agent = await self.get_or_create_agent(session_key)
+
+        history = await self.load_history(session_key, source)
+
+        from personal_agent.context_budget import build_context_budget
+
+        budget = await build_context_budget(
+            messages=history,
+            agent=agent,
+            settings=self.settings,
+            skills_summary="\n".join(
+                part for part in (
+                    getattr(agent, "_last_skill_summaries", ""),
+                    getattr(agent, "_last_skill_injection", ""),
+                )
+                if part
+            ),
+            memory_injections=getattr(agent, "_last_memory_injections", ""),
+            current_user_message=current_user_message,
+        )
+        threshold_line = ""
+        if budget.compression_threshold:
+            marker = "，已达到" if budget.over_compression_threshold else ""
+            threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
+        return (
+            f"会话用量\n"
+            f"API 调用: {agent.session_api_calls} 次\n"
+            f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
+            f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
+            f"\n上下文窗口 (估算)\n"
+            f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
+            f"  system prompt: {budget.system_prompt:,}\n"
+            f"  history messages: {budget.history_messages:,}\n"
+            f"  tools schema: {budget.tools_schema:,}\n"
+            f"  skills: {budget.skills:,}\n"
+            f"  memory injections: {budget.memory_injections:,}\n"
+            f"  MCP tools: {budget.mcp_tools:,}\n"
+            f"剩余: {budget.remaining_context:,} tokens\n"
+            f"{threshold_line}"
+            f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
+        )
 
     def resolve_session_id(self, session_id: str) -> str:
         if self.compression_chain is None:

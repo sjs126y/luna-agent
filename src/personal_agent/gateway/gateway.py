@@ -291,7 +291,7 @@ class _GatewayCommandRuntime:
         return await self.gateway._conversation_service.get_or_create_agent(self._session_key)
 
     async def reset_session(self) -> str:
-        await self.gateway._session_store.reset_session(self._session_key, self.event.source)
+        await self.gateway._conversation_service.reset_session(self._session_key, self.event.source)
         return "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
 
     async def clear_agent(self) -> None:
@@ -302,7 +302,7 @@ class _GatewayCommandRuntime:
         platform, user_id = self._platform_user()
         new_key = f"{platform}:{name}:{user_id}"
         self.gateway._session_override[base_key] = new_key
-        await self.gateway._session_store.get_or_create(new_key, self.event.source)
+        await self.gateway._conversation_service.ensure_session(new_key, self.event.source)
         self._session_key = new_key
         return f"会话已切换: {new_key}"
 
@@ -310,23 +310,15 @@ class _GatewayCommandRuntime:
         base_key = self._base_key()
         current = self.gateway._session_override.get(base_key, base_key)
         platform, user_id = self._platform_user()
-        sessions = await self.gateway._session_store.list_user_sessions(platform, user_id)
-        lines = [f"当前会话: {current}", "你的会话列表:"]
-        for item in sessions[:10]:
-            marker = " <-" if item["session_key"] == current else ""
-            lines.append(f"  {item['session_key']}{marker} ({item.get('message_count', 0)} 条消息)")
-        if len(lines) == 2:
-            lines.append("  无")
-        return "\n".join(lines)
+        return await self.gateway._conversation_service.session_list_summary(
+            platform=platform,
+            user_id=user_id,
+            current_key=current,
+        )
 
     async def current_session(self) -> str:
-        session = await self.gateway._session_store.get_or_create(self._session_key, self.event.source)
-        current_id = self.gateway._compression_chain.resolve(session.session_id)
-        count = len(await self.gateway._session_store.load_history(current_id))
-        return (
-            f"当前会话: {self._session_key}\n"
-            f"session id: {current_id[:8]}\n"
-            f"消息数: {count}"
+        return await self.gateway._conversation_service.current_session_summary(
+            self._session_key, self.event.source
         )
 
     async def rename_session(self, name: str) -> str:
@@ -335,10 +327,9 @@ class _GatewayCommandRuntime:
         new_key = f"{platform}:{name}:{user_id}"
         if new_key == old_key:
             return f"会话已是: {new_key}"
-        ok = await self.gateway._session_store.rename_session(old_key, new_key)
+        ok = await self.gateway._conversation_service.rename_session(old_key, new_key)
         if not ok:
             return f"无法重命名，会话不存在或目标已存在: {new_key}"
-        self.gateway._conversation_service.move_agent(old_key, new_key)
         base_key = self._base_key()
         if old_key == base_key:
             self.gateway._session_override[base_key] = new_key
@@ -355,72 +346,32 @@ class _GatewayCommandRuntime:
         target_key = self._session_key if name is None else f"{platform}:{name}:{user_id}"
         if self.gateway._session_store.get(target_key) is None:
             return f"会话不存在: {target_key}"
-        await self.gateway._session_store.delete_session(target_key)
-        self.gateway._conversation_service.delete_agent(target_key)
+        await self.gateway._conversation_service.delete_session(target_key)
         for key, value in list(self.gateway._session_override.items()):
             if key == target_key or value == target_key:
                 del self.gateway._session_override[key]
         if target_key == self._session_key:
             self._session_key = base_key
-            await self.gateway._session_store.get_or_create(base_key, self.event.source)
+            await self.gateway._conversation_service.ensure_session(base_key, self.event.source)
         return f"会话已删除: {target_key}\n当前会话: {self._session_key}"
 
     async def load_history(self) -> list[dict]:
         return await self.gateway._conversation_service.load_history(self._session_key, self.event.source)
 
     async def export_session(self) -> tuple[int, str]:
-        export_path = (
-            self.gateway.config.agent_data_dir
-            / "exports"
-            / f"{self._session_key.replace(':', '_')}.jsonl"
-        )
+        export_path = self.gateway._conversation_service.default_export_path(self._session_key)
         count = await self.gateway._conversation_service.export_session(
             self._session_key, self.event.source, export_path
         )
         return count, str(export_path)
 
     async def usage(self, *, current_user_message: str = "") -> str:
-        agent = self.gateway._conversation_service.agent_cache.get(self._session_key)
-        if agent is None:
-            return "暂无会话数据。"
-        history = await self.load_history()
-
-        from personal_agent.context_budget import build_context_budget
-
-        budget = await build_context_budget(
-            messages=history,
-            agent=agent,
-            settings=self.gateway.config,
-            skills_summary="\n".join(
-                part for part in (
-                    getattr(agent, "_last_skill_summaries", ""),
-                    getattr(agent, "_last_skill_injection", ""),
-                )
-                if part
-            ),
-            memory_injections=getattr(agent, "_last_memory_injections", ""),
+        return await self.gateway._conversation_service.usage_summary(
+            self._session_key,
+            self.event.source,
             current_user_message=current_user_message,
-        )
-        threshold_line = ""
-        if budget.compression_threshold:
-            marker = "，已达到" if budget.over_compression_threshold else ""
-            threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
-        return (
-            f"会话用量\n"
-            f"API 调用: {agent.session_api_calls} 次\n"
-            f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
-            f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
-            f"\n上下文窗口 (估算)\n"
-            f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
-            f"  system prompt: {budget.system_prompt:,}\n"
-            f"  history messages: {budget.history_messages:,}\n"
-            f"  tools schema: {budget.tools_schema:,}\n"
-            f"  skills: {budget.skills:,}\n"
-            f"  memory injections: {budget.memory_injections:,}\n"
-            f"  MCP tools: {budget.mcp_tools:,}\n"
-            f"剩余: {budget.remaining_context:,} tokens\n"
-            f"{threshold_line}"
-            f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
+            create_agent=False,
+            empty_message="暂无会话数据。",
         )
 
     async def allow_category(self, category: str) -> str:

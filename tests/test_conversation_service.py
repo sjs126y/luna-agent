@@ -26,6 +26,25 @@ class PluginManager:
 
 
 class Agent:
+    session_api_calls = 0
+    session_prompt_tokens = 0
+    session_completion_tokens = 0
+    _last_skill_summaries = ""
+    _last_skill_injection = ""
+    _last_memory_injections = ""
+    _tool_calls_this_turn = 0
+    _max_tool_calls_per_turn = 20
+    _cached_system_prompt = "system"
+    tools = []
+    model = "deepseek-chat"
+    _memory_manager = None
+
+    class Provider:
+        model = "deepseek-chat"
+        context_window = 1000
+
+    _provider = Provider()
+
     def __init__(self, generation: int | None = None):
         self._tools_generation = tool_registry.generation if generation is None else generation
         self._interrupt_requested = False
@@ -197,3 +216,59 @@ def test_agent_cache_operations_and_stop(service, monkeypatch):
     assert "c" in svc.agent_cache
     assert svc.agent_cache["c"]._interrupt_requested is True
     assert isinstance(stopped, int)
+
+
+@pytest.mark.asyncio
+async def test_session_summary_helpers(service):
+    svc, _manager, _db = service
+    await svc.ensure_session("cli:default:local", _source())
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+    await svc.session_store.save_transcript(session.session_id, _messages())
+
+    listed = await svc.session_list_summary(
+        platform="cli",
+        user_id="local",
+        current_key="cli:default:local",
+    )
+    current = await svc.current_session_summary("cli:default:local", _source())
+
+    assert "当前会话: cli:default:local" in listed
+    assert "cli:default:local <- (2 条消息)" in listed
+    assert "session id" in current
+    assert "消息数: 2" in current
+
+
+@pytest.mark.asyncio
+async def test_session_rename_delete_update_agent_cache(service):
+    svc, _manager, _db = service
+    await svc.ensure_session("cli:default:local", _source())
+    agent = svc.agent_cache["cli:default:local"]
+
+    renamed = await svc.rename_session("cli:default:local", "cli:renamed:local")
+    deleted = await svc.delete_session("cli:renamed:local")
+
+    assert renamed is True
+    assert deleted is True
+    assert svc.session_store.get("cli:default:local") is None
+    assert svc.session_store.get("cli:renamed:local") is None
+    assert "cli:default:local" not in svc.agent_cache
+    assert "cli:renamed:local" not in svc.agent_cache
+    assert agent not in svc.agent_cache.values()
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_reuses_cached_agent_without_forcing_creation(service):
+    svc, _manager, _db = service
+
+    empty = await svc.usage_summary(
+        "cli:missing:local",
+        _source(),
+        create_agent=False,
+        empty_message="empty",
+    )
+    usage = await svc.usage_summary("cli:default:local", _source())
+
+    assert empty == "empty"
+    assert "cli:missing:local" not in svc.agent_cache
+    assert "会话用量" in usage
+    assert "上下文窗口" in usage
