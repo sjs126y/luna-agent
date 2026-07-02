@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.memory.review import MemoryReviewService
+from personal_agent.memory.review import MemoryReviewService, _review_signature
 
 
 class Transport:
@@ -78,6 +78,34 @@ def test_memory_review_maybe_spawn_gates_and_starts_thread(monkeypatch):
     assert service.health_snapshot()["spawn_count"] == 1
 
 
+def test_memory_review_maybe_spawn_skips_when_active():
+    service = MemoryReviewService()
+    service.active = True
+
+    assert service.maybe_spawn(
+        agent=object(),
+        messages=_messages(1),
+        should_review=True,
+        final_response="ok",
+    ) is False
+    assert service.health_snapshot()["spawn_count"] == 0
+
+
+def test_memory_review_maybe_spawn_skips_duplicate_signature():
+    service = MemoryReviewService()
+    messages = _messages(2)
+    signature = _review_signature(messages, "ok", service.prompt)
+    service._last_completed_signature = signature
+
+    assert service.maybe_spawn(
+        agent=object(),
+        messages=messages,
+        should_review=True,
+        final_response="ok",
+    ) is False
+    assert service.health_snapshot()["spawn_count"] == 0
+
+
 @pytest.mark.asyncio
 async def test_memory_review_calls_transport_with_recent_messages_and_tools(monkeypatch):
     tool_calls = [{"id": "call-1", "name": "memory"}]
@@ -111,6 +139,7 @@ async def test_memory_review_records_status_and_errors():
     assert ok_service.health_snapshot()["active"] is False
     assert ok_service.health_snapshot()["last_finished"]
     assert ok_service.health_snapshot()["last_error"] == ""
+    assert ok_service.health_snapshot()["last_completed_signature"]
 
     bad_service = MemoryReviewService()
     await bad_service.review(agent=Agent(Transport(exc=RuntimeError("boom"))), messages=_messages(1))

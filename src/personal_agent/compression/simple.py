@@ -73,14 +73,16 @@ class ContextCompressor(ContextEngine):
         """Two-step: prune, then summarize if still needed."""
         self.protect_head = protect_head
         self.protect_tail = protect_tail
+        before_tokens = self._estimate_tokens(messages, system_prompt)
+        self.last_prompt_tokens = before_tokens
 
         # Step 1: prune old tool results (zero LLM cost)
         messages = self._prune_old_tool_results(messages)
 
         # Check if pruning was enough
-        token_count = count_messages_tokens(messages, model=self.model) + count_messages_tokens([], system_prompt, model=self.model)
+        token_count = self._estimate_tokens(messages, system_prompt)
         if token_count < self.threshold_tokens:
-            logger.info("Pruning sufficient: %d → %d tokens", self.last_prompt_tokens, token_count)
+            logger.info("Pruning sufficient: %d → %d tokens", before_tokens, token_count)
             return messages
 
         # Step 2: LLM summary
@@ -98,7 +100,6 @@ class ContextCompressor(ContextEngine):
             return messages
 
         # Measure effectiveness
-        before_tokens = self.last_prompt_tokens
         summary_msg = {
             "role": "user",
             "content": [{"type": "text", "text": f"[系统生成的对话历史摘要]\n{summary}"}],
@@ -237,6 +238,12 @@ class ContextCompressor(ContextEngine):
         except Exception:
             logger.exception("Compression LLM call failed")
             return None
+
+    def _estimate_tokens(self, messages: list[dict], system_prompt: str) -> int:
+        return (
+            count_messages_tokens(messages, model=self.model)
+            + count_messages_tokens([], system_prompt, model=self.model)
+        )
 
 
 def _format_messages_for_summary(messages: list[dict]) -> str:

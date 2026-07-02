@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -36,6 +39,8 @@ class MemoryReviewService:
         self.last_started = ""
         self.last_finished = ""
         self.last_error = ""
+        self._active_signature = ""
+        self._last_completed_signature = ""
 
     def maybe_spawn(
         self,
@@ -47,16 +52,22 @@ class MemoryReviewService:
     ) -> bool:
         if not self.enabled or not should_review or not final_response or agent is None:
             return False
-
-        import threading
+        signature = _review_signature(messages, final_response, self.prompt)
+        if self.active:
+            logger.debug("Memory review skipped: previous review still active")
+            return False
+        if signature and signature == self._last_completed_signature:
+            logger.debug("Memory review skipped: duplicate signature")
+            return False
 
         def _run() -> None:
             import asyncio as _asyncio
 
-            _asyncio.run(self.review(agent=agent, messages=list(messages)))
+            _asyncio.run(self.review(agent=agent, messages=list(messages), signature=signature))
 
         self.cancel_requested = False
         self.active = True
+        self._active_signature = signature
         self.spawn_count += 1
         self.last_started = _now()
         thread = threading.Thread(target=_run, daemon=True, name="mem-review")
@@ -64,7 +75,8 @@ class MemoryReviewService:
         logger.debug("Memory review spawned")
         return True
 
-    async def review(self, *, agent, messages: list[dict]) -> None:
+    async def review(self, *, agent, messages: list[dict], signature: str = "") -> None:
+        signature = signature or _review_signature(messages, "", self.prompt)
         if self.cancel_requested:
             self.active = False
             self.last_finished = _now()
@@ -93,11 +105,14 @@ class MemoryReviewService:
                 self.saved_count += len(tool_calls)
                 logger.info("Memory review: %d memories saved", len(tool_calls))
             self.last_error = ""
+            if not self.cancel_requested:
+                self._last_completed_signature = signature
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
         finally:
             self.active = False
             self.last_finished = _now()
+            self._active_signature = ""
 
     def cancel(self) -> bool:
         was_active = self.active
@@ -114,6 +129,8 @@ class MemoryReviewService:
             "last_started": self.last_started,
             "last_finished": self.last_finished,
             "last_error": self.last_error,
+            "active_signature": self._active_signature,
+            "last_completed_signature": self._last_completed_signature,
         }
 
     async def close(self) -> None:
@@ -123,3 +140,13 @@ class MemoryReviewService:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _review_signature(messages: list[dict], final_response: str, prompt: str) -> str:
+    payload = {
+        "messages": messages[-12:],
+        "final_response": final_response,
+        "prompt": prompt,
+    }
+    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()

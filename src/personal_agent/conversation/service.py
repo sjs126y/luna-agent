@@ -218,17 +218,15 @@ class ConversationService:
         history = await self.load_history(session_key, source)
 
         from personal_agent.context_budget import build_context_budget
+        from personal_agent.context_budget import compose_context_text
 
         budget = await build_context_budget(
             messages=history,
             agent=agent,
             settings=self.settings,
-            skills_summary="\n".join(
-                part for part in (
-                    getattr(agent, "_last_skill_summaries", ""),
-                    getattr(agent, "_last_skill_injection", ""),
-                )
-                if part
+            skills_summary=compose_context_text(
+                getattr(agent, "_last_skill_summaries", ""),
+                getattr(agent, "_last_skill_injection", ""),
             ),
             memory_injections=getattr(agent, "_last_memory_injections", ""),
             current_user_message=current_user_message,

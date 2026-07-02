@@ -363,6 +363,19 @@ async def test_compress_prune_sufficient():
 
 
 @pytest.mark.asyncio
+async def test_compress_updates_prompt_token_baseline():
+    c = ContextCompressor()
+    c.threshold_tokens = 999999
+    c.last_prompt_tokens = 1
+
+    msgs = _make_long_history(1)
+    result = await c.compress(msgs, "system prompt", AsyncMock(), protect_head=2, protect_tail=6)
+
+    assert result == msgs
+    assert c.last_prompt_tokens > 1
+
+
+@pytest.mark.asyncio
 async def test_compress_full_summary():
     """Pruning not enough → LLM summary called."""
     mock_transport = AsyncMock()

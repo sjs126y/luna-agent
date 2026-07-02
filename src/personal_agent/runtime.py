@@ -222,13 +222,17 @@ async def create_memory_manager(
 
     external_memory = None
     if settings.memory_external_provider == "embedding":
-        external_memory = await plugin_manager.invoke_hook(
-            "create_external_memory_provider",
-            settings=settings,
-            data_dir=data_dir / "memory",
-        )
-        if external_memory is not None:
-            logger.info("External memory: embedding (BAAI/bge-small-zh-v1.5)")
+        try:
+            external_memory = await plugin_manager.invoke_hook(
+                "create_external_memory_provider",
+                settings=settings,
+                data_dir=data_dir / "memory",
+            )
+            if external_memory is not None:
+                logger.info("External memory: embedding (BAAI/bge-small-zh-v1.5)")
+        except Exception as exc:
+            logger.warning("External memory provider unavailable, falling back to file memory: %s", exc)
+            external_memory = None
 
     return MemoryManager(builtin=builtin_memory, external=external_memory)
 

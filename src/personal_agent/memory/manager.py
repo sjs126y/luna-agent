@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from personal_agent.memory.base import MemoryProvider
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
@@ -28,7 +31,13 @@ class MemoryManager:
     async def prefetch(self, user_message: str) -> list[dict]:
         """External memory search results for api_messages injection."""
         if self._external:
-            return await self._external.prefetch(user_message)
+            try:
+                results = await self._external.prefetch(user_message)
+                self._last_errors.pop("external", None)
+                return results
+            except Exception as exc:
+                self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
+                logger.warning("External memory prefetch failed, falling back to builtin only: %s", exc)
         return []
 
     # ── save ──────────────────────────────────────────
@@ -36,7 +45,12 @@ class MemoryManager:
     async def save(self, content: str) -> None:
         await self._call_provider("builtin", self._builtin.save(content))
         if self._external:
-            await self._call_provider("external", self._external.save(content))
+            try:
+                await self._external.save(content)
+                self._last_errors.pop("external", None)
+            except Exception as exc:
+                self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
+                logger.warning("External memory save failed, continuing with builtin memory: %s", exc)
 
     async def list_entries(self, *, target: str = "all") -> list[dict[str, Any]]:
         target = _normalize_target(target)

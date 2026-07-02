@@ -2,7 +2,7 @@
 
 import pytest
 
-from personal_agent.context_budget import build_context_budget, estimate_context_budget
+from personal_agent.context_budget import build_context_budget, compose_context_text, estimate_context_budget
 
 
 def test_context_budget_splits_tools_skills_memory_and_mcp():
@@ -49,6 +49,10 @@ def test_context_budget_splits_tools_skills_memory_and_mcp():
     ])
     assert budget.remaining_context == 1000 - budget.used
     assert budget.compression_threshold == 600
+
+
+def test_compose_context_text_skips_empty_parts():
+    assert compose_context_text("skills", "", "memory") == "skills\nmemory"
 
 
 @pytest.mark.asyncio

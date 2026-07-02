@@ -60,3 +60,40 @@ async def test_memory_manager_health_and_lookup(tmp_path):
     assert found["text"] == "alpha memory"
     assert health["builtin_available"] is True
     assert health["providers"]["builtin"]["entries"] == 1
+
+
+class FailingExternalProvider:
+    async def prefetch(self, user_message: str) -> list[dict]:
+        raise RuntimeError("external prefetch boom")
+
+    async def save(self, content: str) -> None:
+        raise RuntimeError("external save boom")
+
+    async def search(self, query: str) -> list[str]:
+        raise RuntimeError("external search boom")
+
+    async def load_all(self) -> list[str]:
+        raise RuntimeError("external load boom")
+
+    def get_system_prompt_text(self) -> str:
+        return ""
+
+    def health_snapshot(self) -> dict[str, object]:
+        return {"provider": "FailingExternalProvider", "available": False, "last_error": "boom"}
+
+
+@pytest.mark.asyncio
+async def test_memory_manager_falls_back_when_external_provider_fails(tmp_path):
+    builtin = FileMemoryProvider(tmp_path)
+    manager = MemoryManager(builtin, FailingExternalProvider())
+
+    await manager.save("alpha memory")
+    prefetched = await manager.prefetch("alpha")
+    entries = await manager.list_entries(target="all")
+    health = await manager.health_snapshot()
+
+    assert prefetched == []
+    assert any(entry["provider"] == "builtin" for entry in entries)
+    assert (tmp_path / "MEMORY.md").exists()
+    assert health["providers"]["external"]["available"] is False
+    assert "external" in health["last_errors"]

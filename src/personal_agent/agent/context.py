@@ -6,6 +6,7 @@ import copy
 import logging
 from dataclasses import dataclass, field
 
+from personal_agent.context_budget import compose_context_text
 from personal_agent.llm.token_counter import count_messages_tokens, count_tools_tokens
 
 logger = logging.getLogger(__name__)
@@ -101,9 +102,10 @@ async def build_turn_context(
     messages = await _check_and_compress(
         agent,
         messages,
-        extra_context_text="\n".join(
-            part for part in (skill_summaries, skill_injection or "", memory_injections_text)
-            if part
+        extra_context_text=compose_context_text(
+            skill_summaries,
+            skill_injection or "",
+            memory_injections_text,
         ),
     )
     was_compressed = messages != pre_compress_messages

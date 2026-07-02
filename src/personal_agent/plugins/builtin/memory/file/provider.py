@@ -266,19 +266,28 @@ async def _memory_tool(action: str, content: str = "", query: str = "",
         else:
             await internal.save(content)
         if ext:
-            await ext.save(content)
+            try:
+                await ext.save(content)
+            except Exception:
+                logger.exception("External memory save failed; file memory fallback kept")
         return f"Memory saved to {target}: {content}"
     elif action == "remove":
         return "For now, manage memories via data/system/MEMORY.md or USER.md directly."
     elif action == "search":
         results = await internal.search(query)
         if ext:
-            results = await ext.search(query) + results
+            try:
+                results = await ext.search(query) + results
+            except Exception:
+                logger.exception("External memory search failed; falling back to file memory")
         return "\n".join(results) if results else "No matching memories."
     elif action == "list":
         entries = await internal.load_all()
         if ext:
-            entries = await ext.load_all() + entries
+            try:
+                entries = await ext.load_all() + entries
+            except Exception:
+                logger.exception("External memory list failed; falling back to file memory")
         return "\n".join(entries) if entries else "No memories yet."
     return f"Unknown action: {action}. Use 'add', 'search', 'list'."
 

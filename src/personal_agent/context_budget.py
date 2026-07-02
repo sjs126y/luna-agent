@@ -8,6 +8,10 @@ from typing import Any
 from personal_agent.llm.token_counter import count_messages_tokens, count_tools_tokens, estimate_tokens
 
 
+def compose_context_text(*parts: str) -> str:
+    return "\n".join(part for part in parts if part)
+
+
 @dataclass
 class ContextBudget:
     system_prompt: int
