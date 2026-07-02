@@ -273,9 +273,86 @@ entrypoint: bad:register
 def test_global_doctor_report_contains_tokenizer_and_plugins():
     report = build_doctor_report()
 
+    assert "runtime" in report
+    assert "memory" in report
+    assert "initialized" in report["runtime"]
+    assert "builtin_available" in report["memory"]
     assert "tokenizer" in report
     assert "tiktoken_available" in report["tokenizer"]
     assert any(plugin["key"] == "builtin/tools" for plugin in report["plugins"])
+
+
+def test_global_doctor_json_command_contains_runtime_and_memory():
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "runtime" in data
+    assert "memory" in data
+    assert "plugins" in data
+
+
+def test_doctor_report_includes_runtime_failure(monkeypatch):
+    def failed_runtime(settings):
+        return {
+            "runtime": {
+                "initialized": False,
+                "error": "RuntimeError: broken",
+                "db_open": False,
+                "mcp_running": False,
+                "gateway_created": False,
+                "gateway_running": False,
+                "cached_agents": 0,
+            },
+            "memory": {
+                "builtin_available": False,
+                "builtin_provider": "",
+                "external_provider": "",
+                "review_service": "",
+                "review_enabled": False,
+            },
+            "_plugins": [],
+        }
+
+    monkeypatch.setattr("personal_agent.cli._runtime_health_report", failed_runtime)
+
+    report = build_doctor_report()
+    text = format_doctor_report(report)
+
+    assert report["runtime"]["initialized"] is False
+    assert "Runtime 初始化失败: RuntimeError: broken" in text
+    assert "内置 memory provider 不可用" in text
+
+
+def test_init_command_generates_and_skips_existing_files(tmp_path):
+    result = runner.invoke(app, ["init", "--dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "初始化 Personal Agent 配置" in result.output
+    assert "已生成" in result.output
+    assert (tmp_path / "config.yaml").exists()
+    assert (tmp_path / ".env.example").exists()
+
+    original = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    second = runner.invoke(app, ["init", "--dir", str(tmp_path)])
+
+    assert second.exit_code == 0
+    assert "已跳过" in second.output
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == original
+
+
+def test_init_command_force_overwrites_existing_files(tmp_path):
+    config = tmp_path / "config.yaml"
+    env = tmp_path / ".env.example"
+    config.write_text("old", encoding="utf-8")
+    env.write_text("old", encoding="utf-8")
+
+    result = runner.invoke(app, ["init", "--dir", str(tmp_path), "--force"])
+
+    assert result.exit_code == 0
+    assert "已覆盖" in result.output
+    assert "storage:" in config.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER" in env.read_text(encoding="utf-8")
 
 
 def test_format_plugin_report_includes_traceback_when_requested():

@@ -28,6 +28,72 @@ app.add_typer(tokens_app, name="tokens")
 app.add_typer(agents_app, name="agents")
 
 
+_CONFIG_TEMPLATE = """# Personal Agent minimal configuration
+storage:
+  data_dir: ./data
+  log_level: INFO
+
+plugins:
+  dirs:
+    - ./plugins
+    - ./data/plugins
+  enabled: []
+  disabled: []
+
+memory:
+  provider: file
+  external_provider: none
+  review_interval: 10
+
+compression:
+  threshold_ratio: 0.6
+  tail_token_budget: 20000
+
+sandbox:
+  roots:
+    - ./data
+  blocked:
+    - "**/.env"
+    - "**/.git/**"
+    - "**/.ssh/**"
+  bash_work_dir: ./data
+  bash_restrict_paths: true
+  bash_allow_network: false
+  audit_enabled: true
+
+mcp:
+  enabled: false
+  servers: []
+
+session:
+  expire_days: 30
+  override: {}
+
+auth:
+  enabled: false
+  admins: []
+"""
+
+
+_ENV_EXAMPLE_TEMPLATE = """# LLM
+LLM_PROVIDER=deepseek
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
+LLM_API_MODE=auto
+LLM_MAX_TOKENS=4096
+
+# Platforms
+TELEGRAM_BOT_TOKEN=
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+WEIXIN_TOKEN=
+WEIXIN_ACCOUNT_ID=
+WEIXIN_USER_ID=
+WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+"""
+
+
 @app.command()
 def chat(
     message: str = typer.Argument("", help="可选：只运行一轮消息后退出。"),
@@ -59,6 +125,22 @@ def doctor(json_output: bool = typer.Option(False, "--json", help="输出 JSON�
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
         typer.echo(format_doctor_report(report))
+
+
+@app.command("init")
+def init_project(
+    target_dir: Path = typer.Option(Path("."), "--dir", "-d", help="生成配置的目录。"),
+    force: bool = typer.Option(False, "--force", "-f", help="覆盖已存在的文件。"),
+) -> None:
+    """Generate a minimal config.yaml and .env.example."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    results = [
+        _write_template(target_dir / "config.yaml", _CONFIG_TEMPLATE, force=force),
+        _write_template(target_dir / ".env.example", _ENV_EXAMPLE_TEMPLATE, force=force),
+    ]
+    typer.echo(f"初始化 Personal Agent 配置: {target_dir}")
+    for path, action in results:
+        typer.echo(f"  - {action}: {path}")
 
 
 @plugins_app.command("list")
@@ -303,14 +385,120 @@ def _load_agent_run_store(settings: Settings | None = None) -> Settings:
     return settings
 
 
+def _write_template(path: Path, content: str, *, force: bool) -> tuple[Path, str]:
+    existed = path.exists()
+    if existed and not force:
+        return path, "已跳过"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content.rstrip() + "\n", encoding="utf-8")
+    return path, "已覆盖" if existed else "已生成"
+
+
+def _runtime_health_report(settings: Settings) -> dict[str, Any]:
+    return _run_async_sync(_runtime_health_report_async(settings))
+
+
+async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
+    from personal_agent.runtime import create_app_runtime
+
+    runtime = None
+    try:
+        runtime = await create_app_runtime(settings)
+        runtime_data = runtime.health_snapshot()
+        runtime_data.update({
+            "initialized": True,
+            "error": "",
+        })
+        memory = {
+            "provider": settings.memory_provider,
+            "external_provider_config": settings.memory_external_provider,
+            "builtin_available": runtime.memory_manager.builtin is not None,
+            "builtin_provider": type(runtime.memory_manager.builtin).__name__,
+            "external_provider": (
+                type(runtime.memory_manager.external).__name__
+                if runtime.memory_manager.external is not None else ""
+            ),
+            "external_available": runtime.memory_manager.external is not None,
+            "review_service": type(runtime.memory_review_service).__name__,
+            "review_enabled": bool(getattr(runtime.memory_review_service, "enabled", False)),
+        }
+        plugins = [
+            runtime.plugin_manager.doctor_plugin(plugin.key)
+            for plugin in runtime.plugin_manager.list_plugins()
+        ]
+        return {
+            "runtime": runtime_data,
+            "memory": memory,
+            "_plugins": plugins,
+        }
+    except Exception as exc:
+        return {
+            "runtime": {
+                "initialized": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "data_dir": str(settings.agent_data_dir),
+                "db_open": False,
+                "mcp_enabled": bool(settings.mcp_enabled),
+                "mcp_running": False,
+                "gateway_created": False,
+                "gateway_running": False,
+                "plugins": 0,
+                "cached_agents": 0,
+                "closed": True,
+            },
+            "memory": {
+                "provider": settings.memory_provider,
+                "external_provider_config": settings.memory_external_provider,
+                "builtin_available": False,
+                "builtin_provider": "",
+                "external_provider": "",
+                "external_available": False,
+                "review_service": "",
+                "review_enabled": False,
+            },
+            "_plugins": None,
+        }
+    finally:
+        if runtime is not None:
+            await runtime.close()
+
+
+def _run_async_sync(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    import threading
+
+    result: dict[str, Any] = {}
+    error: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:
+            error.append(exc)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join()
+    if error:
+        raise error[0]
+    return result["value"]
+
+
 def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
     settings = settings or Settings()
-    manager = _plugin_manager(settings)
-    manager.load_enabled()
+    runtime_health = _runtime_health_report(settings)
+    plugins = runtime_health.pop("_plugins", None)
+    if plugins is None:
+        manager = _plugin_manager(settings)
+        manager.load_enabled()
+        plugins = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
 
     from personal_agent.llm.token_counter import tokenizer_status
 
-    plugins = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
     sandbox_roots = [
         {"path": str(root), "exists": Path(root).exists()}
         for root in settings.sandbox_roots
@@ -343,6 +531,8 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
         "mcp_enabled": settings.mcp_enabled,
+        "runtime": runtime_health["runtime"],
+        "memory": runtime_health["memory"],
         "sandbox": {
             "roots": sandbox_roots,
             "blocked_count": len(settings.sandbox_blocked),
@@ -358,6 +548,8 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
 def format_doctor_report(report: dict[str, Any]) -> str:
     issues = _doctor_issues(report)
     plugin_summary = _plugin_status_summary(report["plugins"])
+    runtime = report.get("runtime", {})
+    memory = report.get("memory", {})
     lines = [
         "Personal Agent 诊断",
         f"总体状态: {'需要注意' if issues else '正常'}",
@@ -373,6 +565,21 @@ def format_doctor_report(report: dict[str, Any]) -> str:
             f"禁用={plugin_summary['disabled']} "
             f"错误={plugin_summary['error']}"
         ),
+        "",
+        "Runtime:",
+        f"  初始化: {_yes(runtime.get('initialized', False))}",
+        f"  DB 打开: {_yes(runtime.get('db_open', False))}",
+        f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
+        f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
+        f"  Gateway 运行: {_yes(runtime.get('gateway_running', False))}",
+        f"  cached agents: {runtime.get('cached_agents', 0)}",
+        f"  runtime 错误: {runtime.get('error') or '-'}",
+        "",
+        "Memory:",
+        f"  builtin provider: {memory.get('builtin_provider') or '-'}",
+        f"  external provider: {memory.get('external_provider') or '-'}",
+        f"  review service: {memory.get('review_service') or '-'}",
+        f"  review enabled: {_yes(memory.get('review_enabled', False))}",
         "",
         "Sandbox:",
     ]
@@ -518,6 +725,17 @@ def format_token_budget(data: dict[str, Any]) -> str:
 
 def _doctor_issues(report: dict[str, Any]) -> list[str]:
     issues: list[str] = []
+    runtime = report.get("runtime", {})
+    if runtime:
+        if not runtime.get("initialized", False):
+            issues.append(f"Runtime 初始化失败: {runtime.get('error') or '未知错误'}")
+        elif not runtime.get("db_open", False):
+            issues.append("Runtime DB 未打开。")
+
+    memory = report.get("memory", {})
+    if memory and not memory.get("builtin_available", False):
+        issues.append("内置 memory provider 不可用。")
+
     for root in report["sandbox"]["roots"]:
         if not root["exists"]:
             issues.append(f"Sandbox root 不存在: {root['path']}")
