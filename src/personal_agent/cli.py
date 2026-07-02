@@ -328,8 +328,13 @@ def chat(
 
 
 @app.command()
-def serve() -> None:
+def serve(
+    dry_run: bool = typer.Option(False, "--dry-run", help="只执行启动装配检查，不连接平台。"),
+) -> None:
     """Run the platform gateway service."""
+    if dry_run:
+        asyncio.run(_serve_dry_run())
+        return
     asyncio.run(boot())
 
 
@@ -769,6 +774,27 @@ async def _memory_delete(identifier: str, *, target: str) -> bool:
         return await runtime.memory_manager.delete(identifier, target=target)
 
     return await _with_app_runtime(_collect)
+
+
+async def _serve_dry_run() -> None:
+    from personal_agent.runtime import create_app_runtime
+
+    runtime = None
+    try:
+        settings = Settings()
+        runtime = await create_app_runtime(settings)
+        runtime.create_gateway(system_prompt_template="")
+        health = runtime.health_snapshot()
+        typer.echo("启动检查通过。")
+        typer.echo(f"数据目录: {health.get('data_dir')}")
+        typer.echo(f"插件数: {health.get('plugins', 0)}")
+        typer.echo(f"Gateway 已创建: {_yes(health.get('gateway_created', False))}")
+        typer.echo(f"Gateway 运行: {_yes(health.get('gateway_running', False))}")
+    except Exception as exc:
+        _exit_error(f"启动检查失败: {exc}")
+    finally:
+        if runtime is not None:
+            await runtime.close()
 
 
 def _write_template(path: Path, content: str, *, force: bool) -> tuple[Path, str]:
