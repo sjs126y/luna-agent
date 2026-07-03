@@ -12,6 +12,7 @@ from typing import Awaitable, Callable
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.formatted_text import ANSI
 from rich import box
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -154,6 +155,12 @@ class TerminalRenderer(ConversationEventSink):
             self._rule("─", style="dark_orange")
             self._input_open = False
             self._input_preframed = False
+
+    def input_bottom_toolbar(self) -> ANSI:
+        line = "─" * self._line_width()
+        if self.options.color:
+            return ANSI(f"\x1b[38;5;208m{line}\x1b[0m")
+        return ANSI(line)
 
     def user_message(self, text: str) -> None:
         self.begin_turn()
@@ -647,7 +654,10 @@ class CliShell:
         if self.input_fn is not None:
             return await _resolve_input(self.input_fn(prompt_text))
         if self._uses_prompt_toolkit():
-            return await self._prompt().prompt_async(prompt_text)
+            return await self._prompt().prompt_async(
+                prompt_text,
+                bottom_toolbar=self.renderer.input_bottom_toolbar(),
+            )
         return await _read_input(prompt_text)
 
     def _uses_prompt_toolkit(self) -> bool:

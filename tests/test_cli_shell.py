@@ -177,6 +177,29 @@ def test_cli_shell_terminal_prompt_avoids_cursor_rewrite_frame():
 
 
 @pytest.mark.asyncio
+async def test_cli_shell_prompt_toolkit_uses_bottom_toolbar():
+    renderer, _ = _terminal_renderer(ShellRenderOptions(color=False))
+    runtime = FakeRuntime()
+    shell = CliShell(runtime, renderer=renderer)
+    calls = []
+
+    class FakePrompt:
+        async def prompt_async(self, prompt_text: str, **kwargs):
+            calls.append((prompt_text, kwargs))
+            return ""
+
+    shell._prompt_session = FakePrompt()
+
+    await shell._read_turn_text()
+
+    assert calls[0][0] == "› "
+    toolbar = calls[0][1]["bottom_toolbar"]
+    assert "─" * 20 in str(toolbar)
+    assert "\x1b[1A" not in str(toolbar)
+    assert "\x1b[2C" not in str(toolbar)
+
+
+@pytest.mark.asyncio
 async def test_cli_shell_verbose_shows_model_lines():
     renderer, stream = _renderer(ShellRenderOptions(verbose=True))
     runtime = FakeRuntime()
