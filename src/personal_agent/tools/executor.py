@@ -203,6 +203,7 @@ async def execute_tool_call_result(
             duration=result.duration,
             input_summary=result.input_summary,
             output_summary=result.output_summary,
+            full_output=result.content or result.error,
         )
         return result
 

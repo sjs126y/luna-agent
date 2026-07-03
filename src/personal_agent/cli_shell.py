@@ -60,6 +60,7 @@ class ToolTraceItem:
     started_at: float = 0.0
     status: str = "running"
     output_summary: str = ""
+    full_output: str = ""
     error: str = ""
     duration: float = 0.0
     expandable: bool = False
@@ -92,6 +93,86 @@ class TerminalRenderer(ConversationEventSink):
         self._active_tools: dict[str, ToolTraceItem] = {}
         self._completed_tools: list[ToolTraceItem] = []
         self._status = None  # rich Status handle while a spinner is live
+        self._live = None  # rich Live handle while streaming a reply
+        self._stream_text = ""       # accumulated answer text this LLM call
+        self._stream_thinking = ""   # accumulated thinking text this LLM call
+
+    @property
+    def wants_deltas(self) -> bool:
+        # Opt into token-by-token events only when we can actually live-render
+        # them; otherwise the loop skips per-token overhead entirely.
+        return self._can_stream()
+
+    def _can_stream(self) -> bool:
+        return (
+            not self.options.quiet_events
+            and self.options.show_events
+            and self.console is not None
+            and bool(getattr(self.console, "is_terminal", False))
+        )
+
+    def _stream_view(self):
+        parts = []
+        if self._stream_thinking:
+            parts.append(
+                Text(f"💭 思考中… ({len(self._stream_thinking)} 字)", style="dim")
+            )
+        if self._stream_text:
+            parts.append(
+                Panel(
+                    Text(self._stream_text),
+                    title="Personal Agent",
+                    title_align="left",
+                    border_style="cyan",
+                    box=box.ROUNDED,
+                    padding=(0, 1),
+                )
+            )
+        return Group(*parts)
+
+    def _ensure_live(self) -> bool:
+        if not self._can_stream():
+            return False
+        if self._live is None:
+            self._stop_spinner()
+            try:
+                self._live = Live(
+                    self._stream_view(),
+                    console=self.console,
+                    auto_refresh=False,
+                    transient=True,
+                )
+                self._live.start()
+            except Exception:
+                self._live = None
+                return False
+        return True
+
+    def _update_live(self) -> None:
+        if self._live is not None:
+            try:
+                self._live.update(self._stream_view())
+                self._live.refresh()
+            except Exception:
+                pass
+
+    def _stop_live(self) -> None:
+        if self._live is not None:
+            try:
+                self._live.stop()
+            except Exception:
+                pass
+            self._live = None
+
+    def _finalize_stream(self) -> None:
+        """Stop the live preview and leave a one-line thinking summary."""
+        self._stop_live()
+        if self._stream_thinking:
+            self._print_impl(
+                Text(f"  💭 已思考 {len(self._stream_thinking)} 字", style="dim")
+            )
+        self._stream_text = ""
+        self._stream_thinking = ""
 
     def _spinner_enabled(self) -> bool:
         return (
@@ -122,14 +203,32 @@ class TerminalRenderer(ConversationEventSink):
             self._status = None
 
     def _print(self, value) -> None:
-        # A live spinner and printed output cannot share the terminal; drop the
-        # spinner before writing so the trace/reply lands cleanly.
+        # A live spinner/preview and printed output cannot share the terminal;
+        # drop both before writing so the trace/reply lands cleanly.
         self._stop_spinner()
+        self._stop_live()
         self._print_impl(value)
 
     async def emit(self, event: ConversationEvent) -> None:
+        if event.type == "assistant_delta":
+            chunk = event.data.get("chunk") or ""
+            if chunk and self._ensure_live():
+                self._stream_text += chunk
+                self._update_live()
+            return
+
+        if event.type == "thinking_delta":
+            chunk = event.data.get("chunk") or ""
+            if chunk and self._ensure_live():
+                self._stream_thinking += chunk
+                self._update_live()
+            return
+
         if event.type == "assistant_message":
             text = event.message.strip()
+            # Stop the live text preview, then render the final reply once as
+            # markdown. Streaming showed plain text; this is the polished pass.
+            self._finalize_stream()
             if text:
                 self.assistant_message(text)
             return
@@ -139,6 +238,7 @@ class TerminalRenderer(ConversationEventSink):
             return
 
         if event.type == "turn_end":
+            self._finalize_stream()
             self._stop_spinner()
             return
 
@@ -285,10 +385,17 @@ class TerminalRenderer(ConversationEventSink):
         item.status = str(event.data.get("status") or "")
         item.error = str(event.data.get("error") or "")
         item.output_summary = str(event.data.get("output_summary") or "")
+        item.full_output = str(event.data.get("full_output") or "")
         item.duration = float(event.data.get("duration") or 0.0)
         if item.duration <= 0 and item.started_at:
             item.duration = max(0.0, time.monotonic() - item.started_at)
         self._completed_tools.append(item)
+        # Remember the most recent full output so Ctrl+O can expand it.
+        full = item.error or item.full_output or item.output_summary
+        if full and full != item.output_summary:
+            item.expandable = True
+        if full:
+            self._last_expandable = (item.display_name, full)
         if item.name in {"confirm", "clarify"} and item.status == "success":
             self._interaction_prompt(item)
             return
@@ -312,6 +419,17 @@ class TerminalRenderer(ConversationEventSink):
                 padding=(0, 1),
             )
         )
+
+    def expand_last_output(self) -> None:
+        """Print the most recent tool's full (untruncated) output. Bound to Ctrl+O."""
+        if self._last_expandable is None:
+            self._print(Text("没有可展开的工具输出。", style="dim"))
+            return
+        name, full = self._last_expandable
+        renderables = [self._block_top(f"$ {name} 完整输出", style="blue")]
+        renderables.extend(Text(f"  {line}") for line in full.splitlines() or [full])
+        renderables.append(self._block_bottom(style="blue"))
+        self._print(Group(*renderables))
 
     def stop_text(self, text: str) -> None:
         self._event_line("停止", text or "已请求停止当前处理", style="yellow")
@@ -776,6 +894,10 @@ class CliShell:
         @bindings.add("enter")  # Enter → submit
         def _(event) -> None:
             event.current_buffer.validate_and_handle()
+
+        @bindings.add("c-o")  # Ctrl+O → expand/collapse the last tool output
+        def _(event) -> None:
+            self.renderer.expand_last_output()
 
         return bindings
 
