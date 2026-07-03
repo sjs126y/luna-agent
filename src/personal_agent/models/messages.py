@@ -38,3 +38,4 @@ class NormalizedResponse:
     finish_reason: str = ""                                 # "end_turn" | "tool_use" | "max_tokens" | "stop"
     stop_reason: str = ""                                   # raw from API
     model: str = ""
+    thinking: str = ""                                      # reasoning/thinking text (streamed separately)

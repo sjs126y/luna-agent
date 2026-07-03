@@ -1,9 +1,14 @@
 """Base transport abstraction — all Provider transports implement this."""
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from personal_agent.models.messages import NormalizedResponse
+
+# Incremental delta callback: (kind, chunk) where kind is "text" | "thinking".
+# Transports await it while parsing a stream so callers can render token-by-token.
+# Optional everywhere — when omitted, parsing collects the full response as before.
+DeltaCallback = Callable[[str, str], Awaitable[None]]
 
 
 class BaseTransport(ABC):
@@ -23,8 +28,16 @@ class BaseTransport(ABC):
         ...
 
     @abstractmethod
-    async def parse_stream(self, stream: AsyncIterator[bytes]) -> NormalizedResponse:
-        """Parse streaming SSE events into a unified NormalizedResponse."""
+    async def parse_stream(
+        self,
+        stream: AsyncIterator[bytes],
+        on_delta: DeltaCallback | None = None,
+    ) -> NormalizedResponse:
+        """Parse streaming SSE events into a unified NormalizedResponse.
+
+        If on_delta is provided, it is called with ("text", chunk) and
+        ("thinking", chunk) as incremental content arrives.
+        """
         ...
 
     @abstractmethod

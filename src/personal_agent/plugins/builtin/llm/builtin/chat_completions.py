@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from personal_agent.llm.base import BaseTransport
+from personal_agent.llm.base import BaseTransport, DeltaCallback
 from personal_agent.llm.client import call_chat_completions
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.models.messages import NormalizedResponse
@@ -47,8 +47,17 @@ class ChatCompletionsTransport(BaseTransport):
 
     # ── parse_stream ───────────────────────────────────
 
-    async def parse_stream(self, stream: AsyncIterator[dict]) -> NormalizedResponse:
-        """Parse OpenAI SSE stream → NormalizedResponse."""
+    async def parse_stream(
+        self,
+        stream: AsyncIterator[dict],
+        on_delta: DeltaCallback | None = None,
+    ) -> NormalizedResponse:
+        """Parse OpenAI SSE stream → NormalizedResponse.
+
+        If ``on_delta`` is provided, it is awaited with ("text", chunk) as
+        incremental content arrives. Omitting it keeps the original
+        accumulate-then-return behavior (used by platform paths).
+        """
         text_parts: list[str] = []
         tool_call_deltas: dict[int, dict] = {}
         usage = {"input_tokens": 0, "output_tokens": 0}
@@ -71,6 +80,8 @@ class ChatCompletionsTransport(BaseTransport):
 
             if delta.get("content"):
                 text_parts.append(delta["content"])
+                if on_delta is not None:
+                    await on_delta("text", delta["content"])
 
             tc_list = delta.get("tool_calls", [])
             for tc in tc_list:

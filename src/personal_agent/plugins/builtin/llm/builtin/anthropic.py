@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from personal_agent.llm.base import BaseTransport
+from personal_agent.llm.base import BaseTransport, DeltaCallback
 from personal_agent.llm.client import call_anthropic
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.models.messages import NormalizedResponse
@@ -62,14 +62,28 @@ class AnthropicMessagesTransport(BaseTransport):
 
     # ── parse_stream ───────────────────────────────────
 
-    async def parse_stream(self, stream: AsyncIterator[dict]) -> NormalizedResponse:
-        """Parse stream events (SSE or single non-streaming JSON) → NormalizedResponse."""
+    async def parse_stream(
+        self,
+        stream: AsyncIterator[dict],
+        on_delta: DeltaCallback | None = None,
+    ) -> NormalizedResponse:
+        """Parse stream events (SSE or single non-streaming JSON) → NormalizedResponse.
+
+        If ``on_delta`` is provided, it is awaited with ("text", chunk) or
+        ("thinking", chunk) as incremental content arrives. Omitting it keeps
+        the original accumulate-then-return behavior (used by platform paths).
+        """
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_use_blocks: dict[int, dict] = {}
         usage = {"input_tokens": 0, "output_tokens": 0}
         stop_reason = ""
         model = self._provider.model
         seen_message = False  # tracks if we got the full message event (non-streaming)
+
+        async def _emit(kind: str, chunk: str) -> None:
+            if on_delta is not None and chunk:
+                await on_delta(kind, chunk)
 
         async for event in stream:
             etype = event.get("type", "")
@@ -84,9 +98,14 @@ class AnthropicMessagesTransport(BaseTransport):
                 usage["output_tokens"] = usage_in.get("output_tokens", 0)
 
                 for block in event.get("content", []):
-                    if block.get("type") == "text":
+                    btype = block.get("type")
+                    if btype == "text":
                         text_parts.append(block.get("text", ""))
-                    elif block.get("type") == "tool_use":
+                        await _emit("text", block.get("text", ""))
+                    elif btype == "thinking":
+                        thinking_parts.append(block.get("thinking", ""))
+                        await _emit("thinking", block.get("thinking", ""))
+                    elif btype == "tool_use":
                         tool_use_blocks[len(tool_use_blocks)] = {
                             "id": block.get("id", ""),
                             "name": block.get("name", ""),
@@ -113,9 +132,16 @@ class AnthropicMessagesTransport(BaseTransport):
             elif etype == "content_block_delta":
                 delta = event.get("delta", {})
                 idx = event.get("index", 0)
-                if delta.get("type") == "text_delta":
-                    text_parts.append(delta.get("text", ""))
-                elif delta.get("type") == "input_json_delta":
+                dtype = delta.get("type")
+                if dtype == "text_delta":
+                    chunk = delta.get("text", "")
+                    text_parts.append(chunk)
+                    await _emit("text", chunk)
+                elif dtype == "thinking_delta":
+                    chunk = delta.get("thinking", "")
+                    thinking_parts.append(chunk)
+                    await _emit("thinking", chunk)
+                elif dtype == "input_json_delta":
                     if idx in tool_use_blocks:
                         tool_use_blocks[idx]["input_json"] += delta.get("partial_json", "")
 
@@ -148,6 +174,7 @@ class AnthropicMessagesTransport(BaseTransport):
 
         normalized = NormalizedResponse(
             text="".join(text_parts),
+            thinking="".join(thinking_parts),
             tool_calls=tool_calls,
             usage=usage,
             finish_reason=finish_reason,
@@ -186,9 +213,15 @@ class AnthropicMessagesTransport(BaseTransport):
         system_prompt: str = "",
         tools: list[dict] | None = None,
         max_tokens: int = 4096,
-        stream: bool = False,  # DeepSeek doesnʼt support SSE streaming
+        stream: bool = True,
+        on_delta: DeltaCallback | None = None,
     ) -> NormalizedResponse:
-        """Build request, stream, parse — all in one call."""
+        """Build request, stream, parse — all in one call.
+
+        The DeepSeek /anthropic endpoint supports SSE streaming (verified),
+        including ``thinking`` deltas, so streaming is on by default. Pass
+        ``on_delta`` to receive incremental text/thinking as it arrives.
+        """
         body = self.build_request(
             messages, system_prompt, tools or [], max_tokens
         )
@@ -199,7 +232,7 @@ class AnthropicMessagesTransport(BaseTransport):
             stream=stream,
             extra_headers=self._provider.extra_headers,
         )
-        return await self.parse_stream(event_stream)
+        return await self.parse_stream(event_stream, on_delta=on_delta)
 
 
 def _map_stop_reason(stop_reason: str, has_tool_calls: bool) -> str:
