@@ -162,18 +162,18 @@ async def test_cli_shell_run_frames_live_input_area():
     assert runtime.messages == ["你好"]
 
 
-def test_cli_shell_live_terminal_preframes_input_area():
+def test_cli_shell_terminal_prompt_avoids_cursor_rewrite_frame():
     renderer, stream = _terminal_renderer(ShellRenderOptions(color=False))
     runtime = FakeRuntime()
 
     prompt = renderer.prompt(runtime)
 
     text = stream.getvalue()
-    assert prompt == ""
-    assert "› " in text
-    assert text.count("─" * 20) >= 2
-    assert "\x1b[1A" in text
-    assert "\x1b[2C" in text
+    assert prompt == "› "
+    assert "› " not in text
+    assert "─" * 20 in text
+    assert "\x1b[1A" not in text
+    assert "\x1b[2C" not in text
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich import box
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -131,16 +133,13 @@ class TerminalRenderer(ConversationEventSink):
 
     def prompt(self, runtime: CliChatRuntime) -> str:
         self.input_prompt(runtime)
-        return "" if self._input_preframed else "› "
+        return "› "
 
     def input_prompt(self, runtime: CliChatRuntime) -> None:
         self._print(self._status_bar(runtime))
         self._rule("─", style="dark_orange")
         self._input_open = True
         self._input_preframed = False
-        if self._supports_live_input_frame():
-            self._render_live_input_frame()
-            self._input_preframed = True
 
     def begin_turn(self) -> None:
         self.close_input_area()
@@ -152,10 +151,7 @@ class TerminalRenderer(ConversationEventSink):
 
     def close_input_area(self) -> None:
         if self._input_open:
-            if self._input_preframed:
-                self._print_raw("\x1b[1B\r")
-            else:
-                self._rule("─", style="dark_orange")
+            self._rule("─", style="dark_orange")
             self._input_open = False
             self._input_preframed = False
 
@@ -529,19 +525,6 @@ class TerminalRenderer(ConversationEventSink):
     def _line_width(self) -> int:
         return max(40, min(self._console_width(), 120))
 
-    def _supports_live_input_frame(self) -> bool:
-        if self.output_fn is not None or self.console is None:
-            return False
-        return bool(getattr(self.console, "is_terminal", False))
-
-    def _render_live_input_frame(self) -> None:
-        prompt = "› "
-        bottom = "─" * self._line_width()
-        if self.options.color:
-            prompt = f"\x1b[97m{prompt}\x1b[0m"
-            bottom = f"\x1b[38;5;208m{bottom}\x1b[0m"
-        self._print_raw(f"{prompt}\n{bottom}\x1b[1A\r\x1b[2C")
-
     def _format_count(self, value: int) -> str:
         value = int(value or 0)
         abs_value = abs(value)
@@ -566,11 +549,19 @@ class CliShell:
         renderer: TerminalRenderer | None = None,
     ) -> None:
         self.runtime = runtime
-        self.input_fn = input_fn or _read_input
+        self.input_fn = input_fn
         self.renderer = renderer or TerminalRenderer()
+        self._prompt_session: PromptSession[str] | None = None
 
     async def run(self) -> None:
         self.renderer.banner(self.runtime)
+        if self._uses_prompt_toolkit():
+            with patch_stdout(raw=True):
+                await self._run_loop()
+            return
+        await self._run_loop()
+
+    async def _run_loop(self) -> None:
         while True:
             try:
                 text = await self._read_turn_text()
@@ -588,22 +579,7 @@ class CliShell:
                 self.renderer.error(exc)
 
     def run_sync(self, loop: asyncio.AbstractEventLoop) -> None:
-        self.renderer.banner(self.runtime)
-        while True:
-            try:
-                text = self._read_turn_text_sync(loop)
-            except (EOFError, KeyboardInterrupt):
-                self.renderer.close_input_area()
-                print()
-                break
-            if text is None:
-                break
-            if text == "":
-                continue
-            try:
-                loop.run_until_complete(self.run_once(text))
-            except Exception as exc:
-                self.renderer.error(exc)
+        loop.run_until_complete(self.run())
 
     async def run_once(self, text: str) -> str:
         command_result = await self.runtime.handle_command(text)
@@ -638,7 +614,7 @@ class CliShell:
         return str(value or "已请求停止当前处理")
 
     async def _read_turn_text(self) -> str | None:
-        value = await _resolve_input(self.input_fn(self.renderer.prompt(self.runtime)))
+        value = await self._read_line(self.renderer.prompt(self.runtime))
         text = value.strip()
         if not text or text.lower() in {"exit", "quit"}:
             self.renderer.close_input_area()
@@ -651,7 +627,7 @@ class CliShell:
         lines: list[str] = []
         while True:
             try:
-                line = await _resolve_input(self.input_fn("│ "))
+                line = await self._read_line("│ ")
             except KeyboardInterrupt:
                 self.renderer.close_input_area()
                 self.renderer.multiline_cancelled()
@@ -667,35 +643,25 @@ class CliShell:
                 return ""
             lines.append(line)
 
-    def _read_turn_text_sync(self, loop: asyncio.AbstractEventLoop) -> str | None:
-        value = _resolve_input_sync(self.input_fn(self.renderer.prompt(self.runtime)), loop)
-        text = value.strip()
-        if not text or text.lower() in {"exit", "quit"}:
-            self.renderer.close_input_area()
-            return None
-        if text == '"""':
-            return self._read_multiline_text_sync(loop)
-        return text
+    async def _read_line(self, prompt_text: str) -> str:
+        if self.input_fn is not None:
+            return await _resolve_input(self.input_fn(prompt_text))
+        if self._uses_prompt_toolkit():
+            return await self._prompt().prompt_async(prompt_text)
+        return await _read_input(prompt_text)
 
-    def _read_multiline_text_sync(self, loop: asyncio.AbstractEventLoop) -> str | None:
-        lines: list[str] = []
-        while True:
-            try:
-                line = _resolve_input_sync(self.input_fn("│ "), loop)
-            except KeyboardInterrupt:
-                self.renderer.close_input_area()
-                self.renderer.multiline_cancelled()
-                return ""
-            except EOFError:
-                self.renderer.close_input_area()
-                return None
-            if line == '"""':
-                return "\n".join(lines).rstrip("\n")
-            if line == "/cancel":
-                self.renderer.close_input_area()
-                self.renderer.multiline_cancelled()
-                return ""
-            lines.append(line)
+    def _uses_prompt_toolkit(self) -> bool:
+        if self.input_fn is not None:
+            return False
+        console = self.renderer.console
+        if console is None:
+            return False
+        return bool(getattr(console, "is_terminal", False))
+
+    def _prompt(self) -> PromptSession[str]:
+        if self._prompt_session is None:
+            self._prompt_session = PromptSession()
+        return self._prompt_session
 
 
 async def run_cli_shell(
@@ -741,12 +707,6 @@ def _read_input_sync(prompt_text: str) -> str:
 async def _resolve_input(value: str | Awaitable[str]) -> str:
     if inspect.isawaitable(value):
         return await value
-    return value
-
-
-def _resolve_input_sync(value: str | Awaitable[str], loop: asyncio.AbstractEventLoop) -> str:
-    if inspect.isawaitable(value):
-        return loop.run_until_complete(value)
     return value
 
 
