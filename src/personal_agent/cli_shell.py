@@ -730,6 +730,15 @@ class TerminalRenderer(ConversationEventSink):
             return int(getattr(self.console, "width", 80) or 80)
         return 80
 
+    def _console_height(self) -> int:
+        if self.console is not None:
+            height = getattr(self.console, "height", 0)
+            if height:
+                return int(height)
+        import shutil
+
+        return int(shutil.get_terminal_size((80, 24)).lines)
+
     def _line_width(self) -> int:
         return max(40, min(self._console_width(), 120))
 
@@ -943,11 +952,13 @@ class CliShell:
         return bindings
 
     def _build_overlay_app(self, name: str, content: str) -> Application:
-        """Build a short-lived read-only Application that overlays the terminal.
+        """Build a short-lived full-screen pager for one piece of output.
 
-        The user can scroll the content with arrow keys / j-k / Ctrl+D/U and
-        dismiss it with Esc or q.  The caller awaits ``app.run_async()`` and
-        control returns to the PromptSession once the user closes it.
+        It takes over the alternate screen (so the terminal is restored with no
+        scrollback residue on exit), shows the full-width content, and lets the
+        user scroll with the wheel / arrows / PageUp-Down / j-k / Ctrl+D-U.
+        q or Esc closes it; the caller awaits ``app.run_async()`` and control
+        returns to the PromptSession with the input line untouched.
         """
         kb = KeyBindings()
 
@@ -957,64 +968,80 @@ class CliShell:
         def _close(event) -> None:
             event.app.exit()
 
-        # Clamp overlay height: leave at least 3 lines for context below.
-        import shutil
-        term_height = shutil.get_terminal_size().lines
-        content_lines = len(content.splitlines()) + 2  # +2 for frame borders
-        overlay_height = max(5, min(content_lines, term_height - 4, 30))
-
         text_area = TextArea(
             text=content,
             read_only=True,
             scrollbar=True,
             focusable=True,
-            height=overlay_height,
+            wrap_lines=False,
         )
 
-        # A read-only TextArea moves the cursor with arrow keys / PageUp-Down
-        # natively; add j/k and Ctrl+D/U so vim-style and half-page scrolling
-        # also work. Each just relays to the buffer's cursor movement.
-        def _move(event, count: int) -> None:
+        # Arrow keys / PageUp-Down move the read-only cursor natively; add
+        # vim-style j/k and Ctrl+D/U half-page jumps on top.
+        def _move(count: int) -> None:
             buf = text_area.buffer
             if count < 0:
                 buf.cursor_up(count=-count)
             else:
                 buf.cursor_down(count=count)
 
+        def _half_page() -> int:
+            size = self.renderer._console_height() - 2  # minus title + hint rows
+            return max(1, size // 2)
+
         @kb.add("j")
         def _(event) -> None:
-            _move(event, 1)
+            _move(1)
 
         @kb.add("k")
         def _(event) -> None:
-            _move(event, -1)
+            _move(-1)
 
         @kb.add("c-d")
         def _(event) -> None:
-            _move(event, max(1, overlay_height // 2))
+            _move(_half_page())
 
         @kb.add("c-u")
         def _(event) -> None:
-            _move(event, -max(1, overlay_height // 2))
+            _move(-_half_page())
 
-        toolbar_text = HTML(" <b>↑↓ / j k</b> 滚动  <b>Ctrl+D/U</b> 翻页  <b>Esc / q</b> 关闭")
-        toolbar = Window(
-            content=FormattedTextControl(toolbar_text),
+        @kb.add("g")
+        def _(event) -> None:
+            text_area.buffer.cursor_position = 0
+
+        @kb.add("G")
+        def _(event) -> None:
+            text_area.buffer.cursor_position = len(text_area.buffer.text)
+
+        total_lines = max(1, content.count("\n") + 1)
+
+        def _title() -> HTML:
+            row = text_area.document.cursor_position_row + 1
+            return HTML(
+                f" <b>{name}</b> · 完整输出"
+                f"<style fg='#888888'>{'':>4}{row}/{total_lines} 行</style>"
+            )
+
+        title_bar = Window(
+            content=FormattedTextControl(_title),
             height=1,
-            style="class:bottom-toolbar",
+            style="reverse",
+        )
+        hint_bar = Window(
+            content=FormattedTextControl(
+                HTML(" <b>滚轮 / ↑↓ / PgUp-Dn</b> 滚动  <b>g/G</b> 首尾  <b>q / Esc</b> 退出")
+            ),
+            height=1,
+            style="reverse",
         )
 
-        body = HSplit([
-            Frame(body=text_area, title=f" {name} "),
-            toolbar,
-        ])
-
+        body = HSplit([title_bar, text_area, hint_bar])
         layout = Layout(container=body, focused_element=text_area)
         return Application(
             layout=layout,
             key_bindings=kb,
-            mouse_support=True,  # wheel-scroll the content like other agents do
-            full_screen=False,
+            mouse_support=True,   # wheel scrolls the content
+            full_screen=True,     # alternate screen: clean restore, no residue
         )
 
 
