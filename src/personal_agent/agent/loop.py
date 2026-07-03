@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from personal_agent.conversation.events import emit_event
+from personal_agent.conversation.events import emit_delta, emit_event
 from personal_agent.tools.executor import execute_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -73,14 +73,29 @@ async def run_conversation(agent, ctx, *, event_sink=None) -> dict:
                 tool_count=len(agent.tools),
                 model=getattr(agent._provider, "model", ""),
             )
-            llm_task = asyncio.create_task(
-                agent._transport.call(
-                    messages=api_messages,
-                    system_prompt=system_prompt,
-                    tools=agent.tools,
-                    max_tokens=agent._provider.max_tokens,
-                )
-            )
+
+            # Only stream token-by-token events when a renderer opts in. On the
+            # platform path (event_sink=None or wants_deltas=False) on_delta stays
+            # None, so the transport still streams but emits no per-token events.
+            # Only stream token-by-token when a renderer opts in. On the platform
+            # path (event_sink=None or wants_deltas=False) we omit the on_delta
+            # kwarg entirely, so transports without streaming support keep working.
+            call_kwargs = {
+                "messages": api_messages,
+                "system_prompt": system_prompt,
+                "tools": agent.tools,
+                "max_tokens": agent._provider.max_tokens,
+            }
+            if event_sink is not None and getattr(event_sink, "wants_deltas", False):
+                async def on_delta(kind: str, chunk: str) -> None:
+                    if kind == "thinking":
+                        await emit_delta(event_sink, "thinking_delta", chunk)
+                    else:
+                        await emit_delta(event_sink, "assistant_delta", chunk)
+
+                call_kwargs["on_delta"] = on_delta
+
+            llm_task = asyncio.create_task(agent._transport.call(**call_kwargs))
             while not llm_task.done():
                 done, _ = await asyncio.wait([llm_task], timeout=5.0)
                 if llm_task.done():
