@@ -956,8 +956,6 @@ class CliShell:
         def _close(event) -> None:
             event.app.exit()
 
-        # j/k and arrow keys are handled natively by TextArea (scrollable=True).
-
         # Clamp overlay height: leave at least 3 lines for context below.
         import shutil
         term_height = shutil.get_terminal_size().lines
@@ -972,7 +970,33 @@ class CliShell:
             height=overlay_height,
         )
 
-        toolbar_text = HTML(" <b>↑↓</b> 滚动  <b>Esc / q</b> 关闭")
+        # A read-only TextArea moves the cursor with arrow keys / PageUp-Down
+        # natively; add j/k and Ctrl+D/U so vim-style and half-page scrolling
+        # also work. Each just relays to the buffer's cursor movement.
+        def _move(event, count: int) -> None:
+            buf = text_area.buffer
+            if count < 0:
+                buf.cursor_up(count=-count)
+            else:
+                buf.cursor_down(count=count)
+
+        @kb.add("j")
+        def _(event) -> None:
+            _move(event, 1)
+
+        @kb.add("k")
+        def _(event) -> None:
+            _move(event, -1)
+
+        @kb.add("c-d")
+        def _(event) -> None:
+            _move(event, max(1, overlay_height // 2))
+
+        @kb.add("c-u")
+        def _(event) -> None:
+            _move(event, -max(1, overlay_height // 2))
+
+        toolbar_text = HTML(" <b>↑↓ / j k</b> 滚动  <b>Ctrl+D/U</b> 翻页  <b>Esc / q</b> 关闭")
         toolbar = Window(
             content=FormattedTextControl(toolbar_text),
             height=1,
@@ -988,7 +1012,7 @@ class CliShell:
         return Application(
             layout=layout,
             key_bindings=kb,
-            mouse_support=False,
+            mouse_support=True,  # wheel-scroll the content like other agents do
             full_screen=False,
         )
 
