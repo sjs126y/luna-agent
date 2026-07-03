@@ -1,6 +1,6 @@
 # Codex 交接记录
 
-更新时间：2026-07-03 20:30 CST
+更新时间：2026-07-03 22:10 CST
 
 ## 当前状态
 
@@ -47,17 +47,19 @@
 - `test_cli_shell.py` 加 6 个：逐字→定格无重复、thinking 折叠摘要、wants_deltas 仅真终端、Ctrl+O 展开/无输出优雅处理/键绑定存在
 - commit `410c303`
 
-### 阶段 6 — Ctrl+O 滚动浮层（`cli_shell.py`）
+### 阶段 6 — Ctrl+O 全屏 pager（`cli_shell.py`）
 
-- **动机**：原 Ctrl+O 把完整输出直接追加打印在最新 AI 回复下面，位置错乱且无论有没有内容都弹框，体验差。目标做成类似 Claude Code / 其他 agent 的「原地展开」浮层
-- **架构决策：不迁移 PromptSession**。终端是单向追加流，真正的原地折叠需要完整 TUI。取巧方案：Ctrl+O 用 `event.app.exit(result=_EXPAND_SENTINEL)` 让当前 prompt 带哨兵退出 → `_read_line` 识别哨兵 → 启动一个**独立短生命 overlay Application**（只读滚动面板）→ 用户 Esc/q 关闭后 re-prompt，输入行原样回来。PromptSession 继续扛所有输入复杂度，overlay 是独立 app，两者不同时活跃
-- **浮层实现**（`_build_overlay_app`）：`TextArea(read_only, scrollbar)` + `Frame` 边框 + 底部 toolbar 提示；高度自适应 `max(5, min(内容行数, term_height-4, 30))`
-- **滚动**：方向键/PageUp-Down 原生；额外绑 j/k（单行）、Ctrl+D/U（半屏）；`mouse_support=True` 支持滚轮
+- **动机**：原 Ctrl+O 把完整输出直接追加打印在最新 AI 回复下面，位置错乱且无论有没有内容都弹框，体验差。目标做成类似 codex / less 那种「独立全屏区域看完整输出、退出后回到原对话流不打扰输入」
+- **架构决策：不迁移 PromptSession**。终端是单向追加流，真正的原地折叠需要完整 TUI。取巧方案：Ctrl+O 用 `event.app.exit(result=_EXPAND_SENTINEL)` 让当前 prompt 带哨兵退出 → `_read_line` 识别哨兵 → 启动一个**独立短生命 pager Application** → 用户 q/Esc 关闭后 re-prompt，输入行原样回来。PromptSession 继续扛所有输入复杂度，pager 是独立 app，两者不同时活跃
+- **实现演进**：先做成受限高度的小 `Frame` 浮层（`097203f`+`db833ca`），实测体验一般（框太小、操作不友好）。按用户选择改成**全屏 pager**（`d8cb864`）：`full_screen=True` 接管 alternate screen，退出后终端完全恢复、scrollback 无残留
+- **pager 实现**（`_build_overlay_app`）：`HSplit([title_bar, TextArea(read_only, scrollbar, wrap_lines=False), hint_bar])`，全宽正常文本。顶部标题栏 `工具名 · 完整输出` + 右对齐 `当前行/总行数`（`_display_width` 按 CJK 双宽修正对齐）；底部提示栏
+- **滚动**：方向键/PageUp-Down 原生；额外绑 j/k（单行）、Ctrl+D/U（半屏，用 `_console_height` 算）、g/G（首尾）；`mouse_support=True` 支持滚轮。q/Esc/Ctrl+C 退出
 - **可展开内容**：工具输出（截断行末尾提示 `Ctrl+O 展开`）+ thinking 完成后（摘要行变 `💭 已思考 N 字（Ctrl+O 展开）`），都存入 `_last_expandable`
 - **无内容时静默**：`_last_expandable is None` 时 Ctrl+O 不退出 prompt、不弹框
-- **patch_stdout 评估结论：保留不动**。overlay run 时 PromptSession 已通过哨兵退出，两 app 不同时活跃，不冲突；移除 patch_stdout 收益小、风险大（可能破坏已工作的流式）
-- 新增 3 个测试：overlay app 内嵌完整内容、Ctrl+O 仅在可展开时用哨兵退出、无内容时 `_show_expand_overlay` 空转
-- commit `097203f`（浮层）+ `db833ca`（j/k + Ctrl+D/U + 滚轮）
+- **⚠️ 已知限制**：`_last_expandable` 只存**最近一个**可展开输出，一轮里跑了多个工具时旧的会被覆盖，只能展开最后一个。用户已确认「够了」，暂不做「展开任意第 N 个」（若要做，改成 list + 编号，Ctrl+O 弹选择列表或用 `/expand n`）
+- **patch_stdout 评估结论：保留不动**。pager run 时 PromptSession 已通过哨兵退出，两 app 不同时活跃，不冲突。（注：`097203f` 清理未用 import 时误删过 `patch_stdout` import，`dc28b34` 修回并加了模块级名字冒烟测试防回归——测试走 `input_fn` 路径绕开 `run()`，这类 import 缺失自动化测不到）
+- 新增 3 个测试：pager app 内嵌完整内容、Ctrl+O 仅在可展开时用哨兵退出、无内容时 `_show_expand_overlay` 空转；加 1 个 import 冒烟测试
+- commits：`097203f`（初版小浮层）→ `db833ca`（滚动增强）→ `dc28b34`（修 import + 冒烟测试）→ `d8cb864`（改全屏 pager）→ `6d4667b`（行号 CJK 右对齐）
 
 ## 上一轮完成的内容（feature/cli-frontend-refactor，已并入 main）
 
@@ -103,7 +105,7 @@
 
 ```bash
 python -m compileall -q src/personal_agent   # OK
-uv run pytest -q                             # 490 passed
+uv run pytest -q                             # 491 passed
 ```
 
 ## 注意事项
@@ -123,15 +125,20 @@ uv run pytest -q                             # 490 passed
 - confirm/clarify 黄框是否够显眼
 - AI 回复的 markdown 观感（代码块、长行）
 
-本轮浮层（Ctrl+O）真机验收重点：
+本轮 pager（Ctrl+O）真机验收重点：
 
-- 按 Ctrl+O 弹出滚动浮层，展示最近一次工具的**完整输出**（或 thinking）
-- ↑↓ / j k 滚动、Ctrl+D/U 半页翻、鼠标滚轮、Esc / q 关闭
-- 关闭后输入行原样回来（哨兵退出 → 重新 prompt）
-- 没有可展开内容时按 Ctrl+O 静默无响应（不再弹提示框）
+- 按 Ctrl+O 切成全屏 pager（alternate screen），全宽显示最近一次工具的**完整输出**（或 thinking）
+- 滚轮 / ↑↓ / PgUp-Dn 滚动、j/k 单行、Ctrl+D/U 半页、g/G 跳首尾、q / Esc 退出
+- 退出后屏幕完全恢复、无 scrollback 残留，输入行原样回来（哨兵退出 → 重新 prompt）
+- 没有可展开内容时按 Ctrl+O 静默无响应（不弹任何东西）
+
+已知限制（够用，暂不做）：
+
+- **只能展开最近一个**可展开项（`_last_expandable` 单 slot）。工具多时只能看最后那个；要看历史某个工具的完整输出需回到 `/export` 或日志。要支持任意展开得改成按 tool_use_id 存多份 + pager 里加列表选择
 
 后续可选方向（尚未做）：
 
+- Ctrl+O 展开任意历史工具输出（见上「已知限制」）
 - OpenAI-format transport 的 thinking/reasoning（各家字段不统一，等真用到再接；当前只有 Anthropic-format 路径解析 thinking）
 - `--simple` 旧 REPL（`cli_chat.py::repl`）是否还保留
 - 给终端界面加主题开关（如 `cli.theme = "minimal" | "hermes"`）
