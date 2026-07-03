@@ -18,6 +18,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich import box
 from rich.console import Console, Group
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
@@ -169,8 +170,11 @@ class TerminalRenderer(ConversationEventSink):
         """Stop the live preview and leave a one-line thinking summary."""
         self._stop_live()
         if self._stream_thinking:
+            thinking_text = self._stream_thinking
+            # Store thinking as expandable so Ctrl+O can reveal it.
+            self._last_expandable = ("💭 思考过程", thinking_text)
             self._print_impl(
-                Text(f"  💭 已思考 {len(self._stream_thinking)} 字", style="dim")
+                Text(f"  💭 已思考 {len(thinking_text)} 字  (Ctrl+O 展开)", style="dim")
             )
         self._stream_text = ""
         self._stream_thinking = ""
@@ -426,12 +430,12 @@ class TerminalRenderer(ConversationEventSink):
         )
 
     def expand_last_output(self) -> None:
-        """Print the most recent tool's full (untruncated) output. Bound to Ctrl+O."""
+        """Print the most recent expandable content (tool output or thinking). Bound to Ctrl+O."""
         if self._last_expandable is None:
-            self._print(Text("没有可展开的工具输出。", style="dim"))
+            # Nothing to expand — silently do nothing rather than printing a box.
             return
         name, full = self._last_expandable
-        renderables = [self._block_top(f"$ {name} 完整输出", style="blue")]
+        renderables = [self._block_top(f"$ {name}", style="blue")]
         renderables.extend(Text(f"  {line}") for line in full.splitlines() or [full])
         renderables.append(self._block_bottom(style="blue"))
         self._print(Group(*renderables))
@@ -507,13 +511,15 @@ class TerminalRenderer(ConversationEventSink):
         return body
 
     def _tool_result_text(self, item: ToolTraceItem) -> Text:
-        result, _ = self._truncate_result(item.error or item.output_summary or item.status)
+        result, truncated = self._truncate_result(item.error or item.output_summary or item.status)
         if not result:
             result = item.status or "done"
         body = Text()
         body.append("  └ ", style="dim")
         body.append(result, style=self._tool_result_style(item.status))
         body.append(f" · {item.duration:.1f}s", style="dim")
+        if truncated and item.expandable:
+            body.append("  Ctrl+O 展开", style="dim cyan")
         return body
 
     def _tool_dot_style(self, status: str) -> str:

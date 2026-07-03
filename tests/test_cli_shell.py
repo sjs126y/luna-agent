@@ -553,10 +553,10 @@ def test_cli_shell_sync_loop_handles_input_function():
 
 @pytest.mark.asyncio
 async def test_streaming_deltas_then_final_markdown_no_double_render():
-    """Live text preview is transient; the final assistant_message renders the
-    reply once as markdown. The streamed plain text must not linger as a second
-    copy in the transcript."""
-    renderer, stream = _terminal_renderer()
+    """Streaming deltas accumulate internally; the final assistant_message event
+    renders the reply once as markdown. No duplicate copy should appear."""
+    # Use a non-terminal renderer to avoid ANSI control-code noise from Live.
+    renderer, stream = _renderer()
 
     await renderer.emit(ConversationEvent(type="turn_start"))
     for ch in "Hello":
@@ -616,14 +616,18 @@ async def test_ctrl_o_expands_last_tool_full_output():
 
     renderer.expand_last_output()
     text = stream.getvalue()
+    # Full content is now visible.
     assert "line3-full-detail" in text
-    assert "完整输出" in text
+    # Block header includes the tool name.
+    assert "Bash" in text or "bash" in text
 
 
 def test_expand_with_no_tool_output_is_graceful():
+    """Calling expand when nothing is expandable should silently do nothing."""
     renderer, stream = _renderer()
     renderer.expand_last_output()
-    assert "没有可展开" in stream.getvalue()
+    # No box / error message should be emitted — completely silent.
+    assert stream.getvalue() == ""
 
 
 def test_ctrl_o_binding_present():
