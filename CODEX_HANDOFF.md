@@ -5,7 +5,7 @@
 ## 当前状态
 
 - 当前分支：`feature/frontend-upgrade`（从 `main` 派生，上一轮 `feature/cli-frontend-refactor` 已合并进 main）
-- 这一轮在前一轮 PromptSession 重构基础上，加了**逐字流式渲染 + thinking 折叠 + Ctrl+O 展开工具输出**
+- 这一轮在前一轮 PromptSession 重构基础上，加了**逐字流式渲染 + thinking 折叠 + Ctrl+O 滚动浮层展开工具/思考输出**
 - 最终目标不变：可长期使用的 CLI 版 Agent UI，风格接近 Hermes / Claude Code / Codex CLI
 - 事件流（`conversation/events.py`）和渲染层（`cli_shell.py`）保持分离，方便以后抽给 desktop
 
@@ -46,6 +46,18 @@
 - `test_agent_loop.py` 加 2 个：wants_deltas 的 sink 收到 delta；平台路径（opt-out）零 delta
 - `test_cli_shell.py` 加 6 个：逐字→定格无重复、thinking 折叠摘要、wants_deltas 仅真终端、Ctrl+O 展开/无输出优雅处理/键绑定存在
 - commit `410c303`
+
+### 阶段 6 — Ctrl+O 滚动浮层（`cli_shell.py`）
+
+- **动机**：原 Ctrl+O 把完整输出直接追加打印在最新 AI 回复下面，位置错乱且无论有没有内容都弹框，体验差。目标做成类似 Claude Code / 其他 agent 的「原地展开」浮层
+- **架构决策：不迁移 PromptSession**。终端是单向追加流，真正的原地折叠需要完整 TUI。取巧方案：Ctrl+O 用 `event.app.exit(result=_EXPAND_SENTINEL)` 让当前 prompt 带哨兵退出 → `_read_line` 识别哨兵 → 启动一个**独立短生命 overlay Application**（只读滚动面板）→ 用户 Esc/q 关闭后 re-prompt，输入行原样回来。PromptSession 继续扛所有输入复杂度，overlay 是独立 app，两者不同时活跃
+- **浮层实现**（`_build_overlay_app`）：`TextArea(read_only, scrollbar)` + `Frame` 边框 + 底部 toolbar 提示；高度自适应 `max(5, min(内容行数, term_height-4, 30))`
+- **滚动**：方向键/PageUp-Down 原生；额外绑 j/k（单行）、Ctrl+D/U（半屏）；`mouse_support=True` 支持滚轮
+- **可展开内容**：工具输出（截断行末尾提示 `Ctrl+O 展开`）+ thinking 完成后（摘要行变 `💭 已思考 N 字（Ctrl+O 展开）`），都存入 `_last_expandable`
+- **无内容时静默**：`_last_expandable is None` 时 Ctrl+O 不退出 prompt、不弹框
+- **patch_stdout 评估结论：保留不动**。overlay run 时 PromptSession 已通过哨兵退出，两 app 不同时活跃，不冲突；移除 patch_stdout 收益小、风险大（可能破坏已工作的流式）
+- 新增 3 个测试：overlay app 内嵌完整内容、Ctrl+O 仅在可展开时用哨兵退出、无内容时 `_show_expand_overlay` 空转
+- commit `097203f`（浮层）+ `db833ca`（j/k + Ctrl+D/U + 滚轮）
 
 ## 上一轮完成的内容（feature/cli-frontend-refactor，已并入 main）
 
@@ -91,7 +103,7 @@
 
 ```bash
 python -m compileall -q src/personal_agent   # OK
-uv run pytest -q                             # 487 passed
+uv run pytest -q                             # 490 passed
 ```
 
 ## 注意事项
@@ -111,9 +123,15 @@ uv run pytest -q                             # 487 passed
 - confirm/clarify 黄框是否够显眼
 - AI 回复的 markdown 观感（代码块、长行）
 
+本轮浮层（Ctrl+O）真机验收重点：
+
+- 按 Ctrl+O 弹出滚动浮层，展示最近一次工具的**完整输出**（或 thinking）
+- ↑↓ / j k 滚动、Ctrl+D/U 半页翻、鼠标滚轮、Esc / q 关闭
+- 关闭后输入行原样回来（哨兵退出 → 重新 prompt）
+- 没有可展开内容时按 Ctrl+O 静默无响应（不再弹提示框）
+
 后续可选方向（尚未做）：
 
-- thinking 折叠区展开：现在只显示「💭 已思考 N 字」摘要，未来可加快捷键展开完整思考过程（类似 Ctrl+O 之于工具输出）
 - OpenAI-format transport 的 thinking/reasoning（各家字段不统一，等真用到再接；当前只有 Anthropic-format 路径解析 thinking）
 - `--simple` 旧 REPL（`cli_chat.py::repl`）是否还保留
 - 给终端界面加主题开关（如 `cli.theme = "minimal" | "hermes"`）
