@@ -69,7 +69,7 @@ async def test_cli_shell_handles_command_without_running_turn():
 
     assert result == "help text"
     assert "help text" in stream.getvalue()
-    assert "命令" in stream.getvalue()
+    assert "$ help text" in stream.getvalue()
     assert runtime.messages == []
 
 
@@ -86,10 +86,10 @@ async def test_cli_shell_renders_message_events():
     text = stream.getvalue()
     assert "你" in text
     assert "你好" in text
-    assert "$ PersonalAgent" in text
+    assert "$ Personal Agent" in text
     assert "│ echo:你好" not in text
     assert "  echo:你好" in text
-    assert "╭─ $ PersonalAgent" in text
+    assert "╭─ $ Personal Agent" in text
     assert "╮" in text
     assert "╰" in text
     assert "╯" in text
@@ -102,6 +102,30 @@ async def test_cli_shell_renders_message_events():
     prompt_text = stream.getvalue()
     assert "api=1" in prompt_text
     assert "in=10 out=3" in prompt_text
+    assert "$ deepseek-chat" in prompt_text
+
+
+@pytest.mark.asyncio
+async def test_cli_shell_run_frames_live_input_area():
+    output: list[str] = []
+    renderer, stream = _renderer()
+    runtime = FakeRuntime()
+    inputs = iter(["你好", ""])
+
+    async def input_fn(prompt: str) -> str:
+        output.append(prompt)
+        return next(inputs)
+
+    shell = CliShell(runtime, input_fn=input_fn, renderer=renderer)
+
+    await shell.run()
+
+    text = stream.getvalue()
+    assert "$ deepseek-chat" in text
+    assert text.count("─" * 20) >= 2
+    assert "╭─ $ Personal Agent" in text
+    assert any(item == "› " for item in output)
+    assert runtime.messages == ["你好"]
 
 
 @pytest.mark.asyncio

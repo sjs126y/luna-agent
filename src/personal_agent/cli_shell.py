@@ -48,6 +48,7 @@ class TerminalRenderer(ConversationEventSink):
         self._last_input_tokens = 0
         self._last_output_tokens = 0
         self._last_api_calls = 0
+        self._input_open = False
 
     async def emit(self, event: ConversationEvent) -> None:
         if event.type == "assistant_message":
@@ -112,54 +113,61 @@ class TerminalRenderer(ConversationEventSink):
         self._print(
             Panel(
                 Text.assemble(title, "\n", subtitle),
-                border_style="blue",
-                box=box.ROUNDED,
+                border_style="dim cyan",
+                box=box.SQUARE,
+                padding=(0, 1),
             )
         )
-        self._print(Text("输入 exit/quit 或空行退出，/help 查看命令。", style="dim"))
+        self._print(Text("exit/quit 或空行退出，/help 查看命令。", style="dim"))
 
     def prompt(self, runtime: CliChatRuntime) -> str:
         self.input_prompt(runtime)
         return "› "
 
     def input_prompt(self, runtime: CliChatRuntime) -> None:
-        self._print(Text(self._status_text(runtime), style="bold blue"))
-        self._rule("─", style="orange3")
+        self._print(self._status_bar(runtime))
+        self._rule("─", style="dark_orange")
+        self._input_open = True
 
     def begin_turn(self) -> None:
+        self.close_input_area()
         self._turn_started_at = time.monotonic()
         self._last_llm_duration = 0.0
         self._last_input_tokens = 0
         self._last_output_tokens = 0
         self._last_api_calls = 0
 
+    def close_input_area(self) -> None:
+        if self._input_open:
+            self._rule("─", style="dark_orange")
+            self._input_open = False
+
     def user_message(self, text: str) -> None:
         self.begin_turn()
-        self._rule("─", style="yellow")
         body = Text()
-        body.append("● ", style="bold yellow")
+        body.append("› ", style="bold bright_white")
         body.append(text, style="bright_white")
         self._print(body)
-        self._rule("─", style="yellow")
 
     def assistant_message(self, text: str) -> None:
         lines = text.splitlines() or [text]
-        renderables = [self._block_top("$ PersonalAgent", style="cyan")]
+        renderables = [self._block_top("$ Personal Agent", style="cyan")]
         for line in lines:
             renderables.append(Text(f"  {line}"))
         renderables.append(self._block_bottom(style="cyan"))
         self._print(Group(*renderables))
 
     def command_response(self, text: str) -> None:
+        self.close_input_area()
         if not text:
             return
         if "\n" not in text and len(text) <= 100:
             body = Text()
-            body.append("命令 ", style="bold blue")
+            body.append("$ ", style="bold cyan")
             body.append(text)
             self._print(body)
         else:
-            renderables = [self._block_top("命令", style="blue")]
+            renderables = [self._block_top("$ command", style="blue")]
             renderables.extend(Text(f"  {line}") for line in text.splitlines())
             renderables.append(self._block_bottom(style="blue"))
             self._print(Group(*renderables))
@@ -179,7 +187,7 @@ class TerminalRenderer(ConversationEventSink):
         )
 
     def status_line(self, runtime: CliChatRuntime, result: object | None = None) -> None:
-        self._print(Text(self._status_text(runtime, result=result), style="bold blue"))
+        self._print(self._status_bar(runtime, result=result))
 
     def update_result(self, result: object) -> None:
         raw = getattr(result, "raw", {})
@@ -219,6 +227,27 @@ class TerminalRenderer(ConversationEventSink):
         body.append(text, style=style)
         self._print(body)
 
+    def _status_bar(self, runtime: CliChatRuntime, result: object | None = None) -> Text:
+        status = self._status_text(runtime, result=result)
+        parts = [part.strip() for part in status.split("|")]
+        width = self._line_width()
+        bar = Text(style="default on grey11")
+        for index, part in enumerate(parts):
+            if index:
+                bar.append(" │ ", style="yellow on grey11")
+            if index == 0:
+                bar.append("$ ", style="bold cyan on grey11")
+                bar.append(part, style="bold yellow on grey11")
+            elif part.startswith("ctx "):
+                bar.append(part, style="green on grey11")
+            elif part.endswith("s"):
+                bar.append(part, style="yellow on grey11")
+            else:
+                bar.append(part, style="bright_white on grey11")
+        if len(bar.plain) < width:
+            bar.append(" " * (width - len(bar.plain)), style="default on grey11")
+        return bar
+
     def _model_summary(self) -> None:
         parts = []
         if self._last_input_tokens:
@@ -230,19 +259,16 @@ class TerminalRenderer(ConversationEventSink):
         self._event_line("模型", " · ".join(parts) or "完成", style="dim green")
 
     def _rule(self, char: str, *, style: str) -> None:
-        width = self._console_width()
-        self._print(Text(char * min(width, 72), style=style))
+        self._print(Text(char * self._line_width(), style=style))
 
     def _block_top(self, title: str, *, style: str) -> Text:
-        width = self._console_width()
         prefix = f"╭─ {title} "
-        max_width = min(width, 72)
+        max_width = self._line_width()
         line = "─" * max(4, max_width - len(prefix) - 1)
         return Text(prefix + line + "╮", style=style)
 
     def _block_bottom(self, *, style: str) -> Text:
-        width = self._console_width()
-        max_width = min(width, 72)
+        max_width = self._line_width()
         return Text("╰" + "─" * max(4, max_width - 2) + "╯", style=style)
 
     def _print(self, value) -> None:
@@ -287,6 +313,9 @@ class TerminalRenderer(ConversationEventSink):
             return int(getattr(self.console, "width", 80) or 80)
         return 80
 
+    def _line_width(self) -> int:
+        return max(40, min(self._console_width(), 120))
+
 
 class CliShell:
     def __init__(
@@ -306,10 +335,12 @@ class CliShell:
             try:
                 text = await _resolve_input(self.input_fn(self.renderer.prompt(self.runtime)))
             except (EOFError, KeyboardInterrupt):
+                self.renderer.close_input_area()
                 print()
                 break
             text = text.strip()
             if not text or text.lower() in {"exit", "quit"}:
+                self.renderer.close_input_area()
                 break
             try:
                 await self.run_once(text)
@@ -322,10 +353,12 @@ class CliShell:
             try:
                 text = _resolve_input_sync(self.input_fn(self.renderer.prompt(self.runtime)), loop)
             except (EOFError, KeyboardInterrupt):
+                self.renderer.close_input_area()
                 print()
                 break
             text = text.strip()
             if not text or text.lower() in {"exit", "quit"}:
+                self.renderer.close_input_area()
                 break
             try:
                 loop.run_until_complete(self.run_once(text))
