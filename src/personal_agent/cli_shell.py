@@ -5,8 +5,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
+
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 
 from personal_agent.cli_chat import CliChatRuntime, create_cli_runtime
 from personal_agent.conversation.events import ConversationEvent, ConversationEventSink
@@ -16,74 +22,226 @@ from personal_agent.conversation.events import ConversationEvent, ConversationEv
 class ShellRenderOptions:
     color: bool = True
     show_events: bool = True
+    verbose: bool = False
+    quiet_events: bool = False
+    max_tool_summary_chars: int = 140
 
 
 class TerminalRenderer(ConversationEventSink):
     def __init__(
         self,
         *,
-        output_fn: Callable[[str], None] = print,
+        output_fn: Callable[[str], None] | None = None,
+        console: Console | None = None,
         options: ShellRenderOptions | None = None,
     ) -> None:
-        self.output_fn = output_fn
         self.options = options or ShellRenderOptions()
-        self._active_assistant = False
+        self.output_fn = output_fn
+        self.console = console or (
+            None
+            if output_fn is not None
+            else Console(color_system="auto" if self.options.color else None)
+        )
+        self._turn_started_at: float | None = None
+        self._llm_started_at: float | None = None
+        self._last_llm_duration = 0.0
+        self._last_input_tokens = 0
+        self._last_output_tokens = 0
 
     async def emit(self, event: ConversationEvent) -> None:
-        if not self.options.show_events:
-            return
-        if event.type == "llm_start":
-            self._line("模型", "请求中")
-        elif event.type == "llm_end":
-            self._line(
-                "模型",
-                f"完成 in={event.data.get('input_tokens', 0)} out={event.data.get('output_tokens', 0)}",
-            )
-        elif event.type == "assistant_message":
+        if event.type == "assistant_message":
             text = event.message.strip()
             if text:
-                self._assistant(text)
+                self.assistant_message(text)
+            return
+
+        if event.type == "turn_start":
+            self._turn_started_at = time.monotonic()
+            return
+
+        if event.type == "llm_end":
+            self._last_input_tokens = int(event.data.get("input_tokens", 0) or 0)
+            self._last_output_tokens = int(event.data.get("output_tokens", 0) or 0)
+            if self._llm_started_at is not None:
+                self._last_llm_duration = max(0.0, time.monotonic() - self._llm_started_at)
+
+        if self.options.quiet_events or not self.options.show_events:
+            return
+
+        if event.type == "llm_start":
+            self._llm_started_at = time.monotonic()
+            self._event_line("模型", "请求中", style="cyan")
+        elif event.type == "llm_end":
+            self._event_line(
+                "模型",
+                f"完成 in={self._last_input_tokens} out={self._last_output_tokens}",
+                style="green",
+            )
         elif event.type == "tool_start":
-            self._line("工具", f"{event.data.get('tool_name', '')} 开始")
+            text = f"{event.data.get('tool_name', '')} 开始"
+            if self.options.verbose and event.data.get("input_summary"):
+                text += f" {self._short(event.data['input_summary'])}"
+            self._event_line("工具", text.strip(), style="yellow")
         elif event.type == "tool_end":
             status = event.data.get("status", "")
             summary = event.data.get("output_summary") or event.data.get("error") or ""
-            self._line("工具", f"{event.data.get('tool_name', '')} {status} {summary}".strip())
+            if summary:
+                summary = self._short(str(summary))
+            self._event_line(
+                "工具",
+                f"{event.data.get('tool_name', '')} {status} {summary}".strip(),
+                style="green" if status == "success" else "red",
+            )
         elif event.type == "retry":
-            self._line("重试", event.message)
+            self._event_line("重试", event.message, style="yellow")
         elif event.type == "compression":
-            self._line("压缩", event.message)
+            self._event_line("压缩", event.message, style="magenta")
         elif event.type == "stop":
-            self._line("停止", event.message or "已停止")
+            self._event_line("停止", event.message or "已停止", style="yellow")
         elif event.type == "error":
-            self._line("错误", event.data.get("error") or event.message)
+            self.error_text(event.data.get("error") or event.message)
 
     def banner(self, runtime: CliChatRuntime) -> None:
         provider = getattr(runtime.settings, "llm_provider", "")
         model = getattr(runtime.settings, "llm_model", "")
-        self.output_fn(
-            f"Personal Agent CLI | session={runtime.session_key} | provider={provider} | model={model}"
+        title = Text("Personal Agent CLI", style="bold cyan")
+        subtitle = Text(
+            f"session={runtime.session_key} | provider={provider} | model={model}",
+            style="dim",
         )
-        self.output_fn("输入 exit/quit 或空行退出，/help 查看命令。")
+        self._print(
+            Panel(
+                Text.assemble(title, "\n", subtitle),
+                border_style="blue",
+                box=box.ROUNDED,
+            )
+        )
+        self._print(Text("输入 exit/quit 或空行退出，/help 查看命令。", style="dim"))
 
     def prompt(self, runtime: CliChatRuntime) -> str:
         return f"\n{runtime.session_key} >>> "
 
+    def user_message(self, text: str) -> None:
+        self._turn_started_at = time.monotonic()
+        self._last_llm_duration = 0.0
+        self._last_input_tokens = 0
+        self._last_output_tokens = 0
+        self._print(
+            Panel(
+                text,
+                title="你",
+                title_align="left",
+                border_style="yellow",
+                box=box.ROUNDED,
+            )
+        )
+
+    def assistant_message(self, text: str) -> None:
+        self._print(
+            Panel(
+                text,
+                title="assistant",
+                title_align="left",
+                border_style="cyan",
+                box=box.ROUNDED,
+            )
+        )
+
     def command_response(self, text: str) -> None:
         if text:
-            self.output_fn(text)
+            self._print(
+                Panel(
+                    text,
+                    title="命令",
+                    title_align="left",
+                    border_style="blue",
+                    box=box.ROUNDED,
+                )
+            )
 
     def error(self, exc: Exception) -> None:
-        self._line("错误", f"本轮对话失败: {exc}")
+        self.error_text(f"本轮对话失败: {exc}")
 
-    def _assistant(self, text: str) -> None:
-        self.output_fn(f"\nassistant:\n{text}")
+    def error_text(self, text: str) -> None:
+        self._print(
+            Panel(
+                text,
+                title="错误",
+                title_align="left",
+                border_style="red",
+                box=box.ROUNDED,
+            )
+        )
 
-    def _line(self, label: str, text: str) -> None:
-        if text:
-            self.output_fn(f"[{label}] {text}")
+    def status_line(self, runtime: CliChatRuntime, result: object | None = None) -> None:
+        settings = runtime.settings
+        provider = getattr(settings, "llm_provider", "")
+        model = getattr(settings, "llm_model", "")
+        raw = getattr(result, "raw", {}) if result is not None else {}
+        api_calls = raw.get("api_calls", "") if isinstance(raw, dict) else ""
+        context_window = self._context_window(runtime)
+        context = self._context_text(context_window)
+        duration = 0.0
+        if self._turn_started_at is not None:
+            duration = max(0.0, time.monotonic() - self._turn_started_at)
+
+        parts = [
+            f"{provider}/{model}".strip("/"),
+            f"session={runtime.session_key}",
+        ]
+        if context:
+            parts.append(context)
+        if api_calls != "":
+            parts.append(f"api={api_calls}")
+        if self._last_input_tokens or self._last_output_tokens:
+            parts.append(f"in={self._last_input_tokens} out={self._last_output_tokens}")
+        if self._last_llm_duration:
+            parts.append(f"llm={self._last_llm_duration:.1f}s")
+        parts.append(f"turn={duration:.1f}s")
+        self._event_line("状态", " | ".join(parts), style="bold blue")
+
+    def _event_line(self, label: str, text: str, *, style: str = "dim") -> None:
+        body = Text()
+        body.append(f"{label}: ", style=f"bold {style}")
+        body.append(text, style=style)
+        self._print(body)
+
+    def _print(self, value) -> None:
+        if self.console is not None:
+            self.console.print(value)
+            return
+        if isinstance(value, Text):
+            text = value.plain
         else:
-            self.output_fn(f"[{label}]")
+            text = str(value)
+        if self.output_fn is not None:
+            self.output_fn(text)
+
+    def _short(self, text: str) -> str:
+        if self.options.verbose:
+            return text
+        value = " ".join(text.split())
+        limit = max(20, self.options.max_tool_summary_chars)
+        if len(value) <= limit:
+            return value
+        return value[: limit - 3] + "..."
+
+    def _context_window(self, runtime: CliChatRuntime) -> int:
+        service = getattr(runtime, "conversation_service", None)
+        agent = None
+        if service is not None:
+            try:
+                agent = service.get_cached_agent(runtime.session_key)
+            except Exception:
+                agent = None
+        provider = getattr(agent, "_provider", None)
+        return int(getattr(provider, "context_window", 0) or 0)
+
+    def _context_text(self, context_window: int) -> str:
+        if context_window <= 0 or self._last_input_tokens <= 0:
+            return ""
+        percent = round(self._last_input_tokens / max(context_window, 1) * 100, 1)
+        return f"context={self._last_input_tokens:,}/{context_window:,} ({percent}%)"
 
 
 class CliShell:
@@ -135,26 +293,37 @@ class CliShell:
         if command_result is not None:
             self.renderer.command_response(command_result)
             return command_result
+        self.renderer.user_message(text)
         result = await self.runtime.run_message_events(text, event_sink=self.renderer)
+        self.renderer.status_line(self.runtime, result)
         return result.final_response
 
 
-async def run_cli_shell(*, session_name: str = "default") -> None:
+async def run_cli_shell(
+    *,
+    session_name: str = "default",
+    options: ShellRenderOptions | None = None,
+) -> None:
     runtime = await create_cli_runtime(session_name=session_name)
     try:
-        await CliShell(runtime).run()
+        await CliShell(runtime, renderer=TerminalRenderer(options=options)).run()
     finally:
         await runtime.close()
 
 
-def run_cli_shell_sync(*, session_name: str = "default") -> None:
+def run_cli_shell_sync(
+    *,
+    session_name: str = "default",
+    options: ShellRenderOptions | None = None,
+) -> None:
     _configure_stdout()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     runtime = None
     try:
         runtime = loop.run_until_complete(create_cli_runtime(session_name=session_name))
-        CliShell(runtime, input_fn=_read_input_sync).run_sync(loop)
+        renderer = TerminalRenderer(options=options)
+        CliShell(runtime, input_fn=_read_input_sync, renderer=renderer).run_sync(loop)
     finally:
         if runtime is not None:
             loop.run_until_complete(runtime.close())

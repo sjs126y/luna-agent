@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from io import StringIO
 from types import SimpleNamespace
 
 import pytest
+from rich.console import Console
 
 from personal_agent.cli_shell import CliShell, ShellRenderOptions, TerminalRenderer
-from personal_agent.conversation.events import emit_event
+from personal_agent.conversation.events import ConversationEvent, emit_event
 
 
 class FakeRuntime:
@@ -28,48 +30,94 @@ class FakeRuntime:
         self.messages.append(text)
         await emit_event(event_sink, "llm_start", "请求模型")
         await emit_event(event_sink, "assistant_message", f"echo:{text}")
+        await emit_event(
+            event_sink,
+            "llm_end",
+            "模型返回",
+            input_tokens=10,
+            output_tokens=3,
+        )
         await emit_event(event_sink, "turn_end", "完成")
-        return SimpleNamespace(final_response=f"echo:{text}")
+        return SimpleNamespace(final_response=f"echo:{text}", raw={"api_calls": 1})
+
+
+def _renderer(options: ShellRenderOptions | None = None):
+    stream = StringIO()
+    console = Console(file=stream, force_terminal=False, color_system=None, width=100)
+    return TerminalRenderer(console=console, options=options), stream
 
 
 @pytest.mark.asyncio
 async def test_cli_shell_handles_command_without_running_turn():
-    output: list[str] = []
+    renderer, stream = _renderer()
     runtime = FakeRuntime()
-    renderer = TerminalRenderer(
-        output_fn=output.append,
-        options=ShellRenderOptions(show_events=True),
-    )
     shell = CliShell(runtime, renderer=renderer)
 
     result = await shell.run_once("/help")
 
     assert result == "help text"
-    assert output == ["help text"]
+    assert "help text" in stream.getvalue()
+    assert "命令" in stream.getvalue()
     assert runtime.messages == []
 
 
 @pytest.mark.asyncio
 async def test_cli_shell_renders_message_events():
-    output: list[str] = []
+    renderer, stream = _renderer()
     runtime = FakeRuntime()
-    renderer = TerminalRenderer(
-        output_fn=output.append,
-        options=ShellRenderOptions(show_events=True),
-    )
     shell = CliShell(runtime, renderer=renderer)
 
     result = await shell.run_once("你好")
 
     assert result == "echo:你好"
     assert runtime.messages == ["你好"]
-    assert "[模型] 请求中" in output
-    assert "\nassistant:\necho:你好" in output
+    text = stream.getvalue()
+    assert "你" in text
+    assert "你好" in text
+    assert "模型:" in text
+    assert "assistant" in text
+    assert "echo:你好" in text
+    assert "状态:" in text
+
+
+@pytest.mark.asyncio
+async def test_cli_shell_quiet_events_hides_model_lines():
+    renderer, stream = _renderer(ShellRenderOptions(quiet_events=True, show_events=False))
+    runtime = FakeRuntime()
+    shell = CliShell(runtime, renderer=renderer)
+
+    await shell.run_once("你好")
+
+    text = stream.getvalue()
+    assert "echo:你好" in text
+    assert "模型:" not in text
+
+
+@pytest.mark.asyncio
+async def test_cli_shell_truncates_tool_summary_by_default():
+    renderer, stream = _renderer(ShellRenderOptions(max_tool_summary_chars=30))
+
+    await renderer.emit(
+        ConversationEvent(
+            type="tool_end",
+            data={
+                "tool_name": "memory",
+                "status": "success",
+                "output_summary": "x" * 80,
+            },
+        )
+    )
+
+    text = stream.getvalue()
+    assert "memory success" in text
+    assert "xxx..." in text
+    assert "x" * 80 not in text
 
 
 @pytest.mark.asyncio
 async def test_cli_shell_run_accepts_async_input_function():
     output: list[str] = []
+    renderer, stream = _renderer()
     runtime = FakeRuntime()
     inputs = iter(["/help", ""])
 
@@ -77,15 +125,11 @@ async def test_cli_shell_run_accepts_async_input_function():
         output.append(prompt)
         return next(inputs)
 
-    renderer = TerminalRenderer(
-        output_fn=output.append,
-        options=ShellRenderOptions(show_events=True),
-    )
     shell = CliShell(runtime, input_fn=input_fn, renderer=renderer)
 
     await shell.run()
 
-    assert "help text" in output
+    assert "help text" in stream.getvalue()
     assert any(item == "\ncli:default:local >>> " for item in output)
     assert runtime.messages == []
 
@@ -94,6 +138,7 @@ def test_cli_shell_sync_loop_handles_input_function():
     import asyncio
 
     output: list[str] = []
+    renderer, stream = _renderer()
     runtime = FakeRuntime()
     inputs = iter(["/help", ""])
 
@@ -103,14 +148,10 @@ def test_cli_shell_sync_loop_handles_input_function():
 
     loop = asyncio.new_event_loop()
     try:
-        renderer = TerminalRenderer(
-            output_fn=output.append,
-            options=ShellRenderOptions(show_events=True),
-        )
         shell = CliShell(runtime, input_fn=input_fn, renderer=renderer)
         shell.run_sync(loop)
     finally:
         loop.close()
 
-    assert "help text" in output
+    assert "help text" in stream.getvalue()
     assert any(item == "\ncli:default:local >>> " for item in output)

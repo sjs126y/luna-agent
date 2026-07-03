@@ -85,14 +85,30 @@ def test_chat_once_option_runs_once(monkeypatch):
 def test_chat_without_message_runs_shell(monkeypatch):
     calls = []
 
-    def fake_shell(*, session_name="default"):
-        calls.append(session_name)
+    def fake_shell(*, session_name="default", options=None):
+        calls.append((session_name, options))
 
     monkeypatch.setattr("personal_agent.cli.run_cli_shell_sync", fake_shell)
-    result = runner.invoke(app, ["chat", "--session", "work"])
+    result = runner.invoke(app, ["chat", "--session", "work", "--verbose"])
 
     assert result.exit_code == 0
-    assert calls == ["work"]
+    assert calls[0][0] == "work"
+    assert calls[0][1].verbose is True
+
+
+def test_chat_quiet_events_option_runs_shell(monkeypatch):
+    calls = []
+
+    def fake_shell(*, session_name="default", options=None):
+        calls.append((session_name, options))
+
+    monkeypatch.setattr("personal_agent.cli.run_cli_shell_sync", fake_shell)
+    result = runner.invoke(app, ["chat", "--quiet-events"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "default"
+    assert calls[0][1].quiet_events is True
+    assert calls[0][1].show_events is False
 
 
 def test_chat_simple_runs_legacy_repl(monkeypatch):

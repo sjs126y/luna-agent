@@ -16,7 +16,7 @@ from personal_agent.config import Settings
 from personal_agent.config_diagnostics import build_config_report, ensure_config_dirs
 from personal_agent.context_budget import build_context_budget
 from personal_agent.cli_chat import run_cli_once_sync, run_cli_repl_sync
-from personal_agent.cli_shell import run_cli_shell_sync
+from personal_agent.cli_shell import ShellRenderOptions, run_cli_shell_sync
 from personal_agent.main import boot
 from personal_agent.plugins.core.manager import PluginManager
 
@@ -371,6 +371,8 @@ def chat(
     once: str = typer.Option("", "--once", "-o", help="只运行一轮消息后退出。"),
     session: str = typer.Option("default", "--session", "-s", help="CLI 会话名。"),
     simple: bool = typer.Option(False, "--simple", help="使用旧版简单 REPL。"),
+    verbose: bool = typer.Option(False, "--verbose", help="显示更详细的模型和工具事件。"),
+    quiet_events: bool = typer.Option(False, "--quiet-events", help="隐藏模型和工具事件，只显示对话与命令结果。"),
 ) -> None:
     """Interactive multi-turn chat loop."""
     one_shot = once or message
@@ -380,7 +382,14 @@ def chat(
         elif simple:
             run_cli_repl_sync(session_name=session)
         else:
-            run_cli_shell_sync(session_name=session)
+            run_cli_shell_sync(
+                session_name=session,
+                options=ShellRenderOptions(
+                    verbose=verbose,
+                    quiet_events=quiet_events,
+                    show_events=not quiet_events,
+                ),
+            )
     except Exception as exc:
         _exit_error(f"CLI 运行失败: {exc}")
 
