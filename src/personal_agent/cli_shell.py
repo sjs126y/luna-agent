@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import sys
 import time
 from dataclasses import dataclass
@@ -201,7 +202,6 @@ class TerminalRenderer(ConversationEventSink):
             started_at=time.monotonic(),
         )
         self._active_tools[tool_use_id] = item
-        self._print(self._tool_start_text(item))
 
     def tool_end(self, event: ConversationEvent) -> None:
         tool_name = str(event.data.get("tool_name") or "tool")
@@ -217,7 +217,6 @@ class TerminalRenderer(ConversationEventSink):
                 input_summary=self._clean_inline(str(event.data.get("input_summary") or "")),
                 started_at=time.monotonic(),
             )
-            self._print(self._tool_start_text(item))
         item.status = str(event.data.get("status") or "")
         item.error = str(event.data.get("error") or "")
         item.output_summary = str(event.data.get("output_summary") or "")
@@ -225,6 +224,7 @@ class TerminalRenderer(ConversationEventSink):
         if item.duration <= 0 and item.started_at:
             item.duration = max(0.0, time.monotonic() - item.started_at)
         self._completed_tools.append(item)
+        self._print(self._tool_start_text(item))
         self._print(self._tool_result_text(item))
 
     def stop_text(self, text: str) -> None:
@@ -292,8 +292,7 @@ class TerminalRenderer(ConversationEventSink):
         self._print(body)
 
     def _tool_start_text(self, item: ToolTraceItem) -> Text:
-        failed = item.status not in {"", "running", "success"}
-        dot_style = "bright_magenta" if failed else "green"
+        dot_style = self._tool_dot_style(item.status)
         body = Text()
         body.append("● ", style=dot_style)
         body.append(item.display_name, style="bright_white")
@@ -309,9 +308,12 @@ class TerminalRenderer(ConversationEventSink):
         is_success = item.status == "success"
         body = Text()
         body.append("  └ ", style="dim")
-        body.append(result, style="dim" if is_success else "bright_magenta")
+        body.append(result, style="dim" if is_success else "red")
         body.append(f" · {item.duration:.1f}s", style="dim")
         return body
+
+    def _tool_dot_style(self, status: str) -> str:
+        return "green" if status in {"", "running", "success"} else "red"
 
     def _tool_display_name(self, name: str) -> str:
         overrides = {
@@ -328,12 +330,76 @@ class TerminalRenderer(ConversationEventSink):
         return " ".join(part.capitalize() for part in name.replace("-", "_").split("_") if part)
 
     def _format_tool_args(self, summary: str) -> str:
-        summary = self._truncate_inline(summary, limit=80)
-        if not summary:
+        formatted = self._human_tool_args(summary)
+        if not formatted:
             return ""
-        if summary.startswith("(") and summary.endswith(")"):
-            return summary
-        return f"({summary})"
+        return f" {self._truncate_inline(formatted, limit=80)}"
+
+    def _human_tool_args(self, summary: str) -> str:
+        summary = self._clean_inline(summary)
+        if not summary or summary == "{}":
+            return ""
+        parsed = self._parse_tool_summary(summary)
+        if isinstance(parsed, dict):
+            return self._format_tool_mapping(parsed)
+        if isinstance(parsed, list):
+            return f"items={len(parsed)}"
+        if parsed is not None:
+            return self._format_tool_value(parsed, quote_strings=True)
+        return summary
+
+    def _parse_tool_summary(self, summary: str) -> object | None:
+        try:
+            return json.loads(summary)
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+    def _format_tool_mapping(self, values: dict) -> str:
+        if not values:
+            return ""
+        command = self._first_value(values, ("cmd", "command", "script"))
+        if command:
+            return f"$ {self._format_tool_value(command)}"
+        prompt = self._first_value(values, ("query", "q", "search", "prompt", "text"))
+        if prompt and len(values) == 1:
+            return self._format_tool_value(prompt, quote_strings=True)
+        path = self._first_value(values, ("path", "file", "url"))
+        if path and len(values) == 1:
+            return self._format_tool_value(path)
+
+        parts = []
+        for key, value in values.items():
+            if value in (None, "", [], {}):
+                continue
+            parts.append(f"{key}={self._format_tool_value(value)}")
+            if len(parts) >= 3:
+                break
+        hidden = len([value for value in values.values() if value not in (None, "", [], {})]) - len(parts)
+        if hidden > 0:
+            parts.append(f"+{hidden}")
+        return " · ".join(parts)
+
+    def _first_value(self, values: dict, keys: tuple[str, ...]) -> object | None:
+        for key in keys:
+            if key in values and values[key] not in (None, "", [], {}):
+                return values[key]
+        return None
+
+    def _format_tool_value(self, value: object, *, quote_strings: bool = False) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str):
+            text = self._clean_inline(value)
+            if quote_strings and text:
+                return f'"{text}"'
+            return text
+        if isinstance(value, list):
+            return f"[{len(value)}]"
+        if isinstance(value, dict):
+            return "{...}"
+        return self._clean_inline(str(value))
 
     def _status_bar(self, runtime: CliChatRuntime, result: object | None = None) -> Text:
         status = self._status_text(runtime, result=result)

@@ -1,11 +1,11 @@
 # Codex 交接记录
 
-更新时间：2026-07-03 15:43 CST
+更新时间：2026-07-03 16:09 CST
 
 ## 当前状态
 
 - 当前分支：`codex/terminal-cli`
-- 工作区状态：CLI 功能已提交；当前还剩未跟踪文件 `.codexignore` 和 `AGENTS.md`
+- 工作区状态：CLI 功能持续迭代；`.codexignore` 和 `AGENTS.md` 已提交
 - 这个分支目前聚焦在终端前端，也就是类似 Hermes / Claude Code / Codex CLI 的轻量终端聊天界面
 - 用户明确不喜欢重型 TUI 框架，当前方向是用 `rich` + 普通输入循环实现终端界面，后续也方便抽事件给 desktop 用
 
@@ -66,6 +66,12 @@
   - `/cancel` 取消
   - 多行内 `/help` 等 slash 文本会作为正文，不执行命令
 
+2026-07-03 16:09 继续调整了工具 trace：
+
+- 工具 trace 行改为在工具结束时按最终状态渲染，失败工具左侧圆点和错误摘要使用红色
+- 工具参数不再直接显示 JSON object，renderer 会把常见 JSON 参数格式化成更可读的 `key=value`、`"query"`、`$ command` 等摘要
+- 工具 trace 仍保持无框、低视觉权重；框只用于 AI 回复
+
 ## 用户对 UI 的明确偏好
 
 - 喜欢 Hermes 那种终端风格
@@ -99,8 +105,8 @@ uv run pytest -q
 - 测试会改 `src/personal_agent/skills/builtin/.usage.json` 的运行计数，这是副作用，不要提交进去
 - 用户要求每次做完记得 `git commit`
 - 提交信息要带 `[codex]`
-- `AGENTS.md` 已按用户要求生成，但当前未跟踪、未提交
-- `.codexignore` 当前也是未跟踪文件，来源不是本轮 CLI 功能提交，未处理
+- `AGENTS.md` 已按用户要求生成并提交
+- `.codexignore` 已提交，用于减少 Codex 首 token 前上下文扫描负担
 - 当前会话最初从 `/home/sujinsheng` 启动，导致 Codex 可能把整个 home 当工作区看，性能很慢
 - 建议以后从项目根目录启动：
 

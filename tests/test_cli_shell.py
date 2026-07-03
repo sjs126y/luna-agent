@@ -212,7 +212,7 @@ async def test_cli_shell_renders_tool_trace_without_frames():
             data={
                 "tool_name": "web_search",
                 "tool_use_id": "t1",
-                "input_summary": '"巧乐兹 2026 最新消息"',
+                "input_summary": '{"query": "巧乐兹 2026 最新消息"}',
             },
         )
     )
@@ -230,7 +230,7 @@ async def test_cli_shell_renders_tool_trace_without_frames():
     )
 
     text = stream.getvalue()
-    assert "● Web Search" in text
+    assert '● Web Search "巧乐兹 2026 最新消息"' in text
     assert "巧乐兹" in text
     assert "└ Found 10 results · 1.2s" in text
     assert "工具:" not in text
@@ -260,6 +260,64 @@ async def test_cli_shell_truncates_tool_results_by_default():
     assert "└ " in text
     assert "+60 chars" in text
     assert "x" * 160 not in text
+
+
+@pytest.mark.asyncio
+async def test_cli_shell_formats_tool_json_args_for_humans():
+    renderer, stream = _renderer()
+
+    await renderer.emit(
+        ConversationEvent(
+            type="tool_start",
+            data={
+                "tool_name": "weather",
+                "tool_use_id": "t3",
+                "input_summary": '{"city": "火星", "units": "metric", "days": 3}',
+            },
+        )
+    )
+    await renderer.emit(
+        ConversationEvent(
+            type="tool_end",
+            data={
+                "tool_name": "weather",
+                "tool_use_id": "t3",
+                "status": "success",
+                "output_summary": "晴",
+                "duration": 1.5,
+            },
+        )
+    )
+
+    text = stream.getvalue()
+    assert "● Weather city=火星 · units=metric · days=3" in text
+    assert '{"city"' not in text
+
+
+@pytest.mark.asyncio
+async def test_cli_shell_failed_tool_uses_error_color():
+    renderer, stream = _renderer()
+
+    await renderer.emit(
+        ConversationEvent(
+            type="tool_end",
+            data={
+                "tool_name": "fly_to_moon",
+                "tool_use_id": "t4",
+                "status": "error",
+                "error": "unknown tool 'fly_to_moon'",
+                "input_summary": '{"speed": "fast"}',
+                "duration": 0.0,
+            },
+        )
+    )
+
+    text = stream.getvalue()
+    assert "●" in text
+    assert "Fly To Moon speed=fast" in text
+    assert "unknown tool 'fly_to_moon'" in text
+    assert renderer._tool_dot_style("error") == "red"
+    assert renderer._tool_dot_style("success") == "green"
 
 
 @pytest.mark.asyncio
