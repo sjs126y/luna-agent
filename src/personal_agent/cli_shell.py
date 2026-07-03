@@ -49,6 +49,7 @@ class TerminalRenderer(ConversationEventSink):
         self._last_output_tokens = 0
         self._last_api_calls = 0
         self._input_open = False
+        self._input_preframed = False
 
     async def emit(self, event: ConversationEvent) -> None:
         if event.type == "assistant_message":
@@ -122,12 +123,16 @@ class TerminalRenderer(ConversationEventSink):
 
     def prompt(self, runtime: CliChatRuntime) -> str:
         self.input_prompt(runtime)
-        return "› "
+        return "" if self._input_preframed else "› "
 
     def input_prompt(self, runtime: CliChatRuntime) -> None:
         self._print(self._status_bar(runtime))
         self._rule("─", style="dark_orange")
         self._input_open = True
+        self._input_preframed = False
+        if self._supports_live_input_frame():
+            self._render_live_input_frame()
+            self._input_preframed = True
 
     def begin_turn(self) -> None:
         self.close_input_area()
@@ -139,8 +144,12 @@ class TerminalRenderer(ConversationEventSink):
 
     def close_input_area(self) -> None:
         if self._input_open:
-            self._rule("─", style="dark_orange")
+            if self._input_preframed:
+                self._print_raw("\x1b[1B\r")
+            else:
+                self._rule("─", style="dark_orange")
             self._input_open = False
+            self._input_preframed = False
 
     def user_message(self, text: str) -> None:
         self.begin_turn()
@@ -215,9 +224,12 @@ class TerminalRenderer(ConversationEventSink):
         if context:
             parts.append(context)
         if api_calls != "":
-            parts.append(f"api={api_calls}")
+            parts.append(f"api {api_calls}")
         if self._last_input_tokens or self._last_output_tokens:
-            parts.append(f"in={self._last_input_tokens} out={self._last_output_tokens}")
+            parts.append(
+                f"in {self._format_count(self._last_input_tokens)} "
+                f"out {self._format_count(self._last_output_tokens)}"
+            )
         parts.append(f"{duration:.1f}s")
         return " | ".join(parts)
 
@@ -230,8 +242,7 @@ class TerminalRenderer(ConversationEventSink):
     def _status_bar(self, runtime: CliChatRuntime, result: object | None = None) -> Text:
         status = self._status_text(runtime, result=result)
         parts = [part.strip() for part in status.split("|")]
-        width = self._line_width()
-        bar = Text(style="default on grey11")
+        bar = Text()
         for index, part in enumerate(parts):
             if index:
                 bar.append(" │ ", style="yellow on grey11")
@@ -244,8 +255,6 @@ class TerminalRenderer(ConversationEventSink):
                 bar.append(part, style="yellow on grey11")
             else:
                 bar.append(part, style="bright_white on grey11")
-        if len(bar.plain) < width:
-            bar.append(" " * (width - len(bar.plain)), style="default on grey11")
         return bar
 
     def _model_summary(self) -> None:
@@ -282,6 +291,15 @@ class TerminalRenderer(ConversationEventSink):
         if self.output_fn is not None:
             self.output_fn(text)
 
+    def _print_raw(self, text: str) -> None:
+        if self.console is not None:
+            file = getattr(self.console, "file", sys.stdout)
+            file.write(text)
+            file.flush()
+            return
+        if self.output_fn is not None:
+            self.output_fn(text)
+
     def _short(self, text: str) -> str:
         if self.options.verbose:
             return text
@@ -306,7 +324,10 @@ class TerminalRenderer(ConversationEventSink):
         if context_window <= 0 or self._last_input_tokens <= 0:
             return ""
         percent = round(self._last_input_tokens / max(context_window, 1) * 100, 1)
-        return f"ctx {self._last_input_tokens:,}/{context_window:,} ({percent}%)"
+        return (
+            f"ctx {self._format_count(self._last_input_tokens)}/"
+            f"{self._format_count(context_window)} {percent}%"
+        )
 
     def _console_width(self) -> int:
         if self.console is not None:
@@ -315,6 +336,33 @@ class TerminalRenderer(ConversationEventSink):
 
     def _line_width(self) -> int:
         return max(40, min(self._console_width(), 120))
+
+    def _supports_live_input_frame(self) -> bool:
+        if self.output_fn is not None or self.console is None:
+            return False
+        return bool(getattr(self.console, "is_terminal", False))
+
+    def _render_live_input_frame(self) -> None:
+        prompt = "› "
+        bottom = "─" * self._line_width()
+        if self.options.color:
+            prompt = f"\x1b[97m{prompt}\x1b[0m"
+            bottom = f"\x1b[38;5;208m{bottom}\x1b[0m"
+        self._print_raw(f"{prompt}\n{bottom}\x1b[1A\r\x1b[2C")
+
+    def _format_count(self, value: int) -> str:
+        value = int(value or 0)
+        abs_value = abs(value)
+        if abs_value >= 1_000_000:
+            compact = value / 1_000_000
+            return f"{compact:g}M" if compact < 10 else f"{compact:.0f}M"
+        if abs_value >= 10_000:
+            compact = value / 1_000
+            return f"{compact:.1f}K" if compact < 100 else f"{compact:.0f}K"
+        if abs_value >= 1_000:
+            compact = value / 1_000
+            return f"{compact:g}K"
+        return str(value)
 
 
 class CliShell:

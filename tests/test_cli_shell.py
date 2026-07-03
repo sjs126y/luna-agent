@@ -47,6 +47,12 @@ def _renderer(options: ShellRenderOptions | None = None):
     return TerminalRenderer(console=console, options=options), stream
 
 
+def _terminal_renderer(options: ShellRenderOptions | None = None):
+    stream = StringIO()
+    console = Console(file=stream, force_terminal=True, color_system=None, width=100)
+    return TerminalRenderer(console=console, options=options), stream
+
+
 def test_cli_shell_prompt_renders_status_input_line():
     renderer, stream = _renderer()
     runtime = FakeRuntime()
@@ -100,8 +106,8 @@ async def test_cli_shell_renders_message_events():
     stream.truncate(0)
     assert renderer.prompt(runtime) == "› "
     prompt_text = stream.getvalue()
-    assert "api=1" in prompt_text
-    assert "in=10 out=3" in prompt_text
+    assert "api 1" in prompt_text
+    assert "in 10 out 3" in prompt_text
     assert "$ deepseek-chat" in prompt_text
 
 
@@ -126,6 +132,20 @@ async def test_cli_shell_run_frames_live_input_area():
     assert "╭─ $ Personal Agent" in text
     assert any(item == "› " for item in output)
     assert runtime.messages == ["你好"]
+
+
+def test_cli_shell_live_terminal_preframes_input_area():
+    renderer, stream = _terminal_renderer(ShellRenderOptions(color=False))
+    runtime = FakeRuntime()
+
+    prompt = renderer.prompt(runtime)
+
+    text = stream.getvalue()
+    assert prompt == ""
+    assert "› " in text
+    assert text.count("─" * 20) >= 2
+    assert "\x1b[1A" in text
+    assert "\x1b[2C" in text
 
 
 @pytest.mark.asyncio
