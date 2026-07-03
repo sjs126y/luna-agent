@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 from personal_agent.cli_chat import CliChatRuntime, create_cli_runtime
 from personal_agent.conversation.events import ConversationEvent, ConversationEventSink
@@ -90,7 +91,7 @@ class CliShell:
         self,
         runtime: CliChatRuntime,
         *,
-        input_fn: Callable[[str], str] | None = None,
+        input_fn: Callable[[str], str | Awaitable[str]] | None = None,
         renderer: TerminalRenderer | None = None,
     ) -> None:
         self.runtime = runtime
@@ -101,7 +102,7 @@ class CliShell:
         self.renderer.banner(self.runtime)
         while True:
             try:
-                text = self.input_fn(self.renderer.prompt(self.runtime))
+                text = await _resolve_input(self.input_fn(self.renderer.prompt(self.runtime)))
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
@@ -110,6 +111,22 @@ class CliShell:
                 break
             try:
                 await self.run_once(text)
+            except Exception as exc:
+                self.renderer.error(exc)
+
+    def run_sync(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.renderer.banner(self.runtime)
+        while True:
+            try:
+                text = _resolve_input_sync(self.input_fn(self.renderer.prompt(self.runtime)), loop)
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            text = text.strip()
+            if not text or text.lower() in {"exit", "quit"}:
+                break
+            try:
+                loop.run_until_complete(self.run_once(text))
             except Exception as exc:
                 self.renderer.error(exc)
 
@@ -132,17 +149,37 @@ async def run_cli_shell(*, session_name: str = "default") -> None:
 
 def run_cli_shell_sync(*, session_name: str = "default") -> None:
     _configure_stdout()
-    asyncio.run(run_cli_shell(session_name=session_name))
-
-
-def _read_input(prompt: str) -> str:
-    if not sys.stdin.isatty():
-        return input(prompt)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    runtime = None
     try:
-        from prompt_toolkit import prompt as toolkit_prompt
-    except Exception:
-        return input(prompt)
-    return toolkit_prompt(prompt, multiline=False)
+        runtime = loop.run_until_complete(create_cli_runtime(session_name=session_name))
+        CliShell(runtime, input_fn=_read_input_sync).run_sync(loop)
+    finally:
+        if runtime is not None:
+            loop.run_until_complete(runtime.close())
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+async def _read_input(prompt: str) -> str:
+    return input(prompt)
+
+
+def _read_input_sync(prompt_text: str) -> str:
+    return input(prompt_text)
+
+
+async def _resolve_input(value: str | Awaitable[str]) -> str:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _resolve_input_sync(value: str | Awaitable[str], loop: asyncio.AbstractEventLoop) -> str:
+    if inspect.isawaitable(value):
+        return loop.run_until_complete(value)
+    return value
 
 
 def _configure_stdout() -> None:

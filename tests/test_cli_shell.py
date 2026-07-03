@@ -65,3 +65,52 @@ async def test_cli_shell_renders_message_events():
     assert runtime.messages == ["你好"]
     assert "[模型] 请求中" in output
     assert "\nassistant:\necho:你好" in output
+
+
+@pytest.mark.asyncio
+async def test_cli_shell_run_accepts_async_input_function():
+    output: list[str] = []
+    runtime = FakeRuntime()
+    inputs = iter(["/help", ""])
+
+    async def input_fn(prompt: str) -> str:
+        output.append(prompt)
+        return next(inputs)
+
+    renderer = TerminalRenderer(
+        output_fn=output.append,
+        options=ShellRenderOptions(show_events=True),
+    )
+    shell = CliShell(runtime, input_fn=input_fn, renderer=renderer)
+
+    await shell.run()
+
+    assert "help text" in output
+    assert any(item == "\ncli:default:local >>> " for item in output)
+    assert runtime.messages == []
+
+
+def test_cli_shell_sync_loop_handles_input_function():
+    import asyncio
+
+    output: list[str] = []
+    runtime = FakeRuntime()
+    inputs = iter(["/help", ""])
+
+    def input_fn(prompt: str) -> str:
+        output.append(prompt)
+        return next(inputs)
+
+    loop = asyncio.new_event_loop()
+    try:
+        renderer = TerminalRenderer(
+            output_fn=output.append,
+            options=ShellRenderOptions(show_events=True),
+        )
+        shell = CliShell(runtime, input_fn=input_fn, renderer=renderer)
+        shell.run_sync(loop)
+    finally:
+        loop.close()
+
+    assert "help text" in output
+    assert any(item == "\ncli:default:local >>> " for item in output)
