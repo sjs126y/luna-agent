@@ -116,6 +116,15 @@ class CliChatRuntime(ConversationCommandRuntime):
         result = await self.conversation_service.run_turn(self.session_key, self.source, text)
         return result.final_response or "..."
 
+    async def run_message_events(self, text: str, *, event_sink=None):
+        assert self.conversation_service is not None
+        return await self.conversation_service.run_turn_events(
+            self.session_key,
+            self.source,
+            text,
+            event_sink=event_sink,
+        )
+
     async def switch_session(self, name: str) -> str:
         self.session_name = _clean_session_name(name)
         assert self.conversation_service is not None

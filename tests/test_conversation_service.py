@@ -123,6 +123,39 @@ async def test_run_turn_persists_history_and_invokes_session_hook(service, monke
 
 
 @pytest.mark.asyncio
+async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch):
+    from personal_agent.conversation.events import emit_event
+
+    svc, _manager, _db = service
+    forwarded = []
+
+    class Sink:
+        async def emit(self, event):
+            forwarded.append(event)
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx, *, event_sink=None):
+        await emit_event(event_sink, "llm_start", "请求模型")
+        await emit_event(event_sink, "assistant_message", "echo:hello")
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn_events("cli:default:local", _source(), "hello", event_sink=Sink())
+
+    assert [event.type for event in result.events] == ["llm_start", "assistant_message", "turn_end"]
+    assert [event.type for event in forwarded] == ["llm_start", "assistant_message", "turn_end"]
+    assert result.final_response == "echo:hello"
+
+
+@pytest.mark.asyncio
 async def test_run_turn_persists_minimal_context_overflow_turn(service, monkeypatch):
     svc, _manager, _db = service
 

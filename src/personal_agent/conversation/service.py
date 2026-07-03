@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from personal_agent.conversation.events import ConversationEvent, EventRecorder, emit_event
 
 
 @dataclass
@@ -19,6 +22,7 @@ class ConversationTurnResult:
     raw: dict[str, Any]
     status: str = "completed"
     error: str = ""
+    events: list[ConversationEvent] = field(default_factory=list)
 
 
 class ConversationService:
@@ -48,6 +52,17 @@ class ConversationService:
         )
 
     async def run_turn(self, session_key: str, source, text: str) -> ConversationTurnResult:
+        return await self.run_turn_events(session_key, source, text)
+
+    async def run_turn_events(
+        self,
+        session_key: str,
+        source,
+        text: str,
+        *,
+        event_sink=None,
+    ) -> ConversationTurnResult:
+        recorder = EventRecorder(event_sink)
         if self.plugin_manager is not None:
             await self.plugin_manager.invoke_hook("on_session_selected", session_key=session_key)
 
@@ -63,10 +78,14 @@ class ConversationService:
         try:
             agent = await self.get_or_create_agent(session_key)
             ctx = await build_turn_context(agent, text, history)
-            result = await run_conversation(agent, ctx)
+            if _accepts_event_sink(run_conversation):
+                result = await run_conversation(agent, ctx, event_sink=recorder)
+            else:
+                result = await run_conversation(agent, ctx)
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             final = f"抱歉，本轮处理出错了：{exc}"
+            await emit_event(recorder, "error", "本轮处理失败", error=error)
             result = {
                 "final_response": final,
                 "messages": _minimal_turn_messages(text, final),
@@ -101,6 +120,16 @@ class ConversationService:
             await self.session_store.save_transcript(
                 current_id, history + minimal_messages, previous_count
             )
+        await emit_event(
+            recorder,
+            "turn_end",
+            "会话已保存",
+            session_key=session_key,
+            status=status,
+            completed=completed,
+            was_compressed=was_compressed,
+            context_overflow=context_overflow,
+        )
 
         return ConversationTurnResult(
             final_response=final_response,
@@ -112,6 +141,7 @@ class ConversationService:
             raw=result,
             status=status,
             error=error,
+            events=list(recorder.events),
         )
 
     async def get_or_create_agent(self, session_key: str):
@@ -356,3 +386,10 @@ def _final_response_for_status(status: str, final_response: Any, error: str = ""
     if status == "failed":
         return f"抱歉，本轮处理出错了：{error}" if error else "抱歉，本轮处理出错了。"
     return ""
+
+
+def _accepts_event_sink(func: Any) -> bool:
+    try:
+        return "event_sink" in inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return True

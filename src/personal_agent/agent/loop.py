@@ -14,18 +14,37 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from personal_agent.conversation.events import emit_event
 from personal_agent.tools.executor import execute_tool_calls
 
 logger = logging.getLogger(__name__)
 
 
-async def run_conversation(agent, ctx) -> dict:
+async def run_conversation(agent, ctx, *, event_sink=None) -> dict:
     """Execute the agent while loop. Returns final result dict."""
     just_executed_tools = False
+    await emit_event(
+        event_sink,
+        "turn_start",
+        "开始处理",
+        turn_id=getattr(ctx, "turn_id", ""),
+        user_message=getattr(ctx, "user_message", ""),
+        message_count=len(getattr(ctx, "messages", []) or []),
+        was_compressed=bool(getattr(ctx, "was_compressed", False)),
+    )
+    if getattr(ctx, "was_compressed", False):
+        await emit_event(
+            event_sink,
+            "compression",
+            "历史消息已压缩",
+            pre_message_count=getattr(ctx, "pre_compress_message_count", 0),
+            post_message_count=len(ctx.messages),
+        )
 
     while agent._iteration_budget > 0:
         if agent._interrupt_requested:
             logger.info("Agent interrupted by user")
+            await emit_event(event_sink, "stop", "已停止")
             break
 
         # ── build api_messages (injections, NOT persisted) ──
@@ -45,6 +64,15 @@ async def run_conversation(agent, ctx) -> dict:
 
         # ── LLM call (interruptible — polls _interrupt_requested every 5s) ──
         try:
+            await emit_event(
+                event_sink,
+                "llm_start",
+                "请求模型",
+                api_calls=agent.session_api_calls + 1,
+                message_count=len(api_messages),
+                tool_count=len(agent.tools),
+                model=getattr(agent._provider, "model", ""),
+            )
             llm_task = asyncio.create_task(
                 agent._transport.call(
                     messages=api_messages,
@@ -60,6 +88,7 @@ async def run_conversation(agent, ctx) -> dict:
                 if agent._interrupt_requested:
                     llm_task.cancel()
                     logger.info("LLM call interrupted by /stop")
+                    await emit_event(event_sink, "stop", "已停止")
                     return {
                         "final_response": "已停止。",
                         "messages": ctx.messages,
@@ -70,6 +99,7 @@ async def run_conversation(agent, ctx) -> dict:
                     }
             response = await llm_task
         except asyncio.CancelledError:
+            await emit_event(event_sink, "stop", "已停止")
             return {
                 "final_response": "已停止。",
                 "messages": ctx.messages,
@@ -83,6 +113,14 @@ async def run_conversation(agent, ctx) -> dict:
             if _looks_like_parse_error(exc) and \
                agent._retry.invalid_json_retries < agent._retry.MAX_INVALID_JSON:
                 agent._retry.invalid_json_retries += 1
+                await emit_event(
+                    event_sink,
+                    "retry",
+                    "模型返回格式异常，准备重试",
+                    category="invalid_json",
+                    attempt=agent._retry.invalid_json_retries,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
                 ctx.messages.append({
                     "role": "user",
                     "content": [{"type": "text", "text":
@@ -91,6 +129,12 @@ async def run_conversation(agent, ctx) -> dict:
                 logger.debug("Invalid JSON retry %d: %s", agent._retry.invalid_json_retries, exc)
                 continue
             logger.exception("LLM call failed (non-retryable)")
+            await emit_event(
+                event_sink,
+                "error",
+                "模型调用失败",
+                error=f"{type(exc).__name__}: {exc}",
+            )
             return {
                 "final_response": f"抱歉，模型调用出错了：{exc}",
                 "messages": ctx.messages,
@@ -103,6 +147,15 @@ async def run_conversation(agent, ctx) -> dict:
         agent.session_prompt_tokens += response.usage.get("input_tokens", 0)
         agent.session_completion_tokens += response.usage.get("output_tokens", 0)
         agent.session_api_calls += 1
+        await emit_event(
+            event_sink,
+            "llm_end",
+            "模型返回",
+            input_tokens=response.usage.get("input_tokens", 0),
+            output_tokens=response.usage.get("output_tokens", 0),
+            tool_call_count=len(response.tool_calls or []),
+            finish_reason=response.finish_reason,
+        )
         if agent._compressor is not None:
             try:
                 agent._compressor.update_from_response(response)
@@ -119,6 +172,13 @@ async def run_conversation(agent, ctx) -> dict:
             # Post-tool empty: specific retry (different nudge)
             if just_executed_tools and not agent._retry.post_tool_empty_retried:
                 agent._retry.post_tool_empty_retried = True
+                await emit_event(
+                    event_sink,
+                    "retry",
+                    "工具执行后模型空回复，准备重试",
+                    category="post_tool_empty",
+                    attempt=1,
+                )
                 ctx.messages.append({
                     "role": "user",
                     "content": [{"type": "text", "text":
@@ -131,6 +191,13 @@ async def run_conversation(agent, ctx) -> dict:
             # Generic empty: retry with continue nudge
             if agent._retry.empty_content_retries < agent._retry.MAX_EMPTY_CONTENT:
                 agent._retry.empty_content_retries += 1
+                await emit_event(
+                    event_sink,
+                    "retry",
+                    "模型空回复，准备重试",
+                    category="empty_response",
+                    attempt=agent._retry.empty_content_retries,
+                )
                 ctx.messages.append({
                     "role": "user",
                     "content": [{"type": "text", "text": "请继续。"}],
@@ -156,6 +223,14 @@ async def run_conversation(agent, ctx) -> dict:
             if agent._retry.invalid_tool_retries < agent._retry.MAX_INVALID_TOOL:
                 agent._retry.invalid_tool_retries += 1
                 bad_names = ", ".join(tc["name"] for tc in invalid_tools)
+                await emit_event(
+                    event_sink,
+                    "retry",
+                    "工具参数格式异常，准备重试",
+                    category="invalid_tool",
+                    attempt=agent._retry.invalid_tool_retries,
+                    tool_names=bad_names,
+                )
                 ctx.messages.append({
                     "role": "user",
                     "content": [{"type": "text", "text":
@@ -172,6 +247,7 @@ async def run_conversation(agent, ctx) -> dict:
                 "role": "assistant",
                 "content": [{"type": "text", "text": response.text}],
             })
+            await emit_event(event_sink, "assistant_message", response.text)
             break
 
         # ── has tool_calls → execute ──
@@ -187,7 +263,16 @@ async def run_conversation(agent, ctx) -> dict:
             })
         ctx.messages.append({"role": "assistant", "content": assistant_blocks})
 
-        await execute_tool_calls(response.tool_calls, ctx.messages, agent=agent, hooks=agent.hooks)
+        if response.text:
+            await emit_event(event_sink, "assistant_message", response.text)
+
+        await execute_tool_calls(
+            response.tool_calls,
+            ctx.messages,
+            agent=agent,
+            hooks=agent.hooks,
+            event_sink=event_sink,
+        )
         just_executed_tools = True
 
         # ── iteration budget check ──
@@ -197,6 +282,7 @@ async def run_conversation(agent, ctx) -> dict:
                 "role": "user",
                 "content": [{"type": "text", "text": "请总结一下已完成的操作。"}],
             })
+            await emit_event(event_sink, "retry", "达到迭代上限，要求模型总结", category="iteration_budget")
             break
 
     # ── final response ──
@@ -206,7 +292,7 @@ async def run_conversation(agent, ctx) -> dict:
             if block.get("type") == "text":
                 final_text += block["text"]
 
-    return {
+    result = {
         "final_response": final_text,
         "messages": ctx.messages,
         "api_calls": agent.session_api_calls,
@@ -215,6 +301,17 @@ async def run_conversation(agent, ctx) -> dict:
         "status": "completed",
         "error": "",
     }
+    await emit_event(
+        event_sink,
+        "turn_end",
+        "处理完成",
+        status=result["status"],
+        completed=result["completed"],
+        final_response=final_text,
+        api_calls=agent.session_api_calls,
+        should_review_memory=ctx.should_review_memory,
+    )
+    return result
 
 
 def _looks_like_parse_error(exc: Exception) -> bool:

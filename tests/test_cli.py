@@ -82,6 +82,32 @@ def test_chat_once_option_runs_once(monkeypatch):
     assert calls == [("你好", "default")]
 
 
+def test_chat_without_message_runs_shell(monkeypatch):
+    calls = []
+
+    def fake_shell(*, session_name="default"):
+        calls.append(session_name)
+
+    monkeypatch.setattr("personal_agent.cli.run_cli_shell_sync", fake_shell)
+    result = runner.invoke(app, ["chat", "--session", "work"])
+
+    assert result.exit_code == 0
+    assert calls == ["work"]
+
+
+def test_chat_simple_runs_legacy_repl(monkeypatch):
+    calls = []
+
+    def fake_repl(*, session_name="default"):
+        calls.append(session_name)
+
+    monkeypatch.setattr("personal_agent.cli.run_cli_repl_sync", fake_repl)
+    result = runner.invoke(app, ["chat", "--simple", "--session", "work"])
+
+    assert result.exit_code == 0
+    assert calls == ["work"]
+
+
 def test_agents_list_show_clear_commands(monkeypatch):
     monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
     monkeypatch.setattr(

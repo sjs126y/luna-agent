@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from personal_agent.conversation.events import emit_event
 from personal_agent.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ async def execute_tool_calls(
     *,
     agent: Any = None,
     hooks: Any = None,
+    event_sink: Any = None,
 ) -> list[ToolExecutionResult]:
     """Execute all tool calls, append results to messages in original order.
 
@@ -101,7 +103,15 @@ async def execute_tool_calls(
                     break
 
             gathered = await asyncio.gather(
-                *[execute_tool_call_result(tc, agent=agent, hooks=hooks) for _, tc in batch],
+                *[
+                    execute_tool_call_result(
+                        tc,
+                        agent=agent,
+                        hooks=hooks,
+                        event_sink=event_sink,
+                    )
+                    for _, tc in batch
+                ],
                 return_exceptions=True,
             )
             for j, (idx, tc) in enumerate(batch):
@@ -119,7 +129,12 @@ async def execute_tool_calls(
                     results[idx] = _result(tc, content=str(item))
         else:
             idx, tc = i, tool_calls[i]
-            results[idx] = await execute_tool_call_result(tc, agent=agent, hooks=hooks)
+            results[idx] = await execute_tool_call_result(
+                tc,
+                agent=agent,
+                hooks=hooks,
+                event_sink=event_sink,
+            )
             i += 1
 
     # ── append ALL results as ONE user message (Anthropic requires this) ──
@@ -152,6 +167,7 @@ async def execute_tool_call_result(
     *,
     agent: Any = None,
     hooks: Any = None,
+    event_sink: Any = None,
     timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
 ) -> ToolExecutionResult:
     """Execute a single tool call through the security pipeline.
@@ -165,59 +181,83 @@ async def execute_tool_call_result(
     started = _time_module.monotonic()
     tc = _normalize_tool_call(tc)
     name = tc["name"]
+    await emit_event(
+        event_sink,
+        "tool_start",
+        f"调用工具 {name}",
+        tool_name=name,
+        tool_use_id=tc["id"],
+        input_summary=_summarize_value(tc.get("input", {})),
+    )
+
+    async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
+        await emit_event(
+            event_sink,
+            "tool_end",
+            f"工具 {result.tool_name} {result.status}",
+            tool_name=result.tool_name,
+            tool_use_id=result.tool_use_id,
+            status=result.status,
+            category=result.category,
+            error=result.error,
+            duration=result.duration,
+            input_summary=result.input_summary,
+            output_summary=result.output_summary,
+        )
+        return result
 
     if is_interrupted():
-        return _result(
+        return await _finish(_result(
             tc,
             status="interrupted",
             category="interrupt",
             error="tool execution interrupted",
             started=started,
-        )
+        ))
 
     entry = tool_registry.get(name)
     if entry is None:
-        return _result(
+        return await _finish(_result(
             tc,
             status="error",
             category="unknown_tool",
             error=f"unknown tool '{name}'",
             started=started,
-        )
+        ))
 
     # ── ① pre-check: hard rejections, NEVER ask user ──
     try:
         pre_error = _pre_check(tc, entry)
     except Exception as exc:
-        return _result(
+        return await _finish(_result(
             tc,
             status="error",
             category="precheck",
             error=f"{type(exc).__name__}: {exc}",
             started=started,
-        )
+        ))
     if pre_error:
-        return _result(tc, status="denied", category="precheck", error=pre_error, started=started)
+        return await _finish(_result(tc, status="denied", category="precheck", error=pre_error, started=started))
 
     # ── ② scope gate: may ask user (/allow) ────────────
     try:
         gate_error = _scope_gate(tc, entry, agent)
     except Exception as exc:
-        return _result(
+        return await _finish(_result(
             tc,
             status="error",
             category="scope_gate",
             error=f"{type(exc).__name__}: {exc}",
             started=started,
-        )
+        ))
     if gate_error:
-        return _result(
+        return await _finish(_result(
             tc,
             status="denied",
             category=_classify_gate_error(gate_error),
             error=gate_error,
             started=started,
-        )
+        ))
 
     # ── ③ checkpoint (destructive file tools) ──────────
     if name in ("write", "edit"):
@@ -228,25 +268,25 @@ async def execute_tool_call_result(
         try:
             hook_result = await hooks.fire("on_before_tool_exec", tc, entry)
         except Exception as exc:
-            return _result(
+            return await _finish(_result(
                 tc,
                 status="error",
                 category="hook",
                 error=f"before hook failed: {type(exc).__name__}: {exc}",
                 started=started,
-            )
+            ))
         if hook_result is None:
-            return _result(tc, status="denied", category="hook", error="tool execution blocked", started=started)
+            return await _finish(_result(tc, status="denied", category="hook", error="tool execution blocked", started=started))
         if isinstance(hook_result, dict):
             modified = _normalize_tool_call(hook_result)
             if modified["name"] != name:
-                return _result(
+                return await _finish(_result(
                     tc,
                     status="denied",
                     category="hook",
                     error="before hook cannot change tool name",
                     started=started,
-                )
+                ))
             tc = modified
 
     # ── 2. dispatch (with retry for idempotent tools) ──
@@ -256,44 +296,52 @@ async def execute_tool_call_result(
     for attempt in range(max_attempts):
         attempts = attempt + 1
         if is_interrupted():
-            return _result(
+            return await _finish(_result(
                 tc,
                 status="interrupted",
                 category="interrupt",
                 error="tool execution interrupted",
                 attempts=attempts,
                 started=started,
-            )
+            ))
         try:
             raw_result = await _run_handler(entry.handler, tc["input"], timeout=timeout)
             result = _coerce_tool_output(raw_result)
             break
         except asyncio.TimeoutError:
-            return _result(
+            return await _finish(_result(
                 tc,
                 status="timeout",
                 category="timeout",
                 error=f"tool '{name}' timed out after {timeout:g}s",
                 attempts=attempts,
                 started=started,
-            )
+            ))
         except Exception as exc:
             last_exc = exc
             if attempt < max_attempts - 1 and _is_retryable(exc):
+                await emit_event(
+                    event_sink,
+                    "retry",
+                    f"工具 {name} 失败，准备重试",
+                    tool_name=name,
+                    attempt=attempt + 1,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
                 logger.warning("Tool '%s' failed (attempt %d/2): %s", name, attempt + 1, exc)
                 await asyncio.sleep(0.5 * (attempt + 1))  # brief backoff
                 continue
             logger.exception("Tool dispatch failed for '%s'", name)
     else:
         # All attempts failed
-        return _result(
+        return await _finish(_result(
             tc,
             status="error",
             category="handler",
             error=str(last_exc or "tool dispatch failed"),
             attempts=attempts,
             started=started,
-        )
+        ))
 
     # ── 3. post-process ──────────────────────────────
     if len(result) > MAX_RESULT_CHARS:
@@ -313,7 +361,7 @@ async def execute_tool_call_result(
             error = f"after hook failed: {type(exc).__name__}: {exc}"
 
     logger.debug("Tool '%s' done: %d chars", name, len(result))
-    return _result(
+    return await _finish(_result(
         tc,
         status=status,
         category=category,
@@ -321,7 +369,7 @@ async def execute_tool_call_result(
         error=error,
         attempts=attempts,
         started=started,
-    )
+    ))
 
 
 def format_tool_result(result: ToolExecutionResult) -> str:

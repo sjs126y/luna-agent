@@ -70,17 +70,29 @@ def provider():
 @pytest.mark.asyncio
 async def test_simple_response(provider):
     """Agent returns final response when no tool_calls."""
+    from personal_agent.conversation.events import EventRecorder
+
+    recorder = EventRecorder()
     transport = MockTransport([
         NormalizedResponse(text="Hello!", finish_reason="end_turn",
                           usage={"input_tokens": 5, "output_tokens": 3}),
     ])
     agent = init_agent(transport, provider)
     ctx = await build_turn_context(agent,"Hi")
-    result = await run_conversation(agent, ctx)
+    result = await run_conversation(agent, ctx, event_sink=recorder)
 
     assert result["completed"]
     assert result["api_calls"] == 1
     assert result["messages"][-1]["role"] == "assistant"
+    assert [event.type for event in recorder.events] == [
+        "turn_start",
+        "llm_start",
+        "llm_end",
+        "assistant_message",
+        "turn_end",
+    ]
+    assert recorder.events[2].data["input_tokens"] == 5
+    assert recorder.events[3].message == "Hello!"
 
 
 @pytest.mark.asyncio

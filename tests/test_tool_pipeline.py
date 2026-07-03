@@ -274,11 +274,13 @@ async def test_exec_one_unknown_tool():
 
 @pytest.mark.asyncio
 async def test_execute_tool_call_result_structured_success_and_error():
+    from personal_agent.conversation.events import EventRecorder
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
     from personal_agent.tools.registry import tool_registry
 
     original = tool_registry.get("structured_demo")
+    recorder = EventRecorder()
 
     async def handler(value):
         return {"value": value}
@@ -295,7 +297,7 @@ async def test_execute_tool_call_result_structured_success_and_error():
             "id": "call-1",
             "name": "structured_demo",
             "input": {"value": 7},
-        })
+        }, event_sink=recorder)
         unknown = await execute_tool_call_result({"id": "bad", "name": "missing_demo", "input": {}})
     finally:
         if original is None:
@@ -309,6 +311,9 @@ async def test_execute_tool_call_result_structured_success_and_error():
     assert result.content == '{"value": 7}'
     assert result.input_summary == '{"value": 7}'
     assert format_tool_result(result) == '{"value": 7}'
+    assert [event.type for event in recorder.events] == ["tool_start", "tool_end"]
+    assert recorder.events[0].data["tool_name"] == "structured_demo"
+    assert recorder.events[1].data["status"] == "success"
     assert unknown.status == "error"
     assert unknown.category == "unknown_tool"
     assert "unknown tool" in format_tool_result(unknown)
