@@ -47,6 +47,24 @@ async def test_embedding_memory_provider_lists_and_deletes_without_loading_model
 
 
 @pytest.mark.asyncio
+async def test_embedding_memory_provider_cleans_surrogate_text_before_embedding(tmp_path, monkeypatch):
+    provider = EmbeddingMemoryProvider(tmp_path)
+    seen = []
+
+    class Model:
+        def embed(self, values):
+            seen.extend(values)
+            return [np.ones(3, dtype=np.float32)]
+
+    provider._model = Model()
+
+    await provider.save("bad \ud83d text")
+
+    assert seen == ["bad ? text"]
+    assert provider._texts[0]["text"] == "bad ? text"
+
+
+@pytest.mark.asyncio
 async def test_memory_manager_health_and_lookup(tmp_path):
     provider = FileMemoryProvider(tmp_path)
     await provider.save("alpha memory")

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from personal_agent.context_budget import compose_context_text
 from personal_agent.llm.token_counter import count_messages_tokens, count_tools_tokens
+from personal_agent.text_safety import clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,8 @@ async def build_turn_context(
     """
     import time
     import uuid
+
+    user_message = clean_text(user_message)
 
     # Reset per-turn state
     agent._iteration_budget = agent.max_iterations

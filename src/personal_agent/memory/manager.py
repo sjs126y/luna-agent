@@ -37,7 +37,7 @@ class MemoryManager:
                 return results
             except Exception as exc:
                 self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
-                logger.warning("External memory prefetch failed, falling back to builtin only: %s", exc)
+                logger.debug("External memory prefetch failed, falling back to builtin only: %s", exc)
         return []
 
     # ── save ──────────────────────────────────────────

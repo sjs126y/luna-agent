@@ -171,6 +171,29 @@ async def test_cli_session_switch_list_usage_export_and_allow(runtime):
 
 
 @pytest.mark.asyncio
+async def test_cli_memory_command_is_handled_locally(runtime, monkeypatch):
+    called = False
+
+    async def run_message(text):
+        nonlocal called
+        called = True
+        return "model"
+
+    async def list_entries(*, target="all"):
+        return [{"id": "memory:1", "provider": "builtin", "target": target, "text": "remember cli"}]
+
+    monkeypatch.setattr(runtime, "run_message", run_message)
+    monkeypatch.setattr(runtime.memory_manager, "list_entries", list_entries)
+
+    result = await runtime.handle_command("/memory list")
+
+    assert result is not None
+    assert "记忆列表" in result
+    assert "remember cli" in result
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_cli_stop_reports_delegate_agent_count(runtime, monkeypatch):
     monkeypatch.setattr(
         "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",

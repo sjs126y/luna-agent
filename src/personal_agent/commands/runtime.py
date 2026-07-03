@@ -56,6 +56,16 @@ class CommandRuntime(Protocol):
 
     async def clear_agent(self) -> None: ...
 
+    async def memory_report(self) -> dict: ...
+
+    async def memory_entries(self, *, target: str = "all") -> list[dict]: ...
+
+    async def memory_search(self, query: str, *, target: str = "all") -> list[dict]: ...
+
+    async def memory_entry(self, identifier: str, *, target: str = "all") -> dict | None: ...
+
+    async def memory_delete(self, identifier: str, *, target: str = "all") -> bool: ...
+
     def plugin_command_kwargs(self, args: str) -> dict: ...
 
 
@@ -90,6 +100,9 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
 
     if command_name in {"agents", "agent-runs"}:
         return CommandResult.reply(await _agents(args))
+
+    if command_name == "memory":
+        return CommandResult.reply(await _memory(runtime, args))
 
     if command_name == "help":
         return CommandResult.reply(help_text(runtime))
@@ -255,6 +268,121 @@ async def _agents(args: str) -> str:
     return "用法: /agents [list [limit]|show <run_id>|clear]"
 
 
+async def _memory(runtime: CommandRuntime, args: str) -> str:
+    parts = args.split()
+    action = parts[0] if parts else "list"
+    rest, target = _split_target_args(parts[1:])
+
+    if action == "doctor":
+        custom = await _call_optional(runtime, "format_memory_doctor")
+        if custom is not None:
+            return str(custom)
+        return _format_memory_doctor(await runtime.memory_report())
+
+    if action == "list":
+        custom = await _call_optional(runtime, "format_memory_entries", target=target)
+        if custom is not None:
+            return str(custom)
+        return _format_memory_entries(await runtime.memory_entries(target=target))
+
+    if action == "search":
+        query = " ".join(token for token in rest if not token.startswith("--target=")).strip()
+        if not query:
+            return "用法: /memory search <query> [--target=all|memory|user|external]"
+        custom = await _call_optional(runtime, "format_memory_search", query, target=target)
+        if custom is not None:
+            return str(custom)
+        return _format_memory_entries(
+            await runtime.memory_search(query, target=target),
+            title="记忆搜索结果",
+        )
+
+    if action == "show":
+        if not rest:
+            return "用法: /memory show <id> [--target=all|memory|user|external]"
+        identifier = rest[0]
+        entry = await runtime.memory_entry(identifier, target=target)
+        if entry is None:
+            return f"未找到记忆: {identifier}"
+        custom = await _call_optional(runtime, "format_memory_entry", entry)
+        if custom is not None:
+            return str(custom)
+        return _format_memory_entry(entry)
+
+    if action == "delete":
+        if not rest:
+            return "用法: /memory delete <id> [--target=all|memory|user|external]"
+        identifier = rest[0]
+        deleted = await runtime.memory_delete(identifier, target=target)
+        if not deleted:
+            return f"未找到或无法删除记忆: {identifier}"
+        return f"已删除记忆: {identifier}"
+
+    return "用法: /memory [list|search <query>|show <id>|delete <id>|doctor]"
+
+
+def _split_target_args(tokens: list[str]) -> tuple[list[str], str]:
+    target = "all"
+    rest: list[str] = []
+    skip_next = False
+    for index, token in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("--target="):
+            target = token.split("=", 1)[1] or target
+        elif token in {"--target", "-t"} and index + 1 < len(tokens):
+            target = tokens[index + 1]
+            skip_next = True
+        else:
+            rest.append(token)
+    return rest, target
+
+
+def _format_memory_doctor(report: dict) -> str:
+    providers = report.get("providers") or {}
+    builtin = providers.get("builtin") or {}
+    external = providers.get("external") or {}
+    return "\n".join([
+        "Memory 诊断",
+        f"builtin: {builtin.get('provider') or report.get('builtin_provider') or '-'} available={bool(builtin.get('available', report.get('builtin_available', False)))} entries={builtin.get('entries', 0)}",
+        f"external: {external.get('provider') or report.get('external_provider') or '-'} available={bool(external.get('available', report.get('external_available', False)))} entries={external.get('entries', 0)}",
+        f"last_errors: {report.get('last_errors') or {}}",
+    ])
+
+
+def _format_memory_entries(entries: list[dict], *, title: str = "记忆列表") -> str:
+    if not entries:
+        return f"{title}: 无"
+    lines = [f"{title}: {len(entries)} 条"]
+    for entry in entries:
+        label = entry.get("id") or entry.get("index") or "-"
+        provider = entry.get("provider") or "-"
+        target = entry.get("target") or "-"
+        text = _short_text(str(entry.get("text", "")), 120)
+        lines.append(f"- {label} [{provider}/{target}] {text}")
+    return "\n".join(lines)
+
+
+def _format_memory_entry(entry: dict) -> str:
+    return "\n".join([
+        f"记忆: {entry.get('id') or entry.get('index') or '-'}",
+        f"provider: {entry.get('provider') or '-'}",
+        f"target: {entry.get('target') or '-'}",
+        f"created_at: {entry.get('created_at') or '-'}",
+        f"path: {entry.get('path') or '-'}",
+        "",
+        str(entry.get("text", "")),
+    ])
+
+
+def _short_text(text: str, limit: int) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
 def _parse_limit(value: str) -> int | None:
     if not value:
         return None
@@ -308,6 +436,7 @@ def help_text(runtime: CommandRuntime | None = None) -> str:
         "/stop - 停止当前处理",
         "/export - 导出当前会话 JSONL",
         "/agents [list|show|clear] - 查看子 agent 运行记录",
+        "/memory [list|search|show|delete|doctor] - 查看和管理记忆",
         "/help - 显示此帮助",
         "/<skill-name> [message] - 加载技能后发送消息",
         "exit / quit / 空行 - 退出 CLI",

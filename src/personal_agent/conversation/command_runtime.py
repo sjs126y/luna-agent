@@ -45,6 +45,21 @@ class ConversationCommandRuntime:
         )
         return count, str(export_path)
 
+    async def memory_report(self) -> dict:
+        return await self.conversation_service.memory_manager.health_snapshot()
+
+    async def memory_entries(self, *, target: str = "all") -> list[dict]:
+        return await self.conversation_service.memory_manager.list_entries(target=target)
+
+    async def memory_search(self, query: str, *, target: str = "all") -> list[dict]:
+        return await self.conversation_service.memory_manager.search_entries(query, target=target)
+
+    async def memory_entry(self, identifier: str, *, target: str = "all") -> dict | None:
+        return await self.conversation_service.memory_manager.get_entry(identifier, target=target)
+
+    async def memory_delete(self, identifier: str, *, target: str = "all") -> bool:
+        return await self.conversation_service.memory_manager.delete(identifier, target=target)
+
     async def usage(self, *, current_user_message: str = "") -> str:
         return await self.conversation_service.usage_summary(
             self.session_key,

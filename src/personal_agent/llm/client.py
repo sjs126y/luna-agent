@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 
+from personal_agent.text_safety import clean_payload
+
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
@@ -64,6 +66,7 @@ async def _call_with_retry(
 ) -> AsyncIterator[dict[str, Any]]:
     """POST with retry. Yields parsed events (SSE chunks or single response)."""
     last_error: Exception | None = None
+    body = clean_payload(body)
 
     for attempt in range(MAX_RETRIES + 1):
         try:

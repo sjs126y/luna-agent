@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from personal_agent.memory.base import MemoryProvider
+from personal_agent.text_safety import clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ class EmbeddingMemoryProvider(MemoryProvider):
 
     async def save(self, content: str) -> None:
         """Embed and persist a new memory entry."""
+        content = clean_text(content)
         async with self._lock:
             emb = await self._embed(content)
             entry = {
@@ -102,6 +104,7 @@ class EmbeddingMemoryProvider(MemoryProvider):
 
     async def search(self, query: str) -> list[str]:
         """Cosine similarity search. Returns texts sorted by relevance."""
+        query = clean_text(query)
         if self._embeddings is None or len(self._texts) == 0:
             return []
 
@@ -203,6 +206,7 @@ class EmbeddingMemoryProvider(MemoryProvider):
 
     async def _embed(self, text: str) -> np.ndarray:
         """Encode a single text → numpy array. Lazy-init model on first call."""
+        text = clean_text(text)
         model = self._get_model()
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: list(model.embed([text]))[0])

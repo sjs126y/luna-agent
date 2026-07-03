@@ -9,6 +9,8 @@ from pathlib import Path
 
 import aiosqlite
 
+from personal_agent.text_safety import clean_payload, clean_text
+
 logger = logging.getLogger(__name__)
 
 SCHEMA = """
@@ -133,7 +135,8 @@ class Database:
         tool_call_id: str | None = None,
     ) -> None:
         import time
-        tc_json = json.dumps(tool_calls) if tool_calls else None
+        content = clean_text(content)
+        tc_json = json.dumps(clean_payload(tool_calls)) if tool_calls else None
         async with self._write_lock:
             await self._conn.execute(
                 """INSERT INTO messages (session_id, role, content, tool_calls, tool_name, tool_call_id, timestamp)
@@ -159,6 +162,7 @@ class Database:
         async for row in rows:
             role = row["role"]
             text = (row["content"] or "").strip()
+            text = clean_text(text).strip()
 
             if row["tool_name"]:
                 # Assistant message with tool_use — keep text, skip tool_use block

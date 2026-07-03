@@ -68,6 +68,7 @@ class Runtime:
         self.renamed_to = ""
         self.deleted = None
         self.exported = False
+        self.memory_deleted = None
 
     @property
     def session_key(self):
@@ -108,6 +109,30 @@ class Runtime:
     async def export_session(self):
         self.exported = True
         return 1, "/tmp/export.jsonl"
+
+    async def memory_report(self):
+        return {
+            "providers": {
+                "builtin": {"provider": "FileMemoryProvider", "available": True, "entries": 1},
+                "external": {"provider": "", "available": False, "entries": 0},
+            },
+            "last_errors": {},
+        }
+
+    async def memory_entries(self, *, target: str = "all"):
+        return [{"id": "memory:1", "provider": "builtin", "target": "memory", "text": f"hello {target}"}]
+
+    async def memory_search(self, query: str, *, target: str = "all"):
+        return [{"id": "memory:1", "provider": "builtin", "target": "memory", "text": query}]
+
+    async def memory_entry(self, identifier: str, *, target: str = "all"):
+        if identifier == "memory:1":
+            return {"id": identifier, "provider": "builtin", "target": target, "text": "hello"}
+        return None
+
+    async def memory_delete(self, identifier: str, *, target: str = "all"):
+        self.memory_deleted = (identifier, target)
+        return identifier == "memory:1"
 
     async def clear_agent(self):
         self.clear_called = True
@@ -163,6 +188,28 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
     result = await handle_slash_command(runtime, "/allow write")
     assert "已授权 write" in result.response
     assert "write" in runtime.agent._destructive_allowed
+
+    result = await handle_slash_command(runtime, "/memory list")
+    assert result.handled
+    assert "记忆列表: 1 条" in result.response
+    assert "memory:1" in result.response
+
+    result = await handle_slash_command(runtime, "/memory search needle --target=memory")
+    assert "记忆搜索结果: 1 条" in result.response
+    assert "needle" in result.response
+
+    result = await handle_slash_command(runtime, "/memory search needle -t memory")
+    assert "needle memory" not in result.response
+
+    result = await handle_slash_command(runtime, "/memory show memory:1")
+    assert "记忆: memory:1" in result.response
+
+    result = await handle_slash_command(runtime, "/memory delete memory:1 -t external")
+    assert result.response == "已删除记忆: memory:1"
+    assert runtime.memory_deleted == ("memory:1", "external")
+
+    result = await handle_slash_command(runtime, "/memory doctor")
+    assert "Memory 诊断" in result.response
 
 
 @pytest.mark.asyncio
