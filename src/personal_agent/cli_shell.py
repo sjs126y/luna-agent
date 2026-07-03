@@ -27,6 +27,21 @@ class ShellRenderOptions:
     max_tool_summary_chars: int = 140
 
 
+@dataclass
+class ToolTraceItem:
+    index: int
+    tool_use_id: str
+    name: str
+    display_name: str
+    input_summary: str = ""
+    started_at: float = 0.0
+    status: str = "running"
+    output_summary: str = ""
+    error: str = ""
+    duration: float = 0.0
+    expandable: bool = False
+
+
 class TerminalRenderer(ConversationEventSink):
     def __init__(
         self,
@@ -50,6 +65,9 @@ class TerminalRenderer(ConversationEventSink):
         self._last_api_calls = 0
         self._input_open = False
         self._input_preframed = False
+        self._tool_seq = 0
+        self._active_tools: dict[str, ToolTraceItem] = {}
+        self._completed_tools: list[ToolTraceItem] = []
 
     async def emit(self, event: ConversationEvent) -> None:
         if event.type == "assistant_message":
@@ -80,20 +98,9 @@ class TerminalRenderer(ConversationEventSink):
             if self.options.verbose:
                 self._model_summary()
         elif event.type == "tool_start":
-            text = f"{event.data.get('tool_name', '')} 开始"
-            if self.options.verbose and event.data.get("input_summary"):
-                text += f" {self._short(event.data['input_summary'])}"
-            self._event_line("工具", text.strip(), style="yellow")
+            self.tool_start(event)
         elif event.type == "tool_end":
-            status = event.data.get("status", "")
-            summary = event.data.get("output_summary") or event.data.get("error") or ""
-            if summary:
-                summary = self._short(str(summary))
-            self._event_line(
-                "工具",
-                f"{event.data.get('tool_name', '')} {status} {summary}".strip(),
-                style="green" if status == "success" else "red",
-            )
+            self.tool_end(event)
         elif event.type == "retry":
             self._event_line("重试", event.message, style="yellow")
         elif event.type == "compression":
@@ -181,6 +188,51 @@ class TerminalRenderer(ConversationEventSink):
             renderables.append(self._block_bottom(style="blue"))
             self._print(Group(*renderables))
 
+    def tool_start(self, event: ConversationEvent) -> None:
+        tool_name = str(event.data.get("tool_name") or "tool")
+        tool_use_id = str(event.data.get("tool_use_id") or f"tool-{self._tool_seq + 1}")
+        self._tool_seq += 1
+        item = ToolTraceItem(
+            index=self._tool_seq,
+            tool_use_id=tool_use_id,
+            name=tool_name,
+            display_name=self._tool_display_name(tool_name),
+            input_summary=self._clean_inline(str(event.data.get("input_summary") or "")),
+            started_at=time.monotonic(),
+        )
+        self._active_tools[tool_use_id] = item
+        self._print(self._tool_start_text(item))
+
+    def tool_end(self, event: ConversationEvent) -> None:
+        tool_name = str(event.data.get("tool_name") or "tool")
+        tool_use_id = str(event.data.get("tool_use_id") or "")
+        item = self._active_tools.pop(tool_use_id, None)
+        if item is None:
+            self._tool_seq += 1
+            item = ToolTraceItem(
+                index=self._tool_seq,
+                tool_use_id=tool_use_id or f"tool-{self._tool_seq}",
+                name=tool_name,
+                display_name=self._tool_display_name(tool_name),
+                input_summary=self._clean_inline(str(event.data.get("input_summary") or "")),
+                started_at=time.monotonic(),
+            )
+            self._print(self._tool_start_text(item))
+        item.status = str(event.data.get("status") or "")
+        item.error = str(event.data.get("error") or "")
+        item.output_summary = str(event.data.get("output_summary") or "")
+        item.duration = float(event.data.get("duration") or 0.0)
+        if item.duration <= 0 and item.started_at:
+            item.duration = max(0.0, time.monotonic() - item.started_at)
+        self._completed_tools.append(item)
+        self._print(self._tool_result_text(item))
+
+    def stop_text(self, text: str) -> None:
+        self._event_line("停止", text or "已请求停止当前处理", style="yellow")
+
+    def multiline_cancelled(self) -> None:
+        self._print(Text("已取消多行输入。", style="dim"))
+
     def error(self, exc: Exception) -> None:
         self.error_text(f"本轮对话失败: {exc}")
 
@@ -238,6 +290,50 @@ class TerminalRenderer(ConversationEventSink):
         body.append(f"{label}: ", style=f"bold {style}")
         body.append(text, style=style)
         self._print(body)
+
+    def _tool_start_text(self, item: ToolTraceItem) -> Text:
+        failed = item.status not in {"", "running", "success"}
+        dot_style = "bright_magenta" if failed else "green"
+        body = Text()
+        body.append("● ", style=dot_style)
+        body.append(item.display_name, style="bright_white")
+        args = self._format_tool_args(item.input_summary)
+        if args:
+            body.append(args, style="dim")
+        return body
+
+    def _tool_result_text(self, item: ToolTraceItem) -> Text:
+        result, _ = self._truncate_result(item.error or item.output_summary or item.status)
+        if not result:
+            result = item.status or "done"
+        is_success = item.status == "success"
+        body = Text()
+        body.append("  └ ", style="dim")
+        body.append(result, style="dim" if is_success else "bright_magenta")
+        body.append(f" · {item.duration:.1f}s", style="dim")
+        return body
+
+    def _tool_display_name(self, name: str) -> str:
+        overrides = {
+            "web_search": "Web Search",
+            "web_fetch": "Web Fetch",
+            "file_write": "Write",
+            "file_read": "Read",
+            "file_edit": "Edit",
+            "execute_code": "Execute Code",
+            "bash": "Bash",
+        }
+        if name in overrides:
+            return overrides[name]
+        return " ".join(part.capitalize() for part in name.replace("-", "_").split("_") if part)
+
+    def _format_tool_args(self, summary: str) -> str:
+        summary = self._truncate_inline(summary, limit=80)
+        if not summary:
+            return ""
+        if summary.startswith("(") and summary.endswith(")"):
+            return summary
+        return f"({summary})"
 
     def _status_bar(self, runtime: CliChatRuntime, result: object | None = None) -> Text:
         status = self._status_text(runtime, result=result)
@@ -303,11 +399,41 @@ class TerminalRenderer(ConversationEventSink):
     def _short(self, text: str) -> str:
         if self.options.verbose:
             return text
-        value = " ".join(text.split())
+        value = self._clean_inline(text)
         limit = max(20, self.options.max_tool_summary_chars)
         if len(value) <= limit:
             return value
         return value[: limit - 3] + "..."
+
+    def _clean_inline(self, text: str) -> str:
+        return " ".join(str(text or "").split())
+
+    def _truncate_inline(self, text: str, *, limit: int) -> str:
+        value = self._clean_inline(text)
+        if len(value) <= limit:
+            return value
+        return value[: max(1, limit - 3)] + "..."
+
+    def _truncate_result(
+        self,
+        text: str,
+        *,
+        char_limit: int = 100,
+        line_limit: int = 2,
+    ) -> tuple[str, bool]:
+        raw = str(text or "")
+        lines = raw.splitlines()
+        truncated = False
+        if len(lines) > line_limit:
+            raw = " ".join(lines[:line_limit])
+            raw += f" ... +{len(lines) - line_limit} lines"
+            truncated = True
+        value = self._clean_inline(raw)
+        if len(value) > char_limit:
+            hidden = len(value) - char_limit
+            value = value[: max(1, char_limit - 3)] + f"... +{hidden} chars"
+            truncated = True
+        return value, truncated
 
     def _context_window(self, runtime: CliChatRuntime) -> int:
         service = getattr(runtime, "conversation_service", None)
@@ -381,15 +507,15 @@ class CliShell:
         self.renderer.banner(self.runtime)
         while True:
             try:
-                text = await _resolve_input(self.input_fn(self.renderer.prompt(self.runtime)))
+                text = await self._read_turn_text()
             except (EOFError, KeyboardInterrupt):
                 self.renderer.close_input_area()
                 print()
                 break
-            text = text.strip()
-            if not text or text.lower() in {"exit", "quit"}:
-                self.renderer.close_input_area()
+            if text is None:
                 break
+            if text == "":
+                continue
             try:
                 await self.run_once(text)
             except Exception as exc:
@@ -399,15 +525,15 @@ class CliShell:
         self.renderer.banner(self.runtime)
         while True:
             try:
-                text = _resolve_input_sync(self.input_fn(self.renderer.prompt(self.runtime)), loop)
+                text = self._read_turn_text_sync(loop)
             except (EOFError, KeyboardInterrupt):
                 self.renderer.close_input_area()
                 print()
                 break
-            text = text.strip()
-            if not text or text.lower() in {"exit", "quit"}:
-                self.renderer.close_input_area()
+            if text is None:
                 break
+            if text == "":
+                continue
             try:
                 loop.run_until_complete(self.run_once(text))
             except Exception as exc:
@@ -419,9 +545,91 @@ class CliShell:
             self.renderer.command_response(command_result)
             return command_result
         self.renderer.begin_turn()
-        result = await self.runtime.run_message_events(text, event_sink=self.renderer)
+        result = await self._run_message_with_interrupt(text)
         self.renderer.update_result(result)
         return result.final_response
+
+    async def _run_message_with_interrupt(self, text: str):
+        task = asyncio.create_task(self.runtime.run_message_events(text, event_sink=self.renderer))
+        try:
+            return await asyncio.shield(task)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            message = await self._request_stop()
+            self.renderer.stop_text(message)
+            return await asyncio.shield(task)
+
+    async def _request_stop(self) -> str:
+        stop_agents = getattr(self.runtime, "stop_agents", None)
+        if stop_agents is not None:
+            value = stop_agents()
+            if inspect.isawaitable(value):
+                value = await value
+            return str(value or "已请求停止当前处理")
+        try:
+            value = await self.runtime.handle_command("/stop")
+        except Exception:
+            return "已请求停止当前处理"
+        return str(value or "已请求停止当前处理")
+
+    async def _read_turn_text(self) -> str | None:
+        value = await _resolve_input(self.input_fn(self.renderer.prompt(self.runtime)))
+        text = value.strip()
+        if not text or text.lower() in {"exit", "quit"}:
+            self.renderer.close_input_area()
+            return None
+        if text == '"""':
+            return await self._read_multiline_text()
+        return text
+
+    async def _read_multiline_text(self) -> str | None:
+        lines: list[str] = []
+        while True:
+            try:
+                line = await _resolve_input(self.input_fn("│ "))
+            except KeyboardInterrupt:
+                self.renderer.close_input_area()
+                self.renderer.multiline_cancelled()
+                return ""
+            except EOFError:
+                self.renderer.close_input_area()
+                return None
+            if line == '"""':
+                return "\n".join(lines).rstrip("\n")
+            if line == "/cancel":
+                self.renderer.close_input_area()
+                self.renderer.multiline_cancelled()
+                return ""
+            lines.append(line)
+
+    def _read_turn_text_sync(self, loop: asyncio.AbstractEventLoop) -> str | None:
+        value = _resolve_input_sync(self.input_fn(self.renderer.prompt(self.runtime)), loop)
+        text = value.strip()
+        if not text or text.lower() in {"exit", "quit"}:
+            self.renderer.close_input_area()
+            return None
+        if text == '"""':
+            return self._read_multiline_text_sync(loop)
+        return text
+
+    def _read_multiline_text_sync(self, loop: asyncio.AbstractEventLoop) -> str | None:
+        lines: list[str] = []
+        while True:
+            try:
+                line = _resolve_input_sync(self.input_fn("│ "), loop)
+            except KeyboardInterrupt:
+                self.renderer.close_input_area()
+                self.renderer.multiline_cancelled()
+                return ""
+            except EOFError:
+                self.renderer.close_input_area()
+                return None
+            if line == '"""':
+                return "\n".join(lines).rstrip("\n")
+            if line == "/cancel":
+                self.renderer.close_input_area()
+                self.renderer.multiline_cancelled()
+                return ""
+            lines.append(line)
 
 
 async def run_cli_shell(

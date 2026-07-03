@@ -441,6 +441,8 @@ def help_text(runtime: CommandRuntime | None = None) -> str:
         "/<skill-name> [message] - 加载技能后发送消息",
         "exit / quit / 空行 - 退出 CLI",
     ]
+    if runtime is not None and "cli" in _plugin_command_scopes(runtime):
+        lines.insert(-1, '""" - 进入多行输入，再输入 """ 提交，/cancel 取消')
     plugin_lines = _plugin_command_help_lines(runtime)
     if plugin_lines:
         lines.extend(["", "插件命令:", *plugin_lines])
