@@ -117,7 +117,12 @@ class TerminalRenderer(ConversationEventSink):
         self._print(Text("输入 exit/quit 或空行退出，/help 查看命令。", style="dim"))
 
     def prompt(self, runtime: CliChatRuntime) -> str:
-        return f"\n{runtime.session_key} >>> "
+        self.input_prompt(runtime)
+        return "› "
+
+    def input_prompt(self, runtime: CliChatRuntime) -> None:
+        self._print(Text(self._status_text(runtime), style="bold blue"))
+        self._rule("─", style="orange3")
 
     def user_message(self, text: str) -> None:
         self._turn_started_at = time.monotonic()
@@ -133,12 +138,10 @@ class TerminalRenderer(ConversationEventSink):
 
     def assistant_message(self, text: str) -> None:
         lines = text.splitlines() or [text]
-        renderables = [Text("assistant", style="bold cyan")]
+        renderables = [self._block_top("$ PersonalAgent", style="cyan")]
         for line in lines:
-            body = Text()
-            body.append("│ ", style="cyan")
-            body.append(line)
-            renderables.append(body)
+            renderables.append(Text(f"  {line}"))
+        renderables.append(self._block_bottom(style="cyan"))
         self._print(Group(*renderables))
 
     def command_response(self, text: str) -> None:
@@ -150,15 +153,10 @@ class TerminalRenderer(ConversationEventSink):
             body.append(text)
             self._print(body)
         else:
-            self._print(
-                Panel(
-                    text,
-                    title="命令",
-                    title_align="left",
-                    border_style="blue",
-                    box=box.ROUNDED,
-                )
-            )
+            renderables = [self._block_top("命令", style="blue")]
+            renderables.extend(Text(f"  {line}") for line in text.splitlines())
+            renderables.append(self._block_bottom(style="blue"))
+            self._print(Group(*renderables))
 
     def error(self, exc: Exception) -> None:
         self.error_text(f"本轮对话失败: {exc}")
@@ -175,6 +173,9 @@ class TerminalRenderer(ConversationEventSink):
         )
 
     def status_line(self, runtime: CliChatRuntime, result: object | None = None) -> None:
+        self._print(Text(self._status_text(runtime, result=result), style="bold blue"))
+
+    def _status_text(self, runtime: CliChatRuntime, result: object | None = None) -> str:
         settings = runtime.settings
         provider = getattr(settings, "llm_provider", "")
         model = getattr(settings, "llm_model", "")
@@ -194,7 +195,7 @@ class TerminalRenderer(ConversationEventSink):
         if self._last_input_tokens or self._last_output_tokens:
             parts.append(f"in={self._last_input_tokens} out={self._last_output_tokens}")
         parts.append(f"{duration:.1f}s")
-        self._event_line("状态", " | ".join(parts), style="blue")
+        return " | ".join(parts)
 
     def _event_line(self, label: str, text: str, *, style: str = "dim") -> None:
         body = Text()
@@ -215,6 +216,16 @@ class TerminalRenderer(ConversationEventSink):
     def _rule(self, char: str, *, style: str) -> None:
         width = self._console_width()
         self._print(Text(char * min(width, 72), style=style))
+
+    def _block_top(self, title: str, *, style: str) -> Text:
+        width = self._console_width()
+        prefix = f"╭─ {title} "
+        line = "─" * max(4, min(width, 72) - len(prefix))
+        return Text(prefix + line, style=style)
+
+    def _block_bottom(self, *, style: str) -> Text:
+        width = self._console_width()
+        return Text("╰" + "─" * max(4, min(width, 72) - 1), style=style)
 
     def _print(self, value) -> None:
         if self.console is not None:
@@ -310,7 +321,6 @@ class CliShell:
             return command_result
         self.renderer.user_message(text)
         result = await self.runtime.run_message_events(text, event_sink=self.renderer)
-        self.renderer.status_line(self.runtime, result)
         return result.final_response
 
 

@@ -117,8 +117,8 @@ def test_chat_repl_entrypoint_handles_commands_and_closes_runtime(tmp_path, monk
     assert "echo:你好" in result.output
     assert "上下文窗口" in result.output
     assert "会话已切换: cli:work:local" in result.output
-    assert "cli:default:local >>> " in result.output
-    assert "cli:work:local >>> " in result.output
+    assert "deepseek-chat" in result.output
+    assert "› " in result.output
 
 
 def test_serve_dry_run_bootstraps_without_starting_platforms(tmp_path, monkeypatch):

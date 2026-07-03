@@ -47,6 +47,18 @@ def _renderer(options: ShellRenderOptions | None = None):
     return TerminalRenderer(console=console, options=options), stream
 
 
+def test_cli_shell_prompt_renders_status_input_line():
+    renderer, stream = _renderer()
+    runtime = FakeRuntime()
+
+    prompt = renderer.prompt(runtime)
+
+    text = stream.getvalue()
+    assert prompt == "› "
+    assert "deepseek-chat" in text
+    assert "─" in text
+
+
 @pytest.mark.asyncio
 async def test_cli_shell_handles_command_without_running_turn():
     renderer, stream = _renderer()
@@ -75,10 +87,12 @@ async def test_cli_shell_renders_message_events():
     assert "●" in text
     assert "你" in text
     assert "你好" in text
-    assert "assistant" in text
-    assert "│ echo:你好" in text
+    assert "$ PersonalAgent" in text
+    assert "│ echo:你好" not in text
+    assert "  echo:你好" in text
+    assert "╭─ $ PersonalAgent" in text
+    assert "╰" in text
     assert "echo:你好" in text
-    assert "状态:" in text
     assert "模型:" not in text
 
 
@@ -145,7 +159,7 @@ async def test_cli_shell_run_accepts_async_input_function():
     await shell.run()
 
     assert "help text" in stream.getvalue()
-    assert any(item == "\ncli:default:local >>> " for item in output)
+    assert any(item == "› " for item in output)
     assert runtime.messages == []
 
 
@@ -169,4 +183,4 @@ def test_cli_shell_sync_loop_handles_input_function():
         loop.close()
 
     assert "help text" in stream.getvalue()
-    assert any(item == "\ncli:default:local >>> " for item in output)
+    assert any(item == "› " for item in output)
