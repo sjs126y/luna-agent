@@ -20,6 +20,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.widgets import Frame, TextArea
 from rich import box
 from rich.console import Console, Group

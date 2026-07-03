@@ -460,6 +460,16 @@ def test_spinner_enabled_on_plain_terminal():
     assert renderer._spinner_enabled() is True
 
 
+def test_cli_shell_module_exposes_run_dependencies():
+    """run() references module-level names (patch_stdout, PromptSession, …) that
+    the interactive path uses but automated tests bypass via input_fn. A missing
+    import here only surfaces at real-terminal startup, so guard the names."""
+    import personal_agent.cli_shell as shell_mod
+
+    for name in ("patch_stdout", "PromptSession", "Application", "Live"):
+        assert hasattr(shell_mod, name), f"cli_shell is missing {name}"
+
+
 def test_ctrl_j_inserts_newline_enter_submits():
     from prompt_toolkit.keys import Keys
 
