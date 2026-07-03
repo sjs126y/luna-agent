@@ -328,6 +328,9 @@ class TerminalRenderer(ConversationEventSink):
         )
 
     def prompt(self, runtime: CliChatRuntime) -> str:
+        # A thin rule separates the previous turn from the input region, then
+        # the status bar sits just above the prompt line.
+        self._print(Text("─" * self._line_width(), style="dim"))
         self._print(self._status_bar(runtime))
         return "› "
 
@@ -357,8 +360,11 @@ class TerminalRenderer(ConversationEventSink):
                 border_style="cyan",
                 box=box.ROUNDED,
                 padding=(0, 1),
+                expand=False,  # shrink the box to the widest line, not full width
             )
         )
+        # Blank line after the reply to separate it from the next user turn.
+        self._print_impl(Text(""))
 
     def command_response(self, text: str) -> None:
         if not text:
@@ -918,7 +924,7 @@ class CliShell:
             self._session = PromptSession(
                 history=self._build_history(),
                 completer=SlashCompleter(SLASH_COMMANDS),
-                complete_while_typing=False,
+                complete_while_typing=True,  # slash menu pops as you type '/'
                 multiline=True,
                 key_bindings=self._key_bindings(),
             )
@@ -939,9 +945,20 @@ class CliShell:
         def _(event) -> None:
             event.current_buffer.insert_text("\n")
 
-        @bindings.add("enter")  # Enter → submit
+        @bindings.add("enter")  # Enter → accept the open completion, else submit
         def _(event) -> None:
-            event.current_buffer.validate_and_handle()
+            buf = event.current_buffer
+            state = buf.complete_state
+            if state is not None:
+                # Menu is open: accept the highlighted item, or the first one if
+                # nothing is highlighted yet (so a bare '/' + Enter picks top).
+                completion = state.current_completion or (
+                    state.completions[0] if state.completions else None
+                )
+                if completion is not None:
+                    buf.apply_completion(completion)
+                    return
+            buf.validate_and_handle()
 
         @bindings.add("c-o")  # Ctrl+O → signal _read_line to open the expand overlay
         def _(event) -> None:

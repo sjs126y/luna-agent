@@ -89,7 +89,10 @@ def test_cli_shell_prompt_renders_status_input_line():
 
     text = stream.getvalue()
     assert prompt == "› "
-    assert "deepseek-chat" in text
+    # prompt() now draws a thin separator above the input; the status text
+    # moved to prompt_toolkit's bottom_toolbar (fed by _status_text).
+    assert "─" in text
+    assert "deepseek-chat" in renderer._status_text(runtime)
 
 
 @pytest.mark.asyncio
@@ -123,13 +126,12 @@ async def test_cli_shell_renders_message_events():
     assert "echo:你好" in text
     assert "模型:" not in text
 
-    stream.seek(0)
-    stream.truncate(0)
-    assert renderer.prompt(runtime) == "› "
-    prompt_text = stream.getvalue()
-    assert "api 1" in prompt_text
-    assert "in 10 out 3" in prompt_text
-    assert "$ deepseek-chat" in prompt_text
+    # Status now lives in the bottom_toolbar (built from _status_text), no
+    # longer printed inline by prompt(); assert on the status text directly.
+    status = renderer._status_text(runtime)
+    assert "api 1" in status
+    assert "in 10 out 3" in status
+    assert "deepseek-chat" in status
 
 
 @pytest.mark.asyncio
@@ -148,7 +150,9 @@ async def test_cli_shell_run_echoes_user_input_and_reply():
     await shell.run()
 
     text = stream.getvalue()
-    assert "$ deepseek-chat" in text
+    # prompt() now draws a thin rule wrapping the input; the status bar moved to
+    # prompt_toolkit's bottom_toolbar (not used on the input_fn path).
+    assert "─" in text
     # input_fn path does not use prompt_toolkit, so the shell echoes the user line
     assert "› 你好" in text
     assert "Personal Agent" in text
@@ -164,8 +168,11 @@ def test_cli_shell_prompt_status_bar_only():
 
     text = stream.getvalue()
     assert prompt == "› "
-    # status bar prints, but no input frame / orange rule is drawn anymore
-    assert "deepseek-chat" in text
+    # prompt() now draws only a thin rule wrapping the input; the status text
+    # moved into prompt_toolkit's bottom_toolbar (see _status_text).
+    assert "─" in text
+    assert "deepseek-chat" in renderer._status_text(runtime)
+    # no input frame / orange rule cursor tricks are drawn anymore
     assert "\x1b[1A" not in text
     assert "\x1b[2C" not in text
 
@@ -488,16 +495,35 @@ def test_ctrl_j_inserts_newline_enter_submits():
     ctrl_j.handler(newline_event)
     assert inserted == ["\n"]
 
-    # Plain Enter submits the current buffer.
+    # Plain Enter (no completion menu open) submits the current buffer.
     plain_enter = keymap[(Keys.ControlM,)]
     submitted: list[bool] = []
     submit_event = SimpleNamespace(
         current_buffer=SimpleNamespace(
-            validate_and_handle=lambda: submitted.append(True)
+            complete_state=None,
+            validate_and_handle=lambda: submitted.append(True),
         )
     )
     plain_enter.handler(submit_event)
     assert submitted == [True]
+
+    # Enter with the completion menu open accepts the highlighted item (or the
+    # first one if none is highlighted) instead of submitting.
+    applied: list[object] = []
+    first = SimpleNamespace(text="/help")
+    menu_event = SimpleNamespace(
+        current_buffer=SimpleNamespace(
+            complete_state=SimpleNamespace(
+                current_completion=None,
+                completions=[first],
+            ),
+            apply_completion=applied.append,
+            validate_and_handle=lambda: submitted.append(True),
+        )
+    )
+    plain_enter.handler(menu_event)
+    assert applied == [first]
+    assert submitted == [True]  # unchanged: no extra submit fired
 
 
 @pytest.mark.asyncio
