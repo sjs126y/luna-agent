@@ -547,3 +547,89 @@ def test_cli_shell_sync_loop_handles_input_function():
 
     assert "help text" in stream.getvalue()
     assert any(item == "› " for item in output)
+
+
+# ── streaming render (Phase 3) ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_streaming_deltas_then_final_markdown_no_double_render():
+    """Live text preview is transient; the final assistant_message renders the
+    reply once as markdown. The streamed plain text must not linger as a second
+    copy in the transcript."""
+    renderer, stream = _terminal_renderer()
+
+    await renderer.emit(ConversationEvent(type="turn_start"))
+    for ch in "Hello":
+        await renderer.emit(ConversationEvent(type="assistant_delta", data={"chunk": ch}))
+    await renderer.emit(ConversationEvent(type="assistant_message", message="Hello"))
+    await renderer.emit(ConversationEvent(type="turn_end"))
+
+    text = stream.getvalue()
+    # Final reply is present exactly once (inside the markdown panel).
+    assert text.count("Hello") == 1
+    assert "Personal Agent" in text
+
+
+@pytest.mark.asyncio
+async def test_thinking_deltas_leave_collapsed_summary():
+    renderer, stream = _terminal_renderer()
+
+    await renderer.emit(ConversationEvent(type="turn_start"))
+    await renderer.emit(ConversationEvent(type="thinking_delta", data={"chunk": "推理过程"}))
+    await renderer.emit(ConversationEvent(type="assistant_message", message="答案"))
+    await renderer.emit(ConversationEvent(type="turn_end"))
+
+    text = stream.getvalue()
+    # The raw chain-of-thought is not dumped; only a short summary remains.
+    assert "推理过程" not in text
+    assert "已思考" in text
+    assert "答案" in text
+
+
+def test_renderer_wants_deltas_only_on_real_terminal():
+    live, _ = _terminal_renderer()
+    assert live.wants_deltas is True
+    # StringIO-backed (non-terminal) renderer opts out.
+    plain, _ = _renderer()
+    assert plain.wants_deltas is False
+
+
+# ── Ctrl+O expand tool output (Phase 4) ────────────────
+
+@pytest.mark.asyncio
+async def test_ctrl_o_expands_last_tool_full_output():
+    renderer, stream = _renderer()
+
+    await renderer.emit(ConversationEvent(
+        type="tool_end",
+        data={
+            "tool_name": "bash",
+            "tool_use_id": "b1",
+            "status": "success",
+            "output_summary": "line1 ... +40 chars",
+            "full_output": "line1\nline2\nline3-full-detail",
+            "duration": 0.2,
+        },
+    ))
+    # Before expand: only the truncated summary is shown.
+    assert "line3-full-detail" not in stream.getvalue()
+
+    renderer.expand_last_output()
+    text = stream.getvalue()
+    assert "line3-full-detail" in text
+    assert "完整输出" in text
+
+
+def test_expand_with_no_tool_output_is_graceful():
+    renderer, stream = _renderer()
+    renderer.expand_last_output()
+    assert "没有可展开" in stream.getvalue()
+
+
+def test_ctrl_o_binding_present():
+    from prompt_toolkit.keys import Keys
+
+    renderer, _ = _renderer()
+    shell = CliShell(FakeRuntime(), renderer=renderer)
+    keymap = {tuple(b.keys) for b in shell._key_bindings().bindings}
+    assert (Keys.ControlO,) in keymap

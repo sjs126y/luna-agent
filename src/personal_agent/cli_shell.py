@@ -96,6 +96,7 @@ class TerminalRenderer(ConversationEventSink):
         self._live = None  # rich Live handle while streaming a reply
         self._stream_text = ""       # accumulated answer text this LLM call
         self._stream_thinking = ""   # accumulated thinking text this LLM call
+        self._last_expandable = None  # (display_name, full_output) for Ctrl+O
 
     @property
     def wants_deltas(self) -> bool:
@@ -212,16 +213,20 @@ class TerminalRenderer(ConversationEventSink):
     async def emit(self, event: ConversationEvent) -> None:
         if event.type == "assistant_delta":
             chunk = event.data.get("chunk") or ""
-            if chunk and self._ensure_live():
+            if chunk:
+                # Accumulate unconditionally; only the live preview is gated, so
+                # state survives even if the terminal can't host a Live render.
                 self._stream_text += chunk
-                self._update_live()
+                if self._ensure_live():
+                    self._update_live()
             return
 
         if event.type == "thinking_delta":
             chunk = event.data.get("chunk") or ""
-            if chunk and self._ensure_live():
+            if chunk:
                 self._stream_thinking += chunk
-                self._update_live()
+                if self._ensure_live():
+                    self._update_live()
             return
 
         if event.type == "assistant_message":

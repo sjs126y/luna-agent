@@ -8,6 +8,7 @@ from personal_agent.agent.loop import run_conversation
 from personal_agent.agent.retry import RetryState
 from personal_agent.models.messages import NormalizedResponse
 from personal_agent.llm.provider import ProviderProfile
+from personal_agent.conversation.events import ConversationEventSink
 
 
 class MockTransport:
@@ -265,3 +266,84 @@ async def test_retry_state_reset():
     assert rs.empty_content_retries == 0
     assert rs.invalid_tool_retries == 0
     assert not rs.post_tool_empty_retried
+
+
+# ── streaming delta events (Phase 2 platform-safe gate) ────────────────
+
+class DeltaTransport(MockTransport):
+    """Transport that fires on_delta like a real streaming backend, then
+    returns the assembled response."""
+
+    def __init__(self, text="Hi", thinking=""):
+        super().__init__([
+            NormalizedResponse(text=text, finish_reason="end_turn",
+                               usage={"input_tokens": 1, "output_tokens": 1}),
+        ])
+        self._text = text
+        self._thinking = thinking
+
+    async def call(self, messages, system_prompt="", tools=None, max_tokens=4096,
+                   stream=False, on_delta=None):
+        if on_delta is not None:
+            if self._thinking:
+                await on_delta("thinking", self._thinking)
+            for ch in self._text:
+                await on_delta("text", ch)
+        return await super().call(messages, system_prompt, tools, max_tokens, stream)
+
+
+class DeltaSink(ConversationEventSink):
+    wants_deltas = True
+
+    def __init__(self):
+        self.events = []
+
+    async def emit(self, event):
+        self.events.append(event)
+
+
+class PlainSink(ConversationEventSink):
+    """Platform-style sink: wants_deltas defaults False."""
+
+    def __init__(self):
+        self.events = []
+
+    async def emit(self, event):
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_streaming_emits_deltas_when_sink_opts_in(provider):
+    transport = DeltaTransport(text="Hey", thinking="pondering")
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi")
+    sink = DeltaSink()
+
+    result = await run_conversation(agent, ctx, event_sink=sink)
+
+    kinds = [e.type for e in sink.events]
+    assert "thinking_delta" in kinds
+    assert "assistant_delta" in kinds
+    text_deltas = [e for e in sink.events if e.type == "assistant_delta"]
+    assert len(text_deltas) == 3  # "Hey" → 3 chars
+    assert "".join(e.data["chunk"] for e in text_deltas) == "Hey"
+    assert result["completed"]
+
+
+@pytest.mark.asyncio
+async def test_no_deltas_when_sink_opts_out(provider):
+    """Platform path: wants_deltas defaults False, so on_delta is never wired
+    and no delta events are produced even though the transport supports them."""
+    transport = DeltaTransport(text="Hey", thinking="pondering")
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi")
+    sink = PlainSink()
+
+    result = await run_conversation(agent, ctx, event_sink=sink)
+
+    kinds = [e.type for e in sink.events]
+    assert "assistant_delta" not in kinds
+    assert "thinking_delta" not in kinds
+    # Final answer still arrives via assistant_message
+    assert "assistant_message" in kinds
+    assert result["completed"]
