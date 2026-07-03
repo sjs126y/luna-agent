@@ -12,10 +12,15 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.widgets import Frame, TextArea
 from rich import box
 from rich.console import Console, Group
 from rich.live import Live
@@ -25,6 +30,11 @@ from rich.text import Text
 
 from personal_agent.cli_chat import CliChatRuntime, create_cli_runtime
 from personal_agent.conversation.events import ConversationEvent, ConversationEventSink
+
+# Sentinel returned by PromptSession when Ctrl+O is pressed with expandable content.
+# _read_line() detects this and launches the overlay Application instead of
+# treating it as user input.
+_EXPAND_SENTINEL = "\x00__expand__"
 
 # Core slash commands offered by the input completer, with one-line hints
 # shown in the completion menu. Skills are added dynamically at runtime.
@@ -859,8 +869,25 @@ class CliShell:
         if self.input_fn is not None:
             return await _resolve_input(self.input_fn(prompt_text))
         if self._uses_prompt_toolkit():
-            return await self._prompt_session().prompt_async(prompt_text)
+            # Ctrl+O exits the prompt with a sentinel; we open a scrollable
+            # overlay, then re-prompt so the input line comes back unchanged.
+            while True:
+                result = await self._prompt_session().prompt_async(prompt_text)
+                if result != _EXPAND_SENTINEL:
+                    return result
+                await self._show_expand_overlay()
         return await _read_input(prompt_text)
+
+    async def _show_expand_overlay(self) -> None:
+        expandable = getattr(self.renderer, "_last_expandable", None)
+        if not expandable:
+            return
+        name, content = expandable
+        try:
+            await self._build_overlay_app(name, content).run_async()
+        except Exception:
+            # Fall back to inline printing if the overlay can't run.
+            self.renderer.expand_last_output()
 
     def _uses_prompt_toolkit(self) -> bool:
         if self.input_fn is not None:
@@ -906,11 +933,64 @@ class CliShell:
         def _(event) -> None:
             event.current_buffer.validate_and_handle()
 
-        @bindings.add("c-o")  # Ctrl+O → expand/collapse the last tool output
+        @bindings.add("c-o")  # Ctrl+O → signal _read_line to open the expand overlay
         def _(event) -> None:
-            self.renderer.expand_last_output()
+            if self.renderer._last_expandable is not None:
+                event.app.exit(result=_EXPAND_SENTINEL)
+            # Nothing to expand → silently ignore.
 
         return bindings
+
+    def _build_overlay_app(self, name: str, content: str) -> Application:
+        """Build a short-lived read-only Application that overlays the terminal.
+
+        The user can scroll the content with arrow keys / j-k / Ctrl+D/U and
+        dismiss it with Esc or q.  The caller awaits ``app.run_async()`` and
+        control returns to the PromptSession once the user closes it.
+        """
+        kb = KeyBindings()
+
+        @kb.add("escape")
+        @kb.add("q")
+        @kb.add("c-c")
+        def _close(event) -> None:
+            event.app.exit()
+
+        # j/k and arrow keys are handled natively by TextArea (scrollable=True).
+
+        # Clamp overlay height: leave at least 3 lines for context below.
+        import shutil
+        term_height = shutil.get_terminal_size().lines
+        content_lines = len(content.splitlines()) + 2  # +2 for frame borders
+        overlay_height = max(5, min(content_lines, term_height - 4, 30))
+
+        text_area = TextArea(
+            text=content,
+            read_only=True,
+            scrollbar=True,
+            focusable=True,
+            height=overlay_height,
+        )
+
+        toolbar_text = HTML(" <b>↑↓</b> 滚动  <b>Esc / q</b> 关闭")
+        toolbar = Window(
+            content=FormattedTextControl(toolbar_text),
+            height=1,
+            style="class:bottom-toolbar",
+        )
+
+        body = HSplit([
+            Frame(body=text_area, title=f" {name} "),
+            toolbar,
+        ])
+
+        layout = Layout(container=body, focused_element=text_area)
+        return Application(
+            layout=layout,
+            key_bindings=kb,
+            mouse_support=False,
+            full_screen=False,
+        )
 
 
 async def run_cli_shell(

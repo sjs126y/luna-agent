@@ -637,3 +637,73 @@ def test_ctrl_o_binding_present():
     shell = CliShell(FakeRuntime(), renderer=renderer)
     keymap = {tuple(b.keys) for b in shell._key_bindings().bindings}
     assert (Keys.ControlO,) in keymap
+
+
+# ── Ctrl+O overlay Application (Phase 6) ────────────────
+
+def test_build_overlay_app_holds_full_content():
+    """The overlay Application embeds the untruncated content in a read-only buffer."""
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.buffer import Buffer
+
+    renderer, _ = _renderer()
+    shell = CliShell(FakeRuntime(), renderer=renderer)
+    content = "line1\nline2\nline3-full-detail"
+    app = shell._build_overlay_app("Bash", content)
+    assert isinstance(app, Application)
+    # The full content lives in one of the app's buffers, untruncated.
+    buffer_texts = [
+        c.buffer.text for c in app.layout.find_all_controls()
+        if isinstance(getattr(c, "buffer", None), Buffer)
+    ]
+    assert any("line3-full-detail" in t for t in buffer_texts)
+
+
+def test_ctrl_o_exits_prompt_with_sentinel_only_when_expandable():
+    """Ctrl+O signals the read loop via a sentinel only if something can expand."""
+    from prompt_toolkit.keys import Keys
+
+    from personal_agent.cli_shell import _EXPAND_SENTINEL
+
+    renderer, _ = _renderer()
+    shell = CliShell(FakeRuntime(), renderer=renderer)
+
+    class FakeEvent:
+        def __init__(self):
+            self.exited_with = "__none__"
+
+            class _App:
+                def exit(inner, result=None):
+                    self.exited_with = result
+
+                def invalidate(inner):
+                    pass
+
+            self.app = _App()
+
+    binding = next(
+        b for b in shell._key_bindings().bindings
+        if tuple(b.keys) == (Keys.ControlO,)
+    )
+
+    # Nothing expandable → no exit.
+    renderer._last_expandable = None
+    ev = FakeEvent()
+    binding.call(ev)
+    assert ev.exited_with == "__none__"
+
+    # Something expandable → exit with sentinel.
+    renderer._last_expandable = ("Bash", "full output")
+    ev = FakeEvent()
+    binding.call(ev)
+    assert ev.exited_with == _EXPAND_SENTINEL
+
+
+@pytest.mark.asyncio
+async def test_show_expand_overlay_noop_without_content():
+    renderer, stream = _renderer()
+    shell = CliShell(FakeRuntime(), renderer=renderer)
+    renderer._last_expandable = None
+    # Should return without attempting to run an Application.
+    await shell._show_expand_overlay()
+    assert stream.getvalue() == ""
