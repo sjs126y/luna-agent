@@ -1017,9 +1017,15 @@ class CliShell:
 
         def _title() -> HTML:
             row = text_area.document.cursor_position_row + 1
+            left = f" {name} · 完整输出"
+            right = f"{row}/{total_lines} 行 "
+            # Right-align the counter; CJK glyphs are double-width, so measure
+            # display columns rather than character count.
+            width = self.renderer._console_width()
+            gap = max(2, width - _display_width(left) - _display_width(right))
             return HTML(
                 f" <b>{name}</b> · 完整输出"
-                f"<style fg='#888888'>{'':>4}{row}/{total_lines} 行</style>"
+                f"{' ' * gap}<style fg='#888888'>{row}/{total_lines} 行</style> "
             )
 
         title_bar = Window(
@@ -1064,6 +1070,16 @@ def run_cli_shell_sync(
 ) -> None:
     _configure_stdout()
     asyncio.run(run_cli_shell(session_name=session_name, options=options))
+
+
+def _display_width(text: str) -> int:
+    """Approximate terminal columns for a string, counting CJK glyphs as two."""
+    import unicodedata
+
+    width = 0
+    for ch in text:
+        width += 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+    return width
 
 
 async def _read_input(prompt: str) -> str:
