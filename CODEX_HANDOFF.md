@@ -76,7 +76,7 @@
 
 - 新增依赖 `prompt-toolkit`
 - 真实终端 REPL 使用 `PromptSession.prompt_async()` + `patch_stdout(raw=True)` 读取输入
-- 输入等待期间的下橙线由 `prompt_toolkit` 的 `bottom_toolbar` 临时显示，提交后由 renderer 写入 transcript
+- 输入等待期间使用自定义 `prompt_toolkit.Application` 显示输入行和紧贴其下方的橙色下边线，提交后由 renderer 写入 transcript
 - 移除了真实终端下预画输入底线再用 `\x1b[1A` / `\x1b[2C` 回退光标的 hack
 - 自定义 `input_fn`、非 TTY、测试路径仍保留轻量输入逻辑
 - 目标是让 AI/工具输出稳定出现在两次输入之间，不再在终端底部吞线或把光标顶到输入框外

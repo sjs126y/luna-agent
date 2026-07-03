@@ -10,9 +10,16 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.application import Application
+from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.processors import BeforeInput
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich import box
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -156,7 +163,7 @@ class TerminalRenderer(ConversationEventSink):
             self._input_open = False
             self._input_preframed = False
 
-    def input_bottom_toolbar(self) -> ANSI:
+    def input_bottom_rule(self) -> ANSI:
         line = "─" * self._line_width()
         if self.options.color:
             return ANSI(f"\x1b[38;5;208m{line}\x1b[0m")
@@ -558,7 +565,7 @@ class CliShell:
         self.runtime = runtime
         self.input_fn = input_fn
         self.renderer = renderer or TerminalRenderer()
-        self._prompt_session: PromptSession[str] | None = None
+        self._framed_prompt: _FramedPrompt | None = None
 
     async def run(self) -> None:
         self.renderer.banner(self.runtime)
@@ -654,10 +661,7 @@ class CliShell:
         if self.input_fn is not None:
             return await _resolve_input(self.input_fn(prompt_text))
         if self._uses_prompt_toolkit():
-            return await self._prompt().prompt_async(
-                prompt_text,
-                bottom_toolbar=self.renderer.input_bottom_toolbar(),
-            )
+            return await self._prompt().read(prompt_text)
         return await _read_input(prompt_text)
 
     def _uses_prompt_toolkit(self) -> bool:
@@ -668,10 +672,62 @@ class CliShell:
             return False
         return bool(getattr(console, "is_terminal", False))
 
-    def _prompt(self) -> PromptSession[str]:
-        if self._prompt_session is None:
-            self._prompt_session = PromptSession()
-        return self._prompt_session
+    def _prompt(self) -> "_FramedPrompt":
+        if self._framed_prompt is None:
+            self._framed_prompt = _FramedPrompt(self.renderer)
+        return self._framed_prompt
+
+
+class _FramedPrompt:
+    def __init__(self, renderer: TerminalRenderer) -> None:
+        self.renderer = renderer
+
+    async def read(self, prompt_text: str) -> str:
+        buffer = Buffer(multiline=False)
+        control = BufferControl(
+            buffer=buffer,
+            input_processors=[BeforeInput(prompt_text)],
+        )
+        bindings = KeyBindings()
+
+        @bindings.add("enter")
+        def _(event) -> None:
+            event.app.exit(result=buffer.text)
+
+        @bindings.add("c-c")
+        def _(event) -> None:
+            event.app.exit(exception=KeyboardInterrupt)
+
+        @bindings.add("c-d")
+        def _(event) -> None:
+            if buffer.text:
+                buffer.delete_before_cursor(count=1)
+                return
+            event.app.exit(exception=EOFError)
+
+        app = Application(
+            layout=Layout(
+                HSplit(
+                    [
+                        Window(
+                            control,
+                            height=Dimension.exact(1),
+                            dont_extend_height=True,
+                        ),
+                        Window(
+                            FormattedTextControl(self.renderer.input_bottom_rule),
+                            height=Dimension.exact(1),
+                            dont_extend_height=True,
+                        ),
+                    ]
+                ),
+                focused_element=control,
+            ),
+            key_bindings=bindings,
+            full_screen=False,
+            erase_when_done=True,
+        )
+        return await app.run_async()
 
 
 async def run_cli_shell(
