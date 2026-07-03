@@ -25,17 +25,18 @@ from rich.text import Text
 from personal_agent.cli_chat import CliChatRuntime, create_cli_runtime
 from personal_agent.conversation.events import ConversationEvent, ConversationEventSink
 
-# Core slash commands offered by the input completer (skills are dynamic).
-SLASH_COMMANDS: tuple[str, ...] = (
-    "/help",
-    "/new",
-    "/session",
-    "/usage",
-    "/allow",
-    "/stop",
-    "/export",
-    "/agents",
-    "/memory",
+# Core slash commands offered by the input completer, with one-line hints
+# shown in the completion menu. Skills are added dynamically at runtime.
+SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("/help", "显示帮助"),
+    ("/new", "重置当前会话"),
+    ("/session", "管理会话 (list/switch/rename/delete)"),
+    ("/usage", "查看上下文预算"),
+    ("/allow", "授权危险操作 (write/bash/all)"),
+    ("/stop", "停止当前处理"),
+    ("/export", "导出会话 JSONL"),
+    ("/agents", "查看子 agent 运行记录"),
+    ("/memory", "查看和管理记忆"),
 )
 
 
@@ -46,6 +47,7 @@ class ShellRenderOptions:
     verbose: bool = False
     quiet_events: bool = False
     max_tool_summary_chars: int = 140
+    spinner: bool = True
 
 
 @dataclass
@@ -89,6 +91,41 @@ class TerminalRenderer(ConversationEventSink):
         self._tool_seq = 0
         self._active_tools: dict[str, ToolTraceItem] = {}
         self._completed_tools: list[ToolTraceItem] = []
+        self._status = None  # rich Status handle while a spinner is live
+
+    def _spinner_enabled(self) -> bool:
+        return (
+            self.options.spinner
+            and not self.options.verbose
+            and not self.options.quiet_events
+            and self.options.show_events
+            and self.console is not None
+            and bool(getattr(self.console, "is_terminal", False))
+        )
+
+    def _start_spinner(self, message: str) -> None:
+        if not self._spinner_enabled():
+            return
+        self._stop_spinner()
+        try:
+            self._status = self.console.status(f"[dim cyan]{message}", spinner="dots")
+            self._status.start()
+        except Exception:
+            self._status = None
+
+    def _stop_spinner(self) -> None:
+        if self._status is not None:
+            try:
+                self._status.stop()
+            except Exception:
+                pass
+            self._status = None
+
+    def _print(self, value) -> None:
+        # A live spinner and printed output cannot share the terminal; drop the
+        # spinner before writing so the trace/reply lands cleanly.
+        self._stop_spinner()
+        self._print_impl(value)
 
     async def emit(self, event: ConversationEvent) -> None:
         if event.type == "assistant_message":
@@ -99,6 +136,10 @@ class TerminalRenderer(ConversationEventSink):
 
         if event.type == "turn_start":
             self.begin_turn()
+            return
+
+        if event.type == "turn_end":
+            self._stop_spinner()
             return
 
         if event.type == "llm_end":
@@ -121,11 +162,15 @@ class TerminalRenderer(ConversationEventSink):
             self._llm_started_at = time.monotonic()
             if self.options.verbose:
                 self._event_line("模型", "请求中", style="dim cyan")
+            else:
+                self._start_spinner("思考中…")
         elif event.type == "llm_end":
             if self.options.verbose:
                 self._model_summary()
         elif event.type == "tool_start":
             self.tool_start(event)
+            name = self._tool_display_name(str(event.data.get("tool_name") or "tool"))
+            self._start_spinner(f"调用工具 {name}…")
         elif event.type == "tool_end":
             self.tool_end(event)
         elif event.type == "retry":
@@ -244,8 +289,29 @@ class TerminalRenderer(ConversationEventSink):
         if item.duration <= 0 and item.started_at:
             item.duration = max(0.0, time.monotonic() - item.started_at)
         self._completed_tools.append(item)
+        if item.name in {"confirm", "clarify"} and item.status == "success":
+            self._interaction_prompt(item)
+            return
         self._print(self._tool_start_text(item))
         self._print(self._tool_result_text(item))
+
+    def _interaction_prompt(self, item: ToolTraceItem) -> None:
+        """Render confirm/clarify tool output as a prominent 'needs your reply' box."""
+        text = item.output_summary or item.status
+        if item.name == "confirm":
+            title = "● 需要确认 — 请回复 yes / no"
+        else:
+            title = "● 需要澄清 — 请回复你的答案"
+        self._print(
+            Panel(
+                Text(text),
+                title=title,
+                title_align="left",
+                border_style="yellow",
+                box=box.ROUNDED,
+                padding=(0, 1),
+            )
+        )
 
     def stop_text(self, text: str) -> None:
         self._event_line("停止", text or "已请求停止当前处理", style="yellow")
@@ -321,15 +387,29 @@ class TerminalRenderer(ConversationEventSink):
         result, _ = self._truncate_result(item.error or item.output_summary or item.status)
         if not result:
             result = item.status or "done"
-        is_success = item.status == "success"
         body = Text()
         body.append("  └ ", style="dim")
-        body.append(result, style="dim" if is_success else "red")
+        body.append(result, style=self._tool_result_style(item.status))
         body.append(f" · {item.duration:.1f}s", style="dim")
         return body
 
     def _tool_dot_style(self, status: str) -> str:
-        return "green" if status in {"", "running", "success"} else "red"
+        if status in {"", "running", "success"}:
+            return "green"
+        if status == "denied":
+            return "yellow"
+        if status in {"interrupted", "skipped"}:
+            return "grey62"
+        return "red"
+
+    def _tool_result_style(self, status: str) -> str:
+        if status in {"", "running", "success"}:
+            return "dim"
+        if status == "denied":
+            return "yellow"
+        if status in {"interrupted", "skipped"}:
+            return "grey62"
+        return "red"
 
     def _tool_display_name(self, name: str) -> str:
         overrides = {
@@ -455,7 +535,7 @@ class TerminalRenderer(ConversationEventSink):
         max_width = self._line_width()
         return Text("╰" + "─" * max(4, max_width - 2) + "╯", style=style)
 
-    def _print(self, value) -> None:
+    def _print_impl(self, value) -> None:
         if self.console is not None:
             self.console.print(value)
             return
@@ -529,18 +609,40 @@ class TerminalRenderer(ConversationEventSink):
 
 
 class SlashCompleter(Completer):
-    """Complete core slash commands when the line starts with '/'."""
+    """Complete slash commands when the line starts with '/'.
 
-    def __init__(self, commands: tuple[str, ...]) -> None:
+    Core commands are static; skills are resolved lazily from the registry so
+    newly loaded plugins show up without rebuilding the completer.
+    """
+
+    def __init__(self, commands: tuple[tuple[str, str], ...]) -> None:
         self.commands = commands
+
+    def _skill_entries(self) -> list[tuple[str, str]]:
+        try:
+            from personal_agent.skills.registry import skill_registry
+
+            return [
+                (f"/{entry.name}", entry.description or "技能")
+                for entry in skill_registry.list()
+            ]
+        except Exception:
+            return []
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
         if not text.startswith("/") or " " in text:
             return
-        for command in self.commands:
-            if command.startswith(text):
-                yield Completion(command, start_position=-len(text))
+        seen: set[str] = set()
+        for command, description in (*self.commands, *self._skill_entries()):
+            if command in seen or not command.startswith(text):
+                continue
+            seen.add(command)
+            yield Completion(
+                command,
+                start_position=-len(text),
+                display_meta=description,
+            )
 
 
 class CliShell:

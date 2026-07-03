@@ -362,16 +362,102 @@ def test_slash_completer_offers_matching_commands():
 
     completer = SlashCompleter(SLASH_COMMANDS)
 
-    matches = [
-        completion.text
-        for completion in completer.get_completions(Document("/se"), None)
-    ]
+    completions = list(completer.get_completions(Document("/se"), None))
+    matches = [completion.text for completion in completions]
     assert "/session" in matches
+    # Each completion carries a one-line hint in the menu.
+    session = next(c for c in completions if c.text == "/session")
+    assert "会话" in session.display_meta_text
 
     # No completions once the command is complete and args begin.
     assert list(completer.get_completions(Document("/session list"), None)) == []
     # No completions for plain text.
     assert list(completer.get_completions(Document("hello"), None)) == []
+
+
+def test_slash_completer_includes_dynamic_skills(monkeypatch):
+    from prompt_toolkit.document import Document
+
+    from personal_agent.cli_shell import SLASH_COMMANDS, SlashCompleter
+
+    class FakeSkill:
+        def __init__(self, name, description):
+            self.name = name
+            self.description = description
+
+    class FakeRegistry:
+        def list(self):
+            return [FakeSkill("web-dev", "前端开发技能")]
+
+    monkeypatch.setattr(
+        "personal_agent.skills.registry.skill_registry", FakeRegistry()
+    )
+
+    completer = SlashCompleter(SLASH_COMMANDS)
+    completions = list(completer.get_completions(Document("/web"), None))
+    texts = [c.text for c in completions]
+    assert "/web-dev" in texts
+    meta = next(c for c in completions if c.text == "/web-dev").display_meta_text
+    assert "前端" in meta
+
+
+@pytest.mark.asyncio
+async def test_confirm_tool_renders_interaction_prompt():
+    renderer, stream = _renderer()
+
+    await renderer.emit(
+        ConversationEvent(
+            type="tool_end",
+            data={
+                "tool_name": "confirm",
+                "tool_use_id": "c1",
+                "status": "success",
+                "output_summary": "删除 3 个文件？",
+                "duration": 0.0,
+            },
+        )
+    )
+
+    text = stream.getvalue()
+    assert "需要确认" in text
+    assert "yes" in text
+    assert "删除 3 个文件" in text
+    # Not rendered as a low-key trace line.
+    assert "● Confirm" not in text
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_uses_warning_color():
+    renderer, _ = _renderer()
+
+    assert renderer._tool_dot_style("denied") == "yellow"
+    assert renderer._tool_result_style("denied") == "yellow"
+    assert renderer._tool_dot_style("interrupted") == "grey62"
+    assert renderer._tool_dot_style("skipped") == "grey62"
+    assert renderer._tool_dot_style("error") == "red"
+    assert renderer._tool_dot_style("success") == "green"
+
+
+def test_spinner_disabled_on_non_terminal_console():
+    # StringIO-backed console is not a terminal, so the spinner stays off to
+    # avoid polluting piped/captured output.
+    renderer, _ = _renderer()
+    assert renderer._spinner_enabled() is False
+
+
+def test_spinner_disabled_in_verbose_and_quiet_modes():
+    verbose, _ = _terminal_renderer(ShellRenderOptions(verbose=True))
+    assert verbose._spinner_enabled() is False
+
+    quiet, _ = _terminal_renderer(
+        ShellRenderOptions(quiet_events=True, show_events=False)
+    )
+    assert quiet._spinner_enabled() is False
+
+
+def test_spinner_enabled_on_plain_terminal():
+    renderer, _ = _terminal_renderer()
+    assert renderer._spinner_enabled() is True
 
 
 def test_ctrl_j_inserts_newline_enter_submits():

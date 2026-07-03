@@ -1,150 +1,77 @@
 # Codex 交接记录
 
-更新时间：2026-07-03 17:13 CST
+更新时间：2026-07-03 19:00 CST
 
 ## 当前状态
 
-- 当前分支：`codex/terminal-cli`
-- 工作区状态：CLI 功能持续迭代；`.codexignore` 和 `AGENTS.md` 已提交
-- 这个分支目前聚焦在终端前端，最终目标是做出一个可长期使用的 CLI 版 Agent UI，风格接近 Hermes / Claude Code / Codex CLI
-- 用户明确不喜欢重型 TUI 框架，当前方向是用 `rich` 渲染输出、`prompt_toolkit` 管理真实终端输入，后续也方便抽事件给 desktop 用
+- 当前分支：`feature/cli-frontend-refactor`（从 `codex/terminal-cli` 派生）
+- 这一轮把终端前端从「反复修边线/光标」的自定义 `prompt_toolkit.Application` 方案，重构成基于 `PromptSession` 的标准姿势，并补齐了一批 UX
+- 最终目标不变：可长期使用的 CLI 版 Agent UI，风格接近 Hermes / Claude Code / Codex CLI
+- 事件流（`conversation/events.py`）和渲染层（`cli_shell.py`）保持分离，方便以后抽给 desktop
 
-## 最近完成的内容
+## 本轮完成的内容（feature/cli-frontend-refactor）
 
-### CLI 入口与 REPL
+### 架构
 
-- `personal-agent chat` 已经是多轮 REPL
-- 支持 `/help`、`/new`、`/session`、`/usage`、`/allow`、`/stop`、`/export`、`/agents`、`/memory`
-- `chat --once "消息"` 仍保留单次调用
-- 修过 `asyncio.run() cannot be called from a running event loop` 问题
+- `llm_end` 事件现在自带 `model` / `context_window`（`agent/loop.py`），renderer 不再反向掏 `agent._provider` 三层私有属性 —— desktop 复用的前提
+- `events.py` 增加 `assistant_delta` 事件类型，为将来 streaming 逐字渲染留口子（当前 DeepSeek 不支持 SSE，未强推）
 
-### 终端事件渲染
+### 输入层：`_FramedPrompt` → `PromptSession`
 
-核心文件：
+- 砍掉自定义 `Application` 和那条反复修的满宽橙色下边线
+- 换来官方推荐姿势 + 三样白送的能力：
+  - ↑↓ 输入历史，**持久化**到 `data/cli_history.txt`（跨重启保留）
+  - slash 命令 Tab 补全，带一行中文说明（menu 的 `display_meta`），并动态包含已注册 skill
+  - **Ctrl+J 换行**，Enter 提交（旧的 `"""` 多行模式移除）
+- **换行键教训**：最初用 Alt+Enter，但很多终端把它绑成最大化/全屏窗口，按键到不了 CLI。改用 Ctrl+J（`c-j`），终端层不拦截
 
-- `src/personal_agent/cli_shell.py`
-- `src/personal_agent/cli_chat.py`
-- `src/personal_agent/conversation/events.py`
+### 修掉的生产 bug
 
-现在模型调用、工具调用、压缩、错误、停止等都会通过事件流给 CLI 渲染。
+- 原来 `chat` 走 `run_cli_shell_sync` 时传了 `input_fn`，导致 `_uses_prompt_toolkit()` 恒为 False —— 生产环境其实一直走裸 `input()`，prompt_toolkit 功夫没生效。现在 `run_cli_shell_sync` 走 `asyncio.run(run_cli_shell(...))` 不传 `input_fn`，真实终端确实走 PromptSession
+- 用户输入回显：prompt_toolkit 提交的行天然留在 scrollback；非终端/管道/测试路径由 renderer 显式 `user_message` 回显，两条路径行为一致
 
-### 终端 UI 当前形态
+### 渲染层 UX
 
-最近几次提交在做 Hermes 风格的终端聊天界面：
+- **AI 回复走 Markdown**：`rich.Markdown` + cyan 圆角 Panel，代码块高亮、超宽行折行（不再手画 box + 硬缩进）
+- **「思考中」spinner**：非流式模型等待时用 `rich console.status`（dots），`llm_start` 起「思考中…」，`tool_start` 切成「调用工具 X…」，任何打印前自动停（`_print` 包一层先 `_stop_spinner`）。默认开；非终端 / `--quiet-events` / verbose / `spinner=False` 下自动关，避免污染输出
+- **confirm/clarify 高亮**：这两个工具的输出不再混在普通 trace 里，渲染成醒目的黄框「需要确认 — 请回复 yes/no」/「需要澄清 — 请回复你的答案」。不拦截输入（保持工具原设计：用户下一句话即答案）
+- **工具状态配色**：区分 success（绿）/ denied（黄，权限）/ interrupted·skipped（灰 grey62）/ error（红），点和结果摘要用对应颜色
 
-- `b4f1465 [codex] stabilize terminal prompt input`
-- `54093af [codex] restore terminal input bottom rule`
-- `5efaa64 [codex] fix framed prompt bottom rule`
-- `e339a19 [codex] add rich terminal chat renderer`
-- `72ea87e [codex] refine terminal chat layout`
-- `df90b46 [codex] align terminal input layout`
-- `34ccbcb [codex] polish terminal chat framing`
-- `ce6a0b5 [codex] refine hermes-style terminal ui`
-- `ffb841f [codex] polish terminal input frame`
-- `2709d48 [codex] add terminal trace controls`
+## 关键文件
 
-当前效果：
-
-- 顶部有较轻量的 `Personal Agent CLI` banner
-- 输入提示是 `› `，真实终端下输入读取由自定义 `prompt_toolkit.Application` 管理，避免底部滚动时光标错位
-- 当前输入区由状态条、上橙线、`› 输入`、下橙线组成；下橙线必须紧贴输入行，不应变成 terminal bottom toolbar
-- 状态条显示在下一次输入上方，使用黑底分段样式，例如：
-  `$ deepseek-v4-flash │ ctx 531/1M 0.1% │ api 3 │ in 531 out 108 │ 2.8s`
-- 用户输入不再被二次渲染，避免出现 `› 你好` 后又出现一块 `● 你好`
-- AI 回复是唯一使用 cyan 边框的内容，左右角完整
-- 命令输出短结果使用 `$ ...`，长结果才使用轻量块
-
-### 工具 trace、Ctrl+C 和多行输入
-
-最新提交 `2709d48` 完成了三项终端体验增强：
-
-- 工具事件改成无框 trace 样式，例如：
-  `● Web Search("query")`
-  `  └ Found 10 results · 1.2s`
-- 工具参数、URL、输出、错误默认截断，避免 transcript 爆炸
-- 工具失败不再显示大红错误块，只显示短结果行
-- 运行中取消路径会请求 `stop_agents()`，显示轻量停止提示，并回到 REPL
-- 新增 `"""` 多行输入模式：
-  - `"""` 进入
-  - 再输入 `"""` 提交
-  - `/cancel` 取消
-  - 多行内 `/help` 等 slash 文本会作为正文，不执行命令
-
-2026-07-03 16:09 继续调整了工具 trace：
-
-- 工具 trace 行改为在工具结束时按最终状态渲染，失败工具左侧圆点和错误摘要使用红色
-- 工具参数不再直接显示 JSON object，renderer 会把常见 JSON 参数格式化成更可读的 `key=value`、`"query"`、`$ command` 等摘要
-- 工具 trace 仍保持无框、低视觉权重；框只用于 AI 回复
-
-2026-07-03 16:34-17:03 修正了底部输入区光标错位和下边线问题：
-
-- 新增依赖 `prompt-toolkit`
-- 真实终端 REPL 使用 `prompt_toolkit` + `patch_stdout(raw=True)` 读取输入
-- 最终方案使用自定义 `prompt_toolkit.Application` 显示输入行和紧贴其下方的橙色下边线，提交后由 renderer 写入 transcript
-- 曾尝试 `bottom_toolbar`，但它是底部工具条/状态栏语义，不是输入框下边线；不要再沿用这个方案
-- 移除了真实终端下预画输入底线再用 `\x1b[1A` / `\x1b[2C` 回退光标的 hack
-- 自定义 `input_fn`、非 TTY、测试路径仍保留轻量输入逻辑
-- 目标是让 AI/工具输出稳定出现在两次输入之间，不再在终端底部吞线或把光标顶到输入框外
-
-## 用户对 UI 的明确偏好
-
-- 喜欢 Hermes 那种终端风格
-- 不喜欢 Textual 这类重型 TUI
-- 不想要太像 Web/card 的复杂界面
-- 输入区要像 Hermes：状态行在输入上方，实际输入就是 `› 文字`
-- 发送后新输入区应稳定回到底部，AI/工具输出从上一次输入和当前输入之间出现
-- 用户历史消息不应该重复渲染
-- AI 回复块可以有边框，但左右要完整，不能只有左侧角
-- 工具不要用框；框只给 AI 回复
-- 工具应该像 trace/log：低视觉权重、无分组标题、默认摘要、失败也只是状态
-- 展开以后更倾向快捷键，例如未来 `ctrl+o`；当前只实现摘要和截断
-- 可以用 `prompt_toolkit` 这类轻量输入库；仍不希望引入 Textual/full-screen TUI
-- 以后可能做 desktop，所以事件流和渲染层要继续保持分离
+- `src/personal_agent/cli_shell.py` — renderer + CliShell + SlashCompleter + PromptSession
+- `src/personal_agent/cli_chat.py` — CliChatRuntime（复用 ConversationService）
+- `src/personal_agent/conversation/events.py` — 事件模型
+- `src/personal_agent/agent/loop.py` — 事件产出点（llm_end 带 model/context_window）
+- `tests/test_cli_shell.py` — 24 个测试覆盖新行为
 
 ## 已验证
 
-最近一次终端 UI 修正后执行过：
-
 ```bash
-python -m compileall -q src/personal_agent
-uv run pytest -q
-```
-
-结果：
-
-```text
-466 passed
+python -m compileall -q src/personal_agent   # OK
+uv run pytest -q                             # 473 passed
 ```
 
 ## 注意事项
 
-- 测试会改 `src/personal_agent/skills/builtin/.usage.json` 的运行计数，这是副作用，不要提交进去
-- 用户要求每次做完记得 `git commit`
-- 提交信息要带 `[codex]`
-- `AGENTS.md` 已按用户要求生成并提交
-- `.codexignore` 已提交，用于减少 Codex 首 token 前上下文扫描负担
-- 当前会话最初从 `/home/sujinsheng` 启动，导致 Codex 可能把整个 home 当工作区看，性能很慢
-- 建议以后从项目根目录启动：
-
-```bash
-cd ~/projects/Personal-Agent
-codex
-```
+- 测试会改 `src/personal_agent/skills/builtin/.usage.json` 的运行计数，这是副作用，提交前 `git checkout` 还原
+- 自动化测试碰不到真正的 PromptSession 交互路径（走 `input_fn` 绕开），UI 回归只能真机肉眼验收
+- 提交信息带 `[codex]` 或规范的 `feat/fix(cli):` 前缀
+- 用户偏好：不要重型 TUI（Textual）；工具用无框 trace，只有 AI 回复用框；事件流和渲染层保持分离
 
 ## 接下来建议
 
-下一次从项目根目录打开 Codex 后，可以先做：
+真机 `uv run personal-agent chat` 验收本轮改动：
 
-```bash
-git status --short --branch
-git log -5 --oneline
-uv run personal-agent chat
-```
+- Ctrl+J 换行是否在你的终端生效（这次应该不被抢）
+- ↑↓ 历史跨重启保留、`/` Tab 补全（含 skill）
+- 「思考中」spinner 在等待 DeepSeek 时是否顺眼
+- confirm/clarify 黄框是否够显眼
+- AI 回复的 markdown 观感（代码块、长行）
 
-然后继续按用户截图微调终端界面。当前还可以重点看：
+后续可选方向（本轮未做）：
 
-- 实机验证新的自定义 `prompt_toolkit.Application` 输入区是否真正满足“输入行下方紧贴下橙线”
-- 实机验证运行中 `Ctrl+C` 中断是否足够自然
-- 工具 trace 的参数和结果截断是否还需要更像 Claude Code
-- 未来是否为 thinking/bash 输出实现 `ctrl+o` 展开
-- 是否需要给终端界面加配置开关，例如 `cli.theme = "minimal" | "hermes"`
+- 底层 streaming 逐字渲染（等切到支持 SSE 的 provider，`assistant_delta` 口子已留）
+- thinking/bash 长输出的 `ctrl+o` 展开
+- `--simple` 旧 REPL（`cli_chat.py::repl`）是否还保留
+- 给终端界面加主题开关（如 `cli.theme = "minimal" | "hermes"`）
