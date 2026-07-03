@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
@@ -70,13 +70,11 @@ class TerminalRenderer(ConversationEventSink):
 
         if event.type == "llm_start":
             self._llm_started_at = time.monotonic()
-            self._event_line("模型", "请求中", style="cyan")
+            if self.options.verbose:
+                self._event_line("模型", "请求中", style="dim cyan")
         elif event.type == "llm_end":
-            self._event_line(
-                "模型",
-                f"完成 in={self._last_input_tokens} out={self._last_output_tokens}",
-                style="green",
-            )
+            if self.options.verbose:
+                self._model_summary()
         elif event.type == "tool_start":
             text = f"{event.data.get('tool_name', '')} 开始"
             if self.options.verbose and event.data.get("input_summary"):
@@ -126,29 +124,32 @@ class TerminalRenderer(ConversationEventSink):
         self._last_llm_duration = 0.0
         self._last_input_tokens = 0
         self._last_output_tokens = 0
-        self._print(
-            Panel(
-                text,
-                title="你",
-                title_align="left",
-                border_style="yellow",
-                box=box.ROUNDED,
-            )
-        )
+        self._rule("─", style="yellow")
+        body = Text()
+        body.append("● ", style="bold yellow")
+        body.append(text, style="bright_white")
+        self._print(body)
+        self._rule("─", style="yellow")
 
     def assistant_message(self, text: str) -> None:
-        self._print(
-            Panel(
-                text,
-                title="assistant",
-                title_align="left",
-                border_style="cyan",
-                box=box.ROUNDED,
-            )
-        )
+        lines = text.splitlines() or [text]
+        renderables = [Text("assistant", style="bold cyan")]
+        for line in lines:
+            body = Text()
+            body.append("│ ", style="cyan")
+            body.append(line)
+            renderables.append(body)
+        self._print(Group(*renderables))
 
     def command_response(self, text: str) -> None:
-        if text:
+        if not text:
+            return
+        if "\n" not in text and len(text) <= 100:
+            body = Text()
+            body.append("命令 ", style="bold blue")
+            body.append(text)
+            self._print(body)
+        else:
             self._print(
                 Panel(
                     text,
@@ -185,26 +186,35 @@ class TerminalRenderer(ConversationEventSink):
         if self._turn_started_at is not None:
             duration = max(0.0, time.monotonic() - self._turn_started_at)
 
-        parts = [
-            f"{provider}/{model}".strip("/"),
-            f"session={runtime.session_key}",
-        ]
+        parts = [model or provider or "-"]
         if context:
             parts.append(context)
         if api_calls != "":
             parts.append(f"api={api_calls}")
         if self._last_input_tokens or self._last_output_tokens:
             parts.append(f"in={self._last_input_tokens} out={self._last_output_tokens}")
-        if self._last_llm_duration:
-            parts.append(f"llm={self._last_llm_duration:.1f}s")
-        parts.append(f"turn={duration:.1f}s")
-        self._event_line("状态", " | ".join(parts), style="bold blue")
+        parts.append(f"{duration:.1f}s")
+        self._event_line("状态", " | ".join(parts), style="blue")
 
     def _event_line(self, label: str, text: str, *, style: str = "dim") -> None:
         body = Text()
         body.append(f"{label}: ", style=f"bold {style}")
         body.append(text, style=style)
         self._print(body)
+
+    def _model_summary(self) -> None:
+        parts = []
+        if self._last_input_tokens:
+            parts.append(f"in {self._last_input_tokens}")
+        if self._last_output_tokens:
+            parts.append(f"out {self._last_output_tokens}")
+        if self._last_llm_duration:
+            parts.append(f"{self._last_llm_duration:.1f}s")
+        self._event_line("模型", " · ".join(parts) or "完成", style="dim green")
+
+    def _rule(self, char: str, *, style: str) -> None:
+        width = self._console_width()
+        self._print(Text(char * min(width, 72), style=style))
 
     def _print(self, value) -> None:
         if self.console is not None:
@@ -241,7 +251,12 @@ class TerminalRenderer(ConversationEventSink):
         if context_window <= 0 or self._last_input_tokens <= 0:
             return ""
         percent = round(self._last_input_tokens / max(context_window, 1) * 100, 1)
-        return f"context={self._last_input_tokens:,}/{context_window:,} ({percent}%)"
+        return f"ctx {self._last_input_tokens:,}/{context_window:,} ({percent}%)"
+
+    def _console_width(self) -> int:
+        if self.console is not None:
+            return int(getattr(self.console, "width", 80) or 80)
+        return 80
 
 
 class CliShell:

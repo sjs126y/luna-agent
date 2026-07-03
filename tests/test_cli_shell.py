@@ -72,12 +72,27 @@ async def test_cli_shell_renders_message_events():
     assert result == "echo:你好"
     assert runtime.messages == ["你好"]
     text = stream.getvalue()
+    assert "●" in text
     assert "你" in text
     assert "你好" in text
-    assert "模型:" in text
     assert "assistant" in text
+    assert "│ echo:你好" in text
     assert "echo:你好" in text
     assert "状态:" in text
+    assert "模型:" not in text
+
+
+@pytest.mark.asyncio
+async def test_cli_shell_verbose_shows_model_lines():
+    renderer, stream = _renderer(ShellRenderOptions(verbose=True))
+    runtime = FakeRuntime()
+    shell = CliShell(runtime, renderer=renderer)
+
+    await shell.run_once("你好")
+
+    text = stream.getvalue()
+    assert "模型:" in text
+    assert "请求中" in text
 
 
 @pytest.mark.asyncio
