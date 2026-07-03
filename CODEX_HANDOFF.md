@@ -1,12 +1,12 @@
 # Codex 交接记录
 
-更新时间：2026-07-03 16:34 CST
+更新时间：2026-07-03 17:13 CST
 
 ## 当前状态
 
 - 当前分支：`codex/terminal-cli`
 - 工作区状态：CLI 功能持续迭代；`.codexignore` 和 `AGENTS.md` 已提交
-- 这个分支目前聚焦在终端前端，也就是类似 Hermes / Claude Code / Codex CLI 的轻量终端聊天界面
+- 这个分支目前聚焦在终端前端，最终目标是做出一个可长期使用的 CLI 版 Agent UI，风格接近 Hermes / Claude Code / Codex CLI
 - 用户明确不喜欢重型 TUI 框架，当前方向是用 `rich` 渲染输出、`prompt_toolkit` 管理真实终端输入，后续也方便抽事件给 desktop 用
 
 ## 最近完成的内容
@@ -32,6 +32,9 @@
 
 最近几次提交在做 Hermes 风格的终端聊天界面：
 
+- `b4f1465 [codex] stabilize terminal prompt input`
+- `54093af [codex] restore terminal input bottom rule`
+- `5efaa64 [codex] fix framed prompt bottom rule`
 - `e339a19 [codex] add rich terminal chat renderer`
 - `72ea87e [codex] refine terminal chat layout`
 - `df90b46 [codex] align terminal input layout`
@@ -43,7 +46,8 @@
 当前效果：
 
 - 顶部有较轻量的 `Personal Agent CLI` banner
-- 输入提示是 `› `，真实终端下输入读取由 `prompt_toolkit` 管理，避免底部滚动时光标错位
+- 输入提示是 `› `，真实终端下输入读取由自定义 `prompt_toolkit.Application` 管理，避免底部滚动时光标错位
+- 当前输入区由状态条、上橙线、`› 输入`、下橙线组成；下橙线必须紧贴输入行，不应变成 terminal bottom toolbar
 - 状态条显示在下一次输入上方，使用黑底分段样式，例如：
   `$ deepseek-v4-flash │ ctx 531/1M 0.1% │ api 3 │ in 531 out 108 │ 2.8s`
 - 用户输入不再被二次渲染，避免出现 `› 你好` 后又出现一块 `● 你好`
@@ -72,11 +76,12 @@
 - 工具参数不再直接显示 JSON object，renderer 会把常见 JSON 参数格式化成更可读的 `key=value`、`"query"`、`$ command` 等摘要
 - 工具 trace 仍保持无框、低视觉权重；框只用于 AI 回复
 
-2026-07-03 16:34 修正了底部输入区光标错位问题：
+2026-07-03 16:34-17:03 修正了底部输入区光标错位和下边线问题：
 
 - 新增依赖 `prompt-toolkit`
-- 真实终端 REPL 使用 `PromptSession.prompt_async()` + `patch_stdout(raw=True)` 读取输入
-- 输入等待期间使用自定义 `prompt_toolkit.Application` 显示输入行和紧贴其下方的橙色下边线，提交后由 renderer 写入 transcript
+- 真实终端 REPL 使用 `prompt_toolkit` + `patch_stdout(raw=True)` 读取输入
+- 最终方案使用自定义 `prompt_toolkit.Application` 显示输入行和紧贴其下方的橙色下边线，提交后由 renderer 写入 transcript
+- 曾尝试 `bottom_toolbar`，但它是底部工具条/状态栏语义，不是输入框下边线；不要再沿用这个方案
 - 移除了真实终端下预画输入底线再用 `\x1b[1A` / `\x1b[2C` 回退光标的 hack
 - 自定义 `input_fn`、非 TTY、测试路径仍保留轻量输入逻辑
 - 目标是让 AI/工具输出稳定出现在两次输入之间，不再在终端底部吞线或把光标顶到输入框外
@@ -108,7 +113,7 @@ uv run pytest -q
 结果：
 
 ```text
-463 passed
+466 passed
 ```
 
 ## 注意事项
@@ -138,8 +143,8 @@ uv run personal-agent chat
 
 然后继续按用户截图微调终端界面。当前还可以重点看：
 
+- 实机验证新的自定义 `prompt_toolkit.Application` 输入区是否真正满足“输入行下方紧贴下橙线”
 - 实机验证运行中 `Ctrl+C` 中断是否足够自然
 - 工具 trace 的参数和结果截断是否还需要更像 Claude Code
 - 未来是否为 thinking/bash 输出实现 `ctrl+o` 展开
 - 是否需要给终端界面加配置开关，例如 `cli.theme = "minimal" | "hermes"`
-- 是否单独提交当前未跟踪的 `AGENTS.md`
