@@ -155,6 +155,8 @@ async def run_conversation(agent, ctx, *, event_sink=None) -> dict:
             output_tokens=response.usage.get("output_tokens", 0),
             tool_call_count=len(response.tool_calls or []),
             finish_reason=response.finish_reason,
+            model=response.model or getattr(agent._provider, "model", ""),
+            context_window=getattr(agent._provider, "context_window", 0),
         )
         if agent._compressor is not None:
             try:

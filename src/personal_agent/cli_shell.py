@@ -8,25 +8,35 @@ import json
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Awaitable, Callable
 
-from prompt_toolkit.application import Application
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import HSplit, Window
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich import box
 from rich.console import Console, Group
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
 from personal_agent.cli_chat import CliChatRuntime, create_cli_runtime
 from personal_agent.conversation.events import ConversationEvent, ConversationEventSink
+
+# Core slash commands offered by the input completer (skills are dynamic).
+SLASH_COMMANDS: tuple[str, ...] = (
+    "/help",
+    "/new",
+    "/session",
+    "/usage",
+    "/allow",
+    "/stop",
+    "/export",
+    "/agents",
+    "/memory",
+)
 
 
 @dataclass
@@ -74,8 +84,8 @@ class TerminalRenderer(ConversationEventSink):
         self._last_input_tokens = 0
         self._last_output_tokens = 0
         self._last_api_calls = 0
-        self._input_open = False
-        self._input_preframed = False
+        self._last_model = ""
+        self._last_context_window = 0
         self._tool_seq = 0
         self._active_tools: dict[str, ToolTraceItem] = {}
         self._completed_tools: list[ToolTraceItem] = []
@@ -95,6 +105,12 @@ class TerminalRenderer(ConversationEventSink):
             self._last_input_tokens = int(event.data.get("input_tokens", 0) or 0)
             self._last_output_tokens = int(event.data.get("output_tokens", 0) or 0)
             self._last_api_calls = int(event.data.get("api_calls", 0) or self._last_api_calls)
+            model = str(event.data.get("model") or "")
+            if model:
+                self._last_model = model
+            context_window = int(event.data.get("context_window", 0) or 0)
+            if context_window:
+                self._last_context_window = context_window
             if self._llm_started_at is not None:
                 self._last_llm_duration = max(0.0, time.monotonic() - self._llm_started_at)
 
@@ -124,6 +140,8 @@ class TerminalRenderer(ConversationEventSink):
     def banner(self, runtime: CliChatRuntime) -> None:
         provider = getattr(runtime.settings, "llm_provider", "")
         model = getattr(runtime.settings, "llm_model", "")
+        if model:
+            self._last_model = model
         title = Text("Personal Agent CLI", style="bold cyan")
         subtitle = Text(
             f"session={runtime.session_key} | provider={provider} | model={model}",
@@ -137,55 +155,47 @@ class TerminalRenderer(ConversationEventSink):
                 padding=(0, 1),
             )
         )
-        self._print(Text("exit/quit 或空行退出，/help 查看命令。", style="dim"))
+        self._print(
+            Text(
+                "exit/quit 或空行退出，/help 查看命令，Alt+Enter 换行。",
+                style="dim",
+            )
+        )
 
     def prompt(self, runtime: CliChatRuntime) -> str:
-        self.input_prompt(runtime)
+        self._print(self._status_bar(runtime))
         return "› "
 
-    def input_prompt(self, runtime: CliChatRuntime) -> None:
-        self._print(self._status_bar(runtime))
-        self._rule("─", style="dark_orange")
-        self._input_open = True
-        self._input_preframed = False
-
     def begin_turn(self) -> None:
-        self.close_input_area()
         self._turn_started_at = time.monotonic()
         self._last_llm_duration = 0.0
         self._last_input_tokens = 0
         self._last_output_tokens = 0
         self._last_api_calls = 0
 
-    def close_input_area(self) -> None:
-        if self._input_open:
-            self._rule("─", style="dark_orange")
-            self._input_open = False
-            self._input_preframed = False
-
-    def input_bottom_rule(self) -> ANSI:
-        line = "─" * self._line_width()
-        if self.options.color:
-            return ANSI(f"\x1b[38;5;208m{line}\x1b[0m")
-        return ANSI(line)
-
     def user_message(self, text: str) -> None:
-        self.begin_turn()
+        lines = text.splitlines() or [text]
         body = Text()
         body.append("› ", style="bold bright_white")
-        body.append(text, style="bright_white")
+        body.append(lines[0], style="bright_white")
+        for line in lines[1:]:
+            body.append("\n  ")
+            body.append(line, style="bright_white")
         self._print(body)
 
     def assistant_message(self, text: str) -> None:
-        lines = text.splitlines() or [text]
-        renderables = [self._block_top("$ Personal Agent", style="cyan")]
-        for line in lines:
-            renderables.append(Text(f"  {line}"))
-        renderables.append(self._block_bottom(style="cyan"))
-        self._print(Group(*renderables))
+        self._print(
+            Panel(
+                Markdown(text),
+                title="Personal Agent",
+                title_align="left",
+                border_style="cyan",
+                box=box.ROUNDED,
+                padding=(0, 1),
+            )
+        )
 
     def command_response(self, text: str) -> None:
-        self.close_input_area()
         if not text:
             return
         if "\n" not in text and len(text) <= 100:
@@ -240,9 +250,6 @@ class TerminalRenderer(ConversationEventSink):
     def stop_text(self, text: str) -> None:
         self._event_line("停止", text or "已请求停止当前处理", style="yellow")
 
-    def multiline_cancelled(self) -> None:
-        self._print(Text("已取消多行输入。", style="dim"))
-
     def error(self, exc: Exception) -> None:
         self.error_text(f"本轮对话失败: {exc}")
 
@@ -270,14 +277,13 @@ class TerminalRenderer(ConversationEventSink):
     def _status_text(self, runtime: CliChatRuntime, result: object | None = None) -> str:
         settings = runtime.settings
         provider = getattr(settings, "llm_provider", "")
-        model = getattr(settings, "llm_model", "")
+        model = self._last_model or getattr(settings, "llm_model", "")
         raw = getattr(result, "raw", {}) if result is not None else {}
         api_calls = raw.get("api_calls", "") if isinstance(raw, dict) else ""
         if api_calls != "":
             self._last_api_calls = int(api_calls or 0)
         api_calls = self._last_api_calls
-        context_window = self._context_window(runtime)
-        context = self._context_text(context_window)
+        context = self._context_text()
         duration = 0.0
         if self._turn_started_at is not None:
             duration = max(0.0, time.monotonic() - self._turn_started_at)
@@ -439,9 +445,6 @@ class TerminalRenderer(ConversationEventSink):
             parts.append(f"{self._last_llm_duration:.1f}s")
         self._event_line("模型", " · ".join(parts) or "完成", style="dim green")
 
-    def _rule(self, char: str, *, style: str) -> None:
-        self._print(Text(char * self._line_width(), style=style))
-
     def _block_top(self, title: str, *, style: str) -> Text:
         prefix = f"╭─ {title} "
         max_width = self._line_width()
@@ -462,24 +465,6 @@ class TerminalRenderer(ConversationEventSink):
             text = str(value)
         if self.output_fn is not None:
             self.output_fn(text)
-
-    def _print_raw(self, text: str) -> None:
-        if self.console is not None:
-            file = getattr(self.console, "file", sys.stdout)
-            file.write(text)
-            file.flush()
-            return
-        if self.output_fn is not None:
-            self.output_fn(text)
-
-    def _short(self, text: str) -> str:
-        if self.options.verbose:
-            return text
-        value = self._clean_inline(text)
-        limit = max(20, self.options.max_tool_summary_chars)
-        if len(value) <= limit:
-            return value
-        return value[: limit - 3] + "..."
 
     def _clean_inline(self, text: str) -> str:
         return " ".join(str(text or "").split())
@@ -511,24 +496,13 @@ class TerminalRenderer(ConversationEventSink):
             truncated = True
         return value, truncated
 
-    def _context_window(self, runtime: CliChatRuntime) -> int:
-        service = getattr(runtime, "conversation_service", None)
-        agent = None
-        if service is not None:
-            try:
-                agent = service.get_cached_agent(runtime.session_key)
-            except Exception:
-                agent = None
-        provider = getattr(agent, "_provider", None)
-        return int(getattr(provider, "context_window", 0) or 0)
-
-    def _context_text(self, context_window: int) -> str:
-        if context_window <= 0 or self._last_input_tokens <= 0:
+    def _context_text(self) -> str:
+        if self._last_context_window <= 0 or self._last_input_tokens <= 0:
             return ""
-        percent = round(self._last_input_tokens / max(context_window, 1) * 100, 1)
+        percent = round(self._last_input_tokens / max(self._last_context_window, 1) * 100, 1)
         return (
             f"ctx {self._format_count(self._last_input_tokens)}/"
-            f"{self._format_count(context_window)} {percent}%"
+            f"{self._format_count(self._last_context_window)} {percent}%"
         )
 
     def _console_width(self) -> int:
@@ -554,6 +528,21 @@ class TerminalRenderer(ConversationEventSink):
         return str(value)
 
 
+class SlashCompleter(Completer):
+    """Complete core slash commands when the line starts with '/'."""
+
+    def __init__(self, commands: tuple[str, ...]) -> None:
+        self.commands = commands
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/") or " " in text:
+            return
+        for command in self.commands:
+            if command.startswith(text):
+                yield Completion(command, start_position=-len(text))
+
+
 class CliShell:
     def __init__(
         self,
@@ -565,7 +554,7 @@ class CliShell:
         self.runtime = runtime
         self.input_fn = input_fn
         self.renderer = renderer or TerminalRenderer()
-        self._framed_prompt: _FramedPrompt | None = None
+        self._session: PromptSession | None = None
 
     async def run(self) -> None:
         self.renderer.banner(self.runtime)
@@ -580,7 +569,6 @@ class CliShell:
             try:
                 text = await self._read_turn_text()
             except (EOFError, KeyboardInterrupt):
-                self.renderer.close_input_area()
                 print()
                 break
             if text is None:
@@ -600,6 +588,8 @@ class CliShell:
         if command_result is not None:
             self.renderer.command_response(command_result)
             return command_result
+        if self._echo_input():
+            self.renderer.user_message(text)
         self.renderer.begin_turn()
         result = await self._run_message_with_interrupt(text)
         self.renderer.update_result(result)
@@ -631,37 +621,14 @@ class CliShell:
         value = await self._read_line(self.renderer.prompt(self.runtime))
         text = value.strip()
         if not text or text.lower() in {"exit", "quit"}:
-            self.renderer.close_input_area()
             return None
-        if text == '"""':
-            return await self._read_multiline_text()
         return text
-
-    async def _read_multiline_text(self) -> str | None:
-        lines: list[str] = []
-        while True:
-            try:
-                line = await self._read_line("│ ")
-            except KeyboardInterrupt:
-                self.renderer.close_input_area()
-                self.renderer.multiline_cancelled()
-                return ""
-            except EOFError:
-                self.renderer.close_input_area()
-                return None
-            if line == '"""':
-                return "\n".join(lines).rstrip("\n")
-            if line == "/cancel":
-                self.renderer.close_input_area()
-                self.renderer.multiline_cancelled()
-                return ""
-            lines.append(line)
 
     async def _read_line(self, prompt_text: str) -> str:
         if self.input_fn is not None:
             return await _resolve_input(self.input_fn(prompt_text))
         if self._uses_prompt_toolkit():
-            return await self._prompt().read(prompt_text)
+            return await self._prompt_session().prompt_async(prompt_text)
         return await _read_input(prompt_text)
 
     def _uses_prompt_toolkit(self) -> bool:
@@ -672,62 +639,43 @@ class CliShell:
             return False
         return bool(getattr(console, "is_terminal", False))
 
-    def _prompt(self) -> "_FramedPrompt":
-        if self._framed_prompt is None:
-            self._framed_prompt = _FramedPrompt(self.renderer)
-        return self._framed_prompt
+    def _echo_input(self) -> bool:
+        # prompt_toolkit leaves the submitted line in the scrollback; every
+        # other input path (plain input(), input_fn, piped stdin) does not, so
+        # the renderer echoes the user message to keep the transcript complete.
+        return not self._uses_prompt_toolkit()
 
+    def _prompt_session(self) -> PromptSession:
+        if self._session is None:
+            self._session = PromptSession(
+                history=self._build_history(),
+                completer=SlashCompleter(SLASH_COMMANDS),
+                complete_while_typing=False,
+                multiline=True,
+                key_bindings=self._key_bindings(),
+            )
+        return self._session
 
-class _FramedPrompt:
-    def __init__(self, renderer: TerminalRenderer) -> None:
-        self.renderer = renderer
+    def _build_history(self):
+        try:
+            data_dir = Path(getattr(self.runtime.settings, "agent_data_dir", "data"))
+            data_dir.mkdir(parents=True, exist_ok=True)
+            return FileHistory(str(data_dir / "cli_history.txt"))
+        except Exception:
+            return InMemoryHistory()
 
-    async def read(self, prompt_text: str) -> str:
-        buffer = Buffer(multiline=False)
-        control = BufferControl(
-            buffer=buffer,
-            input_processors=[BeforeInput(prompt_text)],
-        )
+    def _key_bindings(self) -> KeyBindings:
         bindings = KeyBindings()
 
-        @bindings.add("enter")
+        @bindings.add("escape", "enter")  # Alt+Enter → newline
         def _(event) -> None:
-            event.app.exit(result=buffer.text)
+            event.current_buffer.insert_text("\n")
 
-        @bindings.add("c-c")
+        @bindings.add("enter")  # Enter → submit
         def _(event) -> None:
-            event.app.exit(exception=KeyboardInterrupt)
+            event.current_buffer.validate_and_handle()
 
-        @bindings.add("c-d")
-        def _(event) -> None:
-            if buffer.text:
-                buffer.delete_before_cursor(count=1)
-                return
-            event.app.exit(exception=EOFError)
-
-        app = Application(
-            layout=Layout(
-                HSplit(
-                    [
-                        Window(
-                            control,
-                            height=Dimension.exact(1),
-                            dont_extend_height=True,
-                        ),
-                        Window(
-                            FormattedTextControl(self.renderer.input_bottom_rule),
-                            height=Dimension.exact(1),
-                            dont_extend_height=True,
-                        ),
-                    ]
-                ),
-                focused_element=control,
-            ),
-            key_bindings=bindings,
-            full_screen=False,
-            erase_when_done=True,
-        )
-        return await app.run_async()
+        return bindings
 
 
 async def run_cli_shell(
@@ -748,26 +696,11 @@ def run_cli_shell_sync(
     options: ShellRenderOptions | None = None,
 ) -> None:
     _configure_stdout()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    runtime = None
-    try:
-        runtime = loop.run_until_complete(create_cli_runtime(session_name=session_name))
-        renderer = TerminalRenderer(options=options)
-        CliShell(runtime, input_fn=_read_input_sync, renderer=renderer).run_sync(loop)
-    finally:
-        if runtime is not None:
-            loop.run_until_complete(runtime.close())
-        asyncio.set_event_loop(None)
-        loop.close()
+    asyncio.run(run_cli_shell(session_name=session_name, options=options))
 
 
 async def _read_input(prompt: str) -> str:
     return input(prompt)
-
-
-def _read_input_sync(prompt_text: str) -> str:
-    return input(prompt_text)
 
 
 async def _resolve_input(value: str | Awaitable[str]) -> str:

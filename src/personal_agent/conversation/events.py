@@ -8,6 +8,7 @@ from typing import Any, Literal
 ConversationEventType = Literal[
     "turn_start",
     "llm_start",
+    "assistant_delta",
     "llm_end",
     "assistant_message",
     "tool_start",

@@ -90,7 +90,6 @@ def test_cli_shell_prompt_renders_status_input_line():
     text = stream.getvalue()
     assert prompt == "› "
     assert "deepseek-chat" in text
-    assert "─" in text
 
 
 @pytest.mark.asyncio
@@ -120,13 +119,7 @@ async def test_cli_shell_renders_message_events():
     text = stream.getvalue()
     assert "你" in text
     assert "你好" in text
-    assert "$ Personal Agent" in text
-    assert "│ echo:你好" not in text
-    assert "  echo:你好" in text
-    assert "╭─ $ Personal Agent" in text
-    assert "╮" in text
-    assert "╰" in text
-    assert "╯" in text
+    assert "Personal Agent" in text
     assert "echo:你好" in text
     assert "模型:" not in text
 
@@ -140,7 +133,7 @@ async def test_cli_shell_renders_message_events():
 
 
 @pytest.mark.asyncio
-async def test_cli_shell_run_frames_live_input_area():
+async def test_cli_shell_run_echoes_user_input_and_reply():
     output: list[str] = []
     renderer, stream = _renderer()
     runtime = FakeRuntime()
@@ -156,13 +149,14 @@ async def test_cli_shell_run_frames_live_input_area():
 
     text = stream.getvalue()
     assert "$ deepseek-chat" in text
-    assert text.count("─" * 20) >= 2
-    assert "╭─ $ Personal Agent" in text
+    # input_fn path does not use prompt_toolkit, so the shell echoes the user line
+    assert "› 你好" in text
+    assert "Personal Agent" in text
     assert any(item == "› " for item in output)
     assert runtime.messages == ["你好"]
 
 
-def test_cli_shell_terminal_prompt_avoids_cursor_rewrite_frame():
+def test_cli_shell_prompt_status_bar_only():
     renderer, stream = _terminal_renderer(ShellRenderOptions(color=False))
     runtime = FakeRuntime()
 
@@ -170,20 +164,10 @@ def test_cli_shell_terminal_prompt_avoids_cursor_rewrite_frame():
 
     text = stream.getvalue()
     assert prompt == "› "
-    assert "› " not in text
-    assert "─" * 20 in text
+    # status bar prints, but no input frame / orange rule is drawn anymore
+    assert "deepseek-chat" in text
     assert "\x1b[1A" not in text
     assert "\x1b[2C" not in text
-
-
-def test_cli_shell_framed_prompt_provides_bottom_rule():
-    renderer, _ = _terminal_renderer(ShellRenderOptions(color=False))
-
-    rule = str(renderer.input_bottom_rule())
-
-    assert "─" * 20 in rule
-    assert "\x1b[1A" not in rule
-    assert "\x1b[2C" not in rule
 
 
 @pytest.mark.asyncio
@@ -355,7 +339,9 @@ async def test_cli_shell_multiline_input_submits_literal_text():
     output: list[str] = []
     renderer, stream = _renderer()
     runtime = FakeRuntime()
-    inputs = iter(['"""', "line1", "", "/help", '"""', ""])
+    # Multiline is now Alt+Enter inside prompt_toolkit; the legacy `"""` sentinel
+    # is just ordinary text sent as a single message.
+    inputs = iter(['"""', ""])
 
     async def input_fn(prompt: str) -> str:
         output.append(prompt)
@@ -365,30 +351,69 @@ async def test_cli_shell_multiline_input_submits_literal_text():
 
     await shell.run()
 
-    assert runtime.messages == ["line1\n\n/help"]
-    assert "/help" not in runtime.commands
-    assert "│ " in output
-    assert "echo:line1" in stream.getvalue()
+    assert runtime.messages == ['"""']
+    assert "echo:" in stream.getvalue()
+
+
+def test_slash_completer_offers_matching_commands():
+    from prompt_toolkit.document import Document
+
+    from personal_agent.cli_shell import SLASH_COMMANDS, SlashCompleter
+
+    completer = SlashCompleter(SLASH_COMMANDS)
+
+    matches = [
+        completion.text
+        for completion in completer.get_completions(Document("/se"), None)
+    ]
+    assert "/session" in matches
+
+    # No completions once the command is complete and args begin.
+    assert list(completer.get_completions(Document("/session list"), None)) == []
+    # No completions for plain text.
+    assert list(completer.get_completions(Document("hello"), None)) == []
+
+
+def test_alt_enter_inserts_newline_enter_submits():
+    from prompt_toolkit.keys import Keys
+
+    renderer, _ = _renderer()
+    shell = CliShell(FakeRuntime(), renderer=renderer)
+
+    bindings = shell._key_bindings()
+    keymap = {tuple(binding.keys): binding for binding in bindings.bindings}
+
+    # Alt+Enter (Escape then Enter) inserts a newline into the buffer.
+    alt_enter = keymap[(Keys.Escape, Keys.ControlM)]
+    inserted: list[str] = []
+    newline_event = SimpleNamespace(
+        current_buffer=SimpleNamespace(insert_text=inserted.append)
+    )
+    alt_enter.handler(newline_event)
+    assert inserted == ["\n"]
+
+    # Plain Enter submits the current buffer.
+    plain_enter = keymap[(Keys.ControlM,)]
+    submitted: list[bool] = []
+    submit_event = SimpleNamespace(
+        current_buffer=SimpleNamespace(
+            validate_and_handle=lambda: submitted.append(True)
+        )
+    )
+    plain_enter.handler(submit_event)
+    assert submitted == [True]
 
 
 @pytest.mark.asyncio
-async def test_cli_shell_multiline_cancel_does_not_run_message():
-    output: list[str] = []
+async def test_cli_shell_echoes_user_input_on_non_terminal_path():
     renderer, stream = _renderer()
     runtime = FakeRuntime()
-    inputs = iter(['"""', "line1", "/cancel", ""])
+    shell = CliShell(runtime, renderer=renderer)
 
-    async def input_fn(prompt: str) -> str:
-        output.append(prompt)
-        return next(inputs)
+    await shell.run_once("你好呀")
 
-    shell = CliShell(runtime, input_fn=input_fn, renderer=renderer)
-
-    await shell.run()
-
-    assert runtime.messages == []
-    assert "已取消多行输入。" in stream.getvalue()
-    assert "│ " in output
+    text = stream.getvalue()
+    assert "› 你好呀" in text
 
 
 @pytest.mark.asyncio
