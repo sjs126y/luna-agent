@@ -84,16 +84,24 @@ async def test_cli_shell_renders_message_events():
     assert result == "echo:你好"
     assert runtime.messages == ["你好"]
     text = stream.getvalue()
-    assert "●" in text
     assert "你" in text
     assert "你好" in text
     assert "$ PersonalAgent" in text
     assert "│ echo:你好" not in text
     assert "  echo:你好" in text
     assert "╭─ $ PersonalAgent" in text
+    assert "╮" in text
     assert "╰" in text
+    assert "╯" in text
     assert "echo:你好" in text
     assert "模型:" not in text
+
+    stream.seek(0)
+    stream.truncate(0)
+    assert renderer.prompt(runtime) == "› "
+    prompt_text = stream.getvalue()
+    assert "api=1" in prompt_text
+    assert "in=10 out=3" in prompt_text
 
 
 @pytest.mark.asyncio

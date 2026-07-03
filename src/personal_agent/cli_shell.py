@@ -47,6 +47,7 @@ class TerminalRenderer(ConversationEventSink):
         self._last_llm_duration = 0.0
         self._last_input_tokens = 0
         self._last_output_tokens = 0
+        self._last_api_calls = 0
 
     async def emit(self, event: ConversationEvent) -> None:
         if event.type == "assistant_message":
@@ -56,12 +57,13 @@ class TerminalRenderer(ConversationEventSink):
             return
 
         if event.type == "turn_start":
-            self._turn_started_at = time.monotonic()
+            self.begin_turn()
             return
 
         if event.type == "llm_end":
             self._last_input_tokens = int(event.data.get("input_tokens", 0) or 0)
             self._last_output_tokens = int(event.data.get("output_tokens", 0) or 0)
+            self._last_api_calls = int(event.data.get("api_calls", 0) or self._last_api_calls)
             if self._llm_started_at is not None:
                 self._last_llm_duration = max(0.0, time.monotonic() - self._llm_started_at)
 
@@ -124,11 +126,15 @@ class TerminalRenderer(ConversationEventSink):
         self._print(Text(self._status_text(runtime), style="bold blue"))
         self._rule("─", style="orange3")
 
-    def user_message(self, text: str) -> None:
+    def begin_turn(self) -> None:
         self._turn_started_at = time.monotonic()
         self._last_llm_duration = 0.0
         self._last_input_tokens = 0
         self._last_output_tokens = 0
+        self._last_api_calls = 0
+
+    def user_message(self, text: str) -> None:
+        self.begin_turn()
         self._rule("─", style="yellow")
         body = Text()
         body.append("● ", style="bold yellow")
@@ -175,12 +181,22 @@ class TerminalRenderer(ConversationEventSink):
     def status_line(self, runtime: CliChatRuntime, result: object | None = None) -> None:
         self._print(Text(self._status_text(runtime, result=result), style="bold blue"))
 
+    def update_result(self, result: object) -> None:
+        raw = getattr(result, "raw", {})
+        if isinstance(raw, dict):
+            api_calls = raw.get("api_calls")
+            if api_calls is not None:
+                self._last_api_calls = int(api_calls or 0)
+
     def _status_text(self, runtime: CliChatRuntime, result: object | None = None) -> str:
         settings = runtime.settings
         provider = getattr(settings, "llm_provider", "")
         model = getattr(settings, "llm_model", "")
         raw = getattr(result, "raw", {}) if result is not None else {}
         api_calls = raw.get("api_calls", "") if isinstance(raw, dict) else ""
+        if api_calls != "":
+            self._last_api_calls = int(api_calls or 0)
+        api_calls = self._last_api_calls
         context_window = self._context_window(runtime)
         context = self._context_text(context_window)
         duration = 0.0
@@ -220,12 +236,14 @@ class TerminalRenderer(ConversationEventSink):
     def _block_top(self, title: str, *, style: str) -> Text:
         width = self._console_width()
         prefix = f"╭─ {title} "
-        line = "─" * max(4, min(width, 72) - len(prefix))
-        return Text(prefix + line, style=style)
+        max_width = min(width, 72)
+        line = "─" * max(4, max_width - len(prefix) - 1)
+        return Text(prefix + line + "╮", style=style)
 
     def _block_bottom(self, *, style: str) -> Text:
         width = self._console_width()
-        return Text("╰" + "─" * max(4, min(width, 72) - 1), style=style)
+        max_width = min(width, 72)
+        return Text("╰" + "─" * max(4, max_width - 2) + "╯", style=style)
 
     def _print(self, value) -> None:
         if self.console is not None:
@@ -319,8 +337,9 @@ class CliShell:
         if command_result is not None:
             self.renderer.command_response(command_result)
             return command_result
-        self.renderer.user_message(text)
+        self.renderer.begin_turn()
         result = await self.runtime.run_message_events(text, event_sink=self.renderer)
+        self.renderer.update_result(result)
         return result.final_response
 
 
