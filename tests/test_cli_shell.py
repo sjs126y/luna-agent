@@ -339,7 +339,7 @@ async def test_cli_shell_multiline_input_submits_literal_text():
     output: list[str] = []
     renderer, stream = _renderer()
     runtime = FakeRuntime()
-    # Multiline is now Alt+Enter inside prompt_toolkit; the legacy `"""` sentinel
+    # Multiline is now Ctrl+J inside prompt_toolkit; the legacy `"""` sentinel
     # is just ordinary text sent as a single message.
     inputs = iter(['"""', ""])
 
@@ -374,7 +374,7 @@ def test_slash_completer_offers_matching_commands():
     assert list(completer.get_completions(Document("hello"), None)) == []
 
 
-def test_alt_enter_inserts_newline_enter_submits():
+def test_ctrl_j_inserts_newline_enter_submits():
     from prompt_toolkit.keys import Keys
 
     renderer, _ = _renderer()
@@ -383,13 +383,13 @@ def test_alt_enter_inserts_newline_enter_submits():
     bindings = shell._key_bindings()
     keymap = {tuple(binding.keys): binding for binding in bindings.bindings}
 
-    # Alt+Enter (Escape then Enter) inserts a newline into the buffer.
-    alt_enter = keymap[(Keys.Escape, Keys.ControlM)]
+    # Ctrl+J inserts a newline into the buffer (Alt+Enter is grabbed by many terminals).
+    ctrl_j = keymap[(Keys.ControlJ,)]
     inserted: list[str] = []
     newline_event = SimpleNamespace(
         current_buffer=SimpleNamespace(insert_text=inserted.append)
     )
-    alt_enter.handler(newline_event)
+    ctrl_j.handler(newline_event)
     assert inserted == ["\n"]
 
     # Plain Enter submits the current buffer.

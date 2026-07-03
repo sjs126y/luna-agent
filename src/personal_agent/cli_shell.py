@@ -157,7 +157,7 @@ class TerminalRenderer(ConversationEventSink):
         )
         self._print(
             Text(
-                "exit/quit 或空行退出，/help 查看命令，Alt+Enter 换行。",
+                "exit/quit 或空行退出，/help 查看命令，Ctrl+J 换行。",
                 style="dim",
             )
         )
@@ -667,7 +667,7 @@ class CliShell:
     def _key_bindings(self) -> KeyBindings:
         bindings = KeyBindings()
 
-        @bindings.add("escape", "enter")  # Alt+Enter → newline
+        @bindings.add("c-j")  # Ctrl+J → newline (Alt+Enter is grabbed by many terminals)
         def _(event) -> None:
             event.current_buffer.insert_text("\n")
 
