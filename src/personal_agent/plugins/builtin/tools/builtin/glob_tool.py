@@ -59,4 +59,7 @@ tool_registry.register(ToolEntry(
     handler=_glob,
     toolset="builtin",
     permission_category="read",
+    tags=["file", "search", "read"],
+    risk_level="low",
+    usage_hint="Use to find files by path pattern before reading or editing them.",
 ))

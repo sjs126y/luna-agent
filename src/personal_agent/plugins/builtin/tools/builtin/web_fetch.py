@@ -43,4 +43,7 @@ tool_registry.register(ToolEntry(
     handler=_web_fetch,
     toolset="builtin",
     permission_category="network",
+    tags=["network", "web", "fetch"],
+    risk_level="medium",
+    usage_hint="Use to read a specific URL after deciding the page is relevant.",
 ))

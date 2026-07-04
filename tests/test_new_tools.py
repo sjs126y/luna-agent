@@ -847,3 +847,39 @@ def test_builtin_tools_declare_permission_categories():
 
     for name, category in expected.items():
         assert tool_registry.get(name).permission_category == category
+
+
+def test_key_builtin_tools_declare_usage_metadata():
+    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
+    from personal_agent.tools.registry import tool_registry
+
+    expected = {
+        "read": ("low", "file"),
+        "grep": ("low", "search"),
+        "glob": ("low", "search"),
+        "write": ("high", "write"),
+        "edit": ("high", "edit"),
+        "bash": ("high", "terminal"),
+        "process_start": ("high", "background"),
+        "process_read": ("medium", "process"),
+        "process_kill": ("high", "process"),
+        "web_search": ("medium", "network"),
+        "web_fetch": ("medium", "network"),
+        "tool_search": ("low", "tooling"),
+        "tool_call": ("medium", "dispatch"),
+    }
+
+    for name, (risk, tag) in expected.items():
+        entry = tool_registry.get(name)
+        assert entry.risk_level == risk
+        assert tag in entry.tags
+        assert entry.usage_hint

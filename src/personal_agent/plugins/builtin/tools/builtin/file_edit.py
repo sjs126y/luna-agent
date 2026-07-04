@@ -79,6 +79,9 @@ tool_registry.register(ToolEntry(
     handler=_file_edit,
     toolset="builtin",
     permission_category="write",
+    tags=["file", "write", "edit"],
+    risk_level="high",
+    usage_hint="Use for small append or first-occurrence replacement edits after reading the target file.",
     is_parallel_safe=False,
     is_destructive=True,
 ))

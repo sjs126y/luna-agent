@@ -1,5 +1,7 @@
 """Test tool registry registration, definitions, dispatch."""
 
+import json
+
 import pytest
 
 from personal_agent.tools.entry import ToolEntry
@@ -20,6 +22,9 @@ async def test_register_and_get(registry):
     registry.register(entry)
     assert registry.get("test") is entry
     assert registry.generation == 1
+    assert entry.tags == []
+    assert entry.risk_level == "low"
+    assert entry.usage_hint == ""
 
 
 @pytest.mark.asyncio
@@ -103,6 +108,9 @@ def test_catalog_reports_metadata_and_availability(registry):
         handler=dummy,
         toolset="custom",
         permission_category="write",
+        tags=["file", "write"],
+        risk_level="high",
+        usage_hint="Use carefully.",
         check_fn=lambda: False,
         precheck=lambda args: None,
         is_parallel_safe=False,
@@ -118,6 +126,9 @@ def test_catalog_reports_metadata_and_availability(registry):
     assert catalog["writer"]["unavailable_reason"] == "check_fn returned False"
     assert catalog["writer"]["has_precheck"] is True
     assert catalog["writer"]["is_destructive"] is True
+    assert catalog["writer"]["tags"] == ["file", "write"]
+    assert catalog["writer"]["risk_level"] == "high"
+    assert catalog["writer"]["usage_hint"] == "Use carefully."
 
     summary = registry.catalog_summary()
     assert summary["total"] == 2
@@ -125,5 +136,52 @@ def test_catalog_reports_metadata_and_availability(registry):
     assert summary["unavailable"] == 1
     assert summary["by_permission"] == {"read": 1, "write": 1}
     assert summary["by_toolset"] == {"builtin": 1, "custom": 1}
+    assert summary["by_risk"] == {"high": 1, "low": 1}
+    assert summary["by_tag"] == {"file": 1, "write": 1}
     assert summary["high_risk"] == ["writer"]
     assert summary["unavailable_tools"] == [{"name": "writer", "reason": "check_fn returned False"}]
+
+
+@pytest.mark.asyncio
+async def test_bridge_search_and_describe_include_tool_metadata():
+    from personal_agent.tools.registry import (
+        dispatch_tool_describe,
+        dispatch_tool_search,
+        tool_registry,
+    )
+
+    async def dummy(**kw):
+        return "ok"
+
+    original = tool_registry.get("metadata_bridge_demo")
+    tool_registry.register(ToolEntry(
+        name="metadata_bridge_demo",
+        description="specialmeta bridge metadata demo",
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        handler=dummy,
+        toolset="custom",
+        permission_category="write",
+        tags=["demo", "write"],
+        risk_level="high",
+        usage_hint="Use for metadata bridge tests.",
+        is_destructive=True,
+    ))
+    try:
+        search = json.loads(await dispatch_tool_search("specialmeta"))
+        hit = search["hits"][0]
+        assert hit["name"] == "metadata_bridge_demo"
+        assert hit["permission_category"] == "write"
+        assert hit["risk_level"] == "high"
+        assert hit["tags"] == ["demo", "write"]
+        assert hit["usage_hint"] == "Use for metadata bridge tests."
+
+        described = json.loads(await dispatch_tool_describe("metadata_bridge_demo"))
+        assert described["input_schema"]["properties"]["value"]["type"] == "string"
+        assert described["toolset"] == "custom"
+        assert described["available"] is True
+        assert described["risk_level"] == "high"
+    finally:
+        if original is None:
+            tool_registry.unregister("metadata_bridge_demo")
+        else:
+            tool_registry.register(original)

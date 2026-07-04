@@ -157,4 +157,7 @@ tool_registry.register(ToolEntry(
     handler=_web_search,
     toolset="builtin",
     permission_category="network",
+    tags=["network", "web", "search"],
+    risk_level="medium",
+    usage_hint="Use when current or external information is needed before answering or acting.",
 ))

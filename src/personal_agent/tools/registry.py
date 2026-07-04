@@ -129,9 +129,13 @@ class ToolRegistry:
             result.append({
                 "name": entry.name,
                 "description": entry.description,
+                "input_schema": entry.schema,
                 "toolset": entry.toolset,
                 "groups": _tool_groups(entry.name, entry.toolset, TOOLSETS),
                 "permission_category": entry.permission_category,
+                "tags": list(entry.tags),
+                "risk_level": _normalize_risk_level(entry.risk_level, entry),
+                "usage_hint": entry.usage_hint,
                 "is_core": is_core_tool(entry.name),
                 "is_parallel_safe": entry.is_parallel_safe,
                 "is_destructive": entry.is_destructive,
@@ -151,11 +155,17 @@ class ToolRegistry:
         items = self.catalog(enabled_toolsets)
         by_toolset = Counter(str(item["toolset"]) for item in items)
         by_permission = Counter(str(item["permission_category"]) for item in items)
+        by_risk = Counter(str(item["risk_level"]) for item in items)
+        by_tag = Counter(tag for item in items for tag in item["tags"])
         high_risk_categories = {"write", "bash", "background", "network"}
         high_risk = [
             item["name"]
             for item in items
-            if item["is_destructive"] or item["permission_category"] in high_risk_categories
+            if (
+                item["is_destructive"]
+                or item["permission_category"] in high_risk_categories
+                or item["risk_level"] == "high"
+            )
         ]
         unavailable = [
             {"name": item["name"], "reason": item["unavailable_reason"]}
@@ -171,6 +181,8 @@ class ToolRegistry:
             "destructive": sum(1 for item in items if item["is_destructive"]),
             "by_toolset": dict(sorted(by_toolset.items())),
             "by_permission": dict(sorted(by_permission.items())),
+            "by_risk": dict(sorted(by_risk.items())),
+            "by_tag": dict(sorted(by_tag.items())),
             "high_risk": high_risk,
             "unavailable_tools": unavailable,
             "items": items,
@@ -199,6 +211,17 @@ def _entry_availability(entry: ToolEntry) -> tuple[bool, str]:
     except Exception as exc:
         return False, f"check_fn error: {type(exc).__name__}: {exc}"
     return False, "check_fn returned False"
+
+
+def _normalize_risk_level(risk_level: str, entry: ToolEntry) -> str:
+    value = str(risk_level or "").strip().lower()
+    if entry.is_destructive or entry.permission_category in {"write", "bash"}:
+        return "high"
+    if entry.permission_category in {"background", "network"}:
+        return "high" if value == "high" else "medium"
+    if value in {"low", "medium", "high"}:
+        return value
+    return "low"
 
 
 def _tool_groups(name: str, toolset: str, groups: dict[str, set[str]]) -> list[str]:
@@ -269,13 +292,8 @@ async def dispatch_tool_search(query: str) -> str:
     import json
     from personal_agent.tools.toolsets import is_core_tool
 
-    # Get ALL tool schemas (skip_bridge to avoid recursion)
-    all_defs = tool_registry.get_definitions(
-        enabled_toolsets=None, quiet_mode=False, skip_bridge=True
-    )
-
     # Build catalog: only deferrable tools
-    catalog = [d for d in all_defs if not is_core_tool(d["name"])]
+    catalog = [d for d in tool_registry.catalog() if not is_core_tool(d["name"])]
     if not catalog:
         return json.dumps({"hits": [], "message": "No deferrable tools available."}, ensure_ascii=False)
 
@@ -286,10 +304,7 @@ async def dispatch_tool_search(query: str) -> str:
 async def dispatch_tool_describe(name: str) -> str:
     """Return full schema for a specific tool."""
     import json
-    all_defs = tool_registry.get_definitions(
-        enabled_toolsets=None, quiet_mode=False, skip_bridge=True
-    )
-    for d in all_defs:
+    for d in tool_registry.catalog():
         if d["name"] == name:
             return json.dumps(d, ensure_ascii=False)
     return json.dumps({"error": f"Tool not found: {name}"}, ensure_ascii=False)
@@ -345,7 +360,8 @@ def _bm25_search(catalog: list[dict], query: str, top_k: int = 5) -> list[dict]:
         return catalog[:top_k]
 
     # Build per-doc token frequencies
-    docs_tokens = [_tokenize(d["name"] + " " + d["description"]) for d in catalog]
+    docs_text = [_catalog_search_text(d) for d in catalog]
+    docs_tokens = [_tokenize(text) for text in docs_text]
 
     k1, b = 1.5, 0.75
     avgdl = sum(len(t) for t in docs_tokens) / max(len(docs_tokens), 1)
@@ -372,15 +388,37 @@ def _bm25_search(catalog: list[dict], query: str, top_k: int = 5) -> list[dict]:
             numerator = tf[tok] * (k1 + 1)
             denominator = tf[tok] + k1 * (1 - b + b * doc_len / max(avgdl, 1))
             score += idf * numerator / max(denominator, 0.001)
+        if query.lower().strip() and query.lower().strip() in docs_text[i].lower():
+            score += 1.0
 
         scores.append({
-            "name": catalog[i]["name"],
-            "description": catalog[i]["description"],
-            "input_schema": catalog[i].get("input_schema", {}),
+            **catalog[i],
             "score": round(score, 3),
         })
 
     scores.sort(key=lambda x: x["score"], reverse=True)
-    return [{"name": s["name"], "description": s["description"],
-             "input_schema": s["input_schema"]}
-            for s in scores[:top_k] if s["score"] > 0]
+    return [_search_hit(s) for s in scores[:top_k] if s["score"] > 0]
+
+
+def _search_hit(item: dict) -> dict:
+    return {
+        "name": item["name"],
+        "description": item["description"],
+        "input_schema": item.get("input_schema", {}),
+        "toolset": item.get("toolset", ""),
+        "permission_category": item.get("permission_category", "default"),
+        "risk_level": item.get("risk_level", "low"),
+        "tags": item.get("tags", []),
+        "usage_hint": item.get("usage_hint", ""),
+        "available": item.get("available", True),
+        "unavailable_reason": item.get("unavailable_reason", ""),
+    }
+
+
+def _catalog_search_text(item: dict) -> str:
+    return " ".join([
+        str(item.get("name") or ""),
+        str(item.get("description") or ""),
+        " ".join(str(tag) for tag in item.get("tags", []) or []),
+        str(item.get("usage_hint") or ""),
+    ])

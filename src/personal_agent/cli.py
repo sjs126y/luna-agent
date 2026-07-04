@@ -2114,6 +2114,8 @@ def _empty_tool_summary() -> dict[str, Any]:
         "destructive": 0,
         "by_toolset": {},
         "by_permission": {},
+        "by_risk": {},
+        "by_tag": {},
         "high_risk": [],
         "unavailable_tools": [],
         "items": [],

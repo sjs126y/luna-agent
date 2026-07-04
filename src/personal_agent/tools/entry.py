@@ -13,6 +13,9 @@ class ToolEntry:
     handler: Callable[..., Awaitable[str]]
     toolset: str = "general"    # "web" | "terminal" | "memory" | ...
     permission_category: str = "default"
+    tags: list[str] = field(default_factory=list)
+    risk_level: str = "low"
+    usage_hint: str = ""
     check_fn: Callable[[], bool] | None = None  # dependency check → True/False
     precheck: Callable[[dict[str, Any]], str | None] | None = None
     is_parallel_safe: bool = True

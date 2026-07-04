@@ -43,4 +43,7 @@ tool_registry.register(ToolEntry(
     handler=_file_read,
     toolset="builtin",
     permission_category="read",
+    tags=["file", "read"],
+    risk_level="low",
+    usage_hint="Use to inspect a known file path before editing or summarizing it.",
 ))

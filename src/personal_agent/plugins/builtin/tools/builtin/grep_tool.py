@@ -103,4 +103,7 @@ tool_registry.register(ToolEntry(
     handler=_grep,
     toolset="builtin",
     permission_category="read",
+    tags=["file", "search", "read"],
+    risk_level="low",
+    usage_hint="Use to search file contents by regex before opening or editing matching files.",
 ))

@@ -47,6 +47,7 @@ def test_doctor_report_includes_execution_policy():
     assert "by_permission" in report["tools"]
     assert "Execution:" in text
     assert "Tools:" in text
+    assert "by risk:" in text
     assert "mode: sovereign" in text
     assert "warning:" in text
 

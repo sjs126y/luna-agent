@@ -417,6 +417,9 @@ tool_registry.register(ToolEntry(
     handler=_bash,
     toolset="builtin",
     permission_category="bash",
+    tags=["terminal", "command", "shell"],
+    risk_level="high",
+    usage_hint="Use for short bounded inspection or maintenance commands; use process_start for long-running work.",
     precheck=_precheck,
     is_parallel_safe=False,
     is_destructive=False,  # whitelist constrains safety

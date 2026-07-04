@@ -393,6 +393,9 @@ tool_registry.register(ToolEntry(
     handler=_process_start,
     toolset="builtin",
     permission_category="background",
+    tags=["terminal", "background", "process"],
+    risk_level="high",
+    usage_hint="Use for long-running tests, builds, servers, watchers, or commands that need polling.",
     precheck=_process_start_precheck,
     is_parallel_safe=False,
 ))
@@ -415,6 +418,9 @@ tool_registry.register(ToolEntry(
     handler=_process_list,
     toolset="builtin",
     permission_category="background",
+    tags=["terminal", "background", "process"],
+    risk_level="medium",
+    usage_hint="Use to inspect tracked background processes before reading, waiting, killing, or clearing them.",
 ))
 
 tool_registry.register(ToolEntry(
@@ -444,6 +450,9 @@ tool_registry.register(ToolEntry(
     handler=_process_read,
     toolset="builtin",
     permission_category="background",
+    tags=["terminal", "background", "process", "read"],
+    risk_level="medium",
+    usage_hint="Use mode=since_last to poll new output from a background process without repeating logs.",
 ))
 
 tool_registry.register(ToolEntry(
@@ -467,6 +476,9 @@ tool_registry.register(ToolEntry(
     handler=_process_clear,
     toolset="builtin",
     permission_category="background",
+    tags=["terminal", "background", "process"],
+    risk_level="medium",
+    usage_hint="Use to remove finished process records after confirming they are done or killed.",
 ))
 
 tool_registry.register(ToolEntry(
@@ -482,6 +494,9 @@ tool_registry.register(ToolEntry(
     handler=_process_kill,
     toolset="builtin",
     permission_category="background",
+    tags=["terminal", "background", "process"],
+    risk_level="high",
+    usage_hint="Use to stop a tracked running background process by pid.",
 ))
 
 tool_registry.register(ToolEntry(
@@ -498,4 +513,7 @@ tool_registry.register(ToolEntry(
     handler=_process_wait,
     toolset="builtin",
     permission_category="background",
+    tags=["terminal", "background", "process"],
+    risk_level="medium",
+    usage_hint="Use to wait briefly for a tracked background process and collect final retained output.",
 ))

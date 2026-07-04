@@ -67,6 +67,9 @@ tool_registry.register(ToolEntry(
     },
     handler=_tool_search,
     toolset="system",
+    tags=["tooling", "discovery"],
+    risk_level="low",
+    usage_hint="Use to discover a non-core tool by keyword before calling it directly.",
     is_parallel_safe=True,
 ))
 
@@ -83,6 +86,9 @@ tool_registry.register(ToolEntry(
     },
     handler=_tool_describe,
     toolset="system",
+    tags=["tooling", "discovery"],
+    risk_level="low",
+    usage_hint="Use to inspect one tool's schema, permissions, and risk metadata before calling it.",
     is_parallel_safe=True,
 ))
 
@@ -100,5 +106,8 @@ tool_registry.register(ToolEntry(
     },
     handler=_tool_call,
     toolset="system",
+    tags=["tooling", "dispatch"],
+    risk_level="medium",
+    usage_hint="Use only for safe non-destructive tools; direct calls are preferred when the tool is known.",
     is_parallel_safe=False,
 ))
