@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from collections import OrderedDict
+from contextlib import suppress
 
 from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
 from personal_agent.models.messages import MessageEvent, SessionSource
@@ -21,6 +22,11 @@ class FeishuAdapter(BasePlatformAdapter):
         self._lark_client = None  # Reused API client
         self._app_id = config.feishu_app_id
         self._app_secret = config.feishu_app_secret
+        self._stop_event = None
+        self._ws_ready = None
+        self._ws_connected = None
+        self._ws_thread = None
+        self._health_check_task: asyncio.Task | None = None
         # Dedup + debounce
         self._seen_event_ids: OrderedDict[str, float] = OrderedDict()
         self._debounce_buffers: dict[str, dict] = {}  # chat_id → {timer, messages, ...}
@@ -92,9 +98,16 @@ class FeishuAdapter(BasePlatformAdapter):
         self._ws_thread.start()
 
         if not self._ws_ready.wait(timeout=10):
-            logger.warning("Feishu WS connection timed out after 10s")
+            error = "Feishu WS connection timed out after 10s"
+            self.mark_connect_error(error, name="feishu")
+            raise RuntimeError(error)
+        if not self._ws_connected.is_set():
+            error = "Feishu WS client failed to start"
+            self.mark_connect_error(error, name="feishu")
+            raise RuntimeError(error)
         else:
             await self.hooks.fire("on_connect")
+            self.mark_connected(name="feishu")
             logger.info("Feishu adapter connected")
 
         # Health check watcher: periodically verify WS is alive, reconnect if not
@@ -102,9 +115,12 @@ class FeishuAdapter(BasePlatformAdapter):
 
     async def disconnect(self) -> None:
         await self.hooks.fire("on_disconnect")
-        if hasattr(self, '_health_check_task'):
+        if self._health_check_task:
             self._health_check_task.cancel()
-        if hasattr(self, '_stop_event'):
+            with suppress(asyncio.CancelledError):
+                await self._health_check_task
+            self._health_check_task = None
+        if self._stop_event is not None:
             self._stop_event.set()
         if self._ws_client:
             try:
@@ -115,7 +131,9 @@ class FeishuAdapter(BasePlatformAdapter):
                 pass
             self._ws_client = None
         self._lark_client = None
-        self._ws_connected.clear()
+        if self._ws_connected is not None:
+            self._ws_connected.clear()
+        self.mark_disconnected()
         logger.info("Feishu adapter disconnected")
 
     # ── health check ──────────────────────────────────
@@ -124,9 +142,9 @@ class FeishuAdapter(BasePlatformAdapter):
         """Every 30s, log WS status. If disconnected > 90s, force reconnect."""
         await asyncio.sleep(60)
         disconnected_since = 0.0
-        while not (hasattr(self, '_stop_event') and self._stop_event.is_set()):
+        while not (self._stop_event is not None and self._stop_event.is_set()):
             await asyncio.sleep(30)
-            if not self._ws_connected.is_set():
+            if self._ws_connected is not None and not self._ws_connected.is_set():
                 if disconnected_since == 0:
                     disconnected_since = time.time()
                     logger.warning("Feishu WS appears disconnected — SDK auto_reconnect should handle it")
@@ -138,7 +156,8 @@ class FeishuAdapter(BasePlatformAdapter):
                     except Exception:
                         pass
                     self._ws_client = None
-                    self._ws_ready.clear()
+                    if self._ws_ready is not None:
+                        self._ws_ready.clear()
                     await self.connect()
                     return
             else:
@@ -147,12 +166,15 @@ class FeishuAdapter(BasePlatformAdapter):
     # ── send ──────────────────────────────────────────
 
     async def send(self, chat_id: str, content: str) -> SendResult:
+        if self._lark_client is None:
+            return SendResult(success=False, error="Feishu client not connected")
         try:
             import lark_oapi as lark
 
-            if chat_id.startswith("oc_"):
+            receive_id_type = _receive_id_type(chat_id)
+            if receive_id_type == "chat_id":
                 req = lark.im.v1.CreateMessageRequest.builder() \
-                    .receive_id_type("chat_id") \
+                    .receive_id_type(receive_id_type) \
                     .request_body(
                         lark.im.v1.CreateMessageRequestBody.builder()
                         .receive_id(chat_id)
@@ -162,7 +184,7 @@ class FeishuAdapter(BasePlatformAdapter):
                     ).build()
             else:
                 req = lark.im.v1.CreateMessageRequest.builder() \
-                    .receive_id_type("open_id") \
+                    .receive_id_type(receive_id_type) \
                     .request_body(
                         lark.im.v1.CreateMessageRequestBody.builder()
                         .receive_id(chat_id)
@@ -174,7 +196,7 @@ class FeishuAdapter(BasePlatformAdapter):
             resp = self._lark_client.im.v1.message.create(req)
             if resp.success():
                 return SendResult(success=True, message_id=resp.data.message_id)
-            return SendResult(success=False, error=f"Feishu API error: {resp.code} {resp.msg}")
+            return SendResult(success=False, error=_response_error(resp))
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
 
@@ -376,3 +398,15 @@ class FeishuAdapter(BasePlatformAdapter):
     async def _send_typing(self, chat_id: str) -> None:
         """Feishu doesn't support typing indicators via bot API — no-op."""
         pass
+
+
+def _receive_id_type(chat_id: str) -> str:
+    return "chat_id" if str(chat_id).startswith("oc_") else "open_id"
+
+
+def _response_error(resp) -> str:
+    code = getattr(resp, "code", "")
+    msg = getattr(resp, "msg", "") or getattr(resp, "message", "")
+    if code or msg:
+        return f"Feishu API error: {code} {msg}".strip()
+    return "Feishu API error"
