@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,14 @@ def _get_lock():
     return _AUDIT_LOCK
 
 
+def _write_entry(entry: dict[str, Any]) -> None:
+    line = json.dumps(entry, ensure_ascii=False) + "\n"
+    _AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _get_lock():
+        with open(_AUDIT_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+
+
 def audit_log(tool: str, detail: str, result_snippet: str, success: bool) -> None:
     """Append one JSON line to the audit log. Non-blocking — errors are suppressed.
 
@@ -40,11 +49,7 @@ def audit_log(tool: str, detail: str, result_snippet: str, success: bool) -> Non
             "result": redact(result_snippet[:200]),
             "success": success,
         }
-        line = json.dumps(entry, ensure_ascii=False) + "\n"
-        _AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with _get_lock():
-            with open(_AUDIT_PATH, "a", encoding="utf-8") as f:
-                f.write(line)
+        _write_entry(entry)
     except Exception:
         pass  # audit failure never blocks operations
 
@@ -71,10 +76,41 @@ def audit_tool_decision(decision) -> None:
             "grant_matched": str(data.get("grant_matched", "")),
             "message": redact(str(data.get("decision_message", data.get("message", "")))[:500]),
         }
-        line = json.dumps(entry, ensure_ascii=False) + "\n"
-        _AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with _get_lock():
-            with open(_AUDIT_PATH, "a", encoding="utf-8") as f:
-                f.write(line)
+        _write_entry(entry)
+    except Exception:
+        pass
+
+
+def audit_tool_result(result, *, decision=None) -> None:
+    """Append one structured tool-result audit record."""
+    try:
+        from personal_agent.tools.redact import redact
+
+        result_data = result.as_dict() if hasattr(result, "as_dict") else dict(result)
+        decision_data = (
+            decision.as_dict()
+            if hasattr(decision, "as_dict")
+            else dict(decision or {})
+        )
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "event": "tool_result",
+            "tool": redact(str(result_data.get("tool_name", ""))[:200]),
+            "tool_use_id": redact(str(result_data.get("tool_use_id", ""))[:200]),
+            "status": str(result_data.get("status", "")),
+            "category": str(result_data.get("category", "")),
+            "permission_category": str(decision_data.get("permission_category", "")),
+            "execution_mode": str(decision_data.get("execution_mode", "")),
+            "permission_decision": str(decision_data.get("permission_decision", "")),
+            "reason_code": str(decision_data.get("reason_code", "")),
+            "required_allow": str(decision_data.get("required_allow", "")),
+            "grant_matched": str(decision_data.get("grant_matched", "")),
+            "duration": float(result_data.get("duration", 0.0) or 0.0),
+            "attempts": int(result_data.get("attempts", 0) or 0),
+            "input_summary": redact(str(result_data.get("input_summary", ""))[:500]),
+            "output_summary": redact(str(result_data.get("output_summary", ""))[:500]),
+            "error": redact(str(result_data.get("error", ""))[:500]),
+        }
+        _write_entry(entry)
     except Exception:
         pass

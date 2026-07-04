@@ -1,7 +1,5 @@
 """Edit files within sandbox boundaries — append or replace text."""
 
-from pathlib import Path
-
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 from personal_agent.tools.sandbox import get_sandbox
@@ -30,7 +28,6 @@ async def _file_edit(action: str, path: str, content: str = "",
                 f"Appended {len(content)} chars to {path} "
                 f"({len(existing)} -> {len(existing) + len(content)} chars)"
             )
-            _audit(msg, True)
             return msg
 
         elif action == "replace":
@@ -56,21 +53,11 @@ async def _file_edit(action: str, path: str, content: str = "",
                     f"Replaced 1 of {occurrences} occurrences in {path} "
                     f"({len(text)} -> {len(new_text_full)} chars)"
                 )
-            _audit(msg, True)
             return msg
 
         return f"Error: unknown action '{action}'. Use 'append' or 'replace'."
     except Exception as e:
-        _audit(f"Error: {e}", False)
         return f"Error: {e}"
-
-
-def _audit(msg: str, success: bool) -> None:
-    try:
-        from personal_agent.tools.audit import audit_log
-        audit_log("file_edit", msg[:200], msg[:200], success)
-    except Exception:
-        pass
 
 
 tool_registry.register(ToolEntry(

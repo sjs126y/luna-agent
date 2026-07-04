@@ -812,9 +812,10 @@ async def test_bridge_tool_call_uses_executor_precheck_for_web_fetch():
 
 def test_audit_imports():
     """Verify audit module exists and has expected API."""
-    from personal_agent.tools.audit import audit_log, audit_tool_decision, set_audit_path
+    from personal_agent.tools.audit import audit_log, audit_tool_decision, audit_tool_result, set_audit_path
     assert callable(audit_log)
     assert callable(audit_tool_decision)
+    assert callable(audit_tool_result)
     assert callable(set_audit_path)
 
 
@@ -880,6 +881,142 @@ async def test_audit_tool_decision_writes_structured_record():
         assert data["permission_decision"] == "ask"
         assert data["reason_code"] == "permission_required"
         assert data["required_allow"] == "write"
+
+
+@pytest.mark.asyncio
+async def test_audit_tool_result_writes_structured_record():
+    from personal_agent.tools.audit import audit_tool_result, set_audit_path
+    from personal_agent.tools.execution_guard import ToolDecision
+    from personal_agent.tools.executor import ToolExecutionResult
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        audit_path = Path(tmpdir) / "audit.log"
+        set_audit_path(audit_path)
+
+        audit_tool_result(
+            ToolExecutionResult(
+                tool_name="write",
+                tool_use_id="call-1",
+                status="denied",
+                category="authorization",
+                error="requires authorization",
+                duration=0.25,
+                attempts=1,
+                input_summary='{"api_key": "sk-proj-abcdefghijklmnopqrstuvwxyz"}',
+                output_summary="requires authorization",
+            ),
+            decision=ToolDecision(
+                tool_name="write",
+                tool_use_id="call-1",
+                allowed=False,
+                stage="permission",
+                status="denied",
+                permission_category="write",
+                execution_mode="standard",
+                permission_decision="ask",
+                reason_code="permission_required",
+                required_allow="write",
+                grant_matched="",
+            ),
+        )
+
+        line = audit_path.read_text(encoding="utf-8").strip()
+        data = json.loads(line)
+        assert data["event"] == "tool_result"
+        assert data["tool"] == "write"
+        assert data["tool_use_id"] == "call-1"
+        assert data["status"] == "denied"
+        assert data["category"] == "authorization"
+        assert data["permission_category"] == "write"
+        assert data["execution_mode"] == "standard"
+        assert data["permission_decision"] == "ask"
+        assert data["reason_code"] == "permission_required"
+        assert data["required_allow"] == "write"
+        assert data["duration"] == 0.25
+        assert data["attempts"] == 1
+        assert "abcdefghijklmnopqrstuvwxyz" not in data["input_summary"]
+        assert "authorization" in data["output_summary"]
+
+
+@pytest.mark.asyncio
+async def test_executor_writes_decision_and_result_audit_without_handler_duplicate(tmp_path: Path):
+    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    from personal_agent.tools.audit import set_audit_path
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.sandbox import init_sandbox
+
+    audit_path = tmp_path / "audit.log"
+    set_audit_path(audit_path)
+    init_sandbox([tmp_path], [])
+
+    result = await execute_tool_call_result({
+        "id": "write-1",
+        "name": "write",
+        "input": {"path": "result-audit.txt", "content": "ok"},
+    })
+
+    lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line) for line in lines]
+    assert result.status == "success"
+    assert [event.get("event") for event in events] == ["tool_decision", "tool_result"]
+    assert events[0]["tool"] == "write"
+    assert events[0]["allowed"] is True
+    assert events[1]["tool"] == "write"
+    assert events[1]["status"] == "success"
+    assert events[1]["permission_category"] == "write"
+    assert "success" not in events[1]
+
+
+@pytest.mark.asyncio
+async def test_executor_writes_result_audit_for_denied_precheck_and_unknown_tools(tmp_path: Path):
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.audit import set_audit_path
+    from personal_agent.tools.executor import execute_tool_call_result
+
+    audit_path = tmp_path / "audit.log"
+    set_audit_path(audit_path)
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "background": "ask"},
+    )
+
+    precheck = await execute_tool_call_result(
+        {"id": "p0", "name": "process_start", "input": {"command": "rm -rf /"}},
+        agent=agent,
+    )
+    denied = await execute_tool_call_result(
+        {"id": "p1", "name": "process_start", "input": {"command": "python -c \"print(1)\""}},
+        agent=agent,
+    )
+    unknown = await execute_tool_call_result({"id": "bad", "name": "missing_demo", "input": {}})
+
+    events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    assert precheck.status == "denied"
+    assert denied.status == "denied"
+    assert unknown.status == "error"
+    assert [event["event"] for event in events] == [
+        "tool_decision",
+        "tool_result",
+        "tool_decision",
+        "tool_result",
+        "tool_decision",
+        "tool_result",
+    ]
+    assert events[1]["tool"] == "process_start"
+    assert events[1]["status"] == "denied"
+    assert events[1]["category"] == "precheck"
+    assert events[1]["reason_code"] == "hard_blacklist"
+    assert events[3]["tool"] == "process_start"
+    assert events[3]["status"] == "denied"
+    assert events[3]["reason_code"] == "permission_required"
+    assert events[3]["required_allow"] == "background"
+    assert events[5]["tool"] == "missing_demo"
+    assert events[5]["status"] == "error"
+    assert events[5]["category"] == "unknown_tool"
+    assert events[5]["reason_code"] == "unknown_tool"
 
 
 # ── Checkpoint (file_write backup) ─────────────────────

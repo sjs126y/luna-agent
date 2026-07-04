@@ -203,6 +203,12 @@ async def execute_tool_call_result(
     )
 
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
+        try:
+            from personal_agent.tools.audit import audit_tool_result
+
+            audit_tool_result(result, decision=tool_decision)
+        except Exception:
+            pass
         await emit_event(
             event_sink,
             "tool_end",

@@ -4,7 +4,6 @@ Safety:
   - Sandbox roots + blocked patterns (unified)
   - Extension whitelist (no .exe/.bat/.sh etc.)
   - Max file size
-  - Audit logging
 """
 
 from pathlib import Path
@@ -56,13 +55,8 @@ async def _file_write(path: str, content: str) -> str:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
         msg = f"Written {len(content)} chars to {path} (overwrite)"
-
-        from personal_agent.tools.audit import audit_log
-        audit_log("file_write", path, msg, True)
         return msg
     except Exception as e:
-        from personal_agent.tools.audit import audit_log
-        audit_log("file_write", path, str(e), False)
         return f"Error: {e}"
 
 

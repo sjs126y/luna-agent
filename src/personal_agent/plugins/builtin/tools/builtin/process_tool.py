@@ -101,12 +101,10 @@ async def _process_start(command: str, cwd: str | None = None) -> str:
 
     error = bash_tool._check_command(command)
     if error:
-        bash_tool._audit(command, error, False)
         return error
 
     work_dir, cwd_error = _resolve_cwd(cwd)
     if cwd_error:
-        bash_tool._audit(command, cwd_error, False)
         return cwd_error
 
     try:
@@ -119,13 +117,9 @@ async def _process_start(command: str, cwd: str | None = None) -> str:
             **bash_tool._subprocess_group_kwargs(),
         )
         pid = _register(proc, command, cwd=str(work_dir))
-        result = _format_started(_processes[pid])
-        bash_tool._audit(command, result, True)
-        return result
+        return _format_started(_processes[pid])
     except Exception as exc:
-        error_text = f"Error: {exc}"
-        bash_tool._audit(command, error_text, False)
-        return error_text
+        return f"Error: {exc}"
 
 
 def _process_start_precheck(input_: dict) -> str | None:

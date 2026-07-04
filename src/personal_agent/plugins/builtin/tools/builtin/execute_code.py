@@ -5,7 +5,6 @@ Runs user code in a fresh subprocess with:
   - Credential-stripped environment
   - Hard timeout (default 30s, max 120s)
   - stdout/stderr capture with truncation
-  - Audit logging
 
 This is safer than `bash python -c "..."` because it's a separate process
 with minimal environment and no persistent state.
@@ -15,10 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import tempfile
 import textwrap
-from pathlib import Path
 
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
@@ -35,15 +32,6 @@ _AVAILABLE_MODULES_HINT = (
     "pathlib, csv, io, base64, hashlib, textwrap, functools, typing, enum, "
     "dataclasses, random, statistics, urllib.parse, xml, html, decimal, fractions"
 )
-
-
-def _audit(code: str, result: str, success: bool) -> None:
-    """Write audit entry for code execution."""
-    try:
-        from personal_agent.tools.audit import audit_log
-        audit_log("execute_code", code[:200], result[:200], success)
-    except Exception:
-        pass
 
 
 async def _execute_code(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
@@ -95,7 +83,6 @@ async def _execute_code(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            _audit(code, f"timed out after {timeout}s", False)
             return f"Error: code execution timed out after {timeout}s"
 
         out = stdout.decode("utf-8", errors="replace").strip()
@@ -117,12 +104,9 @@ async def _execute_code(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
                 f"\n\n...(truncated {len(result) - MAX_OUTPUT} more chars)"
             )
 
-        success = proc.returncode == 0
-        _audit(code, result, success)
         return result
 
     except Exception as exc:
-        _audit(code, str(exc), False)
         return f"Error: {exc}"
     finally:
         # Clean up temp dir

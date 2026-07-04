@@ -1,4 +1,4 @@
-"""Safe shell command execution — whitelist + sandbox + audit.
+"""Safe shell command execution — whitelist + sandbox.
 
 Layered defense:
   1. Command whitelist — unknown commands blocked
@@ -272,15 +272,6 @@ def _check_path_sandbox(cmd_line: str) -> str | None:
     return None
 
 
-def _audit(command: str, result: str, success: bool) -> None:
-    """Write audit entry for every shell execution."""
-    try:
-        from personal_agent.tools.audit import audit_log
-        audit_log("bash", command, result[:200], success)
-    except Exception:
-        pass
-
-
 def _subprocess_group_kwargs() -> dict:
     if os.name == "nt":
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
@@ -306,7 +297,6 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
 async def _bash(command: str, timeout: int = 30) -> str:
     error = _check_command(command)
     if error:
-        _audit(command, error, False)
         return error
 
     started = time.monotonic()
@@ -338,7 +328,6 @@ async def _bash(command: str, timeout: int = 30) -> str:
                     stderr=stderr,
                     timed_out=True,
                 )
-                _audit(command, result, False)
                 return result
             try:
                 stdout, stderr = await asyncio.wait_for(
@@ -358,7 +347,6 @@ async def _bash(command: str, timeout: int = 30) -> str:
                         stderr=stderr,
                         interrupted=True,
                     )
-                    _audit(command, result, False)
                     return result
         result = _format_command_result(
             exit_code=proc.returncode,
@@ -366,12 +354,10 @@ async def _bash(command: str, timeout: int = 30) -> str:
             stdout=stdout,
             stderr=stderr,
         )
-        _audit(command, result, proc.returncode == 0)
         return result
     except Exception as e:
         if proc is not None and proc.returncode is None:
             await _kill_process_tree(proc)
-        _audit(command, str(e), False)
         return f"Error: {e}"
 
 

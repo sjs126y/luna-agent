@@ -3,8 +3,6 @@
 Security is enforced by the unified sandbox (roots + blocked patterns).
 """
 
-from pathlib import Path
-
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 from personal_agent.tools.sandbox import get_sandbox
@@ -18,8 +16,6 @@ async def _file_read(path: str) -> str:
         full = sandbox.resolve(path)
         error = sandbox.check_path(full)
         if error:
-            from personal_agent.tools.audit import audit_log
-            audit_log("file_read", path, error, False)
             return error
 
         if not full.exists():
@@ -29,12 +25,8 @@ async def _file_read(path: str) -> str:
         content = full.read_text(encoding="utf-8", errors="replace")
         if len(content) > MAX_READ_BYTES:
             content = content[:MAX_READ_BYTES] + f"\n\n...(truncated {len(content) - MAX_READ_BYTES} bytes)"
-        from personal_agent.tools.audit import audit_log
-        audit_log("file_read", path, f"{len(content)} bytes read", True)
         return content
     except Exception as e:
-        from personal_agent.tools.audit import audit_log
-        audit_log("file_read", path, str(e), False)
         return f"Error: {e}"
 
 
