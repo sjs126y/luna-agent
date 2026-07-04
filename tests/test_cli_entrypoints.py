@@ -110,12 +110,15 @@ def test_doctor_execution_section_reports_profile(tmp_path, monkeypatch):
     assert text_result.exit_code == 0, text_result.output
     assert "Personal Agent 诊断: execution" in text_result.output
     assert "profile: Standard" in text_result.output
+    assert "effective permissions:" in text_result.output
+    assert "overrides: 无" in text_result.output
     assert "hard prechecks: enforced" in text_result.output
     assert "audit: enabled=是" in text_result.output
 
     assert json_result.exit_code == 0, json_result.output
     data = json.loads(json_result.output)
     assert data["mode"] == "standard"
+    assert data["overrides"]["tool_permissions"] == {}
     assert data["profile"]["sandbox"]["path_roots_enforced"] is True
     assert data["profile"]["grants"]["scope"] == "turn"
 

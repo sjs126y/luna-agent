@@ -10,6 +10,18 @@ PermissionDecision = Literal["allow", "ask", "deny"]
 NetworkPolicy = Literal["deny", "ask", "allow"]
 
 VALID_EXECUTION_MODES: set[str] = {"guarded", "standard", "trusted", "sovereign"}
+VALID_PERMISSION_DECISIONS: set[str] = {"allow", "ask", "deny"}
+PERMISSION_CATEGORIES: tuple[str, ...] = (
+    "default",
+    "read",
+    "search",
+    "write",
+    "bash",
+    "background",
+    "network",
+    "destructive",
+)
+VALID_PERMISSION_CATEGORIES: set[str] = set(PERMISSION_CATEGORIES)
 
 MODE_DESCRIPTIONS: dict[str, str] = {
     "guarded": "conservative analysis mode",
@@ -97,6 +109,7 @@ class ExecutionPolicy:
     isolation: str = "tool-enforced"
     warnings: tuple[str, ...] = ()
     profile: ExecutionModeProfile | None = None
+    overrides: dict[str, dict[str, PermissionDecision]] = field(default_factory=dict)
 
     def permission_for(self, category: str) -> PermissionDecision:
         return self.permissions.get(category, self.permissions.get("default", "ask"))
@@ -131,6 +144,9 @@ class ExecutionPolicy:
             "isolation": self.isolation,
             "warnings": list(self.warnings),
             "profile": self.profile.as_dict() if self.profile else None,
+            "overrides": {
+                "tool_permissions": dict(self.overrides.get("tool_permissions", {})),
+            },
         }
 
 
@@ -206,17 +222,23 @@ MODE_PROFILES: dict[str, ExecutionModeProfile] = {
 def resolve_execution_policy(settings) -> ExecutionPolicy:
     mode = _normalize_mode(getattr(settings, "execution_mode", "standard"))
     profile = _profile_for_mode(mode)
+    overrides = _normalize_policy_overrides(
+        getattr(settings, "execution_policy_overrides", {})
+    )
+    permissions = dict(profile.tool_permissions)
+    permissions.update(overrides.get("tool_permissions", {}))
     network = _effective_network_policy(profile, settings)
 
     # Hard-deny secret and protected path rules live in sandbox/precheck layers and
     # cannot be relaxed by this policy.
     return ExecutionPolicy(
         mode=mode,  # type: ignore[arg-type]
-        permissions=dict(profile.tool_permissions),
+        permissions=permissions,
         network=network,
         isolation=profile.sandbox.kind,
         warnings=profile.warnings,
         profile=profile,
+        overrides=overrides,
     )
 
 
@@ -235,3 +257,29 @@ def _effective_network_policy(profile: ExecutionModeProfile, settings) -> Networ
 def _normalize_mode(value: object) -> str:
     mode = str(value or "standard").strip().lower()
     return mode if mode in VALID_EXECUTION_MODES else "standard"
+
+
+def _normalize_policy_overrides(value: object) -> dict[str, dict[str, PermissionDecision]]:
+    tool_permissions: dict[str, PermissionDecision] = {}
+    if not isinstance(value, dict):
+        return {"tool_permissions": tool_permissions}
+
+    _merge_permission_overrides(value, tool_permissions)
+    nested = value.get("tool_permissions")
+    if isinstance(nested, dict):
+        _merge_permission_overrides(nested, tool_permissions)
+    return {"tool_permissions": tool_permissions}
+
+
+def _merge_permission_overrides(
+    source: dict,
+    target: dict[str, PermissionDecision],
+) -> None:
+    for key, value in source.items():
+        category = str(key).strip().lower()
+        decision = str(value).strip().lower()
+        if category not in VALID_PERMISSION_CATEGORIES:
+            continue
+        if decision not in VALID_PERMISSION_DECISIONS:
+            continue
+        target[category] = decision  # type: ignore[assignment]

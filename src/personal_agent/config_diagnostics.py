@@ -10,6 +10,12 @@ from typing import Any
 
 import yaml
 
+from personal_agent.execution import (
+    VALID_EXECUTION_MODES,
+    VALID_PERMISSION_CATEGORIES,
+    VALID_PERMISSION_DECISIONS,
+)
+
 
 KNOWN_TOP_LEVEL_KEYS = {
     "agent",
@@ -79,7 +85,7 @@ VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages"}
 VALID_COMPRESSION_ENGINES = {"compressor", "simple", "none", "off", "disabled"}
 VALID_MEMORY_PROVIDERS = {"file"}
 VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "embedding"}
-VALID_EXECUTION_MODES = {"guarded", "standard", "trusted", "sovereign"}
+VALID_EXECUTION_POLICY_KEYS = VALID_PERMISSION_CATEGORIES | {"tool_permissions"}
 
 PLATFORM_ENV = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
@@ -409,6 +415,8 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     _execution_mode_value(execution, "mode", "execution.mode", errors)
     if "policy" in execution and not isinstance(execution["policy"], dict):
         errors.append("execution.policy 必须是对象。")
+    elif "policy" in execution:
+        _execution_policy_value(execution["policy"], "execution.policy", errors)
 
     sandbox = sections["sandbox"]
     _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)
@@ -787,6 +795,45 @@ def _enum_value(
 
 def _execution_mode_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
     _enum_value(section, key, label, VALID_EXECUTION_MODES, errors)
+
+
+def _execution_policy_value(policy: dict[str, Any], label: str, errors: list[str]) -> None:
+    for key, value in sorted(policy.items()):
+        child_label = f"{label}.{key}"
+        if key not in VALID_EXECUTION_POLICY_KEYS:
+            errors.append(
+                f"{child_label} 暂不支持；v1 只允许权限类别或 tool_permissions。"
+            )
+            continue
+        if key == "tool_permissions":
+            if not isinstance(value, dict):
+                errors.append(f"{child_label} 必须是对象。")
+                continue
+            _execution_tool_permissions_value(value, child_label, errors)
+            continue
+        _permission_decision_value(value, child_label, errors)
+
+
+def _execution_tool_permissions_value(
+    permissions: dict[str, Any],
+    label: str,
+    errors: list[str],
+) -> None:
+    for key, value in sorted(permissions.items()):
+        child_label = f"{label}.{key}"
+        if key not in VALID_PERMISSION_CATEGORIES:
+            errors.append(
+                f"{child_label} 不支持；可选: {', '.join(sorted(VALID_PERMISSION_CATEGORIES))}"
+            )
+            continue
+        _permission_decision_value(value, child_label, errors)
+
+
+def _permission_decision_value(value: Any, label: str, errors: list[str]) -> None:
+    if not isinstance(value, str) or value not in VALID_PERMISSION_DECISIONS:
+        errors.append(
+            f"{label} 必须是 allow/ask/deny，可选: {', '.join(sorted(VALID_PERMISSION_DECISIONS))}"
+        )
 
 
 def _bool_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:

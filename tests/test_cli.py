@@ -35,6 +35,7 @@ def test_doctor_report_includes_execution_policy():
 
     settings = Settings(
         execution_mode="sovereign",
+        execution_policy_overrides={"background": "ask"},
         llm_api_key="test",
         llm_base_url="https://example.test",
     )
@@ -45,6 +46,8 @@ def test_doctor_report_includes_execution_policy():
     assert report["execution"]["isolation"] == "tool-enforced"
     assert report["execution"]["profile"]["name"] == "sovereign"
     assert report["execution"]["profile"]["sandbox"]["hard_prechecks_enforced"] is True
+    assert report["execution"]["permissions"]["background"] == "ask"
+    assert report["execution"]["overrides"]["tool_permissions"]["background"] == "ask"
     assert report["tools"]["total"] >= 0
     assert "by_permission" in report["tools"]
     assert "Execution:" in text
@@ -52,6 +55,8 @@ def test_doctor_report_includes_execution_policy():
     assert "by risk:" in text
     assert "mode: sovereign" in text
     assert "profile: Sovereign" in text
+    assert "effective permissions:" in text
+    assert "overrides: background=ask" in text
     assert "hard prechecks: enforced" in text
     assert "grants: turn scoped /allow" in text
     assert "warning:" in text

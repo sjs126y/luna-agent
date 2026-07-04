@@ -1233,6 +1233,7 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
             "network": "deny",
             "isolation": "policy-only",
             "warnings": [],
+            "overrides": {"tool_permissions": {}},
         },
         "tools": _empty_tool_summary(),
         "sandbox": {
@@ -1463,13 +1464,16 @@ def _format_execution_lines(execution: dict[str, Any]) -> list[str]:
     network = profile.get("network") or {}
     grants = profile.get("grants") or {}
     audit = profile.get("audit") or {}
+    overrides = execution.get("overrides") or {}
+    tool_overrides = overrides.get("tool_permissions") or {}
     lines = [
         f"  mode: {execution.get('mode', '-')}",
         f"  profile: {profile.get('label') or '-'}",
         f"  description: {execution.get('description') or profile.get('description') or '-'}",
         f"  isolation: {execution.get('isolation', '-')}",
         f"  network: {execution.get('network', '-')}",
-        f"  tool permissions: {_format_permissions(execution.get('permissions', {}))}",
+        f"  effective permissions: {_format_permissions(execution.get('permissions', {}))}",
+        f"  overrides: {_format_permissions(tool_overrides)}",
     ]
     if sandbox:
         lines.extend([
@@ -2172,7 +2176,7 @@ def _empty_tool_summary() -> dict[str, Any]:
 def _format_permissions(permissions) -> str:
     if not isinstance(permissions, dict) or not permissions:
         return "无"
-    keys = ["read", "write", "bash", "background", "network", "destructive"]
+    keys = ["default", "read", "search", "write", "bash", "background", "network", "destructive"]
     parts = [f"{key}={permissions[key]}" for key in keys if key in permissions]
     if not parts:
         parts = [f"{key}={value}" for key, value in sorted(permissions.items())]

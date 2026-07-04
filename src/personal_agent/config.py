@@ -48,6 +48,10 @@ class Settings:
         if not isinstance(execution, dict):
             execution = {}
         self.execution_mode: str = str(execution.get("mode", "standard") or "standard").strip().lower()
+        execution_policy = execution.get("policy", {})
+        self.execution_policy_overrides: dict[str, Any] = (
+            dict(execution_policy) if isinstance(execution_policy, dict) else {}
+        )
 
         # ── LLM (from .env) ──
         self.llm_api_key: str = env.get("LLM_API_KEY", "")

@@ -415,6 +415,60 @@ def test_scope_gate_standard_background_requires_allow():
     assert _scope_gate(tc, entry, agent) is None
 
 
+def test_scope_gate_policy_override_allows_background():
+    from types import SimpleNamespace
+
+    from personal_agent.execution import resolve_execution_policy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._execution_policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="standard",
+        bash_allow_network=False,
+        execution_policy_overrides={"background": "allow"},
+    ))
+    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
+    entry = ToolEntry(
+        name="process_start",
+        description="Start process",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+        permission_category="background",
+    )
+
+    assert _scope_gate(tc, entry, agent) is None
+
+
+def test_scope_gate_policy_override_can_tighten_trusted_bash():
+    from types import SimpleNamespace
+
+    from personal_agent.execution import resolve_execution_policy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._execution_policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="trusted",
+        bash_allow_network=False,
+        execution_policy_overrides={"tool_permissions": {"bash": "ask"}},
+    ))
+    tc = {"name": "bash", "input": {"command": "ls"}}
+    entry = ToolEntry(
+        name="bash",
+        description="Bash",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+        permission_category="bash",
+    )
+
+    blocked = _scope_gate(tc, entry, agent)
+    assert blocked is not None
+    assert "/allow bash" in blocked
+
+
 def test_scope_gate_guarded_denies_background():
     from personal_agent.execution import ExecutionPolicy
     from personal_agent.tools.executor import _scope_gate

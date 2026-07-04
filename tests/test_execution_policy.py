@@ -49,6 +49,7 @@ def test_execution_policy_as_dict_includes_profile_sections():
     assert data["profile"]["grants"]["scope"] == "turn"
     assert "bash" in data["profile"]["grants"]["categories"]
     assert data["profile"]["audit"]["decisions"] is True
+    assert data["overrides"]["tool_permissions"] == {}
 
 
 def test_execution_policy_explains_permission_decisions():
@@ -77,3 +78,55 @@ def test_execution_policy_unknown_mode_falls_back_to_standard():
 
     assert policy.mode == "standard"
     assert policy.permission_for("write") == "ask"
+
+
+def test_execution_policy_accepts_flat_permission_overrides():
+    from personal_agent.execution import resolve_execution_policy
+
+    policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="standard",
+        bash_allow_network=False,
+        execution_policy_overrides={"background": "allow", "network": "ask"},
+    ))
+    data = policy.as_dict()
+
+    assert policy.permission_for("read") == "allow"
+    assert policy.permission_for("background") == "allow"
+    assert policy.permission_for("network") == "ask"
+    assert data["overrides"]["tool_permissions"] == {
+        "background": "allow",
+        "network": "ask",
+    }
+
+
+def test_execution_policy_accepts_nested_permission_overrides():
+    from personal_agent.execution import resolve_execution_policy
+
+    policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="trusted",
+        bash_allow_network=False,
+        execution_policy_overrides={"tool_permissions": {"bash": "ask"}},
+    ))
+
+    assert policy.permission_for("write") == "allow"
+    assert policy.permission_for("bash") == "ask"
+    assert policy.as_dict()["overrides"]["tool_permissions"] == {"bash": "ask"}
+
+
+def test_execution_policy_ignores_invalid_runtime_overrides():
+    from personal_agent.execution import resolve_execution_policy
+
+    policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="standard",
+        bash_allow_network=False,
+        execution_policy_overrides={
+            "sandbox": {"path_roots_enforced": False},
+            "background": "maybe",
+            "unknown": "allow",
+            "tool_permissions": "bad",
+        },
+    ))
+
+    assert policy.permission_for("background") == "ask"
+    assert policy.permission_for("write") == "ask"
+    assert policy.as_dict()["overrides"]["tool_permissions"] == {}
