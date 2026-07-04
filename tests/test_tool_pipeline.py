@@ -323,6 +323,57 @@ def test_scope_gate_trusted_allows_workspace_write_policy():
     assert _scope_gate(tc, entry, agent) is None
 
 
+def test_scope_gate_standard_background_requires_allow():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "ask", "background": "ask"},
+    )
+    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
+    entry = ToolEntry(
+        name="process_start",
+        description="Start process",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+    )
+
+    blocked = _scope_gate(tc, entry, agent)
+    assert blocked is not None
+    assert "background" in blocked
+    agent._destructive_allowed.add("background")
+    assert _scope_gate(tc, entry, agent) is None
+
+
+def test_scope_gate_guarded_denies_background():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._destructive_allowed.add("background")
+    agent._execution_policy = ExecutionPolicy(
+        mode="guarded",
+        permissions={"default": "deny", "background": "deny"},
+    )
+    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
+    entry = ToolEntry(
+        name="process_start",
+        description="Start process",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+    )
+
+    result = _scope_gate(tc, entry, agent)
+    assert result is not None
+    assert "denied by execution mode" in result
+
+
 # ── Executor _exec_one integration ─────────────────────
 
 

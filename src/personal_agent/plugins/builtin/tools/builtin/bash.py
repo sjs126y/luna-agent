@@ -14,6 +14,9 @@ import asyncio
 import logging
 import os
 import re
+import signal
+import subprocess
+import time
 from pathlib import Path
 
 from personal_agent.tools.entry import ToolEntry
@@ -278,6 +281,26 @@ def _audit(command: str, result: str, success: bool) -> None:
         pass
 
 
+def _subprocess_group_kwargs() -> dict:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is not None:
+        return
+    try:
+        if os.name == "nt":
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except Exception:
+        proc.kill()
+
+
 # ── handler ──────────────────────────────────────────
 
 async def _bash(command: str, timeout: int = 30) -> str:
@@ -286,45 +309,105 @@ async def _bash(command: str, timeout: int = 30) -> str:
         _audit(command, error, False)
         return error
 
+    started = time.monotonic()
+    proc = None
     try:
         from personal_agent.tools.env_filter import filter_env
-        proc = await asyncio.create_subprocess_bash(
+        proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_work_dir),
             env=filter_env(),
+            **_subprocess_group_kwargs(),
         )
-        try:
-            deadline = time.time() + min(timeout, 60)
-            stdout, stderr = b"", b""
-            while time.time() < deadline:
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=1.0
+
+        timeout = min(max(int(timeout or 30), 1), 60)
+        communicate_task = asyncio.create_task(proc.communicate())
+        deadline = time.monotonic() + timeout
+        stdout, stderr = b"", b""
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                await _kill_process_tree(proc)
+                stdout, stderr = await communicate_task
+                result = _format_command_result(
+                    exit_code=proc.returncode,
+                    duration=time.monotonic() - started,
+                    stdout=stdout,
+                    stderr=stderr,
+                    timed_out=True,
+                )
+                _audit(command, result, False)
+                return result
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    asyncio.shield(communicate_task),
+                    timeout=min(1.0, remaining),
+                )
+                break
+            except asyncio.TimeoutError:
+                from personal_agent.tools.executor import is_interrupted
+                if is_interrupted():
+                    await _kill_process_tree(proc)
+                    stdout, stderr = await communicate_task
+                    result = _format_command_result(
+                        exit_code=proc.returncode,
+                        duration=time.monotonic() - started,
+                        stdout=stdout,
+                        stderr=stderr,
+                        interrupted=True,
                     )
-                    break
-                except asyncio.TimeoutError:
-                    from personal_agent.tools.executor import is_interrupted
-                    if is_interrupted():
-                        proc.kill()
-                        await proc.wait()
-                        _audit(command, "interrupted by user", False)
-                        return "Interrupted by user."
-        except asyncio.TimeoutError:
-            proc.kill()
-
-        out = stdout.decode("utf-8", errors="replace").strip()
-        err = stderr.decode("utf-8", errors="replace").strip()
-        result = out or err or "(no output)"
-        if len(result) > _MAX_OUTPUT:
-            result = result[:_MAX_OUTPUT] + f"\n...({len(result) - _MAX_OUTPUT} more chars)"
-
-        _audit(command, result, proc.returncode == 0 if proc.returncode is not None else True)
+                    _audit(command, result, False)
+                    return result
+        result = _format_command_result(
+            exit_code=proc.returncode,
+            duration=time.monotonic() - started,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        _audit(command, result, proc.returncode == 0)
         return result
     except Exception as e:
+        if proc is not None and proc.returncode is None:
+            await _kill_process_tree(proc)
         _audit(command, str(e), False)
         return f"Error: {e}"
+
+
+def _format_command_result(
+    *,
+    exit_code: int | None,
+    duration: float,
+    stdout: bytes,
+    stderr: bytes,
+    timed_out: bool = False,
+    interrupted: bool = False,
+) -> str:
+    out, out_truncated = _decode_and_truncate(stdout)
+    err, err_truncated = _decode_and_truncate(stderr)
+    status = "timed out" if timed_out else "interrupted" if interrupted else "finished"
+    lines = [
+        f"Command {status}",
+        f"exit_code: {exit_code if exit_code is not None else '-'}",
+        f"duration: {duration:.2f}s",
+        "stdout:",
+        out or "(empty)",
+        "stderr:",
+        err or "(empty)",
+    ]
+    if out_truncated or err_truncated:
+        lines.append("truncated: true")
+    if timed_out:
+        lines.append("hint: use process_start for long-running commands.")
+    return "\n".join(lines)
+
+
+def _decode_and_truncate(data: bytes) -> tuple[str, bool]:
+    text = data.decode("utf-8", errors="replace").strip()
+    if len(text) <= _MAX_OUTPUT:
+        return text, False
+    return text[:_MAX_OUTPUT] + f"\n...({len(text) - _MAX_OUTPUT} more chars)", True
 
 
 def _precheck(input_: dict) -> str | None:

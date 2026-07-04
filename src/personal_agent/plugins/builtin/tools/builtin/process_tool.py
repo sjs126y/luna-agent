@@ -1,10 +1,4 @@
-"""Process manager — background process tracking.
-
-Track subprocesses spawned by bash, allowing the agent to:
-  - List running background processes
-  - Kill a specific process
-  - Wait for a process to finish and get its output
-"""
+"""Process manager - background process tracking."""
 
 from __future__ import annotations
 
@@ -12,11 +6,15 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
 
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
+
+ProcessStatus = Literal["running", "done", "killed"]
 
 
 @dataclass
@@ -26,45 +24,104 @@ class TrackedProcess:
     pid: int
     command: str
     proc: asyncio.subprocess.Process
+    cwd: str = ""
     started_at: float = field(default_factory=time.time)
-    finished: bool = False
+    finished_at: float | None = None
+    status: ProcessStatus = "running"
     returncode: int | None = None
     stdout: str = ""
     stderr: str = ""
 
+    @property
+    def finished(self) -> bool:
+        return self.status != "running"
 
-# In-memory registry — lost on restart, fine for a session
+
+# In-memory registry - lost on restart, fine for a session.
 _processes: dict[int, TrackedProcess] = {}
 _next_id = 0
 _MAX_OUTPUT = 4000
 
 
-def _register(proc: asyncio.subprocess.Process, command: str) -> int:
-    """Register a new background process. Returns the internal PID."""
+def _register(proc: asyncio.subprocess.Process, command: str, *, cwd: str = "") -> int:
+    """Register a new background process. Returns the internal process id."""
     global _next_id
     _next_id += 1
     pid = _next_id
-    _processes[pid] = TrackedProcess(pid=pid, command=command, proc=proc)
-    # Schedule background waiter
+    _processes[pid] = TrackedProcess(pid=pid, command=command, proc=proc, cwd=cwd)
+    asyncio.create_task(_reader(pid, "stdout", proc.stdout))
+    asyncio.create_task(_reader(pid, "stderr", proc.stderr))
     asyncio.create_task(_waiter(pid, proc))
     return pid
 
 
-async def _waiter(pid: int, proc: asyncio.subprocess.Process) -> None:
-    """Wait for process completion and capture output."""
+async def _reader(pid: int, stream_name: Literal["stdout", "stderr"], reader) -> None:
+    if reader is None:
+        return
     try:
-        stdout, stderr = await proc.communicate()
+        while True:
+            chunk = await reader.read(1024)
+            if not chunk:
+                return
+            text = chunk.decode("utf-8", errors="replace")
+            tp = _processes.get(pid)
+            if tp is None:
+                return
+            current = getattr(tp, stream_name)
+            setattr(tp, stream_name, _tail(current + text, _MAX_OUTPUT))
+    except Exception as exc:
+        logger.debug("Process %d %s reader error: %s", pid, stream_name, exc)
+
+
+async def _waiter(pid: int, proc: asyncio.subprocess.Process) -> None:
+    """Wait for process completion and record final status."""
+    try:
+        returncode = await proc.wait()
         tp = _processes.get(pid)
         if tp:
-            tp.stdout = stdout.decode("utf-8", errors="replace")[:_MAX_OUTPUT]
-            tp.stderr = stderr.decode("utf-8", errors="replace")[:_MAX_OUTPUT]
-            tp.returncode = proc.returncode
-            tp.finished = True
+            tp.returncode = returncode
+            tp.finished_at = time.time()
+            if tp.status == "running":
+                tp.status = "done"
     except Exception as exc:
         logger.debug("Process %d waiter error: %s", pid, exc)
 
 
 # ── tool handlers ──────────────────────────────────────
+
+
+async def _process_start(command: str, cwd: str | None = None) -> str:
+    """Start a background shell command and return its process id."""
+    from personal_agent.plugins.builtin.tools.builtin import bash as bash_tool
+    from personal_agent.tools.env_filter import filter_env
+
+    error = bash_tool._check_command(command)
+    if error:
+        bash_tool._audit(command, error, False)
+        return error
+
+    work_dir, cwd_error = _resolve_cwd(cwd)
+    if cwd_error:
+        bash_tool._audit(command, cwd_error, False)
+        return cwd_error
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(work_dir),
+            env=filter_env(),
+            **bash_tool._subprocess_group_kwargs(),
+        )
+        pid = _register(proc, command, cwd=str(work_dir))
+        result = _format_started(_processes[pid])
+        bash_tool._audit(command, result, True)
+        return result
+    except Exception as exc:
+        error_text = f"Error: {exc}"
+        bash_tool._audit(command, error_text, False)
+        return error_text
 
 
 async def _process_list() -> str:
@@ -73,14 +130,25 @@ async def _process_list() -> str:
         return "No background processes running."
 
     lines = ["Background processes:"]
-    for pid, p in sorted(_processes.items()):
-        status = "done" if p.finished else "running"
-        runtime = time.time() - p.started_at
+    for pid, process in sorted(_processes.items()):
+        runtime = _runtime_seconds(process)
+        rc = "-" if process.returncode is None else str(process.returncode)
         lines.append(
-            f"  [{pid}] {status} ({runtime:.0f}s) — {p.command[:80]}"
-            + (f" → rc={p.returncode}" if p.finished else "")
+            f"  [{pid}] {process.status} ({runtime:.1f}s) rc={rc} - {process.command[:100]}"
         )
     return "\n".join(lines)
+
+
+async def _process_read(pid: int, stream: str = "both", tail_chars: int = _MAX_OUTPUT) -> str:
+    """Read captured output from a background process."""
+    tp = _processes.get(pid)
+    if tp is None:
+        return f"Error: no process with ID {pid}"
+    if stream not in {"stdout", "stderr", "both"}:
+        return "Error: stream must be one of stdout, stderr, both"
+
+    tail_chars = max(1, min(int(tail_chars or _MAX_OUTPUT), _MAX_OUTPUT))
+    return _format_output(tp, stream=stream, tail_chars=tail_chars, header="output")
 
 
 async def _process_kill(pid: int) -> str:
@@ -93,10 +161,15 @@ async def _process_kill(pid: int) -> str:
         return f"Process [{pid}] already finished (rc={tp.returncode})"
 
     try:
-        tp.proc.kill()
-        tp.finished = True
-        tp.returncode = -9
-        return f"Process [{pid}] killed."
+        from personal_agent.plugins.builtin.tools.builtin import bash as bash_tool
+
+        await bash_tool._kill_process_tree(tp.proc)
+        await tp.proc.wait()
+        tp.status = "killed"
+        tp.returncode = tp.proc.returncode if tp.proc.returncode is not None else -9
+        tp.finished_at = time.time()
+        await asyncio.sleep(0)
+        return _format_result(tp, "killed")
     except Exception as e:
         return f"Error killing process [{pid}]: {e}"
 
@@ -112,9 +185,8 @@ async def _process_wait(pid: int, timeout: int = 30) -> str:
 
     try:
         await asyncio.wait_for(tp.proc.wait(), timeout=min(timeout, 120))
-        # Give waiter a moment to capture output
-        await asyncio.sleep(0.1)
-        tp = _processes.get(pid)  # refresh after waiter updated
+        await asyncio.sleep(0)
+        tp = _processes.get(pid)
         if tp and tp.finished:
             return _format_result(tp, "finished")
         return f"Process [{pid}] ended but output was not captured."
@@ -124,27 +196,128 @@ async def _process_wait(pid: int, timeout: int = 30) -> str:
         return f"Error waiting for process [{pid}]: {e}"
 
 
+def _format_started(tp: TrackedProcess) -> str:
+    return (
+        f"Process [{tp.pid}] started\n"
+        f"status: {tp.status}\n"
+        f"cwd: {tp.cwd or '-'}\n"
+        f"command: {tp.command}"
+    )
+
+
 def _format_result(tp: TrackedProcess, status: str) -> str:
-    lines = [f"Process [{tp.pid}] {status} (rc={tp.returncode})"]
-    if tp.stdout.strip():
-        lines.append(f"stdout:\n{tp.stdout}")
-    if tp.stderr.strip():
-        lines.append(f"stderr:\n{tp.stderr}")
+    lines = [
+        f"Process [{tp.pid}] {status}",
+        f"status: {tp.status}",
+        f"exit_code: {tp.returncode if tp.returncode is not None else '-'}",
+        f"duration: {_runtime_seconds(tp):.1f}s",
+        f"command: {tp.command}",
+    ]
+    output = _format_output(tp, stream="both", tail_chars=_MAX_OUTPUT, header="")
+    if output:
+        lines.append(output)
     return "\n".join(lines)
+
+
+def _format_output(tp: TrackedProcess, *, stream: str, tail_chars: int, header: str) -> str:
+    lines = []
+    if header:
+        lines.extend([
+            f"Process [{tp.pid}] {header}",
+            f"status: {tp.status}",
+            f"exit_code: {tp.returncode if tp.returncode is not None else '-'}",
+            f"duration: {_runtime_seconds(tp):.1f}s",
+        ])
+    if stream in {"stdout", "both"}:
+        lines.append("stdout:")
+        lines.append(_tail(tp.stdout.strip(), tail_chars) or "(empty)")
+    if stream in {"stderr", "both"}:
+        lines.append("stderr:")
+        lines.append(_tail(tp.stderr.strip(), tail_chars) or "(empty)")
+    return "\n".join(lines)
+
+
+def _resolve_cwd(cwd: str | None) -> tuple[Path, str | None]:
+    if not cwd:
+        from personal_agent.plugins.builtin.tools.builtin import bash as bash_tool
+        return bash_tool._work_dir, None
+
+    from personal_agent.tools.sandbox import get_sandbox
+
+    sandbox = get_sandbox()
+    full = sandbox.resolve(cwd)
+    error = sandbox.check_path(full)
+    if error:
+        return full, error
+    if not full.exists():
+        return full, f"Error: cwd does not exist: {cwd}"
+    if not full.is_dir():
+        return full, f"Error: cwd is not a directory: {cwd}"
+    return full, None
+
+
+def _runtime_seconds(tp: TrackedProcess) -> float:
+    end = tp.finished_at or time.time()
+    return max(0.0, end - tp.started_at)
+
+
+def _tail(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
 
 
 # ── registration ───────────────────────────────────────
 
 
 tool_registry.register(ToolEntry(
+    name="process_start",
+    description=(
+        "Start a background shell command and return a process ID. "
+        "Use for long-running tests, builds, servers, or data processing."
+    ),
+    schema={
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "description": "Shell command to start in the background"},
+            "cwd": {"type": "string", "description": "Optional working directory within sandbox roots"},
+        },
+        "required": ["command"],
+    },
+    handler=_process_start,
+    toolset="builtin",
+    is_parallel_safe=False,
+))
+
+tool_registry.register(ToolEntry(
     name="process_list",
-    description="List all tracked background processes and their status (running/done).",
+    description="List all tracked background processes and their status.",
     schema={
         "type": "object",
         "properties": {},
         "required": [],
     },
     handler=_process_list,
+    toolset="builtin",
+))
+
+tool_registry.register(ToolEntry(
+    name="process_read",
+    description="Read captured stdout/stderr from a background process.",
+    schema={
+        "type": "object",
+        "properties": {
+            "pid": {"type": "integer", "description": "Process ID from process_start or process_list"},
+            "stream": {
+                "type": "string",
+                "enum": ["stdout", "stderr", "both"],
+                "description": "Which stream to read (default both)",
+            },
+            "tail_chars": {"type": "integer", "description": "Maximum tail characters to return"},
+        },
+        "required": ["pid"],
+    },
+    handler=_process_read,
     toolset="builtin",
 ))
 
@@ -164,7 +337,7 @@ tool_registry.register(ToolEntry(
 
 tool_registry.register(ToolEntry(
     name="process_wait",
-    description="Wait for a background process to finish and return its output. Useful for long-running builds, installs, or data processing.",
+    description="Wait for a background process to finish and return its output.",
     schema={
         "type": "object",
         "properties": {

@@ -26,7 +26,9 @@ _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
     ("personal_agent.plugins.builtin.tools.builtin.grep_tool", ("grep",)),
     ("personal_agent.plugins.builtin.tools.builtin.json_tool", ("json",)),
     ("personal_agent.plugins.builtin.tools.builtin.process_tool", (
+        "process_start",
         "process_list",
+        "process_read",
         "process_kill",
         "process_wait",
     )),

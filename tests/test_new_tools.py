@@ -112,6 +112,58 @@ async def test_process_wait_nonexistent():
 
 
 @pytest.mark.asyncio
+async def test_process_start_read_wait(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+        _process_read,
+        _process_start,
+        _process_wait,
+    )
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    result = await _process_start(
+        'python -u -c "import sys\nprint(\'out\')\nprint(\'err\', file=sys.stderr)"',
+        cwd=str(tmp_path),
+    )
+    assert "Process [" in result
+    pid = int(result.split("Process [", 1)[1].split("]", 1)[0])
+
+    waited = await _process_wait(pid, timeout=5)
+    assert "exit_code: 0" in waited
+    assert "out" in waited
+    assert "err" in waited
+
+    read = await _process_read(pid)
+    assert "stdout:" in read
+    assert "stderr:" in read
+    assert "out" in read
+
+
+@pytest.mark.asyncio
+async def test_process_start_reuses_bash_sandbox_precheck(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_start
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    result = await _process_start("rm -rf /", cwd=str(tmp_path))
+    assert "hard blacklist" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_process_read_invalid_stream():
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_read
+
+    result = await _process_read(99999, stream="wat")
+    assert "no process" in result.lower()
+
+
+@pytest.mark.asyncio
 async def test_process_lifecycle():
     """Spawn a real background process, list it, wait for it, verify."""
     from personal_agent.plugins.builtin.tools.builtin.process_tool import (
@@ -141,6 +193,39 @@ async def test_process_lifecycle():
 
 
 # ── execute_code ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_bash_structured_output(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    result = await _bash('python -u -c "print(\'hello\')"', timeout=5)
+
+    assert "Command finished" in result
+    assert "exit_code: 0" in result
+    assert "duration:" in result
+    assert "stdout:" in result
+    assert "hello" in result
+    assert "stderr:" in result
+
+
+@pytest.mark.asyncio
+async def test_bash_timeout_suggests_background(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    result = await _bash('python -u -c "import time\ntime.sleep(2)"', timeout=1)
+
+    assert "Command timed out" in result
+    assert "process_start" in result
+    assert "exit_code:" in result
 
 
 @pytest.mark.asyncio
@@ -492,7 +577,7 @@ def test_all_new_tools_registered():
     expected = [
         "clarify", "execute_code",
         "sub_agent", "sub_parallel", "sub_pipeline",
-        "process_list", "process_kill", "process_wait",
+        "process_start", "process_list", "process_read", "process_kill", "process_wait",
     ]
     for name in expected:
         entry = tool_registry.get(name)
