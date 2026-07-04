@@ -398,6 +398,53 @@ def test_scope_gate_process_clear_uses_background_permission():
     assert "background" in blocked
 
 
+@pytest.mark.asyncio
+async def test_process_start_precheck_runs_before_background_allow(tmp_path: Path):
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_work_dir
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], ["**/.env"])
+    set_work_dir(tmp_path)
+    set_allow_network(False)
+
+    agent = MockAgent()
+    agent._destructive_allowed.add("background")
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "ask", "background": "ask"},
+    )
+
+    hard_blacklist = await execute_tool_call_result(
+        {"id": "p1", "name": "process_start", "input": {"command": "rm -rf /", "cwd": str(tmp_path)}},
+        agent=agent,
+    )
+    blocked_secret = await execute_tool_call_result(
+        {"id": "p2", "name": "process_start", "input": {"command": "cat .env", "cwd": str(tmp_path)}},
+        agent=agent,
+    )
+    blocked_network = await execute_tool_call_result(
+        {
+            "id": "p3",
+            "name": "process_start",
+            "input": {"command": "curl https://example.com", "cwd": str(tmp_path)},
+        },
+        agent=agent,
+    )
+
+    assert hard_blacklist.status == "denied"
+    assert hard_blacklist.category == "precheck"
+    assert "hard blacklist" in hard_blacklist.error.lower()
+    assert blocked_secret.status == "denied"
+    assert blocked_secret.category == "precheck"
+    assert "sandbox" in blocked_secret.error.lower()
+    assert blocked_network.status == "denied"
+    assert blocked_network.category == "precheck"
+    assert "network" in blocked_network.error.lower()
+
+
 # ── Executor _exec_one integration ─────────────────────
 
 

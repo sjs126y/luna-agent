@@ -417,9 +417,9 @@ def _precheck(input_: dict) -> str | None:
 
 tool_registry.register(ToolEntry(
     name="bash",
-    description="Execute a shell command in a restricted sandbox. "
-                "Only whitelisted commands allowed (ls, cat, grep, git, python, etc.). "
-                "Network tools (curl, pip) blocked unless bash_allow_network=true.",
+    description="Execute a short bounded shell command in the configured sandbox. "
+                "Only whitelisted commands are allowed. Use process_start for servers, watchers, "
+                "long-running tests, or builds. Network commands are blocked unless execution policy allows them.",
     schema={
         "type": "object",
         "properties": {

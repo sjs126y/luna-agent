@@ -55,7 +55,7 @@ async def _file_write(path: str, content: str) -> str:
 
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
-        msg = f"Written {len(content)} bytes to {path}"
+        msg = f"Written {len(content)} chars to {path} (overwrite)"
 
         from personal_agent.tools.audit import audit_log
         audit_log("file_write", path, msg, True)
@@ -85,7 +85,7 @@ def _precheck(input_: dict) -> str | None:
 
 tool_registry.register(ToolEntry(
     name="write",
-    description="Write content to a file in the agent's allowed directories. "
+    description="Overwrite a file with full content in the agent's allowed directories. "
                 f"Allowed extensions: {', '.join(sorted(_ALLOWED_EXTENSIONS))}. Max {_MAX_WRITE_BYTES // 1000}KB.",
     schema={
         "type": "object",

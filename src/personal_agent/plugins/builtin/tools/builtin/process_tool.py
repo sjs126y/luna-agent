@@ -128,6 +128,19 @@ async def _process_start(command: str, cwd: str | None = None) -> str:
         return error_text
 
 
+def _process_start_precheck(input_: dict) -> str | None:
+    """Run process_start hard safety checks before permission prompts."""
+    from personal_agent.plugins.builtin.tools.builtin import bash as bash_tool
+
+    command = input_.get("command", "")
+    if command:
+        error = bash_tool._check_command(command)
+        if error:
+            return error
+    _, cwd_error = _resolve_cwd(input_.get("cwd"))
+    return cwd_error
+
+
 async def _process_list(status: str = "all", limit: int | None = None) -> str:
     """List all tracked background processes."""
     if status not in {"running", "done", "killed", "all"}:
@@ -372,7 +385,8 @@ tool_registry.register(ToolEntry(
     name="process_start",
     description=(
         "Start a background shell command and return a process ID. "
-        "Use for long-running tests, builds, servers, or data processing."
+        "Use for long-running tests, builds, servers, watch tasks, or data processing. "
+        "Then use process_read mode=since_last to poll progress."
     ),
     schema={
         "type": "object",
@@ -384,6 +398,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_process_start,
     toolset="builtin",
+    precheck=_process_start_precheck,
     is_parallel_safe=False,
 ))
 
@@ -472,7 +487,7 @@ tool_registry.register(ToolEntry(
 
 tool_registry.register(ToolEntry(
     name="process_wait",
-    description="Wait for a background process to finish and return its output.",
+    description="Wait for a background process to finish and return its final retained output.",
     schema={
         "type": "object",
         "properties": {

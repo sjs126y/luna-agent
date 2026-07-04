@@ -156,6 +156,43 @@ async def test_process_start_reuses_bash_sandbox_precheck(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_process_start_blocks_sandbox_patterns_and_bad_cwd(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_start
+    from personal_agent.tools.sandbox import init_sandbox
+
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    (workspace / ".env").write_text("SECRET=1", encoding="utf-8")
+
+    init_sandbox([workspace], ["**/.env"])
+    set_work_dir(workspace)
+
+    blocked_path = await _process_start("cat .env", cwd=str(workspace))
+    bad_cwd = await _process_start("pwd", cwd=str(outside))
+
+    assert "sandbox blocked" in blocked_path.lower() or "path blocked" in blocked_path.lower()
+    assert "outside sandbox roots" in bad_cwd.lower()
+
+
+@pytest.mark.asyncio
+async def test_process_start_blocks_network_when_policy_denies(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_work_dir
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_start
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+    set_allow_network(False)
+
+    result = await _process_start("curl https://example.com", cwd=str(tmp_path))
+
+    assert "network" in result.lower()
+
+
+@pytest.mark.asyncio
 async def test_process_read_invalid_stream():
     from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_read
 
@@ -354,6 +391,57 @@ async def test_bash_timeout_suggests_background(tmp_path: Path):
     assert "Command timed out" in result
     assert "process_start" in result
     assert "exit_code:" in result
+
+
+# ── file edit/write reliability ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_file_edit_rejects_empty_append(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+
+    result = await _file_edit("append", "notes.md", content="")
+
+    assert "cannot be empty" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_file_edit_replace_reports_occurrences(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+    from personal_agent.tools.sandbox import init_sandbox
+
+    path = tmp_path / "notes.md"
+    path.write_text("alpha beta beta", encoding="utf-8")
+    init_sandbox([tmp_path], [])
+
+    empty_old = await _file_edit("replace", str(path), old_text="", new_text="x")
+    missing = await _file_edit("replace", str(path), old_text="gamma", new_text="x")
+    replaced = await _file_edit("replace", str(path), old_text="beta", new_text="BETA")
+
+    assert "old_text cannot be empty" in empty_old
+    assert "occurrences=0" in missing
+    assert "Replaced 1 of 2 occurrences" in replaced
+    assert path.read_text(encoding="utf-8") == "alpha BETA beta"
+
+
+@pytest.mark.asyncio
+async def test_file_edit_size_limit_and_sandbox_block(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import file_edit
+    from personal_agent.tools.sandbox import init_sandbox
+
+    path = tmp_path / "notes.md"
+    path.write_text("12345", encoding="utf-8")
+    init_sandbox([tmp_path], ["**/.env"])
+
+    monkeypatch.setattr(file_edit, "_MAX_WRITE_BYTES", 6)
+    too_large = await file_edit._file_edit("append", str(path), content="789")
+    blocked = await file_edit._file_edit("append", ".env", content="x")
+
+    assert "exceed max size" in too_large.lower()
+    assert "path blocked" in blocked.lower()
 
 
 @pytest.mark.asyncio
@@ -711,3 +799,18 @@ def test_all_new_tools_registered():
         entry = tool_registry.get(name)
         assert entry is not None, f"Tool '{name}' not registered"
         assert entry.toolset in ("builtin",)
+
+
+def test_tool_descriptions_guide_model_usage():
+    import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from personal_agent.tools.registry import tool_registry
+
+    assert "process_start" in tool_registry.get("bash").description
+    assert "long-running" in tool_registry.get("process_start").description
+    assert "since_last" in tool_registry.get("process_read").description
+    assert "finished" in tool_registry.get("process_clear").description
+    assert "first occurrence" in tool_registry.get("edit").description
+    assert "Overwrite" in tool_registry.get("write").description

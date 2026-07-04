@@ -19,26 +19,43 @@ async def _file_edit(action: str, path: str, content: str = "",
             return error
 
         if action == "append":
+            if content == "":
+                return "Error: append content cannot be empty"
             full.parent.mkdir(parents=True, exist_ok=True)
             existing = full.read_text(encoding="utf-8") if full.exists() else ""
             if len(existing) + len(content) > _MAX_WRITE_BYTES:
                 return f"Error: file would exceed max size ({_MAX_WRITE_BYTES // 1000}KB)"
             full.write_text(existing + content, encoding="utf-8")
-            msg = f"Appended {len(content)} bytes to {path}"
+            msg = (
+                f"Appended {len(content)} chars to {path} "
+                f"({len(existing)} -> {len(existing) + len(content)} chars)"
+            )
             _audit(msg, True)
             return msg
 
         elif action == "replace":
+            if old_text == "":
+                return "Error: old_text cannot be empty for replace"
             if not full.exists():
                 return f"Error: file not found: {path}"
             text = full.read_text(encoding="utf-8")
-            if old_text not in text:
-                return f"Error: old_text not found in {path}"
+            occurrences = text.count(old_text)
+            if occurrences == 0:
+                return f"Error: old_text not found in {path} (occurrences=0)"
             new_text_full = text.replace(old_text, new_text, 1)
             if len(new_text_full) > _MAX_WRITE_BYTES:
                 return f"Error: result would exceed max size ({_MAX_WRITE_BYTES // 1000}KB)"
             full.write_text(new_text_full, encoding="utf-8")
-            msg = f"Replaced 1 occurrence in {path}"
+            if occurrences == 1:
+                msg = (
+                    f"Replaced 1 occurrence in {path} "
+                    f"({len(text)} -> {len(new_text_full)} chars)"
+                )
+            else:
+                msg = (
+                    f"Replaced 1 of {occurrences} occurrences in {path} "
+                    f"({len(text)} -> {len(new_text_full)} chars)"
+                )
             _audit(msg, True)
             return msg
 
@@ -58,8 +75,8 @@ def _audit(msg: str, success: bool) -> None:
 
 tool_registry.register(ToolEntry(
     name="edit",
-    description="Edit a file by appending content or replacing text. "
-                "Actions: 'append' (add to end), 'replace' (find and replace first occurrence).",
+    description="Edit a file in the agent's allowed directories by appending non-empty content "
+                "or replacing the first occurrence of old_text. Reports occurrence counts and size changes.",
     schema={
         "type": "object",
         "properties": {
