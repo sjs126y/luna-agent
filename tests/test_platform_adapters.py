@@ -211,6 +211,39 @@ async def test_qq_send_builds_onebot_private_and_group_requests(tmp_path: Path, 
 
 
 @pytest.mark.asyncio
+async def test_qq_send_builds_onebot_rich_segments(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path), db=None)
+    adapter._session = object()
+    calls = []
+
+    async def fake_post_json(endpoint, payload):
+        calls.append((endpoint, payload))
+        return {"status": "ok"}
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.send(
+        "group:20002",
+        "hello [at:10001] ![chart](https://example.test/a.png) [reply:42] [voice:file:///tmp/a.amr]",
+    )
+
+    assert result.success is True
+    assert calls[0][0] == "send_group_msg"
+    assert calls[0][1]["message"] == [
+        {"type": "text", "data": {"text": "hello "}},
+        {"type": "at", "data": {"qq": "10001"}},
+        {"type": "text", "data": {"text": " "}},
+        {"type": "image", "data": {"file": "https://example.test/a.png"}},
+        {"type": "text", "data": {"text": " "}},
+        {"type": "reply", "data": {"id": "42"}},
+        {"type": "text", "data": {"text": " "}},
+        {"type": "record", "data": {"file": "file:///tmp/a.amr"}},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_qq_webhook_payload_parses_onebot_message(tmp_path: Path, monkeypatch):
     from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
@@ -240,6 +273,38 @@ async def test_qq_webhook_payload_parses_onebot_message(tmp_path: Path, monkeypa
     assert event.source.chat_id == "group:20002"
     assert event.source.user_id == "10001"
     assert event.source.user_name == "Neo"
+
+
+@pytest.mark.asyncio
+async def test_qq_webhook_payload_summarizes_media_segments(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+
+    handled = await adapter.handle_webhook_payload({
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": 10001,
+        "message": [
+            {"type": "text", "data": {"text": "see "}},
+            {"type": "image", "data": {"url": "https://example.test/a.png"}},
+            {"type": "record", "data": {"file": "voice.amr"}},
+            {"type": "video", "data": {"file": "movie.mp4"}},
+            {"type": "file", "data": {"name": "report.pdf"}},
+            {"type": "reply", "data": {"id": "42"}},
+        ],
+    })
+
+    assert handled is True
+    assert captured[0].text == (
+        "see [image: https://example.test/a.png]"
+        "[voice: voice.amr]"
+        "[video: movie.mp4]"
+        "[file: report.pdf]"
+        "[reply:42]"
+    )
 
 
 @pytest.mark.asyncio

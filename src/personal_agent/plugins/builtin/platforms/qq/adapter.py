@@ -11,7 +11,9 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import re
 import time
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -95,7 +97,7 @@ class QQAdapter(BasePlatformAdapter):
 
     def _build_send_request(self, chat_id: str, content: str) -> tuple[str, dict[str, Any]]:
         chat_type, raw_id = _split_chat_id(chat_id)
-        message = _truncate_message(content, self.MAX_MESSAGE_LENGTH)
+        message = _build_outbound_message(content, self.MAX_MESSAGE_LENGTH)
         if chat_type == "group":
             return "send_group_msg", {"group_id": raw_id, "message": message}
         return "send_private_msg", {"user_id": raw_id, "message": message}
@@ -119,7 +121,7 @@ class QQAdapter(BasePlatformAdapter):
             return None
 
         message_type = str(payload.get("message_type") or "private")
-        text = _extract_text(payload.get("message") or payload.get("raw_message") or "")
+        text = _extract_message_summary(payload.get("message") or payload.get("raw_message") or "")
         if not text:
             return None
 
@@ -191,6 +193,112 @@ def _extract_text(message: Any) -> str:
                 parts.append(str(data.get("text") or ""))
         return "".join(parts).strip()
     return str(message or "").strip()
+
+
+def _extract_message_summary(message: Any) -> str:
+    if isinstance(message, str):
+        return message.strip()
+    if not isinstance(message, list):
+        return str(message or "").strip()
+
+    parts = []
+    for item in message:
+        if not isinstance(item, dict):
+            continue
+        segment_type = str(item.get("type") or "")
+        data = item.get("data") or {}
+        if segment_type == "text":
+            parts.append(str(data.get("text") or ""))
+        elif segment_type == "image":
+            parts.append(_media_placeholder("image", data, ("file", "url", "summary")))
+        elif segment_type == "record":
+            parts.append(_media_placeholder("voice", data, ("file", "url")))
+        elif segment_type == "video":
+            parts.append(_media_placeholder("video", data, ("file", "url")))
+        elif segment_type == "file":
+            parts.append(_media_placeholder("file", data, ("name", "file", "url")))
+        elif segment_type == "at":
+            qq = str(data.get("qq") or "")
+            parts.append(f"[@{qq or 'unknown'}]")
+        elif segment_type == "reply":
+            message_id = str(data.get("id") or "")
+            parts.append(f"[reply:{message_id or 'unknown'}]")
+        elif segment_type:
+            parts.append(f"[{segment_type}]")
+    return "".join(parts).strip()
+
+
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+_RICH_MARKER_RE = re.compile(r"\[(image|record|voice|video|at|reply):([^\]]+)\]")
+
+
+def _build_outbound_message(content: str, limit: int) -> str | list[dict[str, Any]]:
+    text = str(content or "")
+    segments: list[dict[str, Any]] = []
+    cursor = 0
+    for match in _iter_rich_matches(text):
+        start, end, segment = match
+        if start > cursor:
+            _append_text_segment(segments, text[cursor:start])
+        segments.append(segment)
+        cursor = end
+    if not segments:
+        return _truncate_message(text, limit)
+    if cursor < len(text):
+        _append_text_segment(segments, text[cursor:])
+    return segments
+
+
+def _iter_rich_matches(text: str):
+    matches = []
+    for match in _MARKDOWN_IMAGE_RE.finditer(text):
+        target = _normalize_media_target(match.group(2).strip())
+        if target:
+            matches.append((match.start(), match.end(), {"type": "image", "data": {"file": target}}))
+    for match in _RICH_MARKER_RE.finditer(text):
+        kind = match.group(1)
+        value = match.group(2).strip()
+        if not value:
+            continue
+        if kind == "image":
+            segment = {"type": "image", "data": {"file": _normalize_media_target(value)}}
+        elif kind in {"record", "voice"}:
+            segment = {"type": "record", "data": {"file": _normalize_media_target(value)}}
+        elif kind == "video":
+            segment = {"type": "video", "data": {"file": _normalize_media_target(value)}}
+        elif kind == "at":
+            segment = {"type": "at", "data": {"qq": value}}
+        else:
+            segment = {"type": "reply", "data": {"id": value}}
+        matches.append((match.start(), match.end(), segment))
+    yield from sorted(matches, key=lambda item: item[0])
+
+
+def _append_text_segment(segments: list[dict[str, Any]], text: str) -> None:
+    if text:
+        segments.append({"type": "text", "data": {"text": text}})
+
+
+def _normalize_media_target(value: str) -> str:
+    target = value.strip()
+    if not target:
+        return target
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", target):
+        return target
+    path = Path(target)
+    if path.is_absolute():
+        return path.as_uri()
+    return target
+
+
+def _media_placeholder(kind: str, data: dict[str, Any], keys: tuple[str, ...]) -> str:
+    detail = ""
+    for key in keys:
+        value = data.get(key)
+        if value:
+            detail = str(value)
+            break
+    return f"[{kind}: {detail}]" if detail else f"[{kind}]"
 
 
 def _truncate_message(content: str, limit: int) -> str:
