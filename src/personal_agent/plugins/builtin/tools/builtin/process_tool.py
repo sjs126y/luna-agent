@@ -15,6 +15,7 @@ from personal_agent.tools.registry import tool_registry
 logger = logging.getLogger(__name__)
 
 ProcessStatus = Literal["running", "done", "killed"]
+ReadMode = Literal["tail", "all", "since_last"]
 
 
 @dataclass
@@ -31,6 +32,10 @@ class TrackedProcess:
     returncode: int | None = None
     stdout: str = ""
     stderr: str = ""
+    stdout_read_offset: int = 0
+    stderr_read_offset: int = 0
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
 
     @property
     def finished(self) -> bool:
@@ -67,8 +72,7 @@ async def _reader(pid: int, stream_name: Literal["stdout", "stderr"], reader) ->
             tp = _processes.get(pid)
             if tp is None:
                 return
-            current = getattr(tp, stream_name)
-            setattr(tp, stream_name, _tail(current + text, _MAX_OUTPUT))
+            _append_output(tp, stream_name, text)
     except Exception as exc:
         logger.debug("Process %d %s reader error: %s", pid, stream_name, exc)
 
@@ -124,31 +128,88 @@ async def _process_start(command: str, cwd: str | None = None) -> str:
         return error_text
 
 
-async def _process_list() -> str:
+async def _process_list(status: str = "all", limit: int | None = None) -> str:
     """List all tracked background processes."""
-    if not _processes:
+    if status not in {"running", "done", "killed", "all"}:
+        return "Error: status must be one of running, done, killed, all"
+
+    processes = [
+        process
+        for process in sorted(_processes.values(), key=lambda item: item.pid, reverse=True)
+        if status == "all" or process.status == status
+    ]
+    if limit is not None:
+        try:
+            limit = max(1, int(limit))
+        except (TypeError, ValueError):
+            return "Error: limit must be an integer"
+        processes = processes[:limit]
+
+    if not processes:
         return "No background processes running."
 
     lines = ["Background processes:"]
-    for pid, process in sorted(_processes.items()):
+    for process in processes:
         runtime = _runtime_seconds(process)
         rc = "-" if process.returncode is None else str(process.returncode)
         lines.append(
-            f"  [{pid}] {process.status} ({runtime:.1f}s) rc={rc} - {process.command[:100]}"
+            f"  [{process.pid}] {process.status} ({runtime:.1f}s) rc={rc} - {process.command[:100]}"
         )
     return "\n".join(lines)
 
 
-async def _process_read(pid: int, stream: str = "both", tail_chars: int = _MAX_OUTPUT) -> str:
+async def _process_read(
+    pid: int,
+    stream: str = "both",
+    tail_chars: int = _MAX_OUTPUT,
+    mode: str = "tail",
+) -> str:
     """Read captured output from a background process."""
     tp = _processes.get(pid)
     if tp is None:
         return f"Error: no process with ID {pid}"
     if stream not in {"stdout", "stderr", "both"}:
         return "Error: stream must be one of stdout, stderr, both"
+    if mode not in {"tail", "all", "since_last"}:
+        return "Error: mode must be one of tail, all, since_last"
 
     tail_chars = max(1, min(int(tail_chars or _MAX_OUTPUT), _MAX_OUTPUT))
-    return _format_output(tp, stream=stream, tail_chars=tail_chars, header="output")
+    return _format_output(
+        tp,
+        stream=stream,
+        tail_chars=tail_chars,
+        mode=mode,
+        header="output",
+    )
+
+
+async def _process_clear(pid: int | None = None, status: str = "finished") -> str:
+    """Clear finished background process records."""
+    if pid is not None:
+        tp = _processes.get(pid)
+        if tp is None:
+            return f"Error: no process with ID {pid}"
+        if not tp.finished:
+            return f"Error: process [{pid}] is still running. Kill or wait for it before clearing."
+        del _processes[pid]
+        return f"Cleared process [{pid}]."
+
+    if status not in {"done", "killed", "finished", "all"}:
+        return "Error: status must be one of done, killed, finished, all"
+
+    def should_clear(process: TrackedProcess) -> bool:
+        if not process.finished:
+            return False
+        if status == "finished":
+            return process.status in {"done", "killed"}
+        if status == "all":
+            return True
+        return process.status == status
+
+    pids = [process.pid for process in _processes.values() if should_clear(process)]
+    for item in pids:
+        del _processes[item]
+    return f"Cleared {len(pids)} process record(s)."
 
 
 async def _process_kill(pid: int) -> str:
@@ -213,13 +274,13 @@ def _format_result(tp: TrackedProcess, status: str) -> str:
         f"duration: {_runtime_seconds(tp):.1f}s",
         f"command: {tp.command}",
     ]
-    output = _format_output(tp, stream="both", tail_chars=_MAX_OUTPUT, header="")
+    output = _format_output(tp, stream="both", tail_chars=_MAX_OUTPUT, mode="all", header="")
     if output:
         lines.append(output)
     return "\n".join(lines)
 
 
-def _format_output(tp: TrackedProcess, *, stream: str, tail_chars: int, header: str) -> str:
+def _format_output(tp: TrackedProcess, *, stream: str, tail_chars: int, mode: str, header: str) -> str:
     lines = []
     if header:
         lines.extend([
@@ -227,14 +288,36 @@ def _format_output(tp: TrackedProcess, *, stream: str, tail_chars: int, header: 
             f"status: {tp.status}",
             f"exit_code: {tp.returncode if tp.returncode is not None else '-'}",
             f"duration: {_runtime_seconds(tp):.1f}s",
+            f"mode: {mode}",
+            f"stdout_truncated: {str(tp.stdout_truncated).lower()}",
+            f"stderr_truncated: {str(tp.stderr_truncated).lower()}",
         ])
     if stream in {"stdout", "both"}:
         lines.append("stdout:")
-        lines.append(_tail(tp.stdout.strip(), tail_chars) or "(empty)")
+        lines.append(_read_stream(tp, "stdout", mode=mode, tail_chars=tail_chars) or "(empty)")
     if stream in {"stderr", "both"}:
         lines.append("stderr:")
-        lines.append(_tail(tp.stderr.strip(), tail_chars) or "(empty)")
+        lines.append(_read_stream(tp, "stderr", mode=mode, tail_chars=tail_chars) or "(empty)")
     return "\n".join(lines)
+
+
+def _read_stream(
+    tp: TrackedProcess,
+    stream_name: Literal["stdout", "stderr"],
+    *,
+    mode: str,
+    tail_chars: int,
+) -> str:
+    value = getattr(tp, stream_name)
+    if mode == "since_last":
+        offset_name = f"{stream_name}_read_offset"
+        offset = int(getattr(tp, offset_name))
+        text = value[offset:]
+        setattr(tp, offset_name, len(value))
+        return text.strip()
+    if mode == "all":
+        return value.strip()
+    return _tail(value.strip(), tail_chars)
 
 
 def _resolve_cwd(cwd: str | None) -> tuple[Path, str | None]:
@@ -267,6 +350,21 @@ def _tail(text: str, limit: int) -> str:
     return text[-limit:]
 
 
+def _append_output(tp: TrackedProcess, stream_name: Literal["stdout", "stderr"], text: str) -> None:
+    current = getattr(tp, stream_name)
+    combined = current + text
+    if len(combined) <= _MAX_OUTPUT:
+        setattr(tp, stream_name, combined)
+        return
+
+    dropped = len(combined) - _MAX_OUTPUT
+    setattr(tp, stream_name, combined[dropped:])
+    setattr(tp, f"{stream_name}_truncated", True)
+    offset_name = f"{stream_name}_read_offset"
+    offset = int(getattr(tp, offset_name))
+    setattr(tp, offset_name, max(0, offset - dropped))
+
+
 # ── registration ───────────────────────────────────────
 
 
@@ -291,10 +389,17 @@ tool_registry.register(ToolEntry(
 
 tool_registry.register(ToolEntry(
     name="process_list",
-    description="List all tracked background processes and their status.",
+    description="List tracked background processes. Filter by status and limit newest results.",
     schema={
         "type": "object",
-        "properties": {},
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["running", "done", "killed", "all"],
+                "description": "Filter by process status (default all)",
+            },
+            "limit": {"type": "integer", "description": "Maximum newest process records to show"},
+        },
         "required": [],
     },
     handler=_process_list,
@@ -303,7 +408,10 @@ tool_registry.register(ToolEntry(
 
 tool_registry.register(ToolEntry(
     name="process_read",
-    description="Read captured stdout/stderr from a background process.",
+    description=(
+        "Read captured stdout/stderr from a background process. "
+        "Use mode=since_last when polling progress to avoid repeated log output."
+    ),
     schema={
         "type": "object",
         "properties": {
@@ -313,11 +421,38 @@ tool_registry.register(ToolEntry(
                 "enum": ["stdout", "stderr", "both"],
                 "description": "Which stream to read (default both)",
             },
+            "mode": {
+                "type": "string",
+                "enum": ["tail", "all", "since_last"],
+                "description": "Read mode: tail, all retained output, or new output since last read",
+            },
             "tail_chars": {"type": "integer", "description": "Maximum tail characters to return"},
         },
         "required": ["pid"],
     },
     handler=_process_read,
+    toolset="builtin",
+))
+
+tool_registry.register(ToolEntry(
+    name="process_clear",
+    description=(
+        "Clear finished background process records. Running processes are never cleared; "
+        "kill or wait for them first."
+    ),
+    schema={
+        "type": "object",
+        "properties": {
+            "pid": {"type": "integer", "description": "Optional process ID to clear"},
+            "status": {
+                "type": "string",
+                "enum": ["done", "killed", "finished", "all"],
+                "description": "Which finished records to clear when pid is omitted",
+            },
+        },
+        "required": [],
+    },
+    handler=_process_clear,
     toolset="builtin",
 ))
 

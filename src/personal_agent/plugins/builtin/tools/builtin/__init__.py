@@ -29,6 +29,7 @@ _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
         "process_start",
         "process_list",
         "process_read",
+        "process_clear",
         "process_kill",
         "process_wait",
     )),

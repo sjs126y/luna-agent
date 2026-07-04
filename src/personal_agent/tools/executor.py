@@ -533,6 +533,7 @@ def _tool_category(name: str) -> str:
         "process_start": "background",
         "process_list": "background",
         "process_read": "background",
+        "process_clear": "background",
         "process_wait": "background",
         "process_kill": "background",
         "web_fetch": "network",

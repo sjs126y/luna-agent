@@ -164,6 +164,134 @@ async def test_process_read_invalid_stream():
 
 
 @pytest.mark.asyncio
+async def test_process_read_since_last_and_tail_modes(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+        _process_read,
+        _process_start,
+        _process_wait,
+    )
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    result = await _process_start(
+        'python -u -c "print(\'first\')\nprint(\'second\')"',
+        cwd=str(tmp_path),
+    )
+    pid = int(result.split("Process [", 1)[1].split("]", 1)[0])
+    await _process_wait(pid, timeout=5)
+
+    first = await _process_read(pid, stream="stdout", mode="since_last")
+    second = await _process_read(pid, stream="stdout", mode="since_last")
+    tail = await _process_read(pid, stream="stdout", mode="tail", tail_chars=6)
+    all_output = await _process_read(pid, stream="stdout", mode="all")
+
+    assert "first" in first
+    assert "second" in first
+    assert "(empty)" in second
+    assert "second" in tail
+    assert "first" in all_output
+
+
+@pytest.mark.asyncio
+async def test_process_read_invalid_mode():
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import TrackedProcess, _process_read, _processes
+
+    _processes[98765] = TrackedProcess(pid=98765, command="demo", proc=None)  # type: ignore[arg-type]
+    try:
+        result = await _process_read(98765, mode="wat")
+    finally:
+        _processes.pop(98765, None)
+    assert "mode must be one of" in result
+
+
+def test_process_read_truncation_flags():
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+        TrackedProcess,
+        _append_output,
+        _format_output,
+    )
+
+    process = TrackedProcess(pid=123, command="demo", proc=None)  # type: ignore[arg-type]
+    _append_output(process, "stdout", "x" * 5000)
+    result = _format_output(process, stream="stdout", tail_chars=20, mode="all", header="output")
+
+    assert process.stdout_truncated is True
+    assert "stdout_truncated: true" in result
+
+
+@pytest.mark.asyncio
+async def test_process_list_filter_and_limit(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+        _process_clear,
+        _process_kill,
+        _process_list,
+        _process_start,
+        _process_wait,
+    )
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    done_result = await _process_start('python -u -c "print(\'done\')"', cwd=str(tmp_path))
+    done_pid = int(done_result.split("Process [", 1)[1].split("]", 1)[0])
+    await _process_wait(done_pid, timeout=5)
+
+    running_result = await _process_start('python -u -c "import time\ntime.sleep(20)"', cwd=str(tmp_path))
+    running_pid = int(running_result.split("Process [", 1)[1].split("]", 1)[0])
+
+    done_list = await _process_list(status="done", limit=1)
+    running_list = await _process_list(status="running")
+
+    assert f"[{done_pid}]" in done_list
+    assert f"[{running_pid}]" in running_list
+
+    await _process_kill(running_pid)
+    await _process_clear(pid=done_pid)
+    await _process_clear(pid=running_pid)
+
+
+@pytest.mark.asyncio
+async def test_process_clear_finished_and_refuses_running(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+        _process_clear,
+        _process_list,
+        _process_start,
+        _process_wait,
+    )
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    done_result = await _process_start('python -u -c "print(\'done\')"', cwd=str(tmp_path))
+    done_pid = int(done_result.split("Process [", 1)[1].split("]", 1)[0])
+    await _process_wait(done_pid, timeout=5)
+
+    running_result = await _process_start('python -u -c "import time\ntime.sleep(20)"', cwd=str(tmp_path))
+    running_pid = int(running_result.split("Process [", 1)[1].split("]", 1)[0])
+
+    refused = await _process_clear(pid=running_pid)
+    cleared = await _process_clear(status="finished")
+    remaining = await _process_list(status="running")
+
+    assert "still running" in refused
+    assert "Cleared" in cleared
+    assert f"[{done_pid}]" not in remaining
+    assert f"[{running_pid}]" in remaining
+
+    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_kill
+
+    await _process_kill(running_pid)
+    await _process_clear(pid=running_pid)
+
+
+@pytest.mark.asyncio
 async def test_process_lifecycle():
     """Spawn a real background process, list it, wait for it, verify."""
     from personal_agent.plugins.builtin.tools.builtin.process_tool import (
@@ -577,7 +705,7 @@ def test_all_new_tools_registered():
     expected = [
         "clarify", "execute_code",
         "sub_agent", "sub_parallel", "sub_pipeline",
-        "process_start", "process_list", "process_read", "process_kill", "process_wait",
+        "process_start", "process_list", "process_read", "process_clear", "process_kill", "process_wait",
     ]
     for name in expected:
         entry = tool_registry.get(name)

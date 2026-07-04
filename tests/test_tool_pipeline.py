@@ -374,6 +374,30 @@ def test_scope_gate_guarded_denies_background():
     assert "denied by execution mode" in result
 
 
+def test_scope_gate_process_clear_uses_background_permission():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "background": "ask"},
+    )
+    tc = {"name": "process_clear", "input": {"status": "finished"}}
+    entry = ToolEntry(
+        name="process_clear",
+        description="Clear processes",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+    )
+
+    blocked = _scope_gate(tc, entry, agent)
+    assert blocked is not None
+    assert "background" in blocked
+
+
 # ── Executor _exec_one integration ─────────────────────
 
 
