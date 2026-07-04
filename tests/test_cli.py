@@ -42,13 +42,18 @@ def test_doctor_report_includes_execution_policy():
     text = format_doctor_report(report)
 
     assert report["execution"]["mode"] == "sovereign"
-    assert report["execution"]["isolation"] == "policy-only"
+    assert report["execution"]["isolation"] == "tool-enforced"
+    assert report["execution"]["profile"]["name"] == "sovereign"
+    assert report["execution"]["profile"]["sandbox"]["hard_prechecks_enforced"] is True
     assert report["tools"]["total"] >= 0
     assert "by_permission" in report["tools"]
     assert "Execution:" in text
     assert "Tools:" in text
     assert "by risk:" in text
     assert "mode: sovereign" in text
+    assert "profile: Sovereign" in text
+    assert "hard prechecks: enforced" in text
+    assert "grants: turn scoped /allow" in text
     assert "warning:" in text
 
 

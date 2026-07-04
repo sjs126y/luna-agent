@@ -1254,7 +1254,7 @@ def _config_directory(report: dict[str, Any], kind: str, default: str) -> str:
     return default
 
 
-_DOCTOR_SECTIONS = {"all", "runtime", "config", "platforms", "tools", "plugins"}
+_DOCTOR_SECTIONS = {"all", "runtime", "config", "execution", "platforms", "tools", "plugins"}
 
 
 def _normalize_doctor_section(section: str) -> str:
@@ -1275,6 +1275,8 @@ def _doctor_section_payload(report: dict[str, Any], section: str) -> dict[str, A
         }
     if section == "config":
         return report.get("config", {})
+    if section == "execution":
+        return report.get("execution", {})
     if section == "platforms":
         return {"platforms": report.get("platforms", [])}
     if section == "tools":
@@ -1362,16 +1364,10 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  history limit: {report.get('agents', {}).get('history_limit', 0)}",
         "",
         "Execution:",
-        f"  mode: {report.get('execution', {}).get('mode', '-')}",
-        f"  isolation: {report.get('execution', {}).get('isolation', '-')}",
-        f"  network: {report.get('execution', {}).get('network', '-')}",
-        f"  permissions: {_format_permissions(report.get('execution', {}).get('permissions', {}))}",
-        "",
-        "Tools:",
     ]
+    lines.extend(_format_execution_lines(report.get("execution", {})))
+    lines.extend(["", "Tools:"])
     lines.extend(_format_tool_summary_lines(tools))
-    for warning in report.get("execution", {}).get("warnings", []):
-        lines.append(f"  warning: {warning}")
     lines.extend(["", "Sandbox:"])
     for root in report["sandbox"]["roots"]:
         lines.append(f"  - {root['path']} [{_status(root['exists'])}]")
@@ -1461,6 +1457,51 @@ def _format_tool_summary_lines(tools: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _format_execution_lines(execution: dict[str, Any]) -> list[str]:
+    profile = execution.get("profile") or {}
+    sandbox = profile.get("sandbox") or {}
+    network = profile.get("network") or {}
+    grants = profile.get("grants") or {}
+    audit = profile.get("audit") or {}
+    lines = [
+        f"  mode: {execution.get('mode', '-')}",
+        f"  profile: {profile.get('label') or '-'}",
+        f"  description: {execution.get('description') or profile.get('description') or '-'}",
+        f"  isolation: {execution.get('isolation', '-')}",
+        f"  network: {execution.get('network', '-')}",
+        f"  tool permissions: {_format_permissions(execution.get('permissions', {}))}",
+    ]
+    if sandbox:
+        lines.extend([
+            f"  sandbox: {sandbox.get('kind', '-')}",
+            f"  hard prechecks: {_enforced(sandbox.get('hard_prechecks_enforced'))}",
+            f"  path roots: {_enforced(sandbox.get('path_roots_enforced'))}",
+            f"  blocked patterns: {_enforced(sandbox.get('blocked_patterns_enforced'))}",
+            f"  bash path restrict: {_enforced(sandbox.get('bash_path_restrict'))}",
+            f"  file write limit: {_enforced(sandbox.get('file_write_limit_enforced'))}",
+        ])
+    if network:
+        lines.extend([
+            f"  network tools: {network.get('tool_permission', '-')}",
+            f"  bash network: {network.get('bash_network', '-')}",
+        ])
+    if grants:
+        lines.append(
+            f"  grants: {grants.get('scope', '-')} scoped /allow "
+            f"{_list_or_none(grants.get('categories', []))}"
+        )
+    if audit:
+        lines.append(
+            "  audit: "
+            f"enabled={_yes(bool(audit.get('enabled', False)))} "
+            f"decisions={_yes(bool(audit.get('decisions', False)))} "
+            f"results={_yes(bool(audit.get('results', False)))}"
+        )
+    for warning in execution.get("warnings", []):
+        lines.append(f"  warning: {warning}")
+    return lines
+
+
 def _format_doctor_section(report: dict[str, Any], section: str) -> str:
     if section == "config":
         return format_config_report(report.get("config", {}))
@@ -1489,6 +1530,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
     elif section == "tools":
         tools = report.get("tools", {})
         lines.extend(_format_tool_summary_lines(tools))
+    elif section == "execution":
+        lines.extend(_format_execution_lines(report.get("execution", {})))
     return "\n".join(lines)
 
 
@@ -2085,6 +2128,10 @@ def _yes(value: bool) -> str:
 
 def _status(ok: bool) -> str:
     return "正常" if ok else "异常"
+
+
+def _enforced(value) -> str:
+    return "enforced" if bool(value) else "not enforced"
 
 
 def _entrypoint_status_text(report: dict[str, Any]) -> str:

@@ -230,6 +230,12 @@ def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDe
         decision = policy.permission_for(category)
         if decision == "allow" and entry.is_destructive and category == "default":
             decision = policy.permission_for("destructive")
+        explanation = policy.explain_permission(category)
+    else:
+        explanation = {
+            "message": f"tool '{tc['name']}' requires authorization",
+            "required_allow": category,
+        }
 
     if decision == "deny":
         return GuardDecision(
@@ -237,10 +243,7 @@ def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDe
             allowed=False,
             category=category,
             reason_code="permission_denied",
-            message=(
-                f"Error: tool '{tc['name']}' is denied by execution mode "
-                f"'{mode or 'unknown'}'."
-            ),
+            message=f"Error: {explanation['message']}",
             mode=mode,
             policy_decision=decision,
         )
@@ -258,13 +261,10 @@ def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDe
             allowed=False,
             category=category,
             reason_code="permission_required",
-            message=(
-                f"Error: tool '{tc['name']}' requires authorization. "
-                f"Send /allow {category} or /allow all to enable for this turn."
-            ),
+            message=f"Error: {explanation['message']}",
             mode=mode,
             policy_decision=decision,
-            required_allow=category,
+            required_allow=str(explanation.get("required_allow") or category),
         )
 
     return GuardDecision(

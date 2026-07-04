@@ -13,6 +13,10 @@ def test_execution_policy_defaults_to_standard():
     assert policy.permission_for("write") == "ask"
     assert policy.permission_for("bash") == "ask"
     assert policy.network == "deny"
+    assert policy.isolation == "tool-enforced"
+    assert policy.profile is not None
+    assert policy.profile.label == "Standard"
+    assert policy.profile.sandbox.hard_prechecks_enforced is True
 
 
 def test_execution_policy_modes_are_stable():
@@ -29,6 +33,41 @@ def test_execution_policy_modes_are_stable():
     assert sovereign.permission_for("bash") == "allow"
     assert sovereign.network == "allow"
     assert sovereign.warnings
+
+
+def test_execution_policy_as_dict_includes_profile_sections():
+    from personal_agent.execution import resolve_execution_policy
+
+    policy = resolve_execution_policy(SimpleNamespace(execution_mode="trusted", bash_allow_network=False))
+    data = policy.as_dict()
+
+    assert data["profile"]["name"] == "trusted"
+    assert data["profile"]["label"] == "Trusted"
+    assert data["profile"]["tool_permissions"]["bash"] == "allow"
+    assert data["profile"]["sandbox"]["path_roots_enforced"] is True
+    assert data["profile"]["network"]["tool_permission"] == "ask"
+    assert data["profile"]["grants"]["scope"] == "turn"
+    assert "bash" in data["profile"]["grants"]["categories"]
+    assert data["profile"]["audit"]["decisions"] is True
+
+
+def test_execution_policy_explains_permission_decisions():
+    from personal_agent.execution import resolve_execution_policy
+
+    standard = resolve_execution_policy(SimpleNamespace(execution_mode="standard", bash_allow_network=False))
+    guarded = resolve_execution_policy(SimpleNamespace(execution_mode="guarded", bash_allow_network=False))
+    trusted = resolve_execution_policy(SimpleNamespace(execution_mode="trusted", bash_allow_network=False))
+
+    ask = standard.explain_permission("bash")
+    deny = guarded.explain_permission("bash")
+    allow = trusted.explain_permission("bash")
+
+    assert ask["decision"] == "ask"
+    assert ask["required_allow"] == "bash"
+    assert "/allow bash" in ask["message"]
+    assert deny["decision"] == "deny"
+    assert "denied by execution mode" in deny["message"]
+    assert allow["decision"] == "allow"
 
 
 def test_execution_policy_unknown_mode_falls_back_to_standard():

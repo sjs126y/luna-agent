@@ -101,6 +101,25 @@ def test_doctor_section_json_returns_only_requested_section(tmp_path, monkeypatc
     assert "runtime" not in data
 
 
+def test_doctor_execution_section_reports_profile(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+
+    text_result = runner.invoke(app, ["doctor", "--section", "execution"])
+    json_result = runner.invoke(app, ["doctor", "--json", "--section", "execution"])
+
+    assert text_result.exit_code == 0, text_result.output
+    assert "Personal Agent 诊断: execution" in text_result.output
+    assert "profile: Standard" in text_result.output
+    assert "hard prechecks: enforced" in text_result.output
+    assert "audit: enabled=是" in text_result.output
+
+    assert json_result.exit_code == 0, json_result.output
+    data = json.loads(json_result.output)
+    assert data["mode"] == "standard"
+    assert data["profile"]["sandbox"]["path_roots_enforced"] is True
+    assert data["profile"]["grants"]["scope"] == "turn"
+
+
 def test_doctor_section_text_filters_output(tmp_path, monkeypatch):
     _init_local_project(tmp_path, monkeypatch)
 
