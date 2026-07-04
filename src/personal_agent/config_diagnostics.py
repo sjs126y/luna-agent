@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from personal_agent.config_registry import registry_fields_summary
 from personal_agent.execution import (
     VALID_EXECUTION_MODES,
     VALID_PERMISSION_CATEGORIES,
@@ -232,6 +233,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         "unknown_nested_keys": validation["unknown_nested_keys"],
         "deprecated_keys": deprecated_keys,
         "migration_hints": migration_hints,
+        "registry_fields": registry_fields_summary(),
         "recommended_commands": recommended_commands,
         "errors": errors,
         "warnings": warnings,

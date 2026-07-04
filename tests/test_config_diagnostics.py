@@ -75,6 +75,30 @@ sandbox:
     assert any("execution.mode 不支持" in error for error in report["errors"])
 
 
+def test_config_report_includes_registry_field_summary(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text("LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n", encoding="utf-8")
+
+    report = build_config_report(tmp_path)
+
+    registry = report["registry_fields"]
+    assert registry["field_count"] > 0
+    assert "gateway" in registry["sections"]
+    assert any(
+        item["path"] == "gateway.platform_send_max_retries"
+        for item in registry["sections"]["gateway"]
+    )
+
+
 def test_config_report_accepts_execution_policy_overrides(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

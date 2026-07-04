@@ -48,6 +48,10 @@ def test_doctor_report_includes_execution_policy():
     assert report["execution"]["profile"]["sandbox"]["hard_prechecks_enforced"] is True
     assert report["execution"]["permissions"]["background"] == "ask"
     assert report["execution"]["overrides"]["tool_permissions"]["background"] == "ask"
+    assert report["effective_config"]["field_count"] > 0
+    effective_fields = {item["path"]: item for item in report["effective_config"]["fields"]}
+    assert effective_fields["execution.mode"]["value"] == "sovereign"
+    assert effective_fields["LLM_API_KEY"]["value"] == "<set>"
     assert report["tools"]["total"] >= 0
     assert "by_permission" in report["tools"]
     assert "Execution:" in text
@@ -55,6 +59,9 @@ def test_doctor_report_includes_execution_policy():
     assert "by risk:" in text
     assert "mode: sovereign" in text
     assert "profile: Sovereign" in text
+    assert "Effective Config:" in text
+    assert "execution.mode: sovereign" in text
+    assert "LLM_API_KEY: <set>" in text
     assert "effective permissions:" in text
     assert "overrides: background=ask" in text
     assert "hard prechecks: enforced" in text
@@ -620,6 +627,8 @@ def test_format_config_report_shows_next_steps():
     text = format_config_report(report)
 
     assert "配置检查" in text
+    assert "配置字段:" in text
+    assert "known fields:" in text
     assert "未知配置: old" in text
     assert "平台:" in text
     assert "platforms/qq" in text

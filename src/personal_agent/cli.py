@@ -14,6 +14,7 @@ import typer
 
 from personal_agent.config import Settings
 from personal_agent.config_diagnostics import build_config_report, ensure_config_dirs
+from personal_agent.config_registry import effective_config_snapshot
 from personal_agent.context_budget import build_context_budget
 from personal_agent.cli_chat import run_cli_once_sync, run_cli_repl_sync
 from personal_agent.cli_shell import ShellRenderOptions, run_cli_shell_sync
@@ -1168,6 +1169,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "llm_model": settings.llm_model,
         "mcp_enabled": settings.mcp_enabled,
         "config": config_report,
+        "effective_config": effective_config_snapshot(settings),
         "runtime": runtime_health["runtime"],
         "memory": runtime_health["memory"],
         "gateway": runtime_health["runtime"].get("gateway", {}),
@@ -1209,6 +1211,7 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
         "llm_model": config_report.get("env", {}).get("llm_model") or "-",
         "mcp_enabled": False,
         "config": config_report,
+        "effective_config": {"field_count": 0, "fields": [], "sections": {}},
         "runtime": {
             "initialized": False,
             "db_open": False,
@@ -1333,6 +1336,9 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  unknown keys: {_list_or_none(config.get('unknown_keys', []))}",
         f"  errors: {len(config.get('errors', []))}",
         f"  warnings: {len(config.get('warnings', []))}",
+    ]
+    lines.extend(_format_effective_config_lines(report.get("effective_config", {})))
+    lines.extend([
         "",
         "Gateway:",
         f"  started: {_yes(gateway.get('started', False))}",
@@ -1366,7 +1372,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  history limit: {report.get('agents', {}).get('history_limit', 0)}",
         "",
         "Execution:",
-    ]
+    ])
     lines.extend(_format_execution_lines(report.get("execution", {})))
     lines.extend(["", "Tools:"])
     lines.extend(_format_tool_summary_lines(tools))
@@ -1507,6 +1513,49 @@ def _format_execution_lines(execution: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str]:
+    fields = {
+        str(item.get("path")): item
+        for item in effective_config.get("fields", [])
+        if isinstance(item, dict)
+    }
+    paths = [
+        "execution.mode",
+        "sandbox.bash_allow_network",
+        "sandbox.bash_restrict_paths",
+        "gateway.platform_send_max_retries",
+        "gateway.platform_message_dedupe_max_size",
+        "memory.external_provider",
+        "plugins.enabled",
+        "LLM_API_KEY",
+    ]
+    lines = ["", f"Effective Config: {effective_config.get('field_count', 0)} fields"]
+    for path in paths:
+        item = fields.get(path)
+        if not item:
+            continue
+        lines.append(f"  {path}: {_format_config_value(item.get('value'))}")
+    return lines
+
+
+def _format_config_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return _yes(value)
+    if isinstance(value, str):
+        return value if value else "无"
+    if value is None:
+        return "无"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list):
+        return _list_or_none(value)
+    if isinstance(value, dict):
+        if not value:
+            return "无"
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
+
+
 def _format_doctor_section(report: dict[str, Any], section: str) -> str:
     if section == "config":
         return format_config_report(report.get("config", {}))
@@ -1559,6 +1608,10 @@ def format_config_report(report: dict[str, Any]) -> str:
         f"  base URL: {_yes(env.get('llm_base_url_set', False))}",
         f"  model: {_yes(env.get('llm_model_set', False))}",
         f"  缺失环境变量: {_list_or_none(env.get('missing_llm_env', []))}",
+        "",
+        "配置字段:",
+        f"  known fields: {report.get('registry_fields', {}).get('field_count', 0)}",
+        f"  sections: {_list_or_none((report.get('registry_fields', {}).get('sections') or {}).keys())}",
         "",
         "平台:",
     ]
