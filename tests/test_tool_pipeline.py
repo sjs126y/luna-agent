@@ -538,8 +538,15 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
         event_sink=recorder,
     )
 
+    decision_event = recorder.events[-2]
     event = recorder.events[-1]
     assert result.status == "denied"
+    assert [item.type for item in recorder.events] == ["tool_start", "tool_decision", "tool_end"]
+    assert decision_event.type == "tool_decision"
+    assert decision_event.data["allowed"] is False
+    assert decision_event.data["stage"] == "permission"
+    assert decision_event.data["status"] == "denied"
+    assert decision_event.data["reason_code"] == "permission_required"
     assert event.type == "tool_end"
     assert event.data["guard_stage"] == "permission"
     assert event.data["guard_reason_code"] == "permission_required"
@@ -581,8 +588,14 @@ async def test_tool_end_event_includes_guard_metadata_for_success():
         else:
             tool_registry.register(original)
 
+    decision_event = recorder.events[-2]
     event = recorder.events[-1]
     assert result.status == "success"
+    assert [item.type for item in recorder.events] == ["tool_start", "tool_decision", "tool_end"]
+    assert decision_event.type == "tool_decision"
+    assert decision_event.data["allowed"] is True
+    assert decision_event.data["stage"] == "runtime_guard"
+    assert decision_event.data["status"] == "allowed"
     assert event.data["guard_stage"] == "runtime_guard"
     assert event.data["permission_category"] == "read"
 
@@ -649,12 +662,32 @@ async def test_execute_tool_call_result_structured_success_and_error():
     assert result.content == '{"value": 7}'
     assert result.input_summary == '{"value": 7}'
     assert format_tool_result(result) == '{"value": 7}'
-    assert [event.type for event in recorder.events] == ["tool_start", "tool_end"]
+    assert [event.type for event in recorder.events] == ["tool_start", "tool_decision", "tool_end"]
     assert recorder.events[0].data["tool_name"] == "structured_demo"
-    assert recorder.events[1].data["status"] == "success"
+    assert recorder.events[1].data["allowed"] is True
+    assert recorder.events[2].data["status"] == "success"
     assert unknown.status == "error"
     assert unknown.category == "unknown_tool"
     assert "unknown tool" in format_tool_result(unknown)
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_emits_tool_decision():
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.tools.executor import execute_tool_call_result
+
+    recorder = EventRecorder()
+
+    result = await execute_tool_call_result(
+        {"id": "bad", "name": "missing_demo", "input": {}},
+        event_sink=recorder,
+    )
+
+    assert result.status == "error"
+    assert [event.type for event in recorder.events] == ["tool_start", "tool_decision", "tool_end"]
+    assert recorder.events[1].data["stage"] == "lookup"
+    assert recorder.events[1].data["status"] == "error"
+    assert recorder.events[1].data["reason_code"] == "unknown_tool"
 
 
 @pytest.mark.asyncio
@@ -779,8 +812,9 @@ async def test_bridge_tool_call_uses_executor_precheck_for_web_fetch():
 
 def test_audit_imports():
     """Verify audit module exists and has expected API."""
-    from personal_agent.tools.audit import audit_log, set_audit_path
+    from personal_agent.tools.audit import audit_log, audit_tool_decision, set_audit_path
     assert callable(audit_log)
+    assert callable(audit_tool_decision)
     assert callable(set_audit_path)
 
 
@@ -806,6 +840,46 @@ async def test_audit_writes_log():
         assert "test result" in lines[0]
         assert "test_tool" in lines[1]
         assert "error message" in lines[1]
+
+
+@pytest.mark.asyncio
+async def test_audit_tool_decision_writes_structured_record():
+    from personal_agent.tools.audit import audit_tool_decision, set_audit_path
+    from personal_agent.tools.execution_guard import ToolDecision
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        audit_path = Path(tmpdir) / "audit.log"
+        set_audit_path(audit_path)
+
+        audit_tool_decision(ToolDecision(
+            tool_name="write",
+            tool_use_id="call-1",
+            allowed=False,
+            stage="permission",
+            status="denied",
+            permission_category="write",
+            execution_mode="standard",
+            permission_decision="ask",
+            reason_code="permission_required",
+            required_allow="write",
+            message="requires authorization",
+        ))
+
+        await asyncio.sleep(0.2)
+
+        line = audit_path.read_text(encoding="utf-8").strip()
+        data = json.loads(line)
+        assert data["event"] == "tool_decision"
+        assert data["tool"] == "write"
+        assert data["tool_use_id"] == "call-1"
+        assert data["allowed"] is False
+        assert data["stage"] == "permission"
+        assert data["status"] == "denied"
+        assert data["permission_category"] == "write"
+        assert data["execution_mode"] == "standard"
+        assert data["permission_decision"] == "ask"
+        assert data["reason_code"] == "permission_required"
+        assert data["required_allow"] == "write"
 
 
 # ── Checkpoint (file_write backup) ─────────────────────

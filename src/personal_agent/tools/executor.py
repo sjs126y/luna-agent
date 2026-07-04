@@ -16,10 +16,13 @@ from typing import Any, Literal
 from personal_agent.conversation.events import emit_event
 from personal_agent.tools.execution_guard import (
     GuardDecision,
+    ToolDecision,
     classify_guard_denial,
     evaluate_execution_guards,
     fallback_tool_category,
     run_precheck,
+    tool_decision_for_unknown_tool,
+    tool_decision_from_guard,
 )
 from personal_agent.tools.registry import tool_registry
 
@@ -189,6 +192,7 @@ async def execute_tool_call_result(
     tc = _normalize_tool_call(tc)
     name = tc["name"]
     guard_decision: GuardDecision | None = None
+    tool_decision: ToolDecision | None = None
     await emit_event(
         event_sink,
         "tool_start",
@@ -212,12 +216,13 @@ async def execute_tool_call_result(
             input_summary=result.input_summary,
             output_summary=result.output_summary,
             full_output=result.content or result.error,
-            guard_stage=guard_decision.stage if guard_decision else "",
-            guard_reason_code=guard_decision.reason_code if guard_decision else "",
-            permission_category=guard_decision.category if guard_decision else "",
-            permission_decision=guard_decision.policy_decision if guard_decision else "",
-            required_allow=guard_decision.required_allow if guard_decision else "",
-            execution_mode=guard_decision.mode if guard_decision else "",
+            guard_stage=tool_decision.stage if tool_decision else "",
+            guard_reason_code=tool_decision.reason_code if tool_decision else "",
+            permission_category=tool_decision.permission_category if tool_decision else "",
+            permission_decision=tool_decision.permission_decision if tool_decision else "",
+            required_allow=tool_decision.required_allow if tool_decision else "",
+            execution_mode=tool_decision.execution_mode if tool_decision else "",
+            grant_matched=tool_decision.grant_matched if tool_decision else "",
         )
         return result
 
@@ -232,6 +237,8 @@ async def execute_tool_call_result(
 
     entry = tool_registry.get(name)
     if entry is None:
+        tool_decision = tool_decision_for_unknown_tool(tc)
+        await _emit_tool_decision(event_sink, tool_decision)
         return await _finish(_result(
             tc,
             status="error",
@@ -251,6 +258,8 @@ async def execute_tool_call_result(
             error=f"{type(exc).__name__}: {exc}",
             started=started,
         ))
+    tool_decision = tool_decision_from_guard(tc, guard_decision)
+    await _emit_tool_decision(event_sink, tool_decision)
     if not guard_decision.allowed:
         return await _finish(_result(
             tc,
@@ -379,6 +388,21 @@ def format_tool_result(result: ToolExecutionResult) -> str:
     if result.error:
         return result.error if result.error.lower().startswith("error:") else f"Error: {result.error}"
     return "Error: tool execution produced no result"
+
+
+async def _emit_tool_decision(event_sink: Any, decision: ToolDecision) -> None:
+    try:
+        from personal_agent.tools.audit import audit_tool_decision
+
+        audit_tool_decision(decision)
+    except Exception:
+        pass
+    await emit_event(
+        event_sink,
+        "tool_decision",
+        f"工具决策 {decision.tool_name} {decision.status}",
+        **decision.as_dict(),
+    )
 
 
 def _normalize_tool_call(tc: dict) -> dict:

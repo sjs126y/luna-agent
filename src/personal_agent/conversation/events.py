@@ -13,6 +13,7 @@ ConversationEventType = Literal[
     "llm_end",
     "assistant_message",
     "tool_start",
+    "tool_decision",
     "tool_end",
     "retry",
     "compression",

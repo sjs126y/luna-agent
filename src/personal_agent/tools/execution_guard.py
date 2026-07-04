@@ -1,7 +1,10 @@
 """Execution guard decisions for tool calls.
 
-This module keeps the executor as the single tool entrypoint while separating
-hard safety checks, permission decisions, and runtime guardrails.
+The executor is still the only tool entrypoint. This module only answers:
+
+  - hard safety: can this ever run, or must it be blocked without asking?
+  - permission: does the current mode/user grant allow it?
+  - runtime guard: do dependency and quota checks allow it right now?
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 GuardStage = Literal["precheck", "permission", "runtime_guard"]
+DecisionStage = Literal["lookup", "precheck", "permission", "runtime_guard", "execution"]
 
 
 @dataclass(frozen=True)
@@ -22,20 +26,53 @@ class GuardDecision:
     mode: str = ""
     policy_decision: str = ""
     required_allow: str = ""
+    grant_matched: str = ""
+
+
+@dataclass(frozen=True)
+class ToolDecision:
+    tool_name: str
+    tool_use_id: str
+    allowed: bool
+    stage: DecisionStage
+    status: str
+    permission_category: str = "default"
+    execution_mode: str = ""
+    permission_decision: str = ""
+    reason_code: str = ""
+    required_allow: str = ""
+    message: str = ""
+    grant_matched: str = ""
+
+    def as_dict(self) -> dict:
+        return {
+            "tool_name": self.tool_name,
+            "tool_use_id": self.tool_use_id,
+            "allowed": self.allowed,
+            "stage": self.stage,
+            "status": self.status,
+            "permission_category": self.permission_category,
+            "execution_mode": self.execution_mode,
+            "permission_decision": self.permission_decision,
+            "reason_code": self.reason_code,
+            "required_allow": self.required_allow,
+            "decision_message": self.message,
+            "grant_matched": self.grant_matched,
+        }
 
 
 def evaluate_execution_guards(tc: dict, entry: Any, agent: Any) -> GuardDecision:
     category = tool_permission_category(str(tc.get("name", "")), entry)
 
-    precheck = _evaluate_precheck(tc, entry, category)
+    precheck = check_hard_safety(tc, entry, category)
     if not precheck.allowed:
         return precheck
 
-    permission = _evaluate_permission(tc, entry, agent, category)
+    permission = check_permission(tc, entry, agent, category)
     if not permission.allowed:
         return permission
 
-    runtime = _evaluate_runtime_guards(tc, entry, agent, category)
+    runtime = check_runtime_guard(tc, entry, agent, category)
     if not runtime.allowed:
         return runtime
 
@@ -45,6 +82,36 @@ def evaluate_execution_guards(tc: dict, entry: Any, agent: Any) -> GuardDecision
         category=category,
         mode=permission.mode,
         policy_decision=permission.policy_decision,
+        grant_matched=permission.grant_matched,
+    )
+
+
+def tool_decision_from_guard(tc: dict, guard: GuardDecision) -> ToolDecision:
+    return ToolDecision(
+        tool_name=str(tc.get("name", "")),
+        tool_use_id=str(tc.get("id") or tc.get("tool_use_id") or tc.get("name") or "tool"),
+        allowed=guard.allowed,
+        stage=guard.stage,
+        status="allowed" if guard.allowed else "denied",
+        permission_category=guard.category,
+        execution_mode=guard.mode,
+        permission_decision=guard.policy_decision,
+        reason_code=guard.reason_code,
+        required_allow=guard.required_allow,
+        message=guard.message,
+        grant_matched=guard.grant_matched,
+    )
+
+
+def tool_decision_for_unknown_tool(tc: dict) -> ToolDecision:
+    return ToolDecision(
+        tool_name=str(tc.get("name", "")),
+        tool_use_id=str(tc.get("id") or tc.get("tool_use_id") or tc.get("name") or "tool"),
+        allowed=False,
+        stage="lookup",
+        status="error",
+        reason_code="unknown_tool",
+        message=f"unknown tool '{tc.get('name', '')}'",
     )
 
 
@@ -88,7 +155,7 @@ def classify_guard_denial(decision: GuardDecision) -> str:
     return decision.stage
 
 
-def _evaluate_precheck(tc: dict, entry: Any, category: str) -> GuardDecision:
+def check_hard_safety(tc: dict, entry: Any, category: str) -> GuardDecision:
     try:
         error = run_precheck(tc, entry)
     except Exception as exc:
@@ -152,7 +219,7 @@ def run_precheck(tc: dict, entry: Any) -> str | None:
     return None
 
 
-def _evaluate_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDecision:
+def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDecision:
     if agent is None:
         return GuardDecision(stage="permission", allowed=True, category=category)
 
@@ -179,7 +246,13 @@ def _evaluate_permission(tc: dict, entry: Any, agent: Any, category: str) -> Gua
         )
 
     grants = getattr(agent, "_destructive_allowed", set())
-    if decision == "ask" and category not in grants and "all" not in grants:
+    grant_matched = ""
+    if "all" in grants:
+        grant_matched = "all"
+    elif category in grants:
+        grant_matched = category
+
+    if decision == "ask" and not grant_matched:
         return GuardDecision(
             stage="permission",
             allowed=False,
@@ -200,10 +273,11 @@ def _evaluate_permission(tc: dict, entry: Any, agent: Any, category: str) -> Gua
         category=category,
         mode=mode,
         policy_decision=decision,
+        grant_matched=grant_matched,
     )
 
 
-def _evaluate_runtime_guards(tc: dict, entry: Any, agent: Any, category: str) -> GuardDecision:
+def check_runtime_guard(tc: dict, entry: Any, agent: Any, category: str) -> GuardDecision:
     if entry.check_fn and not entry.check_fn():
         return GuardDecision(
             stage="runtime_guard",
