@@ -17,11 +17,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_QUERY_ALIASES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("后台", "长任务", "server", "watcher", "守护", "跑测试", "跑服务"),
+        "process_start background long-running server watcher",
+    ),
+    (("看后台", "进程列表", "任务列表"), "process_list background process"),
+    (("读后台输出", "日志", "poll", "进度"), "process_read since_last output log"),
+    (("停止进程", "kill", "终止后台"), "process_kill stop process"),
+    (("找文件", "文件名", "路径匹配"), "glob file pattern"),
+    (("搜内容", "全文搜索", "grep", "包含文本"), "grep file content regex"),
+    (("读文件", "打开文件"), "read file"),
+    (("写文件", "覆盖文件"), "write file"),
+    (("修改文件", "替换文本", "追加"), "edit file replace append"),
+    (("网页", "搜索互联网", "最新"), "web_search network web"),
+    (("打开网页", "抓页面", "fetch url"), "web_fetch network web"),
+)
+
+
 class ToolRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, ToolEntry] = {}
         self._generation: int = 0
         self._defs_cache: dict[tuple, list[dict]] = {}  # key → cached result
+        self._catalog_cache: dict[tuple, list[dict]] = {}
         self._cache_maxsize = 8
 
     # ── registration ──────────────────────────────────
@@ -119,6 +138,10 @@ class ToolRegistry:
         """Return stable metadata for registered tools without executing them."""
         from personal_agent.tools.toolsets import TOOLSETS, is_core_tool, resolve_toolsets
 
+        cache_key = (frozenset(enabled_toolsets or []), self._generation)
+        if cache_key in self._catalog_cache:
+            return [dict(item) for item in self._catalog_cache[cache_key]]
+
         resolved = resolve_toolsets(enabled_toolsets, self.all_names)
         result: list[dict] = []
         for name in sorted(resolved):
@@ -149,7 +172,11 @@ class ToolRegistry:
                     else []
                 ),
             })
-        return result
+        if len(self._catalog_cache) >= self._cache_maxsize:
+            oldest = next(iter(self._catalog_cache))
+            del self._catalog_cache[oldest]
+        self._catalog_cache[cache_key] = result
+        return [dict(item) for item in result]
 
     def catalog_summary(self, enabled_toolsets: list[str] | None = None) -> dict:
         items = self.catalog(enabled_toolsets)
@@ -288,14 +315,15 @@ def _assemble_with_bridge(active: list[ToolEntry], is_core) -> list[dict]:
 # ── bridge tool dispatch ──────────────────────────────
 
 async def dispatch_tool_search(query: str) -> str:
-    """BM25 search over deferrable tool catalog."""
+    """BM25 search over the tool catalog."""
     import json
-    from personal_agent.tools.toolsets import is_core_tool
 
-    # Build catalog: only deferrable tools
-    catalog = [d for d in tool_registry.catalog() if not is_core_tool(d["name"])]
+    catalog = [
+        d for d in tool_registry.catalog()
+        if d["name"] not in {"tool_search", "tool_describe", "tool_call"}
+    ]
     if not catalog:
-        return json.dumps({"hits": [], "message": "No deferrable tools available."}, ensure_ascii=False)
+        return json.dumps({"hits": [], "message": "No tools available."}, ensure_ascii=False)
 
     hits = _bm25_search(catalog, query)
     return json.dumps({"hits": hits}, ensure_ascii=False)
@@ -355,9 +383,10 @@ def _bm25_search(catalog: list[dict], query: str, top_k: int = 5) -> list[dict]:
     if not catalog:
         return []
 
-    query_tokens = _tokenize(query)
+    query_text, alias_matches = _expand_query(query)
+    query_tokens = _tokenize(query_text)
     if not query_tokens:
-        return catalog[:top_k]
+        return [_search_hit(item, score=0.0, why_matched=[]) for item in catalog[:top_k]]
 
     # Build per-doc token frequencies
     docs_text = [_catalog_search_text(d) for d in catalog]
@@ -381,6 +410,13 @@ def _bm25_search(catalog: list[dict], query: str, top_k: int = 5) -> list[dict]:
         for tok in doc_tokens:
             tf[tok] = tf.get(tok, 0) + 1
 
+        why_matched: list[str] = []
+        lower_query = query.lower().strip()
+        lower_query_text = query_text.lower().strip()
+        lower_name = str(catalog[i].get("name") or "").lower()
+        lower_usage_hint = str(catalog[i].get("usage_hint") or "").lower()
+        lower_tags = [str(tag).lower() for tag in catalog[i].get("tags", []) or []]
+
         for tok in query_tokens:
             if tok not in tf:
                 continue
@@ -388,19 +424,49 @@ def _bm25_search(catalog: list[dict], query: str, top_k: int = 5) -> list[dict]:
             numerator = tf[tok] * (k1 + 1)
             denominator = tf[tok] + k1 * (1 - b + b * doc_len / max(avgdl, 1))
             score += idf * numerator / max(denominator, 0.001)
-        if query.lower().strip() and query.lower().strip() in docs_text[i].lower():
+        if lower_query and lower_query == lower_name:
+            score += 6.0
+            why_matched.append("exact name")
+        elif lower_query and lower_query in lower_name:
+            score += 3.0
+            why_matched.append("name substring")
+        if lower_query and lower_query in docs_text[i].lower():
             score += 1.0
+            why_matched.append("substring")
+        matched_tags = [tag for tag in lower_tags if tag and tag in lower_query_text]
+        if matched_tags:
+            score += 2.0 * len(matched_tags)
+            why_matched.extend(f"tag: {tag}" for tag in matched_tags[:2])
+        if lower_query and lower_query in lower_usage_hint:
+            score += 1.5
+            why_matched.append("usage_hint")
+        elif any(token in lower_usage_hint for token in query_tokens):
+            score += 0.75
+            why_matched.append("usage_hint")
+        for alias_term, alias_expansion in alias_matches:
+            alias_tokens = _tokenize(alias_expansion)
+            if any(token in docs_tokens[i] for token in alias_tokens):
+                score += 1.5
+                why_matched.append(f"alias: {alias_term} -> {alias_expansion}")
+        if not catalog[i].get("available", True):
+            score *= 0.5
+            why_matched.append("unavailable")
 
         scores.append({
             **catalog[i],
             "score": round(score, 3),
+            "why_matched": _trim_reasons(why_matched),
         })
 
-    scores.sort(key=lambda x: x["score"], reverse=True)
-    return [_search_hit(s) for s in scores[:top_k] if s["score"] > 0]
+    scores.sort(key=lambda x: (-float(x["score"]), str(x["name"])))
+    return [
+        _search_hit(s, score=float(s["score"]), why_matched=s.get("why_matched", []))
+        for s in scores[:top_k]
+        if s["score"] > 0
+    ]
 
 
-def _search_hit(item: dict) -> dict:
+def _search_hit(item: dict, *, score: float, why_matched: list[str]) -> dict:
     return {
         "name": item["name"],
         "description": item["description"],
@@ -412,6 +478,8 @@ def _search_hit(item: dict) -> dict:
         "usage_hint": item.get("usage_hint", ""),
         "available": item.get("available", True),
         "unavailable_reason": item.get("unavailable_reason", ""),
+        "why_matched": why_matched,
+        "score": round(score, 3),
     }
 
 
@@ -422,3 +490,30 @@ def _catalog_search_text(item: dict) -> str:
         " ".join(str(tag) for tag in item.get("tags", []) or []),
         str(item.get("usage_hint") or ""),
     ])
+
+
+def _expand_query(query: str) -> tuple[str, list[tuple[str, str]]]:
+    raw = query or ""
+    lowered = raw.lower()
+    matches: list[tuple[str, str]] = []
+    expansions: list[str] = [raw]
+    for terms, expansion in _QUERY_ALIASES:
+        for term in terms:
+            if term.lower() in lowered:
+                matches.append((term, expansion))
+                expansions.append(expansion)
+                break
+    return " ".join(part for part in expansions if part).strip(), matches
+
+
+def _trim_reasons(reasons: list[str], limit: int = 4) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for reason in reasons:
+        if reason in seen:
+            continue
+        result.append(reason)
+        seen.add(reason)
+        if len(result) >= limit:
+            break
+    return result

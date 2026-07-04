@@ -142,6 +142,39 @@ def test_catalog_reports_metadata_and_availability(registry):
     assert summary["unavailable_tools"] == [{"name": "writer", "reason": "check_fn returned False"}]
 
 
+def test_catalog_cache_tracks_generation_and_returns_copies(registry):
+    async def dummy(**kw):
+        return "ok"
+
+    registry.register(ToolEntry(
+        name="cached_one",
+        description="Cached one",
+        schema={},
+        handler=dummy,
+    ))
+
+    first = registry.catalog()
+    first[0]["name"] = "mutated"
+    second = registry.catalog()
+
+    assert second[0]["name"] == "cached_one"
+
+    registry.register(ToolEntry(
+        name="cached_two",
+        description="Cached two",
+        schema={},
+        handler=dummy,
+    ))
+
+    names = {item["name"] for item in registry.catalog()}
+    assert names == {"cached_one", "cached_two"}
+
+    registry.unregister("cached_one")
+
+    names = {item["name"] for item in registry.catalog()}
+    assert names == {"cached_two"}
+
+
 @pytest.mark.asyncio
 async def test_bridge_search_and_describe_include_tool_metadata():
     from personal_agent.tools.registry import (
@@ -174,6 +207,8 @@ async def test_bridge_search_and_describe_include_tool_metadata():
         assert hit["risk_level"] == "high"
         assert hit["tags"] == ["demo", "write"]
         assert hit["usage_hint"] == "Use for metadata bridge tests."
+        assert hit["score"] > 0
+        assert hit["why_matched"]
 
         described = json.loads(await dispatch_tool_describe("metadata_bridge_demo"))
         assert described["input_schema"]["properties"]["value"]["type"] == "string"
@@ -185,3 +220,68 @@ async def test_bridge_search_and_describe_include_tool_metadata():
             tool_registry.unregister("metadata_bridge_demo")
         else:
             tool_registry.register(original)
+
+
+@pytest.mark.asyncio
+async def test_bridge_search_aliases_route_chinese_queries_to_expected_tools():
+    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from personal_agent.tools.registry import dispatch_tool_search
+
+    cases = {
+        "后台跑测试": "process_start",
+        "找文件": "glob",
+        "搜内容": "grep",
+    }
+    for query, expected in cases.items():
+        data = json.loads(await dispatch_tool_search(query))
+        assert data["hits"], query
+        assert data["hits"][0]["name"] == expected
+        assert any(item.startswith("alias:") for item in data["hits"][0]["why_matched"])
+
+
+@pytest.mark.asyncio
+async def test_bridge_search_keeps_unavailable_tools_but_ranks_available_first():
+    from personal_agent.tools.registry import dispatch_tool_search, tool_registry
+
+    async def dummy(**kw):
+        return "ok"
+
+    originals = {
+        "availability_good_demo": tool_registry.get("availability_good_demo"),
+        "availability_bad_demo": tool_registry.get("availability_bad_demo"),
+    }
+    tool_registry.register(ToolEntry(
+        name="availability_good_demo",
+        description="availabilitytoken demo",
+        schema={},
+        handler=dummy,
+        tags=["availabilitytoken"],
+        usage_hint="availabilitytoken",
+    ))
+    tool_registry.register(ToolEntry(
+        name="availability_bad_demo",
+        description="availabilitytoken demo",
+        schema={},
+        handler=dummy,
+        tags=["availabilitytoken"],
+        usage_hint="availabilitytoken",
+        check_fn=lambda: False,
+    ))
+    try:
+        data = json.loads(await dispatch_tool_search("availabilitytoken"))
+        names = [item["name"] for item in data["hits"]]
+        assert "availability_good_demo" in names
+        assert "availability_bad_demo" in names
+        assert names.index("availability_good_demo") < names.index("availability_bad_demo")
+        bad = next(item for item in data["hits"] if item["name"] == "availability_bad_demo")
+        assert bad["available"] is False
+        assert "unavailable" in bad["why_matched"]
+    finally:
+        for name, original in originals.items():
+            if original is None:
+                tool_registry.unregister(name)
+            else:
+                tool_registry.register(original)
