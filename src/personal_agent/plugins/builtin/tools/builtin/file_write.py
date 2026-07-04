@@ -97,6 +97,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_file_write,
     toolset="builtin",
+    permission_category="write",
     precheck=_precheck,
     is_parallel_safe=False,
     is_destructive=True,

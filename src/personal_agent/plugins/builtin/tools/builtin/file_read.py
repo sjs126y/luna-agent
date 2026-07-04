@@ -50,4 +50,5 @@ tool_registry.register(ToolEntry(
     },
     handler=_file_read,
     toolset="builtin",
+    permission_category="read",
 ))

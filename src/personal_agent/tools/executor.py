@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 from personal_agent.conversation.events import emit_event
+from personal_agent.tools.execution_guard import (
+    GuardDecision,
+    classify_guard_denial,
+    evaluate_execution_guards,
+    fallback_tool_category,
+    run_precheck,
+)
 from personal_agent.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -181,6 +188,7 @@ async def execute_tool_call_result(
     started = _time_module.monotonic()
     tc = _normalize_tool_call(tc)
     name = tc["name"]
+    guard_decision: GuardDecision | None = None
     await emit_event(
         event_sink,
         "tool_start",
@@ -204,6 +212,12 @@ async def execute_tool_call_result(
             input_summary=result.input_summary,
             output_summary=result.output_summary,
             full_output=result.content or result.error,
+            guard_stage=guard_decision.stage if guard_decision else "",
+            guard_reason_code=guard_decision.reason_code if guard_decision else "",
+            permission_category=guard_decision.category if guard_decision else "",
+            permission_decision=guard_decision.policy_decision if guard_decision else "",
+            required_allow=guard_decision.required_allow if guard_decision else "",
+            execution_mode=guard_decision.mode if guard_decision else "",
         )
         return result
 
@@ -226,37 +240,23 @@ async def execute_tool_call_result(
             started=started,
         ))
 
-    # ── ① pre-check: hard rejections, NEVER ask user ──
+    # ── guard decisions: hard safety → permission → runtime guard ──
     try:
-        pre_error = _pre_check(tc, entry)
+        guard_decision = evaluate_execution_guards(tc, entry, agent)
     except Exception as exc:
         return await _finish(_result(
             tc,
             status="error",
-            category="precheck",
+            category="execution_guard",
             error=f"{type(exc).__name__}: {exc}",
             started=started,
         ))
-    if pre_error:
-        return await _finish(_result(tc, status="denied", category="precheck", error=pre_error, started=started))
-
-    # ── ② scope gate: may ask user (/allow) ────────────
-    try:
-        gate_error = _scope_gate(tc, entry, agent)
-    except Exception as exc:
-        return await _finish(_result(
-            tc,
-            status="error",
-            category="scope_gate",
-            error=f"{type(exc).__name__}: {exc}",
-            started=started,
-        ))
-    if gate_error:
+    if not guard_decision.allowed:
         return await _finish(_result(
             tc,
             status="denied",
-            category=_classify_gate_error(gate_error),
-            error=gate_error,
+            category=classify_guard_denial(guard_decision),
+            error=guard_decision.message,
             started=started,
         ))
 
@@ -477,133 +477,25 @@ async def _run_handler(handler: Any, kwargs: dict[str, Any], *, timeout: float) 
 
 
 def _pre_check(tc: dict, entry) -> str | None:
-    """Hard security checks that NEVER result in user interaction.
-
-    Run BEFORE scope gate — these are unconditional rejections
-    that no amount of /allow can override.
-    """
-    name = tc["name"]
-    inp = tc.get("input", {})
-
-    if entry.precheck is not None:
-        error = entry.precheck(inp)
-        if error:
-            return error
-
-    # ── edit: sandbox path check ──
-    if name == "edit":
-        path = inp.get("path", "")
-        if path:
-            from personal_agent.tools.sandbox import get_sandbox
-            full = get_sandbox().resolve(path)
-            sandbox_err = get_sandbox().check_path(full)
-            if sandbox_err:
-                return sandbox_err
-
-    # ── read: sandbox path check (blocked patterns + roots) ──
-    elif name == "read":
-        path = inp.get("path", "")
-        if path:
-            from personal_agent.tools.sandbox import get_sandbox
-            full = get_sandbox().resolve(path)
-            sandbox_err = get_sandbox().check_path(full)
-            if sandbox_err:
-                return sandbox_err
-
-    # ── web_fetch: SSRF prevention ──
-    elif name == "web_fetch":
-        url = inp.get("url", "")
-        if url:
-            from personal_agent.tools.url_safety import check_url
-            ssrf_err = check_url(url)
-            if ssrf_err:
-                return ssrf_err
-
-    return None
+    """Compatibility wrapper for hard precheck rules."""
+    return run_precheck(tc, entry)
 
 
 # ── scope gate ────────────────────────────────────────
 
 def _tool_category(name: str) -> str:
     """Map tool name → destructive category for granular /allow."""
-    _CATEGORY_MAP: dict[str, str] = {
-        "write": "write",
-        "edit": "write",
-        "bash": "bash",
-        "process_start": "background",
-        "process_list": "background",
-        "process_read": "background",
-        "process_clear": "background",
-        "process_wait": "background",
-        "process_kill": "background",
-        "web_fetch": "network",
-        "web_search": "network",
-    }
-    if name in {"read", "grep", "glob"}:
-        return "read"
-    return _CATEGORY_MAP.get(name, "write" if _looks_destructive(name) else "default")
+    return fallback_tool_category(name)
 
 
 def _scope_gate(tc: dict, entry, agent: Any) -> str | None:
-    """Check if this tool call should be allowed. Returns error string or None."""
-
-    # ① check_fn — runtime dependency check
-    if entry.check_fn and not entry.check_fn():
-        return f"Error: tool '{tc['name']}' is currently unavailable (dependency not met)"
-
-    if agent is None:
-        return None  # no guard checks without agent context
-
-    # ② execution policy — sandbox boundaries are hard checks in precheck/tool handlers;
-    # this layer decides whether an otherwise valid action is allowed, denied, or asks.
-    category = _tool_category(tc["name"])
-    policy = getattr(agent, "_execution_policy", None)
-    decision = "ask" if entry.is_destructive else "allow"
-    if policy is not None:
-        decision = policy.permission_for(category)
-        if decision == "allow" and entry.is_destructive and category == "default":
-            decision = policy.permission_for("destructive")
-    if decision == "deny":
-        return (
-            f"Error: tool '{tc['name']}' is denied by execution mode "
-            f"'{getattr(policy, 'mode', 'unknown')}'."
-        )
-    if decision == "ask" and category not in agent._destructive_allowed and "all" not in agent._destructive_allowed:
-        return (
-            f"Error: tool '{tc['name']}' requires authorization. "
-            f"Send /allow {category} or /allow all to enable for this turn."
-        )
-
-    # ③ guardrail — per-turn call quota
-    if agent._tool_calls_this_turn >= agent._max_tool_calls_per_turn:
-        return (
-            f"Error: tool call limit ({agent._max_tool_calls_per_turn}) reached. "
-            f"Please summarize what has been done and stop."
-        )
-
-    # ③b — destructive quota (stricter, default 3 per turn)
-    if entry.is_destructive:
-        max_destructive = getattr(agent, '_max_destructive_per_turn', 3)
-        destructive_count = getattr(agent, '_destructive_calls_this_turn', 0)
-        if destructive_count >= max_destructive:
-            return (
-                f"Error: destructive tool limit ({max_destructive}) reached. "
-                f"Please summarize or request /allow for more."
-            )
-        agent._destructive_calls_this_turn = destructive_count + 1
-
-    agent._tool_calls_this_turn += 1
-    return None
+    """Compatibility wrapper for execution guard checks."""
+    decision = evaluate_execution_guards(tc, entry, agent)
+    return None if decision.allowed else decision.message
 
 
 def _looks_destructive(name: str) -> bool:
-    return name in {
-        "worktree_create",
-        "worktree_merge",
-        "worktree_cleanup",
-        "task",
-        "todo",
-    }
+    return fallback_tool_category(name) == "write"
 
 
 # ── checkpoint ────────────────────────────────────────

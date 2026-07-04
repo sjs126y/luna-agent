@@ -430,6 +430,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_bash,
     toolset="builtin",
+    permission_category="bash",
     precheck=_precheck,
     is_parallel_safe=False,
     is_destructive=False,  # whitelist constrains safety

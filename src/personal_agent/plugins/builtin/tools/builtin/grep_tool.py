@@ -102,4 +102,5 @@ tool_registry.register(ToolEntry(
     },
     handler=_grep,
     toolset="builtin",
+    permission_category="read",
 ))

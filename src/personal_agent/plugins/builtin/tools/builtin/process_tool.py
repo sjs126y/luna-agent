@@ -398,6 +398,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_process_start,
     toolset="builtin",
+    permission_category="background",
     precheck=_process_start_precheck,
     is_parallel_safe=False,
 ))
@@ -419,6 +420,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_process_list,
     toolset="builtin",
+    permission_category="background",
 ))
 
 tool_registry.register(ToolEntry(
@@ -447,6 +449,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_process_read,
     toolset="builtin",
+    permission_category="background",
 ))
 
 tool_registry.register(ToolEntry(
@@ -469,6 +472,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_process_clear,
     toolset="builtin",
+    permission_category="background",
 ))
 
 tool_registry.register(ToolEntry(
@@ -483,6 +487,7 @@ tool_registry.register(ToolEntry(
     },
     handler=_process_kill,
     toolset="builtin",
+    permission_category="background",
 ))
 
 tool_registry.register(ToolEntry(
@@ -498,4 +503,5 @@ tool_registry.register(ToolEntry(
     },
     handler=_process_wait,
     toolset="builtin",
+    permission_category="background",
 ))

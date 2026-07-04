@@ -156,4 +156,5 @@ tool_registry.register(ToolEntry(
     },
     handler=_web_search,
     toolset="builtin",
+    permission_category="network",
 ))

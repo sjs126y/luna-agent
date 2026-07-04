@@ -42,4 +42,5 @@ tool_registry.register(ToolEntry(
     },
     handler=_web_fetch,
     toolset="builtin",
+    permission_category="network",
 ))

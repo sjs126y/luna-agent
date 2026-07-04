@@ -814,3 +814,36 @@ def test_tool_descriptions_guide_model_usage():
     assert "finished" in tool_registry.get("process_clear").description
     assert "first occurrence" in tool_registry.get("edit").description
     assert "Overwrite" in tool_registry.get("write").description
+
+
+def test_builtin_tools_declare_permission_categories():
+    import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
+    from personal_agent.tools.registry import tool_registry
+
+    expected = {
+        "read": "read",
+        "grep": "read",
+        "glob": "read",
+        "write": "write",
+        "edit": "write",
+        "bash": "bash",
+        "process_start": "background",
+        "process_list": "background",
+        "process_read": "background",
+        "process_clear": "background",
+        "process_kill": "background",
+        "process_wait": "background",
+        "web_fetch": "network",
+        "web_search": "network",
+    }
+
+    for name, category in expected.items():
+        assert tool_registry.get(name).permission_category == category

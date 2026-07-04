@@ -58,4 +58,5 @@ tool_registry.register(ToolEntry(
     },
     handler=_glob,
     toolset="builtin",
+    permission_category="read",
 ))

@@ -146,6 +146,71 @@ class MockAgent:
         self._execution_policy = None
 
 
+def test_tool_entry_permission_category_defaults_to_default():
+    from personal_agent.tools.entry import ToolEntry
+
+    entry = ToolEntry(
+        name="demo",
+        description="Demo",
+        schema={},
+        handler=lambda **kw: "ok",
+    )
+
+    assert entry.permission_category == "default"
+
+
+def test_execution_guard_uses_tool_permission_metadata_before_fallback():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.execution_guard import evaluate_execution_guards
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "network": "ask"},
+    )
+    tc = {"name": "custom_plugin_tool", "input": {}}
+    entry = ToolEntry(
+        name="custom_plugin_tool",
+        description="Custom",
+        schema={},
+        handler=lambda **kw: "ok",
+        permission_category="network",
+    )
+
+    decision = evaluate_execution_guards(tc, entry, agent)
+
+    assert decision.allowed is False
+    assert decision.stage == "permission"
+    assert decision.category == "network"
+    assert decision.reason_code == "permission_required"
+
+
+def test_execution_guard_fallback_category_still_supports_legacy_tools():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.execution_guard import evaluate_execution_guards
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "background": "ask"},
+    )
+    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
+    entry = ToolEntry(
+        name="process_start",
+        description="Legacy process",
+        schema={},
+        handler=lambda **kw: "ok",
+    )
+
+    decision = evaluate_execution_guards(tc, entry, agent)
+
+    assert decision.allowed is False
+    assert decision.category == "background"
+    assert decision.required_allow == "background"
+
+
 def test_scope_gate_destructive_blocked_by_default():
     from personal_agent.tools.executor import _scope_gate
     from personal_agent.tools.entry import ToolEntry
@@ -340,6 +405,7 @@ def test_scope_gate_standard_background_requires_allow():
         schema={},
         handler=lambda **kw: "ok",
         toolset="builtin",
+        permission_category="background",
     )
 
     blocked = _scope_gate(tc, entry, agent)
@@ -367,6 +433,7 @@ def test_scope_gate_guarded_denies_background():
         schema={},
         handler=lambda **kw: "ok",
         toolset="builtin",
+        permission_category="background",
     )
 
     result = _scope_gate(tc, entry, agent)
@@ -391,6 +458,7 @@ def test_scope_gate_process_clear_uses_background_permission():
         schema={},
         handler=lambda **kw: "ok",
         toolset="builtin",
+        permission_category="background",
     )
 
     blocked = _scope_gate(tc, entry, agent)
@@ -443,6 +511,80 @@ async def test_process_start_precheck_runs_before_background_allow(tmp_path: Pat
     assert blocked_network.status == "denied"
     assert blocked_network.category == "precheck"
     assert "network" in blocked_network.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path):
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "background": "ask"},
+    )
+    recorder = EventRecorder()
+
+    result = await execute_tool_call_result(
+        {"id": "p1", "name": "process_start", "input": {"command": "python -c \"print(1)\""}},
+        agent=agent,
+        event_sink=recorder,
+    )
+
+    event = recorder.events[-1]
+    assert result.status == "denied"
+    assert event.type == "tool_end"
+    assert event.data["guard_stage"] == "permission"
+    assert event.data["guard_reason_code"] == "permission_required"
+    assert event.data["permission_category"] == "background"
+    assert event.data["permission_decision"] == "ask"
+    assert event.data["required_allow"] == "background"
+    assert event.data["execution_mode"] == "standard"
+
+
+@pytest.mark.asyncio
+async def test_tool_end_event_includes_guard_metadata_for_success():
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("metadata_demo")
+    recorder = EventRecorder()
+
+    async def handler():
+        return "ok"
+
+    tool_registry.register(ToolEntry(
+        name="metadata_demo",
+        description="metadata",
+        schema={},
+        handler=handler,
+        permission_category="read",
+    ))
+
+    try:
+        result = await execute_tool_call_result(
+            {"id": "m1", "name": "metadata_demo", "input": {}},
+            event_sink=recorder,
+        )
+    finally:
+        if original is None:
+            tool_registry.unregister("metadata_demo")
+        else:
+            tool_registry.register(original)
+
+    event = recorder.events[-1]
+    assert result.status == "success"
+    assert event.data["guard_stage"] == "runtime_guard"
+    assert event.data["permission_category"] == "read"
 
 
 # ── Executor _exec_one integration ─────────────────────
