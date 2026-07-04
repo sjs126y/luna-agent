@@ -533,6 +533,12 @@ def test_builtin_manifests_are_discovered_from_project_plugins(tmp_path):
     assert telegram.manifest.path is not None
     assert "src/personal_agent/plugins/builtin/platforms/telegram" in telegram.manifest.path.as_posix()
 
+    qq = manager._plugins["platforms/qq"]
+    assert qq.status == PluginStatus.DEFERRED
+    assert qq.manifest.entrypoint == "personal_agent.plugins.builtin.platforms.qq:register"
+    assert qq.manifest.path is not None
+    assert "src/personal_agent/plugins/builtin/platforms/qq" in qq.manifest.path.as_posix()
+
     memory_file = manager._plugins["memory/file"]
     assert memory_file.manifest.entrypoint == "personal_agent.plugins.builtin.memory.file:register"
     assert memory_file.manifest.path is not None

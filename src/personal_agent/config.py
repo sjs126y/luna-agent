@@ -65,6 +65,9 @@ class Settings:
         self.weixin_account_id: str = env.get("WEIXIN_ACCOUNT_ID", "")
         self.weixin_user_id: str = env.get("WEIXIN_USER_ID", "")
         self.weixin_base_url: str = env.get("WEIXIN_BASE_URL", "https://ilinkai.weixin.qq.com")
+        self.qq_bot_base_url: str = env.get("QQ_BOT_BASE_URL", "")
+        self.qq_bot_token: str = env.get("QQ_BOT_TOKEN", "")
+        self.qq_bot_webhook_secret: str = env.get("QQ_BOT_WEBHOOK_SECRET", "")
 
         # ── Agent (from config.yaml) ──
         agent = yaml_cfg.get("agent", {})

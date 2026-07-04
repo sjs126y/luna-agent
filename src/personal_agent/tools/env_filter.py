@@ -19,6 +19,8 @@ _BLOCKED_EXACT: set[str] = {
     "WEIXIN_TOKEN",
     "WEIXIN_ACCOUNT_ID",
     "WEIXIN_USER_ID",
+    "QQ_BOT_TOKEN",
+    "QQ_BOT_WEBHOOK_SECRET",
 }
 
 _BLOCKED_SUFFIXES: tuple[str, ...] = (

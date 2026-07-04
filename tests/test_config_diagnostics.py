@@ -106,6 +106,34 @@ sandbox:
     assert any("平台 telegram 缺少环境变量" in warning for warning in report["warnings"])
 
 
+def test_config_report_reports_qq_platform_env(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+plugins:
+  enabled:
+    - platforms/qq
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    qq = next(item for item in report["env"]["platforms"] if item["name"] == "qq")
+    assert qq["enabled"] is True
+    assert qq["required_env"] == ["QQ_BOT_BASE_URL"]
+    assert qq["missing_env"] == ["QQ_BOT_BASE_URL"]
+    assert any("平台 qq 缺少环境变量" in warning for warning in report["warnings"])
+
+
 def test_config_report_validates_nested_keys_ranges_and_env(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

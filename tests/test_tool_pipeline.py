@@ -1225,6 +1225,8 @@ def test_env_filter_blocks_api_keys():
         "FEISHU_APP_SECRET": "secret123",
         "TELEGRAM_BOT_TOKEN": "123:abc",
         "WEIXIN_TOKEN": "wx_token",
+        "QQ_BOT_TOKEN": "qq_token",
+        "QQ_BOT_WEBHOOK_SECRET": "qq_secret",
         "GITHUB_TOKEN": "ghp_secret123",
         "NORMAL_VAR": "hello",
     }
@@ -1238,6 +1240,8 @@ def test_env_filter_blocks_api_keys():
     assert "FEISHU_APP_SECRET" not in filtered
     assert "TELEGRAM_BOT_TOKEN" not in filtered
     assert "WEIXIN_TOKEN" not in filtered
+    assert "QQ_BOT_TOKEN" not in filtered
+    assert "QQ_BOT_WEBHOOK_SECRET" not in filtered
     assert "GITHUB_TOKEN" not in filtered
 
 

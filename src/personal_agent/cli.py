@@ -280,6 +280,7 @@ _CONFIG_TEMPLATES = {
     "telegram": _platform_config_template("telegram"),
     "feishu": _platform_config_template("feishu"),
     "wechat": _platform_config_template("wechat"),
+    "qq": _platform_config_template("qq"),
 }
 
 _PROFILE_LIST = ", ".join(sorted(_CONFIG_TEMPLATES))
@@ -302,6 +303,10 @@ WEIXIN_TOKEN=
 WEIXIN_ACCOUNT_ID=
 WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+
+QQ_BOT_BASE_URL=
+QQ_BOT_TOKEN=
+QQ_BOT_WEBHOOK_SECRET=
 """
 
 _ENV_EXAMPLE_TEMPLATE_BOT = """# LLM
@@ -324,6 +329,11 @@ WEIXIN_TOKEN=
 WEIXIN_ACCOUNT_ID=
 WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+
+# QQ / OneBot HTTP
+QQ_BOT_BASE_URL=
+QQ_BOT_TOKEN=
+QQ_BOT_WEBHOOK_SECRET=
 """
 
 _ENV_EXAMPLE_TEMPLATE_TELEGRAM = """# LLM
@@ -366,11 +376,26 @@ WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
 """
 
+_ENV_EXAMPLE_TEMPLATE_QQ = """# LLM
+LLM_PROVIDER=deepseek
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
+LLM_API_MODE=auto
+LLM_MAX_TOKENS=4096
+
+# QQ / OneBot HTTP
+QQ_BOT_BASE_URL=
+QQ_BOT_TOKEN=
+QQ_BOT_WEBHOOK_SECRET=
+"""
+
 _ENV_EXAMPLE_TEMPLATES = {
     "bot": _ENV_EXAMPLE_TEMPLATE_BOT,
     "telegram": _ENV_EXAMPLE_TEMPLATE_TELEGRAM,
     "feishu": _ENV_EXAMPLE_TEMPLATE_FEISHU,
     "wechat": _ENV_EXAMPLE_TEMPLATE_WECHAT,
+    "qq": _ENV_EXAMPLE_TEMPLATE_QQ,
 }
 
 
@@ -427,7 +452,7 @@ def doctor(json_output: bool = typer.Option(False, "--json", help="输出 JSON�
 @app.command("init")
 def init_project(
     target_dir: Path = typer.Option(Path("."), "--dir", "-d", help="生成配置的目录。"),
-    profile: str = typer.Option("local", "--profile", "-p", help="配置模板: local|server|bot|telegram|feishu|wechat。"),
+    profile: str = typer.Option("local", "--profile", "-p", help="配置模板: local|server|bot|telegram|feishu|wechat|qq。"),
     force: bool = typer.Option(False, "--force", "-f", help="覆盖已存在的文件。"),
     check: bool = typer.Option(False, "--check", help="只检查当前目录配置，不写配置文件。"),
     fix_dirs: bool = typer.Option(False, "--fix-dirs", help="创建 data/plugins/system 等基础目录。"),

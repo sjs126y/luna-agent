@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import hashlib
+import hmac
+import json
 
 import pytest
 
@@ -116,3 +119,97 @@ async def test_wechat_send_splits_long_text(tmp_path: Path, monkeypatch):
     assert result.success is True
     assert len(calls) == 2
     assert all(len(item) <= adapter.MAX_MESSAGE_LENGTH for item in calls)
+
+
+@pytest.mark.asyncio
+async def test_qq_connect_without_base_url_reports_error(tmp_path: Path):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path, qq_bot_base_url=""), db=None)
+
+    with pytest.raises(RuntimeError, match="base URL"):
+        await adapter.connect()
+
+    health = adapter.health_snapshot()
+    assert health["connected"] is False
+    assert "base URL" in health["last_connect_error"]
+
+
+@pytest.mark.asyncio
+async def test_qq_send_builds_onebot_private_and_group_requests(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path), db=None)
+    adapter._session = object()
+    calls = []
+
+    async def fake_post_json(endpoint, payload):
+        calls.append((endpoint, payload))
+        return {"status": "ok", "message_id": 123}
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    private = await adapter.send("private:10001", "hello")
+    group = await adapter.send("group:20002", "hi")
+
+    assert private.success is True
+    assert private.message_id == "123"
+    assert group.success is True
+    assert calls == [
+        ("send_private_msg", {"user_id": "10001", "message": "hello"}),
+        ("send_group_msg", {"group_id": "20002", "message": "hi"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_qq_webhook_payload_parses_onebot_message(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+
+    handled = await adapter.handle_webhook_payload({
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 20002,
+        "user_id": 10001,
+        "message_id": 99,
+        "time": 123456,
+        "sender": {"nickname": "Neo"},
+        "message": [
+            {"type": "text", "data": {"text": "/ping"}},
+        ],
+    })
+
+    assert handled is True
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.text == "/ping"
+    assert event.message_type == "command"
+    assert event.source.platform == "qq"
+    assert event.source.chat_id == "group:20002"
+    assert event.source.user_id == "10001"
+    assert event.source.user_name == "Neo"
+
+
+@pytest.mark.asyncio
+async def test_qq_webhook_signature_is_checked(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    secret = "webhook-secret"
+    adapter = QQAdapter(_settings(tmp_path, qq_bot_webhook_secret=secret), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+    payload = {
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": 10001,
+        "raw_message": "hello",
+    }
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    signature = "sha1=" + hmac.new(secret.encode(), body.encode(), hashlib.sha1).hexdigest()
+
+    assert await adapter.handle_webhook_payload(payload, signature="bad") is False
+    assert await adapter.handle_webhook_payload(payload, signature=signature) is True
+    assert len(captured) == 1

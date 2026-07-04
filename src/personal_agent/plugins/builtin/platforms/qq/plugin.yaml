@@ -1,0 +1,12 @@
+key: platforms/qq
+name: QQ Platform
+version: "0.1.0"
+description: QQ HTTP bot adapter registration.
+kind: platform
+entrypoint: personal_agent.plugins.builtin.platforms.qq:register
+requires_env: [QQ_BOT_BASE_URL]
+provides: [platforms]
+enabled_by_default: true
+source: builtin
+deferred: true
+record_import_delta: false

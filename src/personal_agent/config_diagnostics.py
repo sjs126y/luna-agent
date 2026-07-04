@@ -85,6 +85,7 @@ PLATFORM_ENV = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
     "feishu": ["FEISHU_APP_ID", "FEISHU_APP_SECRET"],
     "wechat": ["WEIXIN_TOKEN", "WEIXIN_ACCOUNT_ID", "WEIXIN_USER_ID"],
+    "qq": ["QQ_BOT_BASE_URL"],
 }
 
 MCP_SERVER_KEYS = {"name", "command", "args", "env", "enabled"}
