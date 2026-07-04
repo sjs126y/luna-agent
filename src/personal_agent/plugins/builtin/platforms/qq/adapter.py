@@ -18,13 +18,29 @@ from typing import Any
 
 import aiohttp
 
-from personal_agent.models.messages import MessageEvent, SessionSource
-from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+from personal_agent.platforms.core import (
+    BasePlatformAdapter,
+    ChatInfo,
+    PlatformCapabilities,
+    SendResult,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class QQAdapter(BasePlatformAdapter):
+    capabilities = PlatformCapabilities(
+        text=True,
+        rich_text=True,
+        image_send=True,
+        audio_send=True,
+        video_send=True,
+        mention=True,
+        reply=True,
+        attachments_in=True,
+        max_text_length=4000,
+    )
     MAX_MESSAGE_LENGTH = 4000
 
     def __init__(self, config, db) -> None:
@@ -121,7 +137,9 @@ class QQAdapter(BasePlatformAdapter):
             return None
 
         message_type = str(payload.get("message_type") or "private")
-        text = _extract_message_summary(payload.get("message") or payload.get("raw_message") or "")
+        text, parts, attachments = _extract_structured_message(
+            payload.get("message") or payload.get("raw_message") or ""
+        )
         if not text:
             return None
 
@@ -149,6 +167,8 @@ class QQAdapter(BasePlatformAdapter):
                 chat_id=chat_id,
                 chat_type=chat_type,
             ),
+            parts=parts,
+            attachments=attachments,
             raw_message=payload,
             message_id=str(payload.get("message_id") or ""),
             timestamp=float(payload.get("time") or time.time()),
@@ -196,36 +216,62 @@ def _extract_text(message: Any) -> str:
 
 
 def _extract_message_summary(message: Any) -> str:
+    return _extract_structured_message(message)[0]
+
+
+def _extract_structured_message(message: Any) -> tuple[str, list[MessagePart], list[MessagePart]]:
     if isinstance(message, str):
-        return message.strip()
+        text = message.strip()
+        return text, [MessagePart(type="text", text=text)] if text else [], []
     if not isinstance(message, list):
-        return str(message or "").strip()
+        text = str(message or "").strip()
+        return text, [MessagePart(type="text", text=text)] if text else [], []
 
     parts = []
+    structured: list[MessagePart] = []
+    attachments: list[MessagePart] = []
     for item in message:
         if not isinstance(item, dict):
             continue
         segment_type = str(item.get("type") or "")
         data = item.get("data") or {}
         if segment_type == "text":
-            parts.append(str(data.get("text") or ""))
+            text = str(data.get("text") or "")
+            parts.append(text)
+            if text:
+                structured.append(MessagePart(type="text", text=text))
         elif segment_type == "image":
-            parts.append(_media_placeholder("image", data, ("file", "url", "summary")))
+            part = _media_part("image", data, ("file", "url", "summary"))
+            parts.append(part.render_text())
+            structured.append(part)
+            attachments.append(part)
         elif segment_type == "record":
-            parts.append(_media_placeholder("voice", data, ("file", "url")))
+            part = _media_part("voice", data, ("file", "url"))
+            parts.append(part.render_text())
+            structured.append(part)
+            attachments.append(part)
         elif segment_type == "video":
-            parts.append(_media_placeholder("video", data, ("file", "url")))
+            part = _media_part("video", data, ("file", "url"))
+            parts.append(part.render_text())
+            structured.append(part)
+            attachments.append(part)
         elif segment_type == "file":
-            parts.append(_media_placeholder("file", data, ("name", "file", "url")))
+            part = _media_part("file", data, ("name", "file", "url"))
+            parts.append(part.render_text())
+            structured.append(part)
+            attachments.append(part)
         elif segment_type == "at":
             qq = str(data.get("qq") or "")
             parts.append(f"[@{qq or 'unknown'}]")
+            structured.append(MessagePart(type="mention", text=qq or "unknown", file_id=qq))
         elif segment_type == "reply":
             message_id = str(data.get("id") or "")
             parts.append(f"[reply:{message_id or 'unknown'}]")
+            structured.append(MessagePart(type="quote", file_id=message_id or "unknown"))
         elif segment_type:
             parts.append(f"[{segment_type}]")
-    return "".join(parts).strip()
+            structured.append(MessagePart(type=segment_type))
+    return "".join(parts).strip(), structured, attachments
 
 
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
@@ -292,13 +338,25 @@ def _normalize_media_target(value: str) -> str:
 
 
 def _media_placeholder(kind: str, data: dict[str, Any], keys: tuple[str, ...]) -> str:
+    return _media_part(kind, data, keys).render_text()
+
+
+def _media_part(kind: str, data: dict[str, Any], keys: tuple[str, ...]) -> MessagePart:
     detail = ""
     for key in keys:
         value = data.get(key)
         if value:
             detail = str(value)
             break
-    return f"[{kind}: {detail}]" if detail else f"[{kind}]"
+    return MessagePart(
+        type=kind,
+        text=detail,
+        url=str(data.get("url") or ""),
+        path=str(data.get("file") or ""),
+        file_id=str(data.get("file_id") or data.get("id") or ""),
+        name=str(data.get("name") or data.get("filename") or ""),
+        metadata=dict(data),
+    )
 
 
 def _truncate_message(content: str, limit: int) -> str:

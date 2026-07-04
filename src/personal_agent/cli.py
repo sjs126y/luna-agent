@@ -1158,6 +1158,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         plugins,
         runtime_health["runtime"].get("gateway", {}),
         config_report,
+        settings=settings,
     )
 
     return {
@@ -1938,6 +1939,7 @@ def _platform_diagnostics_from_reports(
             "check_fn_passed": check_fn_passed,
             "check_fn_error": check_fn_error,
             "health": _platform_health_for_plugin(gateway, plugin),
+            "capabilities": _platform_capabilities_for_name(name),
         })
         seen.add(key)
         seen.add(name)
@@ -1961,6 +1963,7 @@ def _platform_diagnostics_from_reports(
             "check_fn_passed": check_fn_passed,
             "check_fn_error": check_fn_error,
             "health": {},
+            "capabilities": _platform_capabilities_for_name(name),
         })
     return sorted(result, key=lambda item: str(item.get("key") or item.get("name") or ""))
 
@@ -1984,6 +1987,20 @@ def _platform_check_status(name: str, settings: Settings | None) -> tuple[bool |
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
     return None, "platform entry not registered"
+
+
+def _platform_capabilities_for_name(name: str) -> dict[str, Any]:
+    if not name:
+        return {}
+    try:
+        from personal_agent.platforms.core import platform_registry
+
+        for entry in platform_registry.list():
+            if entry.name == name:
+                return entry.capabilities.as_dict()
+    except Exception:
+        return {}
+    return {}
 
 
 def _known_platform_names(report: dict[str, Any]) -> list[str]:
@@ -2069,7 +2086,34 @@ def _format_platform_diagnostic_line(
             f" next_retry={health.get('next_retry_at') or '-'}"
             f" error={error}"
         )
+    capabilities = platform.get("capabilities") or (platform.get("health") or {}).get("capabilities") or {}
+    capability_text = _format_platform_capabilities(capabilities)
+    if capability_text:
+        line += f" capabilities={capability_text}"
     return line
+
+
+def _format_platform_capabilities(capabilities: dict[str, Any]) -> str:
+    if not isinstance(capabilities, dict) or not capabilities:
+        return ""
+    labels = [
+        ("text", "text"),
+        ("markdown", "markdown"),
+        ("rich_text", "rich"),
+        ("image_send", "image"),
+        ("file_send", "file"),
+        ("audio_send", "audio"),
+        ("video_send", "video"),
+        ("mention", "mention"),
+        ("reply", "reply"),
+        ("typing", "typing"),
+        ("attachments_in", "attachments-in"),
+    ]
+    enabled = [label for key, label in labels if bool(capabilities.get(key))]
+    max_text_length = int(capabilities.get("max_text_length") or 0)
+    if max_text_length > 0:
+        enabled.append(f"max={max_text_length}")
+    return ",".join(enabled)
 
 
 def _plugin_issue_summary(report: dict[str, Any]) -> str:

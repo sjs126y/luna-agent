@@ -9,10 +9,10 @@ import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from personal_agent.agent.hooks import Hooks
-from personal_agent.models.messages import MessageEvent
+from personal_agent.models.messages import MessageEvent, OutboundMessage, PlatformCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ class PlatformEntry:
     name: str
     factory: Callable[..., "BasePlatformAdapter"]
     check_fn: Callable[[object], bool]  # config → bool
+    capabilities: PlatformCapabilities = field(default_factory=PlatformCapabilities)
 
 
 class PlatformRegistry:
@@ -116,6 +117,8 @@ class BasePlatformAdapter(ABC):
     """Subclass implements connect/disconnect/send/get_chat_info.
     Base implements handle_message pipeline + retry + queue draining.
     """
+
+    capabilities = PlatformCapabilities()
 
     def __init__(self, config, db) -> None:
         self.config = config
@@ -170,6 +173,10 @@ class BasePlatformAdapter(ABC):
     @abstractmethod
     async def send(self, chat_id: str, content: str) -> SendResult:
         """Send message to chat. Subclass handles platform-specific formatting."""
+
+    async def send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
+        """Send a structured message, falling back to legacy text send."""
+        return await self.send(chat_id, message.render_text())
 
     @abstractmethod
     async def get_chat_info(self, chat_id: str) -> ChatInfo:
@@ -242,10 +249,11 @@ class BasePlatformAdapter(ABC):
 
     async def _send_with_retry(self, chat_id: str, content: str, max_retries: int | None = None) -> None:
         max_retries = self._send_max_retries if max_retries is None else max_retries
+        message = OutboundMessage.text(content)
         for attempt in range(max_retries + 1):
             try:
                 self._send_stats.last_send_at = _now()
-                result = await self.send(chat_id, content)
+                result = await self.send_message(chat_id, message)
                 if result.success:
                     self._last_send_error = ""
                     self._send_stats.sent_count += 1
@@ -267,6 +275,7 @@ class BasePlatformAdapter(ABC):
                     # Format error → strip Markdown, retry with plain text
                     if self._is_format_error(error_lower):
                         content = _strip_formatting(content)
+                        message = OutboundMessage.text(content)
                     delay = self._send_retry_delay(attempt, error_lower)
                     logger.warning("Send failed (attempt %d/%d): %s, retrying in %.1fs",
                                    attempt + 1, max_retries, result.error, delay)
@@ -400,6 +409,7 @@ class BasePlatformAdapter(ABC):
             "dedupe_max_size": self._dedupe_max_size,
             "pending_warning_threshold": self._pending_warning_threshold,
             "send_max_retries": self._send_max_retries,
+            "capabilities": self.capabilities.as_dict(),
             "last_message_at": self._last_message_at,
             "last_response_at": self._last_response_at,
             "send_stats": self._send_stats.snapshot(),

@@ -15,4 +15,5 @@ def register(ctx) -> None:
         name="qq",
         factory=_factory,
         check_fn=_check,
+        capabilities=QQAdapter.capabilities,
     ))

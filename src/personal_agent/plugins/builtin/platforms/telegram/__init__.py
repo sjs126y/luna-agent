@@ -15,4 +15,5 @@ def register(ctx) -> None:
         name="telegram",
         factory=_factory,
         check_fn=_check,
+        capabilities=TelegramAdapter.capabilities,
     ))

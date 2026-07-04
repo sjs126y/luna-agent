@@ -839,6 +839,12 @@ def test_format_doctor_report_includes_summary_and_issues():
                 "next_retry_at": "2026-07-02T10:00:00",
                 "last_connect_error": "RuntimeError: no token",
                 "last_send_error": "",
+                "capabilities": {
+                    "text": True,
+                    "markdown": True,
+                    "typing": True,
+                    "max_text_length": 4096,
+                },
             },
         }],
         "gateway": {
@@ -878,6 +884,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "stderr: startup failed" in text
     assert "MCP 服务器 demo 连接失败: command not found: missing-cmd" in text
     assert "runtime=reconnecting connected=否 attempts=2 pending=3" in text
+    assert "capabilities=text,markdown,typing,max=4096" in text
     assert "平台 telegram 连接失败: RuntimeError: no token" in text
     assert "插件 user/demo: 加载错误: boom" in text
 

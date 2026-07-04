@@ -30,5 +30,6 @@ def register(ctx) -> None:
         name="wechat",
         factory=_factory,
         check_fn=_check,
+        capabilities=WeChatAdapter.capabilities,
     ))
     ctx.register_hook("wechat_qr_login", _wechat_qr_login, priority=10)

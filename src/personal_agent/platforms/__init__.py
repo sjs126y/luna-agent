@@ -3,6 +3,7 @@
 from personal_agent.platforms.core import (
     BasePlatformAdapter,
     ChatInfo,
+    PlatformCapabilities,
     PlatformEntry,
     PlatformRegistry,
     SendResult,
@@ -12,6 +13,7 @@ from personal_agent.platforms.core import (
 __all__ = [
     "BasePlatformAdapter",
     "ChatInfo",
+    "PlatformCapabilities",
     "PlatformEntry",
     "PlatformRegistry",
     "SendResult",

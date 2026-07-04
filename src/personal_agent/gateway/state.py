@@ -209,6 +209,7 @@ class PlatformRuntime:
             "active_sessions": int(adapter_health.get("active_sessions", 0)),
             "pending_messages": int(adapter_health.get("pending_messages", 0)),
             "pending_session_count": int(adapter_health.get("pending_session_count", 0)),
+            "capabilities": adapter_health.get("capabilities", {}),
             "adapter_health": adapter_health,
             "send_stats": adapter_health.get("send_stats", {}),
         }

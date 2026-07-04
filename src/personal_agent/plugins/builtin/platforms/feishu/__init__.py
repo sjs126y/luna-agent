@@ -15,4 +15,5 @@ def register(ctx) -> None:
         name="feishu",
         factory=_factory,
         check_fn=_check,
+        capabilities=FeishuAdapter.capabilities,
     ))

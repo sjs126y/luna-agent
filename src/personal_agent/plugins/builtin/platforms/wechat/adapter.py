@@ -19,8 +19,13 @@ from typing import Any
 
 import aiohttp
 
-from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
-from personal_agent.models.messages import MessageEvent, SessionSource
+from personal_agent.platforms.core import (
+    BasePlatformAdapter,
+    ChatInfo,
+    PlatformCapabilities,
+    SendResult,
+)
+from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,12 @@ def _headers(token: str | None, body: str) -> dict[str, str]:
 
 class WeChatAdapter(BasePlatformAdapter):
     supports_code_blocks = True
+    capabilities = PlatformCapabilities(
+        text=True,
+        typing=True,
+        attachments_in=True,
+        max_text_length=2000,
+    )
     MAX_MESSAGE_LENGTH = 2000
 
     def __init__(self, config, db) -> None:
@@ -255,13 +266,16 @@ class WeChatAdapter(BasePlatformAdapter):
 
             text = ""
             media = []
+            attachments: list[MessagePart] = []
             for item in (msg.get("item_list") or []):
                 itype = item.get("type") or item.get("msg_type")
                 if itype == 1 or itype == "text":  # ITEM_TEXT
                     ti = item.get("text_item") or {}
                     text += ti.get("text", "") or item.get("content", "")
                 else:
-                    media.append(_media_summary(item))
+                    part = _media_part(item)
+                    attachments.append(part)
+                    media.append(part.render_text())
 
             combined = text.strip()
             if not combined:
@@ -286,6 +300,8 @@ class WeChatAdapter(BasePlatformAdapter):
                 text=combined,
                 message_type="command" if combined.startswith("/") else "text",
                 source=source,
+                parts=([MessagePart(type="text", text=text.strip())] if text.strip() else []) + attachments,
+                attachments=attachments,
                 raw_message=msg,
                 message_id=msg_id,
                 timestamp=msg.get("create_time", time.time()),
@@ -373,6 +389,10 @@ def _message_context_token(msg: dict) -> str:
 
 
 def _media_summary(item: dict) -> str:
+    return _media_part(item).render_text()
+
+
+def _media_part(item: dict) -> MessagePart:
     itype = item.get("type") or item.get("msg_type")
     kind = _media_kind(itype)
     data = _media_payload(item, kind)
@@ -388,9 +408,14 @@ def _media_summary(item: dict) -> str:
         "aes_key",
         "md5",
     )
-    if detail:
-        return f"[{kind}: {detail}]"
-    return f"[{kind}]"
+    return MessagePart(
+        type=kind,
+        text=detail,
+        url=str(data.get("url") or data.get("cdn_url") or ""),
+        file_id=str(data.get("file_id") or data.get("media_id") or ""),
+        name=str(data.get("file_name") or data.get("filename") or data.get("name") or ""),
+        metadata=dict(data),
+    )
 
 
 def _media_kind(itype) -> str:

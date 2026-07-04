@@ -43,6 +43,7 @@ async def test_feishu_disconnect_before_connect_is_idempotent(tmp_path: Path):
     health = adapter.health_snapshot()
     assert health["connected"] is False
     assert health["adapter"] == "FeishuAdapter"
+    assert health["capabilities"]["text"] is True
 
 
 @pytest.mark.asyncio
@@ -218,6 +219,9 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
     assert captured[0].text == (
         "see [image: img-1] [voice: voice.amr] [video: video-1] [file: report.pdf]"
     )
+    assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
+    assert captured[0].attachments[0].file_id == "img-1"
+    assert captured[0].attachments[-1].name == "report.pdf"
     assert adapter._context_tokens["wx-user"] == "ctx-token"
 
 
@@ -233,6 +237,7 @@ async def test_qq_connect_without_base_url_reports_error(tmp_path: Path):
     health = adapter.health_snapshot()
     assert health["connected"] is False
     assert "base URL" in health["last_connect_error"]
+    assert health["capabilities"]["image_send"] is True
 
 
 @pytest.mark.asyncio
@@ -356,6 +361,9 @@ async def test_qq_webhook_payload_summarizes_media_segments(tmp_path: Path, monk
         "[file: report.pdf]"
         "[reply:42]"
     )
+    assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
+    assert captured[0].attachments[0].url == "https://example.test/a.png"
+    assert captured[0].attachments[-1].name == "report.pdf"
 
 
 @pytest.mark.asyncio

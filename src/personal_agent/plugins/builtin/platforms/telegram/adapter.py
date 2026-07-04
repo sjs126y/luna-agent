@@ -11,13 +11,25 @@ import json
 import logging
 import time
 
-from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+from personal_agent.platforms.core import (
+    BasePlatformAdapter,
+    ChatInfo,
+    PlatformCapabilities,
+    SendResult,
+)
 from personal_agent.models.messages import MessageEvent, SessionSource
 
 logger = logging.getLogger(__name__)
 
 
 class TelegramAdapter(BasePlatformAdapter):
+    capabilities = PlatformCapabilities(
+        text=True,
+        markdown=True,
+        typing=True,
+        max_text_length=4096,
+    )
+
     def __init__(self, config, db) -> None:
         super().__init__(config, db)
         self._application = None
