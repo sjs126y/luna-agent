@@ -11,10 +11,10 @@ from typing import Any
 import yaml
 
 from personal_agent.config_registry import (
-    config_yaml_known_keys_by_section,
-    config_yaml_known_sections,
+    CONFIG_REGISTRY,
     registry_coverage,
     registry_fields_summary,
+    registry_schema,
     validate_registry_config,
 )
 from personal_agent.execution import (
@@ -244,6 +244,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         "deprecated_keys": deprecated_keys,
         "migration_hints": migration_hints,
         "registry_fields": registry_fields_summary(),
+        "registry_schema": registry_schema(),
         "registry_coverage": coverage,
         "registry_validation_errors": registry_validation["errors"],
         "registry_validation_warnings": registry_validation["warnings"],
@@ -468,13 +469,13 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _known_top_level_keys() -> set[str]:
-    return set(KNOWN_TOP_LEVEL_KEYS) | config_yaml_known_sections()
+    return set(KNOWN_TOP_LEVEL_KEYS) | CONFIG_REGISTRY.yaml_known_sections()
 
 
 def _known_section_keys() -> dict[str, set[str] | None]:
     result: dict[str, set[str] | None] = {
         section: None if keys is None else set(keys)
-        for section, keys in config_yaml_known_keys_by_section().items()
+        for section, keys in CONFIG_REGISTRY.yaml_known_keys_by_section().items()
     }
     for section, keys in KNOWN_SECTION_KEYS.items():
         if keys is None:

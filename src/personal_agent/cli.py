@@ -1614,6 +1614,7 @@ def format_config_report(report: dict[str, Any]) -> str:
     files = report.get("files", {})
     env = report.get("env", {})
     registry_fields = report.get("registry_fields", {})
+    registry_schema = report.get("registry_schema", {})
     registry_coverage = report.get("registry_coverage", {})
     lines = [
         "配置检查",
@@ -1633,7 +1634,9 @@ def format_config_report(report: dict[str, Any]) -> str:
         f"  缺失环境变量: {_list_or_none(env.get('missing_llm_env', []))}",
         "",
         "配置字段:",
+        f"  schema version: {registry_schema.get('version', '-')}",
         f"  known fields: {registry_fields.get('field_count', 0)}",
+        f"  schema fields: {registry_schema.get('field_count', 0)}",
         f"  config.yaml fields: {registry_coverage.get('config_yaml_field_count', registry_fields.get('config_yaml_field_count', 0))}",
         f"  sections: {_list_or_none((registry_fields.get('sections') or {}).keys())}",
         f"  config sections: {_list_or_none(registry_coverage.get('config_yaml_sections', []))}",

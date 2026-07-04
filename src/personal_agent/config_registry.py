@@ -23,6 +23,9 @@ class ConfigField:
     allow_csv: bool = False
     required: bool = False
     template_default: Any = None
+    owner: str = "core"
+    namespace: str = ""
+    plugin_key: str = ""
 
     def as_dict(self, *, value: Any = None, include_value: bool = False) -> dict[str, Any]:
         data = {
@@ -40,10 +43,182 @@ class ConfigField:
             "allow_csv": self.allow_csv,
             "required": self.required,
             "template_default": _json_safe(self.template_default),
+            "owner": self.owner,
+            "namespace": self.namespace,
+            "plugin_key": self.plugin_key,
         }
         if include_value:
             data.update(_value_payload(value, sensitive=self.sensitive))
         return data
+
+
+@dataclass(frozen=True)
+class ConfigSnapshot:
+    fields: tuple[dict[str, Any], ...]
+    values: dict[str, Any]
+    sources: dict[str, str]
+    sections: dict[str, tuple[dict[str, Any], ...]]
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def field_count(self) -> int:
+        return len(self.fields)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "field_count": self.field_count,
+            "fields": [_json_safe(field) for field in self.fields],
+            "values": _json_safe(self.values),
+            "sources": dict(self.sources),
+            "sections": {
+                section: [_json_safe(item) for item in fields]
+                for section, fields in self.sections.items()
+            },
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+        }
+
+
+class ConfigRegistry:
+    def __init__(self, fields: tuple[ConfigField, ...] | None = None) -> None:
+        self._fields_by_path: dict[str, ConfigField] = {}
+        self._fields_by_attr: dict[str, ConfigField] = {}
+        if fields:
+            for field in fields:
+                self.register(field)
+
+    @property
+    def fields(self) -> tuple[ConfigField, ...]:
+        return tuple(self._fields_by_path.values())
+
+    def register(self, field: ConfigField) -> None:
+        if field.path in self._fields_by_path:
+            raise ValueError(f"Duplicate config field path: {field.path}")
+        if field.attr in self._fields_by_attr:
+            raise ValueError(f"Duplicate config field attr: {field.attr}")
+        self._fields_by_path[field.path] = field
+        self._fields_by_attr[field.attr] = field
+
+    def get(self, path: str) -> ConfigField | None:
+        return self._fields_by_path.get(path)
+
+    def get_by_attr(self, attr: str) -> ConfigField | None:
+        return self._fields_by_attr.get(attr)
+
+    def sections(self) -> set[str]:
+        return {field.section for field in self.fields}
+
+    def by_section(self) -> dict[str, list[ConfigField]]:
+        result: dict[str, list[ConfigField]] = {}
+        for field in self.fields:
+            result.setdefault(field.section, []).append(field)
+        return {
+            section: sorted(fields, key=lambda item: item.path)
+            for section, fields in sorted(result.items())
+        }
+
+    def yaml_fields(self) -> tuple[ConfigField, ...]:
+        return tuple(field for field in self.fields if "config.yaml" in field.source)
+
+    def env_fields(self) -> tuple[ConfigField, ...]:
+        return tuple(field for field in self.fields if ".env" in field.source)
+
+    def yaml_known_sections(self) -> set[str]:
+        return {_path_section(field.path) for field in self.yaml_fields()}
+
+    def yaml_known_keys_by_section(self) -> dict[str, set[str] | None]:
+        result: dict[str, set[str] | None] = {}
+        for field in self.yaml_fields():
+            parts = field.path.split(".")
+            section = parts[0]
+            if len(parts) == 1:
+                result[section] = None
+                continue
+            if section in result and result[section] is None:
+                continue
+            result.setdefault(section, set()).add(parts[1])
+        return result
+
+    def summary(self) -> dict[str, Any]:
+        sections = self.by_section()
+        return {
+            "field_count": len(self.fields),
+            "config_yaml_field_count": len(self.yaml_fields()),
+            "env_field_count": len(self.env_fields()),
+            "sections": {
+                section: [field.as_dict() for field in fields]
+                for section, fields in sections.items()
+            },
+        }
+
+    def schema(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "field_count": len(self.fields),
+            "fields": [field.as_dict() for field in sorted(self.fields, key=lambda item: item.path)],
+            "sections": {
+                section: [field.path for field in fields]
+                for section, fields in self.by_section().items()
+            },
+        }
+
+    def coverage(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
+        known_sections = sorted(self.yaml_known_sections())
+        coverage = {
+            "field_count": len(self.fields),
+            "config_yaml_field_count": len(self.yaml_fields()),
+            "env_field_count": len(self.env_fields()),
+            "config_yaml_sections": known_sections,
+            "config_yaml_section_count": len(known_sections),
+        }
+        if config is not None:
+            known = self.yaml_known_sections()
+            present = sorted(
+                section for section in config
+                if section in known and isinstance(config.get(section), dict)
+            )
+            coverage["present_config_sections"] = present
+            coverage["present_config_section_count"] = len(present)
+        return coverage
+
+    def validate_config(self, config: dict[str, Any]) -> dict[str, list[str]]:
+        errors: list[str] = []
+        warnings: list[str] = []
+        for field in self.yaml_fields():
+            found, value = _raw_config_value(config, field.path)
+            if not found:
+                continue
+            result = self.validate_value(field, value)
+            errors.extend(result["errors"])
+            warnings.extend(result["warnings"])
+        return {"errors": _dedupe(errors), "warnings": _dedupe(warnings)}
+
+    def validate_value(self, field: ConfigField, value: Any) -> dict[str, list[str]]:
+        return _validate_field_value(field, value)
+
+    def snapshot_from_settings(self, settings: Any) -> ConfigSnapshot:
+        fields: list[dict[str, Any]] = []
+        values: dict[str, Any] = {}
+        sources: dict[str, str] = {}
+        sections: dict[str, list[dict[str, Any]]] = {}
+        for field in self.fields:
+            value = getattr(settings, field.attr, None)
+            item = field.as_dict(value=value, include_value=True)
+            fields.append(item)
+            values[field.path] = item.get("value")
+            sources[field.path] = field.source
+            sections.setdefault(field.section, []).append(item)
+        sorted_sections = {
+            section: tuple(sorted(items, key=lambda item: item["path"]))
+            for section, items in sorted(sections.items())
+        }
+        return ConfigSnapshot(
+            fields=tuple(sorted(fields, key=lambda item: item["path"])),
+            values=values,
+            sources=sources,
+            sections=sorted_sections,
+        )
 
 
 EXECUTION_MODES = ("guarded", "standard", "trusted", "sovereign")
@@ -121,87 +296,58 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
 )
 
 
+CONFIG_REGISTRY = ConfigRegistry(CONFIG_FIELDS)
+
+
 def config_fields_by_section() -> dict[str, list[ConfigField]]:
-    result: dict[str, list[ConfigField]] = {}
-    for field in CONFIG_FIELDS:
-        result.setdefault(field.section, []).append(field)
-    return {section: sorted(fields, key=lambda item: item.path) for section, fields in sorted(result.items())}
+    return CONFIG_REGISTRY.by_section()
 
 
 def config_field_by_path(path: str) -> ConfigField | None:
-    return _CONFIG_FIELD_BY_PATH.get(path)
+    return CONFIG_REGISTRY.get(path)
 
 
 def config_sections() -> set[str]:
-    return {field.section for field in CONFIG_FIELDS}
+    return CONFIG_REGISTRY.sections()
 
 
 def config_yaml_fields() -> tuple[ConfigField, ...]:
-    return tuple(field for field in CONFIG_FIELDS if "config.yaml" in field.source)
+    return CONFIG_REGISTRY.yaml_fields()
+
+
+def config_env_fields() -> tuple[ConfigField, ...]:
+    return CONFIG_REGISTRY.env_fields()
 
 
 def config_yaml_known_sections() -> set[str]:
-    return {_path_section(field.path) for field in config_yaml_fields()}
+    return CONFIG_REGISTRY.yaml_known_sections()
 
 
 def config_yaml_known_keys_by_section() -> dict[str, set[str] | None]:
-    result: dict[str, set[str] | None] = {}
-    for field in config_yaml_fields():
-        parts = field.path.split(".")
-        section = parts[0]
-        if len(parts) == 1:
-            result[section] = None
-            continue
-        if section in result and result[section] is None:
-            continue
-        result.setdefault(section, set()).add(parts[1])
-    return result
+    return CONFIG_REGISTRY.yaml_known_keys_by_section()
 
 
 def registry_fields_summary() -> dict[str, Any]:
-    sections = config_fields_by_section()
-    return {
-        "field_count": len(CONFIG_FIELDS),
-        "config_yaml_field_count": len(config_yaml_fields()),
-        "sections": {
-            section: [field.as_dict() for field in fields]
-            for section, fields in sections.items()
-        },
-    }
+    return CONFIG_REGISTRY.summary()
+
+
+def registry_schema() -> dict[str, Any]:
+    return CONFIG_REGISTRY.schema()
 
 
 def registry_coverage(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    known_sections = sorted(config_yaml_known_sections())
-    coverage = {
-        "field_count": len(CONFIG_FIELDS),
-        "config_yaml_field_count": len(config_yaml_fields()),
-        "config_yaml_sections": known_sections,
-        "config_yaml_section_count": len(known_sections),
-    }
-    if config is not None:
-        present = sorted(
-            section for section in config
-            if section in config_yaml_known_sections() and isinstance(config.get(section), dict)
-        )
-        coverage["present_config_sections"] = present
-        coverage["present_config_section_count"] = len(present)
-    return coverage
+    return CONFIG_REGISTRY.coverage(config)
 
 
 def validate_registry_config(config: dict[str, Any]) -> dict[str, list[str]]:
-    errors: list[str] = []
-    warnings: list[str] = []
-    for field in config_yaml_fields():
-        found, value = _raw_config_value(config, field.path)
-        if not found:
-            continue
-        result = validate_registry_value(field, value)
-        errors.extend(result["errors"])
-        warnings.extend(result["warnings"])
-    return {"errors": _dedupe(errors), "warnings": _dedupe(warnings)}
+    return CONFIG_REGISTRY.validate_config(config)
 
 
 def validate_registry_value(field: ConfigField, value: Any) -> dict[str, list[str]]:
+    return CONFIG_REGISTRY.validate_value(field, value)
+
+
+def _validate_field_value(field: ConfigField, value: Any) -> dict[str, list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     label = field.path
@@ -243,24 +389,7 @@ def validate_registry_value(field: ConfigField, value: Any) -> dict[str, list[st
 
 
 def effective_config_snapshot(settings) -> dict[str, Any]:
-    fields = []
-    sections: dict[str, list[dict[str, Any]]] = {}
-    for field in CONFIG_FIELDS:
-        value = getattr(settings, field.attr, None)
-        item = field.as_dict(value=value, include_value=True)
-        fields.append(item)
-        sections.setdefault(field.section, []).append(item)
-    return {
-        "field_count": len(fields),
-        "fields": fields,
-        "sections": {
-            section: sorted(items, key=lambda item: item["path"])
-            for section, items in sorted(sections.items())
-        },
-    }
-
-
-_CONFIG_FIELD_BY_PATH = {field.path: field for field in CONFIG_FIELDS}
+    return CONFIG_REGISTRY.snapshot_from_settings(settings).as_dict()
 
 
 def _path_section(path: str) -> str:

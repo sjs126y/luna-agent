@@ -616,6 +616,7 @@ def test_format_config_report_shows_next_steps():
             }],
         },
         "directories": [{"kind": "data_dir", "path": "demo/data", "exists": False, "required": True}],
+        "registry_schema": {"version": 1, "field_count": 3},
         "unknown_keys": ["old"],
         "deprecated_keys": [],
         "migration_hints": ["确认或移除未知顶层配置: old。"],
@@ -628,6 +629,8 @@ def test_format_config_report_shows_next_steps():
 
     assert "配置检查" in text
     assert "配置字段:" in text
+    assert "schema version: 1" in text
+    assert "schema fields: 3" in text
     assert "known fields:" in text
     assert "config.yaml fields:" in text
     assert "未知配置: old" in text
@@ -658,6 +661,7 @@ def test_format_doctor_config_section_includes_grouped_effective_config():
                 "platforms": [],
             },
             "registry_fields": {"field_count": 2, "sections": {"execution": [], "llm": []}},
+            "registry_schema": {"version": 1, "field_count": 2},
             "registry_coverage": {
                 "config_yaml_field_count": 1,
                 "config_yaml_sections": ["execution"],
@@ -687,6 +691,8 @@ def test_format_doctor_config_section_includes_grouped_effective_config():
     text = format_doctor_report(report, section="config")
 
     assert "配置检查" in text
+    assert "schema version: 1" in text
+    assert "schema fields: 2" in text
     assert "Effective Config: 2 fields" in text
     assert "execution.mode: standard (config.yaml)" in text
     assert "LLM_API_KEY: <set> (.env)" in text

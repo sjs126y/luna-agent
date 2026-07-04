@@ -4,17 +4,64 @@ from __future__ import annotations
 
 
 def test_config_registry_paths_are_unique():
-    from personal_agent.config_registry import CONFIG_FIELDS
+    from personal_agent.config_registry import CONFIG_FIELDS, CONFIG_REGISTRY
 
     paths = [field.path for field in CONFIG_FIELDS]
 
     assert len(paths) == len(set(paths))
     assert "execution.mode" in paths
     assert "gateway.platform_send_max_retries" in paths
+    assert CONFIG_REGISTRY.get("execution.mode") is not None
+    assert CONFIG_REGISTRY.get_by_attr("execution_mode") is CONFIG_REGISTRY.get("execution.mode")
+
+
+def test_config_registry_rejects_duplicate_path_and_attr():
+    import pytest
+
+    from personal_agent.config_registry import ConfigField, ConfigRegistry
+
+    registry = ConfigRegistry((
+        ConfigField("demo.enabled", "demo_enabled", "config.yaml", False, "bool", "demo", "Demo."),
+    ))
+
+    with pytest.raises(ValueError, match="Duplicate config field path"):
+        registry.register(
+            ConfigField("demo.enabled", "other_enabled", "config.yaml", False, "bool", "demo", "Demo.")
+        )
+    with pytest.raises(ValueError, match="Duplicate config field attr"):
+        registry.register(
+            ConfigField("demo.other", "demo_enabled", "config.yaml", False, "bool", "demo", "Demo.")
+        )
+
+
+def test_config_registry_supports_plugin_namespaced_fields():
+    from personal_agent.config_registry import ConfigField, ConfigRegistry
+
+    field = ConfigField(
+        "plugin_config.platforms/telegram.poll_interval",
+        "telegram_poll_interval",
+        "config.yaml",
+        2,
+        "int",
+        "plugin_config",
+        "Telegram polling interval.",
+        owner="plugin",
+        namespace="plugin_config",
+        plugin_key="platforms/telegram",
+        minimum=1,
+    )
+    registry = ConfigRegistry((field,))
+
+    schema_field = registry.schema()["fields"][0]
+    assert registry.get(field.path) == field
+    assert registry.yaml_known_keys_by_section()["plugin_config"] == {"platforms/telegram"}
+    assert schema_field["owner"] == "plugin"
+    assert schema_field["plugin_key"] == "platforms/telegram"
 
 
 def test_config_registry_exposes_known_yaml_sections_and_keys():
     from personal_agent.config_registry import (
+        CONFIG_REGISTRY,
         config_yaml_known_keys_by_section,
         config_yaml_known_sections,
     )
@@ -28,6 +75,7 @@ def test_config_registry_exposes_known_yaml_sections_and_keys():
     assert "platform_send_max_retries" in keys["gateway"]
     assert "embedding" in keys["memory"]
     assert keys["profiles"] is None
+    assert len(CONFIG_REGISTRY.env_fields()) > 0
 
 
 def test_config_registry_validates_basic_values():
@@ -55,6 +103,19 @@ def test_config_registry_validates_basic_values():
     ]
 
 
+def test_config_registry_schema_is_stable():
+    from personal_agent.config_registry import registry_schema
+
+    schema = registry_schema()
+    fields = {item["path"]: item for item in schema["fields"]}
+
+    assert schema["version"] == 1
+    assert schema["field_count"] == len(schema["fields"])
+    assert "execution" in schema["sections"]
+    assert fields["LLM_API_KEY"]["sensitive"] is True
+    assert fields["execution.mode"]["choices"] == ["guarded", "standard", "trusted", "sovereign"]
+
+
 def test_config_registry_attrs_exist_on_settings(tmp_path):
     from personal_agent.config import Settings
     from personal_agent.config_registry import CONFIG_FIELDS
@@ -68,7 +129,7 @@ def test_config_registry_attrs_exist_on_settings(tmp_path):
 
 def test_effective_config_snapshot_masks_sensitive_values(tmp_path):
     from personal_agent.config import Settings
-    from personal_agent.config_registry import effective_config_snapshot
+    from personal_agent.config_registry import CONFIG_REGISTRY, effective_config_snapshot
 
     settings = Settings(
         agent_data_dir=tmp_path / "data",
@@ -87,3 +148,10 @@ def test_effective_config_snapshot_masks_sensitive_values(tmp_path):
     assert fields["TELEGRAM_BOT_TOKEN"]["value"] == "<set>"
     assert fields["storage.data_dir"]["value"].endswith("data")
     assert isinstance(fields["plugins.dirs"]["value"], list)
+    assert snapshot["values"]["LLM_API_KEY"] == "<set>"
+    assert snapshot["sources"]["LLM_API_KEY"] == ".env"
+    assert "llm" in snapshot["sections"]
+
+    typed_snapshot = CONFIG_REGISTRY.snapshot_from_settings(settings)
+    assert typed_snapshot.field_count == snapshot["field_count"]
+    assert typed_snapshot.values["LLM_API_KEY"] == "<set>"
