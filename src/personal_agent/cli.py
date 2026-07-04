@@ -1616,6 +1616,7 @@ def format_config_report(report: dict[str, Any]) -> str:
     registry_fields = report.get("registry_fields", {})
     registry_schema = report.get("registry_schema", {})
     registry_coverage = report.get("registry_coverage", {})
+    registry_source_counts = report.get("registry_source_counts", {})
     lines = [
         "配置检查",
         f"目录: {report.get('base_dir') or '-'}",
@@ -1641,6 +1642,7 @@ def format_config_report(report: dict[str, Any]) -> str:
         f"  sections: {_list_or_none((registry_fields.get('sections') or {}).keys())}",
         f"  config sections: {_list_or_none(registry_coverage.get('config_yaml_sections', []))}",
         f"  present sections: {_list_or_none(registry_coverage.get('present_config_sections', []))}",
+        f"  source counts: {_format_counts(registry_source_counts)}",
         "",
         "平台:",
     ]
@@ -1671,6 +1673,12 @@ def format_config_report(report: dict[str, Any]) -> str:
     if report.get("registry_validation_warnings"):
         lines.extend(["", "Registry 校验警告:"])
         lines.extend(f"  - {warning}" for warning in report["registry_validation_warnings"])
+    if report.get("registry_loader_errors"):
+        lines.extend(["", "Registry Loader 错误:"])
+        lines.extend(f"  - {error}" for error in report["registry_loader_errors"])
+    if report.get("registry_loader_warnings"):
+        lines.extend(["", "Registry Loader 警告:"])
+        lines.extend(f"  - {warning}" for warning in report["registry_loader_warnings"])
     if report.get("migration_hints"):
         lines.extend(["", "迁移建议:"])
         lines.extend(f"  - {hint}" for hint in report["migration_hints"])

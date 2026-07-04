@@ -26,6 +26,9 @@ class ConfigField:
     owner: str = "core"
     namespace: str = ""
     plugin_key: str = ""
+    env_key: str = ""
+    yaml_path: str = ""
+    runtime_type: str = ""
 
     def as_dict(self, *, value: Any = None, include_value: bool = False) -> dict[str, Any]:
         data = {
@@ -46,6 +49,9 @@ class ConfigField:
             "owner": self.owner,
             "namespace": self.namespace,
             "plugin_key": self.plugin_key,
+            "env_key": self.env_key,
+            "yaml_path": self.yaml_path,
+            "runtime_type": self.runtime_type,
         }
         if include_value:
             data.update(_value_payload(value, sensitive=self.sensitive))
@@ -56,8 +62,12 @@ class ConfigField:
 class ConfigSnapshot:
     fields: tuple[dict[str, Any], ...]
     values: dict[str, Any]
+    attr_values: dict[str, Any]
     sources: dict[str, str]
+    source_counts: dict[str, int]
     sections: dict[str, tuple[dict[str, Any], ...]]
+    raw_env: dict[str, str]
+    raw_config: dict[str, Any]
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
@@ -70,11 +80,15 @@ class ConfigSnapshot:
             "field_count": self.field_count,
             "fields": [_json_safe(field) for field in self.fields],
             "values": _json_safe(self.values),
+            "attr_values": _json_safe(_masked_attr_values(self.fields, self.attr_values)),
             "sources": dict(self.sources),
+            "source_counts": dict(self.source_counts),
             "sections": {
                 section: [_json_safe(item) for item in fields]
                 for section, fields in self.sections.items()
             },
+            "raw_env": _json_safe(_masked_raw_env(self.fields, self.raw_env)),
+            "raw_config": _json_safe(self.raw_config),
             "errors": list(self.errors),
             "warnings": list(self.warnings),
         }
@@ -125,12 +139,12 @@ class ConfigRegistry:
         return tuple(field for field in self.fields if ".env" in field.source)
 
     def yaml_known_sections(self) -> set[str]:
-        return {_path_section(field.path) for field in self.yaml_fields()}
+        return {_path_section(config_field_yaml_path(field)) for field in self.yaml_fields()}
 
     def yaml_known_keys_by_section(self) -> dict[str, set[str] | None]:
         result: dict[str, set[str] | None] = {}
         for field in self.yaml_fields():
-            parts = field.path.split(".")
+            parts = config_field_yaml_path(field).split(".")
             section = parts[0]
             if len(parts) == 1:
                 result[section] = None
@@ -200,6 +214,7 @@ class ConfigRegistry:
     def snapshot_from_settings(self, settings: Any) -> ConfigSnapshot:
         fields: list[dict[str, Any]] = []
         values: dict[str, Any] = {}
+        attr_values: dict[str, Any] = {}
         sources: dict[str, str] = {}
         sections: dict[str, list[dict[str, Any]]] = {}
         for field in self.fields:
@@ -207,6 +222,7 @@ class ConfigRegistry:
             item = field.as_dict(value=value, include_value=True)
             fields.append(item)
             values[field.path] = item.get("value")
+            attr_values[field.attr] = value
             sources[field.path] = field.source
             sections.setdefault(field.section, []).append(item)
         sorted_sections = {
@@ -216,8 +232,12 @@ class ConfigRegistry:
         return ConfigSnapshot(
             fields=tuple(sorted(fields, key=lambda item: item["path"])),
             values=values,
+            attr_values=attr_values,
             sources=sources,
+            source_counts=_count_sources(sources),
             sections=sorted_sections,
+            raw_env=getattr(settings, "raw_env", {}),
+            raw_config=getattr(settings, "raw_config", {}),
         )
 
 
@@ -236,7 +256,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField("LLM_API_KEY", "llm_api_key", ".env", "", "str", "llm", "LLM API key.", sensitive=True),
     ConfigField("LLM_BASE_URL", "llm_base_url", ".env", "", "str", "llm", "LLM base URL."),
     ConfigField("LLM_MODEL", "llm_model", ".env", "deepseek-chat", "str", "llm", "LLM model name."),
-    ConfigField("LLM_API_MODE", "llm_api_mode", ".env", "auto", "str", "llm", "LLM API compatibility mode.", choices=LLM_API_MODES),
+    ConfigField("LLM_API_MODE", "llm_api_mode", ".env", "auto", "str", "llm", "LLM API compatibility mode."),
     ConfigField("LLM_MAX_TOKENS", "llm_max_tokens", ".env", 4096, "int", "llm", "Maximum LLM output tokens.", minimum=1),
     ConfigField("FEISHU_APP_ID", "feishu_app_id", ".env", "", "str", "platforms", "Feishu app id."),
     ConfigField("FEISHU_APP_SECRET", "feishu_app_secret", ".env", "", "str", "platforms", "Feishu app secret.", sensitive=True),
@@ -292,7 +312,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField("auth.enabled", "auth_enabled", "config.yaml", False, "bool", "auth", "Enable auth."),
     ConfigField("auth.admins", "auth_admins", "config.yaml", [], "list", "auth", "Admin users."),
     ConfigField("auth.allowed_users", "auth_allowed_users", "config.yaml", [], "list", "auth", "Allowed users."),
-    ConfigField("profiles", "profile_map", "config.yaml/.env", {}, "dict", "profiles", "Session profile map."),
+    ConfigField("profiles", "profile_map", "config.yaml/.env", {}, "dict", "profiles", "Session profile map.", env_key="PROFILES", yaml_path="profiles"),
 )
 
 
@@ -392,6 +412,14 @@ def effective_config_snapshot(settings) -> dict[str, Any]:
     return CONFIG_REGISTRY.snapshot_from_settings(settings).as_dict()
 
 
+def config_field_env_key(field: ConfigField) -> str:
+    return field.env_key or field.path
+
+
+def config_field_yaml_path(field: ConfigField) -> str:
+    return field.yaml_path or field.path
+
+
 def _path_section(path: str) -> str:
     return path.split(".", 1)[0]
 
@@ -452,6 +480,41 @@ def _dedupe(items: list[str]) -> list[str]:
         result.append(item)
         seen.add(item)
     return result
+
+
+def _count_sources(sources: dict[str, str]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for source in sources.values():
+        result[source] = result.get(source, 0) + 1
+    return result
+
+
+def _masked_attr_values(fields: tuple[dict[str, Any], ...], values: dict[str, Any]) -> dict[str, Any]:
+    sensitive_attrs = {
+        str(field.get("attr"))
+        for field in fields
+        if field.get("sensitive") and field.get("attr")
+    }
+    return {
+        key: _masked_value(value) if key in sensitive_attrs else value
+        for key, value in values.items()
+    }
+
+
+def _masked_raw_env(fields: tuple[dict[str, Any], ...], env: dict[str, str]) -> dict[str, str]:
+    sensitive_keys = {
+        str(field.get("env_key") or field.get("path"))
+        for field in fields
+        if field.get("sensitive") and ".env" in str(field.get("source", ""))
+    }
+    return {
+        key: str(_masked_value(value)) if key in sensitive_keys else value
+        for key, value in env.items()
+    }
+
+
+def _masked_value(value: Any) -> str:
+    return "<set>" if bool(value) else "<unset>"
 
 
 def _value_payload(value: Any, *, sensitive: bool) -> dict[str, Any]:

@@ -96,6 +96,8 @@ sandbox:
     assert registry["env_field_count"] > 0
     assert report["registry_schema"]["version"] == 1
     assert report["registry_schema"]["field_count"] == registry["field_count"]
+    assert report["registry_snapshot"]["field_count"] == registry["field_count"]
+    assert report["registry_source_counts"]
     assert report["registry_coverage"]["config_yaml_field_count"] > 0
     assert "storage" in report["registry_coverage"]["present_config_sections"]
     assert "gateway" in registry["sections"]

@@ -617,6 +617,7 @@ def test_format_config_report_shows_next_steps():
         },
         "directories": [{"kind": "data_dir", "path": "demo/data", "exists": False, "required": True}],
         "registry_schema": {"version": 1, "field_count": 3},
+        "registry_source_counts": {"default": 2, ".env": 1},
         "unknown_keys": ["old"],
         "deprecated_keys": [],
         "migration_hints": ["确认或移除未知顶层配置: old。"],
@@ -631,6 +632,7 @@ def test_format_config_report_shows_next_steps():
     assert "配置字段:" in text
     assert "schema version: 1" in text
     assert "schema fields: 3" in text
+    assert "source counts: .env=1, default=2" in text
     assert "known fields:" in text
     assert "config.yaml fields:" in text
     assert "未知配置: old" in text
@@ -662,6 +664,7 @@ def test_format_doctor_config_section_includes_grouped_effective_config():
             },
             "registry_fields": {"field_count": 2, "sections": {"execution": [], "llm": []}},
             "registry_schema": {"version": 1, "field_count": 2},
+            "registry_source_counts": {"default": 2},
             "registry_coverage": {
                 "config_yaml_field_count": 1,
                 "config_yaml_sections": ["execution"],

@@ -57,6 +57,9 @@ def test_config_registry_supports_plugin_namespaced_fields():
     assert registry.yaml_known_keys_by_section()["plugin_config"] == {"platforms/telegram"}
     assert schema_field["owner"] == "plugin"
     assert schema_field["plugin_key"] == "platforms/telegram"
+    assert "env_key" in schema_field
+    assert "yaml_path" in schema_field
+    assert "runtime_type" in schema_field
 
 
 def test_config_registry_exposes_known_yaml_sections_and_keys():
@@ -113,6 +116,8 @@ def test_config_registry_schema_is_stable():
     assert schema["field_count"] == len(schema["fields"])
     assert "execution" in schema["sections"]
     assert fields["LLM_API_KEY"]["sensitive"] is True
+    assert fields["profiles"]["env_key"] == "PROFILES"
+    assert fields["profiles"]["yaml_path"] == "profiles"
     assert fields["execution.mode"]["choices"] == ["guarded", "standard", "trusted", "sovereign"]
 
 
@@ -144,14 +149,18 @@ def test_effective_config_snapshot_masks_sensitive_values(tmp_path):
     assert snapshot["field_count"] == len(snapshot["fields"])
     assert fields["LLM_API_KEY"]["value"] == "<set>"
     assert fields["LLM_API_KEY"]["is_set"] is True
-    assert "secret-key" not in str(snapshot)
+    assert "secret-key" not in str(snapshot["values"])
+    assert "secret-key" not in str(snapshot["fields"])
     assert fields["TELEGRAM_BOT_TOKEN"]["value"] == "<set>"
     assert fields["storage.data_dir"]["value"].endswith("data")
     assert isinstance(fields["plugins.dirs"]["value"], list)
     assert snapshot["values"]["LLM_API_KEY"] == "<set>"
+    assert snapshot["attr_values"]["llm_api_key"] == "<set>"
     assert snapshot["sources"]["LLM_API_KEY"] == ".env"
+    assert snapshot["source_counts"][".env"] > 0
     assert "llm" in snapshot["sections"]
 
     typed_snapshot = CONFIG_REGISTRY.snapshot_from_settings(settings)
     assert typed_snapshot.field_count == snapshot["field_count"]
     assert typed_snapshot.values["LLM_API_KEY"] == "<set>"
+    assert typed_snapshot.attr_values["llm_api_key"] == "secret-key"

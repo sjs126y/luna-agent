@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from personal_agent.config_loader import ConfigLoader
 from personal_agent.config_registry import (
     CONFIG_REGISTRY,
     registry_coverage,
@@ -140,6 +141,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     ]
     validation = _validate_config(config)
     registry_validation = validate_registry_config(config)
+    registry_snapshot = ConfigLoader(base_dir=base).load(strict=False)
     coverage = registry_coverage(config)
     env_validation = _validate_env(
         llm_provider=llm_provider,
@@ -182,10 +184,12 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     errors.extend(env_validation["errors"])
     errors.extend(validation["errors"])
     errors.extend(registry_validation["errors"])
+    errors.extend(registry_snapshot.errors)
     errors.extend(mcp_servers["errors"])
     warnings.extend(env_validation["warnings"])
     warnings.extend(validation["warnings"])
     warnings.extend(registry_validation["warnings"])
+    warnings.extend(registry_snapshot.warnings)
     warnings.extend(path_warnings)
     warnings.extend(mcp_servers["warnings"])
 
@@ -245,9 +249,13 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         "migration_hints": migration_hints,
         "registry_fields": registry_fields_summary(),
         "registry_schema": registry_schema(),
+        "registry_snapshot": registry_snapshot.as_dict(),
         "registry_coverage": coverage,
         "registry_validation_errors": registry_validation["errors"],
         "registry_validation_warnings": registry_validation["warnings"],
+        "registry_loader_errors": list(registry_snapshot.errors),
+        "registry_loader_warnings": list(registry_snapshot.warnings),
+        "registry_source_counts": dict(registry_snapshot.source_counts),
         "recommended_commands": recommended_commands,
         "errors": errors,
         "warnings": warnings,
@@ -255,6 +263,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         "validation_errors": (
             validation["errors"]
             + registry_validation["errors"]
+            + list(registry_snapshot.errors)
             + env_validation["errors"]
             + mcp_servers["errors"]
         ),
