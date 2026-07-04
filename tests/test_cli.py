@@ -583,6 +583,16 @@ def test_format_config_report_shows_next_steps():
             "llm_base_url_set": False,
             "llm_model_set": False,
             "missing_llm_env": ["LLM_API_KEY"],
+            "platforms": [{
+                "key": "platforms/qq",
+                "name": "qq",
+                "enabled": True,
+                "configured": False,
+                "status": "incomplete",
+                "required_env": ["QQ_BOT_BASE_URL"],
+                "missing_env": ["QQ_BOT_BASE_URL"],
+                "hint": "填写 QQ_BOT_BASE_URL。",
+            }],
         },
         "directories": [{"kind": "data_dir", "path": "demo/data", "exists": False, "required": True}],
         "unknown_keys": ["old"],
@@ -597,6 +607,9 @@ def test_format_config_report_shows_next_steps():
 
     assert "配置检查" in text
     assert "未知配置: old" in text
+    assert "平台:" in text
+    assert "platforms/qq" in text
+    assert "缺失=QQ_BOT_BASE_URL" in text
     assert "迁移建议" in text
     assert "推荐命令" in text
     assert "运行 personal-agent init" in text

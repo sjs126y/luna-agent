@@ -88,6 +88,13 @@ PLATFORM_ENV = {
     "qq": ["QQ_BOT_BASE_URL"],
 }
 
+PLATFORM_HINTS = {
+    "telegram": "填写 TELEGRAM_BOT_TOKEN，或从 plugins.enabled 移除 platforms/telegram。",
+    "feishu": "填写 FEISHU_APP_ID/FEISHU_APP_SECRET，或从 plugins.enabled 移除 platforms/feishu。",
+    "wechat": "填写 WEIXIN_TOKEN/WEIXIN_ACCOUNT_ID/WEIXIN_USER_ID，或完成微信凭据初始化。",
+    "qq": "填写 QQ_BOT_BASE_URL，确保 OneBot HTTP 服务地址可用。",
+}
+
 MCP_SERVER_KEYS = {"name", "command", "args", "env", "enabled"}
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -498,13 +505,30 @@ def _platform_env_report(config: dict[str, Any], env: dict[str, str]) -> list[di
     result = []
     for name, required in PLATFORM_ENV.items():
         enabled = name in enabled_platforms
+        env_set = [item for item in required if env.get(item)]
+        missing_env = [item for item in required if not env.get(item)] if enabled else []
         result.append({
             "name": name,
+            "key": f"platforms/{name}",
             "enabled": enabled,
             "required_env": required,
-            "missing_env": [item for item in required if not env.get(item)] if enabled else [],
+            "env_set": env_set,
+            "missing_env": missing_env,
+            "configured": enabled and not missing_env,
+            "status": _platform_env_status(enabled, env_set, missing_env),
+            "hint": PLATFORM_HINTS.get(name, ""),
         })
     return result
+
+
+def _platform_env_status(enabled: bool, env_set: list[str], missing_env: list[str]) -> str:
+    if enabled and missing_env:
+        return "incomplete"
+    if enabled:
+        return "ready"
+    if env_set:
+        return "env-present"
+    return "idle"
 
 
 def _enabled_platforms(config: dict[str, Any], env: dict[str, str]) -> set[str]:

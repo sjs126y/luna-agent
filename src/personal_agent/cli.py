@@ -886,11 +886,27 @@ async def _serve_dry_run() -> None:
         runtime = await create_app_runtime(settings)
         runtime.create_gateway(system_prompt_template="")
         health = runtime.health_snapshot()
+        config_report = build_config_report(Path("."))
+        plugins = [
+            runtime.plugin_manager.doctor_plugin(plugin.key)
+            for plugin in runtime.plugin_manager.list_plugins()
+        ]
+        platforms = _platform_diagnostics_from_reports(
+            plugins,
+            health.get("gateway", {}),
+            config_report,
+        )
         typer.echo("启动检查通过。")
         typer.echo(f"数据目录: {health.get('data_dir')}")
         typer.echo(f"插件数: {health.get('plugins', 0)}")
         typer.echo(f"Gateway 已创建: {_yes(health.get('gateway_created', False))}")
         typer.echo(f"Gateway 运行: {_yes(health.get('gateway_running', False))}")
+        typer.echo("平台配置:")
+        if platforms:
+            for platform in platforms:
+                typer.echo(_format_platform_diagnostic_line(platform, include_runtime=False))
+        else:
+            typer.echo("  - 无")
     except Exception as exc:
         _exit_error(f"启动检查失败: {exc}")
     finally:
@@ -1042,18 +1058,12 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
             "command_found": bool(command and shutil.which(command)),
         })
 
-    platform_plugins = [
-        {
-            "key": plugin["key"],
-            "name": plugin["name"],
-            "status": plugin["status"],
-            "missing_env": plugin["missing_env"],
-            "enabled": plugin["enabled"],
-            "health": _platform_health_for_plugin(runtime_health["runtime"].get("gateway", {}), plugin),
-        }
-        for plugin in plugins
-        if plugin.get("kind") == "platform"
-    ]
+    config_report = build_config_report(Path("."))
+    platform_plugins = _platform_diagnostics_from_reports(
+        plugins,
+        runtime_health["runtime"].get("gateway", {}),
+        config_report,
+    )
 
     return {
         "data_dir": str(settings.agent_data_dir),
@@ -1061,7 +1071,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
         "mcp_enabled": settings.mcp_enabled,
-        "config": build_config_report(Path(".")),
+        "config": config_report,
         "runtime": runtime_health["runtime"],
         "memory": runtime_health["memory"],
         "gateway": runtime_health["runtime"].get("gateway", {}),
@@ -1269,25 +1279,7 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     lines.extend(["", "平台配置:"])
     if report["platforms"]:
         for platform in report["platforms"]:
-            missing = _list_or_none(platform["missing_env"])
-            health = platform.get("health") or {}
-            connected = _yes(bool(health.get("connected", False))) if health else "-"
-            error = (
-                health.get("last_connect_error")
-                or health.get("last_send_error")
-                or health.get("last_error")
-                or "-"
-            )
-            runtime_status = health.get("status") or "-"
-            attempts = health.get("attempts", 0)
-            next_retry = health.get("next_retry_at") or "-"
-            pending = health.get("pending_messages", 0)
-            lines.append(
-                f"  - {platform['key']}: 状态={platform['status']} "
-                f"启用={_yes(platform['enabled'])} 缺失环境变量={missing} "
-                f"runtime={runtime_status} connected={connected} attempts={attempts} "
-                f"pending={pending} next_retry={next_retry} error={error}"
-            )
+            lines.append(_format_platform_diagnostic_line(platform, include_runtime=True))
     else:
         lines.append("  - 无")
 
@@ -1337,8 +1329,16 @@ def format_config_report(report: dict[str, Any]) -> str:
         f"  model: {_yes(env.get('llm_model_set', False))}",
         f"  缺失环境变量: {_list_or_none(env.get('missing_llm_env', []))}",
         "",
-        "目录:",
+        "平台:",
     ]
+    for platform in env.get("platforms", []):
+        lines.append(_format_platform_diagnostic_line(platform, include_runtime=False))
+    if not env.get("platforms"):
+        lines.append("  - 无")
+    lines.extend([
+        "",
+        "目录:",
+    ])
     for item in report.get("directories", []):
         lines.append(
             f"  - {item['kind']}: {item['path']} [{_status(item['exists'])}]"
@@ -1669,6 +1669,110 @@ def _platform_health_for_plugin(gateway: dict[str, Any], plugin: dict[str, Any])
         if item.get("name") == name:
             return dict(item)
     return {}
+
+
+def _platform_diagnostics_from_reports(
+    plugins: list[dict[str, Any]],
+    gateway: dict[str, Any],
+    config_report: dict[str, Any],
+) -> list[dict[str, Any]]:
+    config_platforms = _platform_config_index(config_report)
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for plugin in plugins:
+        if plugin.get("kind") != "platform":
+            continue
+        key = str(plugin.get("key") or "")
+        name = key.split("/")[-1] if key else str(plugin.get("name") or "")
+        config_item = config_platforms.get(key) or config_platforms.get(name) or {}
+        missing_env = list(plugin.get("missing_env") or config_item.get("missing_env") or [])
+        requires_env = list(plugin.get("requires_env") or config_item.get("required_env") or [])
+        enabled = bool(plugin.get("enabled", False))
+        hints = list(plugin.get("diagnostic_hints") or [])
+        if not hints and config_item.get("hint"):
+            hints.append(str(config_item["hint"]))
+        result.append({
+            "key": key or config_item.get("key") or name,
+            "name": name,
+            "status": plugin.get("status") or config_item.get("status") or "-",
+            "enabled": enabled,
+            "configured": enabled and not missing_env,
+            "requires_env": requires_env,
+            "missing_env": missing_env,
+            "env_set": list(config_item.get("env_set") or []),
+            "hint": hints[0] if hints else "",
+            "health": _platform_health_for_plugin(gateway, plugin),
+        })
+        seen.add(key)
+        seen.add(name)
+
+    for platform in config_report.get("env", {}).get("platforms", []):
+        key = str(platform.get("key") or f"platforms/{platform.get('name')}")
+        name = str(platform.get("name") or key.split("/")[-1])
+        if key in seen or name in seen:
+            continue
+        result.append({
+            "key": key,
+            "name": name,
+            "status": platform.get("status") or "-",
+            "enabled": bool(platform.get("enabled", False)),
+            "configured": bool(platform.get("configured", False)),
+            "requires_env": list(platform.get("required_env") or []),
+            "missing_env": list(platform.get("missing_env") or []),
+            "env_set": list(platform.get("env_set") or []),
+            "hint": platform.get("hint") or "",
+            "health": {},
+        })
+    return sorted(result, key=lambda item: str(item.get("key") or item.get("name") or ""))
+
+
+def _platform_config_index(config_report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for platform in config_report.get("env", {}).get("platforms", []) or []:
+        key = str(platform.get("key") or "")
+        name = str(platform.get("name") or "")
+        if key:
+            result[key] = platform
+        if name:
+            result[name] = platform
+    return result
+
+
+def _format_platform_diagnostic_line(
+    platform: dict[str, Any],
+    *,
+    include_runtime: bool,
+) -> str:
+    line = (
+        f"  - {platform.get('key') or platform.get('name') or '-'}: "
+        f"状态={platform.get('status') or '-'} "
+        f"启用={_yes(bool(platform.get('enabled', False)))} "
+        f"配置={_yes(bool(platform.get('configured', False)))} "
+        f"需要={_list_or_none(platform.get('requires_env') or platform.get('required_env') or [])} "
+        f"缺失={_list_or_none(platform.get('missing_env') or [])}"
+    )
+    hint = str(platform.get("hint") or "")
+    if hint:
+        line += f" 提示={hint}"
+    if include_runtime:
+        health = platform.get("health") or {}
+        connected = _yes(bool(health.get("connected", False))) if health else "-"
+        error = (
+            health.get("last_connect_error")
+            or health.get("last_send_error")
+            or health.get("last_error")
+            or "-"
+        )
+        line += (
+            f" runtime={health.get('status') or '-'}"
+            f" connected={connected}"
+            f" attempts={health.get('attempts', 0)}"
+            f" pending={health.get('pending_messages', 0)}"
+            f" next_retry={health.get('next_retry_at') or '-'}"
+            f" error={error}"
+        )
+    return line
 
 
 def _plugin_issue_summary(report: dict[str, Any]) -> str:

@@ -130,6 +130,9 @@ def test_serve_dry_run_bootstraps_without_starting_platforms(tmp_path, monkeypat
     assert "启动检查通过" in result.output
     assert "Gateway 已创建: 是" in result.output
     assert "Gateway 运行: 否" in result.output
+    assert "平台配置:" in result.output
+    assert "platforms/qq" in result.output
+    assert "配置=否" in result.output
 
 
 def test_doctor_json_reports_runtime_failure_without_traceback(tmp_path, monkeypatch):
