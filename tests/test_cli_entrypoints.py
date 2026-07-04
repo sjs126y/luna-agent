@@ -89,6 +89,29 @@ def test_init_then_doctor_json_uses_real_runtime_bootstrap(tmp_path, monkeypatch
     assert any(plugin["key"] == "builtin/tools" for plugin in data["plugins"])
 
 
+def test_doctor_section_json_returns_only_requested_section(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["doctor", "--json", "--section", "tools"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert "total" in data
+    assert "by_permission" in data
+    assert "runtime" not in data
+
+
+def test_doctor_section_text_filters_output(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["doctor", "--section", "platforms"])
+
+    assert result.exit_code == 0, result.output
+    assert "Personal Agent 诊断: platforms" in result.output
+    assert "platforms/qq" in result.output
+    assert "Memory:" not in result.output
+
+
 def test_chat_once_entrypoint_bootstraps_runtime_and_persists_history(tmp_path, monkeypatch):
     _init_local_project(tmp_path, monkeypatch)
     _install_echo_agent(monkeypatch)
@@ -133,6 +156,68 @@ def test_serve_dry_run_bootstraps_without_starting_platforms(tmp_path, monkeypat
     assert "平台配置:" in result.output
     assert "platforms/qq" in result.output
     assert "配置=否" in result.output
+
+
+def test_serve_dry_run_json_reports_scriptable_summary(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["serve", "--dry-run", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["ok"] is True
+    assert data["runtime"]["gateway_created"] is True
+    assert data["runtime"]["gateway_running"] is False
+    assert "platforms" in data
+    assert "config" in data
+
+
+def test_serve_check_platform_reports_disabled_platform_without_failing(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "  disabled: []",
+            "  disabled:\n    - platforms/qq",
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["serve", "--check-platform", "qq"])
+
+    assert result.exit_code == 0, result.output
+    assert "平台检查: qq" in result.output
+    assert "platforms/qq" in result.output
+    assert "启用=否" in result.output
+
+
+def test_serve_check_platform_fails_when_enabled_platform_is_incomplete(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "  enabled: []",
+            "  enabled:\n    - platforms/qq",
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["serve", "--check-platform", "qq", "--json"])
+
+    assert result.exit_code == 1, result.output
+    data = json.loads(result.output)
+    assert data["ok"] is False
+    assert data["platforms"][0]["enabled"] is True
+    assert data["platforms"][0]["missing_env"] == ["QQ_BOT_BASE_URL"]
+
+
+def test_serve_check_platform_rejects_unknown_platform(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["serve", "--check-platform", "unknown"])
+
+    assert result.exit_code == 1, result.output
+    assert "unknown platform" in result.output
 
 
 def test_doctor_json_reports_runtime_failure_without_traceback(tmp_path, monkeypatch):

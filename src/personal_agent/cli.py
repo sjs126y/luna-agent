@@ -431,22 +431,33 @@ def chat(
 @app.command()
 def serve(
     dry_run: bool = typer.Option(False, "--dry-run", help="只执行启动装配检查，不连接平台。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON，仅用于 --dry-run 或 --check-platform。"),
+    check_platform: str = typer.Option("", "--check-platform", help="只检查指定平台: telegram|feishu|wechat|qq|all。"),
 ) -> None:
     """Run the platform gateway service."""
-    if dry_run:
-        asyncio.run(_serve_dry_run())
+    if check_platform:
+        asyncio.run(_serve_check_platform(check_platform, json_output=json_output))
         return
+    if dry_run:
+        asyncio.run(_serve_dry_run(json_output=json_output))
+        return
+    if json_output:
+        _exit_error("--json 只能与 --dry-run 或 --check-platform 一起使用。")
     asyncio.run(boot())
 
 
 @app.command()
-def doctor(json_output: bool = typer.Option(False, "--json", help="输出 JSON。")) -> None:
+def doctor(
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+    section: str = typer.Option("all", "--section", help="输出部分诊断: all|runtime|config|platforms|tools|plugins。"),
+) -> None:
     """Show system diagnostics."""
+    section = _normalize_doctor_section(section)
     report = build_doctor_report()
     if json_output:
-        typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+        typer.echo(json.dumps(_doctor_section_payload(report, section), indent=2, ensure_ascii=False))
     else:
-        typer.echo(format_doctor_report(report))
+        typer.echo(format_doctor_report(report, section=section))
 
 
 @app.command("init")
@@ -877,7 +888,77 @@ async def _memory_delete(identifier: str, *, target: str) -> bool:
     return await _with_app_runtime(_collect)
 
 
-async def _serve_dry_run() -> None:
+async def _serve_dry_run(*, json_output: bool = False) -> None:
+    report = await _build_serve_dry_run_report()
+    if json_output:
+        typer.echo(_json_dumps(report))
+    else:
+        if report.get("ok"):
+            typer.echo("启动检查通过。")
+        else:
+            typer.echo("启动检查未通过。")
+        runtime = report.get("runtime", {})
+        typer.echo(f"数据目录: {runtime.get('data_dir') or report.get('data_dir') or '-'}")
+        typer.echo(f"插件数: {runtime.get('plugins', 0)}")
+        typer.echo(f"Gateway 已创建: {_yes(runtime.get('gateway_created', False))}")
+        typer.echo(f"Gateway 运行: {_yes(runtime.get('gateway_running', False))}")
+        typer.echo("平台配置:")
+        platforms = report.get("platforms", [])
+        if platforms:
+            for platform in platforms:
+                typer.echo(_format_platform_diagnostic_line(platform, include_runtime=False))
+        else:
+            typer.echo("  - 无")
+        if report.get("next_steps"):
+            typer.echo("下一步:")
+            for step in report["next_steps"]:
+                typer.echo(f"  - {step}")
+    if not report.get("ok", False):
+        raise typer.Exit(1)
+
+
+async def _serve_check_platform(platform: str, *, json_output: bool = False) -> None:
+    platform = platform.strip().lower()
+    report = await _build_serve_dry_run_report()
+    platforms = report.get("platforms", [])
+    if platform != "all":
+        platforms = [
+            item for item in platforms
+            if item.get("name") == platform or item.get("key") == f"platforms/{platform}"
+        ]
+    check_report = {
+        "ok": bool(report.get("ok", False)),
+        "platform": platform,
+        "platforms": platforms,
+        "next_steps": _platform_next_steps(platforms),
+    }
+    if platform != "all" and not platforms:
+        check_report["ok"] = False
+        check_report["error"] = f"unknown platform: {platform}"
+        check_report["next_steps"] = [f"可选平台: {_list_or_none(_known_platform_names(report))}"]
+
+    for item in platforms:
+        if item.get("enabled") and (item.get("missing_env") or item.get("check_fn_passed") is False):
+            check_report["ok"] = False
+
+    if json_output:
+        typer.echo(_json_dumps(check_report))
+    else:
+        label = platform if platform != "all" else "all"
+        typer.echo(f"平台检查: {label}")
+        if check_report.get("error"):
+            typer.echo(f"  错误: {check_report['error']}")
+        for item in platforms:
+            typer.echo(_format_platform_diagnostic_line(item, include_runtime=False))
+        if check_report.get("next_steps"):
+            typer.echo("下一步:")
+            for step in check_report["next_steps"]:
+                typer.echo(f"  - {step}")
+    if not check_report.get("ok", False):
+        raise typer.Exit(1)
+
+
+async def _build_serve_dry_run_report() -> dict[str, Any]:
     from personal_agent.runtime import create_app_runtime
 
     runtime = None
@@ -885,6 +966,7 @@ async def _serve_dry_run() -> None:
         settings = Settings()
         runtime = await create_app_runtime(settings)
         runtime.create_gateway(system_prompt_template="")
+        _load_enabled_platform_plugins(runtime.plugin_manager)
         health = runtime.health_snapshot()
         config_report = build_config_report(Path("."))
         plugins = [
@@ -895,20 +977,32 @@ async def _serve_dry_run() -> None:
             plugins,
             health.get("gateway", {}),
             config_report,
+            settings=settings,
         )
-        typer.echo("启动检查通过。")
-        typer.echo(f"数据目录: {health.get('data_dir')}")
-        typer.echo(f"插件数: {health.get('plugins', 0)}")
-        typer.echo(f"Gateway 已创建: {_yes(health.get('gateway_created', False))}")
-        typer.echo(f"Gateway 运行: {_yes(health.get('gateway_running', False))}")
-        typer.echo("平台配置:")
-        if platforms:
-            for platform in platforms:
-                typer.echo(_format_platform_diagnostic_line(platform, include_runtime=False))
-        else:
-            typer.echo("  - 无")
+        errors = list(config_report.get("errors", []))
+        return {
+            "ok": not errors,
+            "data_dir": str(settings.agent_data_dir),
+            "runtime": health,
+            "gateway": health.get("gateway", {}),
+            "platforms": platforms,
+            "config": {
+                "ok": config_report.get("ok", False),
+                "errors": errors,
+                "warnings": list(config_report.get("warnings", [])),
+            },
+            "next_steps": list(config_report.get("next_steps", [])) if errors else [],
+        }
     except Exception as exc:
-        _exit_error(f"启动检查失败: {exc}")
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "runtime": {"initialized": False, "error": f"{type(exc).__name__}: {exc}"},
+            "gateway": {},
+            "platforms": [],
+            "config": build_config_report(Path(".")),
+            "next_steps": ["先修复启动检查错误，再运行 personal-agent serve --dry-run。"],
+        }
     finally:
         if runtime is not None:
             await runtime.close()
@@ -1160,7 +1254,41 @@ def _config_directory(report: dict[str, Any], kind: str, default: str) -> str:
     return default
 
 
-def format_doctor_report(report: dict[str, Any]) -> str:
+_DOCTOR_SECTIONS = {"all", "runtime", "config", "platforms", "tools", "plugins"}
+
+
+def _normalize_doctor_section(section: str) -> str:
+    section = (section or "all").strip().lower()
+    if section not in _DOCTOR_SECTIONS:
+        _exit_error(f"未知 doctor section: {section}，可选: {_list_or_none(sorted(_DOCTOR_SECTIONS))}")
+    return section
+
+
+def _doctor_section_payload(report: dict[str, Any], section: str) -> dict[str, Any]:
+    if section == "all":
+        return report
+    if section == "runtime":
+        return {
+            "runtime": report.get("runtime", {}),
+            "gateway": report.get("gateway", {}),
+            "mcp_runtime": report.get("mcp_runtime", {}),
+        }
+    if section == "config":
+        return report.get("config", {})
+    if section == "platforms":
+        return {"platforms": report.get("platforms", [])}
+    if section == "tools":
+        return report.get("tools", {})
+    if section == "plugins":
+        return {"plugins": report.get("plugins", [])}
+    return report
+
+
+def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
+    section = _normalize_doctor_section(section)
+    if section != "all":
+        return _format_doctor_section(report, section)
+
     issues = _doctor_issues(report)
     plugin_summary = _plugin_status_summary(report["plugins"])
     runtime = report.get("runtime", {})
@@ -1240,17 +1368,8 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  permissions: {_format_permissions(report.get('execution', {}).get('permissions', {}))}",
         "",
         "Tools:",
-        f"  total: {tools.get('total', 0)}",
-        f"  available: {tools.get('available', 0)}",
-        f"  unavailable: {tools.get('unavailable', 0)}",
-        f"  core: {tools.get('core', 0)}",
-        f"  destructive: {tools.get('destructive', 0)}",
-        f"  by toolset: {_format_counts(tools.get('by_toolset', {}))}",
-        f"  by permission: {_format_counts(tools.get('by_permission', {}))}",
-        f"  high risk: {_list_or_none(tools.get('high_risk', []))}",
     ]
-    for item in tools.get("unavailable_tools", []):
-        lines.append(f"  unavailable: {item.get('name') or '-'} ({item.get('reason') or '-'})")
+    lines.extend(_format_tool_summary_lines(tools))
     for warning in report.get("execution", {}).get("warnings", []):
         lines.append(f"  warning: {warning}")
     lines.extend(["", "Sandbox:"])
@@ -1321,6 +1440,55 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     if config.get("recommended_commands"):
         lines.extend(["", "推荐命令:"])
         lines.extend(f"  - {command}" for command in config["recommended_commands"])
+    return "\n".join(lines)
+
+
+def _format_tool_summary_lines(tools: dict[str, Any]) -> list[str]:
+    lines = [
+        f"  total: {tools.get('total', 0)}",
+        f"  available: {tools.get('available', 0)}",
+        f"  unavailable: {tools.get('unavailable', 0)}",
+        f"  core: {tools.get('core', 0)}",
+        f"  destructive: {tools.get('destructive', 0)}",
+        f"  by toolset: {_format_counts(tools.get('by_toolset', {}))}",
+        f"  by permission: {_format_counts(tools.get('by_permission', {}))}",
+    ]
+    if "by_risk" in tools:
+        lines.append(f"  by risk: {_format_counts(tools.get('by_risk', {}))}")
+    lines.append(f"  high risk: {_list_or_none(tools.get('high_risk', []))}")
+    for item in tools.get("unavailable_tools", []):
+        lines.append(f"  unavailable: {item.get('name') or '-'} ({item.get('reason') or '-'})")
+    return lines
+
+
+def _format_doctor_section(report: dict[str, Any], section: str) -> str:
+    if section == "config":
+        return format_config_report(report.get("config", {}))
+    if section == "plugins":
+        return format_plugin_list(report.get("plugins", []))
+    lines = [f"Personal Agent 诊断: {section}"]
+    if section == "runtime":
+        runtime = report.get("runtime", {})
+        gateway = report.get("gateway", {})
+        lines.extend([
+            f"  初始化: {_yes(runtime.get('initialized', False))}",
+            f"  DB 打开: {_yes(runtime.get('db_open', False))}",
+            f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
+            f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
+            f"  Gateway 运行: {_yes(runtime.get('gateway_running', False))}",
+            f"  adapters: {gateway.get('adapter_count', 0)}",
+            f"  pending messages: {gateway.get('pending_messages', 0)}",
+            f"  runtime 错误: {runtime.get('error') or '-'}",
+        ])
+    elif section == "platforms":
+        platforms = report.get("platforms", [])
+        if platforms:
+            lines.extend(_format_platform_diagnostic_line(item, include_runtime=True) for item in platforms)
+        else:
+            lines.append("  - 无")
+    elif section == "tools":
+        tools = report.get("tools", {})
+        lines.extend(_format_tool_summary_lines(tools))
     return "\n".join(lines)
 
 
@@ -1690,6 +1858,8 @@ def _platform_diagnostics_from_reports(
     plugins: list[dict[str, Any]],
     gateway: dict[str, Any],
     config_report: dict[str, Any],
+    *,
+    settings: Settings | None = None,
 ) -> list[dict[str, Any]]:
     config_platforms = _platform_config_index(config_report)
     result: list[dict[str, Any]] = []
@@ -1707,6 +1877,7 @@ def _platform_diagnostics_from_reports(
         hints = list(plugin.get("diagnostic_hints") or [])
         if not hints and config_item.get("hint"):
             hints.append(str(config_item["hint"]))
+        check_fn_passed, check_fn_error = _platform_check_status(name, settings)
         result.append({
             "key": key or config_item.get("key") or name,
             "name": name,
@@ -1717,6 +1888,8 @@ def _platform_diagnostics_from_reports(
             "missing_env": missing_env,
             "env_set": list(config_item.get("env_set") or []),
             "hint": hints[0] if hints else "",
+            "check_fn_passed": check_fn_passed,
+            "check_fn_error": check_fn_error,
             "health": _platform_health_for_plugin(gateway, plugin),
         })
         seen.add(key)
@@ -1727,6 +1900,7 @@ def _platform_diagnostics_from_reports(
         name = str(platform.get("name") or key.split("/")[-1])
         if key in seen or name in seen:
             continue
+        check_fn_passed, check_fn_error = _platform_check_status(name, settings)
         result.append({
             "key": key,
             "name": name,
@@ -1737,9 +1911,66 @@ def _platform_diagnostics_from_reports(
             "missing_env": list(platform.get("missing_env") or []),
             "env_set": list(platform.get("env_set") or []),
             "hint": platform.get("hint") or "",
+            "check_fn_passed": check_fn_passed,
+            "check_fn_error": check_fn_error,
             "health": {},
         })
     return sorted(result, key=lambda item: str(item.get("key") or item.get("name") or ""))
+
+
+def _load_enabled_platform_plugins(manager: PluginManager) -> None:
+    for plugin in manager.list_plugins():
+        if plugin.enabled and plugin.manifest.kind == "platform":
+            manager.load_plugin(plugin.key)
+
+
+def _platform_check_status(name: str, settings: Settings | None) -> tuple[bool | None, str]:
+    if settings is None or not name:
+        return None, ""
+    try:
+        from personal_agent.platforms.core import platform_registry
+
+        for entry in platform_registry.list():
+            if entry.name != name:
+                continue
+            return bool(entry.check_fn(settings)), ""
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return None, "platform entry not registered"
+
+
+def _known_platform_names(report: dict[str, Any]) -> list[str]:
+    return sorted(
+        str(item.get("name") or "").strip()
+        for item in report.get("platforms", [])
+        if item.get("name")
+    )
+
+
+def _platform_next_steps(platforms: list[dict[str, Any]]) -> list[str]:
+    steps: list[str] = []
+    for platform in platforms:
+        key = platform.get("key") or platform.get("name") or "-"
+        missing = platform.get("missing_env") or []
+        if missing:
+            steps.append(f"{key}: 在 .env 中填写 {', '.join(str(item) for item in missing)}。")
+        elif platform.get("enabled") and platform.get("check_fn_passed") is False:
+            reason = platform.get("check_fn_error") or "check_fn returned False"
+            steps.append(f"{key}: 修复本地平台配置 ({reason})。")
+        elif not platform.get("enabled"):
+            steps.append(f"{key}: 如需启用，请在 plugins.enabled 添加 {key}。")
+    return _dedupe_strings(steps)
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        result.append(item)
+        seen.add(item)
+    return result
 
 
 def _platform_config_index(config_report: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1767,6 +1998,10 @@ def _format_platform_diagnostic_line(
         f"需要={_list_or_none(platform.get('requires_env') or platform.get('required_env') or [])} "
         f"缺失={_list_or_none(platform.get('missing_env') or [])}"
     )
+    if platform.get("check_fn_passed") is not None:
+        line += f" check_fn={_yes(bool(platform.get('check_fn_passed')))}"
+    if platform.get("check_fn_error"):
+        line += f" check_error={platform.get('check_fn_error')}"
     hint = str(platform.get("hint") or "")
     if hint:
         line += f" 提示={hint}"
