@@ -171,6 +171,57 @@ async def test_wechat_send_splits_long_text(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_wechat_send_includes_cached_context_token(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter._send_session = object()
+    adapter._context_tokens["wx-user"] = "ctx-token"
+    payloads = []
+
+    async def fake_api(path, payload, session, timeout_ms):
+        payloads.append(payload)
+        return {"ret": 0, "errcode": 0}
+
+    monkeypatch.setattr(adapter, "_api", fake_api)
+
+    result = await adapter.send("wx-user", "hello")
+
+    assert result.success is True
+    assert payloads[0]["msg"]["context_token"] == "ctx-token"
+
+
+@pytest.mark.asyncio
+async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+
+    await adapter._process_message({
+        "from_user_id": "wx-user",
+        "from_user_name": "User",
+        "message_id": "m1",
+        "create_time": 123456,
+        "context_token": "ctx-token",
+        "item_list": [
+            {"type": 1, "text_item": {"text": "see"}},
+            {"type": 2, "image_item": {"file_id": "img-1"}},
+            {"type": 3, "voice_item": {"file_name": "voice.amr"}},
+            {"type": 4, "video_item": {"media_id": "video-1"}},
+            {"type": 5, "file_item": {"file_name": "report.pdf"}},
+        ],
+    })
+
+    assert len(captured) == 1
+    assert captured[0].text == (
+        "see [image: img-1] [voice: voice.amr] [video: video-1] [file: report.pdf]"
+    )
+    assert adapter._context_tokens["wx-user"] == "ctx-token"
+
+
+@pytest.mark.asyncio
 async def test_qq_connect_without_base_url_reports_error(tmp_path: Path):
     from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 

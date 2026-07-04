@@ -73,6 +73,7 @@ class WeChatAdapter(BasePlatformAdapter):
         self._poll_task: asyncio.Task | None = None
         self._sync_buf = ""
         self._seen_ids: OrderedDict[str, float] = OrderedDict()
+        self._context_tokens: dict[str, str] = {}
 
     # ── connect / disconnect ──────────────────────────
 
@@ -136,6 +137,9 @@ class WeChatAdapter(BasePlatformAdapter):
                     "item_list": [{"type": 1, "text_item": {"text": content}}],
                 },
             }
+            context_token = self._context_tokens.get(chat_id)
+            if context_token:
+                payload["msg"]["context_token"] = context_token
             result = await self._api("ilink/bot/sendmessage", payload, self._send_session, API_TIMEOUT_MS)
             logger.info("WeChat send result: ret=%s errcode=%s errmsg=%s",
                         result.get("ret"), result.get("errcode"), result.get("errmsg", ""))
@@ -256,14 +260,20 @@ class WeChatAdapter(BasePlatformAdapter):
                 if itype == 1 or itype == "text":  # ITEM_TEXT
                     ti = item.get("text_item") or {}
                     text += ti.get("text", "") or item.get("content", "")
-                elif itype in (2, 3, 4, "image", "video", "file", "voice"):
-                    media.append(f"[{itype}]")
+                else:
+                    media.append(_media_summary(item))
 
             combined = text.strip()
             if not combined:
                 combined = " ".join(media)
+            elif media:
+                combined = " ".join([combined, *media])
             if not combined:
                 return
+
+            context_token = _message_context_token(msg)
+            if context_token:
+                self._context_tokens[sender] = context_token
 
             source = SessionSource(
                 platform="wechat",
@@ -347,6 +357,79 @@ class WeChatAdapter(BasePlatformAdapter):
     def _save_sync_buf(self) -> None:
         (self._state_dir / "sync.json").write_text(
             json.dumps({"get_updates_buf": self._sync_buf}), encoding="utf-8")
+
+
+def _message_context_token(msg: dict) -> str:
+    for key in ("context_token", "msg_context_token", "conversation_context_token"):
+        value = msg.get(key)
+        if value:
+            return str(value)
+    context = msg.get("context") or {}
+    if isinstance(context, dict):
+        value = context.get("context_token") or context.get("token")
+        if value:
+            return str(value)
+    return ""
+
+
+def _media_summary(item: dict) -> str:
+    itype = item.get("type") or item.get("msg_type")
+    kind = _media_kind(itype)
+    data = _media_payload(item, kind)
+    detail = _first_present(
+        data,
+        "file_name",
+        "filename",
+        "name",
+        "file_id",
+        "media_id",
+        "url",
+        "cdn_url",
+        "aes_key",
+        "md5",
+    )
+    if detail:
+        return f"[{kind}: {detail}]"
+    return f"[{kind}]"
+
+
+def _media_kind(itype) -> str:
+    mapping = {
+        2: "image",
+        3: "voice",
+        4: "video",
+        5: "file",
+        "image": "image",
+        "voice": "voice",
+        "audio": "voice",
+        "video": "video",
+        "file": "file",
+    }
+    return mapping.get(itype, str(itype or "media"))
+
+
+def _media_payload(item: dict, kind: str) -> dict:
+    for key in (
+        f"{kind}_item",
+        "image_item",
+        "voice_item",
+        "audio_item",
+        "video_item",
+        "file_item",
+        "media_item",
+    ):
+        value = item.get(key)
+        if isinstance(value, dict):
+            return value
+    return item
+
+
+def _first_present(data: dict, *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value:
+            return str(value)
+    return ""
 
 
 # ── QR Helpers ──────────────────────────────────────
