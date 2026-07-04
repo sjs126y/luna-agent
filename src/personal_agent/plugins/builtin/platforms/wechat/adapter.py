@@ -81,17 +81,22 @@ class WeChatAdapter(BasePlatformAdapter):
         self._load_creds()
 
         if not self._token or not self._account_id:
-            logger.warning("WeChat not logged in. Run: uv run python -m personal_agent --wechat-login")
-            return
+            error = "WeChat not logged in. Run: uv run python -m personal_agent --wechat-login"
+            logger.warning(error)
+            self.mark_connect_error(error, name="wechat")
+            raise RuntimeError(error)
 
         t = aiohttp.ClientTimeout(total=None, connect=None, sock_connect=None, sock_read=None)
         self._poll_session = aiohttp.ClientSession(trust_env=True, timeout=t)
         self._send_session = aiohttp.ClientSession(trust_env=True, timeout=t)
         self._load_sync_buf()
         self._poll_task = asyncio.create_task(self._poll_loop())
+        await self.hooks.fire("on_connect")
+        self.mark_connected(name="wechat")
         logger.info("✅ WeChat connected — account=%s..., polling started", self._account_id[:12])
 
     async def disconnect(self) -> None:
+        await self.hooks.fire("on_disconnect")
         if self._poll_task:
             self._poll_task.cancel()
             self._poll_task = None
@@ -101,6 +106,7 @@ class WeChatAdapter(BasePlatformAdapter):
         if self._send_session:
             await self._send_session.close()
             self._send_session = None
+        self.mark_disconnected()
         logger.info("WeChat adapter disconnected")
 
     # ── send ──────────────────────────────────────────
@@ -108,6 +114,15 @@ class WeChatAdapter(BasePlatformAdapter):
     async def send(self, chat_id: str, content: str) -> SendResult:
         if not self._send_session:
             return SendResult(success=False, error="Not connected")
+        last_message_id = None
+        for chunk in self._split_text(content):
+            result = await self._send_one(chat_id, chunk)
+            if not result.success:
+                return result
+            last_message_id = result.message_id
+        return SendResult(success=True, message_id=last_message_id)
+
+    async def _send_one(self, chat_id: str, content: str) -> SendResult:
         try:
             client_id = f"pa-weixin-{uuid.uuid4().hex[:12]}"
             payload = {
@@ -175,9 +190,7 @@ class WeChatAdapter(BasePlatformAdapter):
 
     async def send_chunked(self, chat_id: str, content: str) -> None:
         """Send content, splitting if needed."""
-        chunks = self._split_text(content)
-        for chunk in chunks:
-            await self.send(chat_id, chunk)
+        await self.send(chat_id, content)
 
     # ── long-poll loop ────────────────────────────────
 
