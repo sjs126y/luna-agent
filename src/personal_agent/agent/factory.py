@@ -46,6 +46,7 @@ async def create_agent_runtime(
         memory_review_interval=settings.memory_review_interval,
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
+        execution_policy=getattr(settings, "execution_policy", None),
     )
 
     if plugin_manager is not None:

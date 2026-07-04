@@ -81,6 +81,9 @@ gateway:
   platform_message_dedupe_max_size: 1024
   platform_send_max_retries: 2
 
+execution:
+  mode: standard
+
 sandbox:
   roots:
     - ./data
@@ -155,6 +158,9 @@ gateway:
   platform_message_dedupe_max_size: 1024
   platform_send_max_retries: 2
 
+execution:
+  mode: standard
+
 sandbox:
   roots:
     - ./data
@@ -228,6 +234,9 @@ gateway:
   platform_chat_locks_maxsize: 64
   platform_message_dedupe_max_size: 1024
   platform_send_max_retries: 2
+
+execution:
+  mode: standard
 
 sandbox:
   roots:
@@ -1038,6 +1047,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
             "max_tokens": settings.agent_runtime_max_tokens,
             "history_limit": settings.agent_runtime_history_limit,
         },
+        "execution": settings.execution_policy.as_dict(),
         "sandbox": {
             "roots": sandbox_roots,
             "blocked_count": len(settings.sandbox_blocked),
@@ -1085,6 +1095,14 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
         "gateway": {},
         "mcp_runtime": {},
         "agents": {},
+        "execution": {
+            "mode": "standard",
+            "description": "balanced daily-use mode",
+            "permissions": {},
+            "network": "deny",
+            "isolation": "policy-only",
+            "warnings": [],
+        },
         "sandbox": {
             "roots": sandbox_roots,
             "blocked_count": 0,
@@ -1176,8 +1194,16 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  max tokens: {report.get('agents', {}).get('max_tokens', 0)}",
         f"  history limit: {report.get('agents', {}).get('history_limit', 0)}",
         "",
+        "Execution:",
+        f"  mode: {report.get('execution', {}).get('mode', '-')}",
+        f"  isolation: {report.get('execution', {}).get('isolation', '-')}",
+        f"  network: {report.get('execution', {}).get('network', '-')}",
+        f"  permissions: {_format_permissions(report.get('execution', {}).get('permissions', {}))}",
+        "",
         "Sandbox:",
     ]
+    for warning in report.get("execution", {}).get("warnings", []):
+        lines.append(f"  warning: {warning}")
     for root in report["sandbox"]["roots"]:
         lines.append(f"  - {root['path']} [{_status(root['exists'])}]")
     lines.append(f"  blocked 规则: {report['sandbox']['blocked_count']}")
@@ -1691,6 +1717,16 @@ def _entrypoint_status_text(report: dict[str, Any]) -> str:
 def _list_or_none(items) -> str:
     values = list(items or [])
     return ", ".join(str(item) for item in values) if values else "无"
+
+
+def _format_permissions(permissions) -> str:
+    if not isinstance(permissions, dict) or not permissions:
+        return "无"
+    keys = ["read", "write", "bash", "background", "network", "destructive"]
+    parts = [f"{key}={permissions[key]}" for key in keys if key in permissions]
+    if not parts:
+        parts = [f"{key}={value}" for key, value in sorted(permissions.items())]
+    return ", ".join(parts)
 
 
 def _short_text(text: str, max_chars: int) -> str:

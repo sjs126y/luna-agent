@@ -43,6 +43,12 @@ class Settings:
         self.raw_env: dict[str, str] = env
         self.raw_config: dict[str, Any] = yaml_cfg
 
+        # ── Execution mode (from config.yaml) ──
+        execution = yaml_cfg.get("execution", {})
+        if not isinstance(execution, dict):
+            execution = {}
+        self.execution_mode: str = str(execution.get("mode", "standard") or "standard").strip().lower()
+
         # ── LLM (from .env) ──
         self.llm_api_key: str = env.get("LLM_API_KEY", "")
         self.llm_base_url: str = env.get("LLM_BASE_URL", "")
@@ -186,3 +192,6 @@ class Settings:
             if key.endswith("_dir") and isinstance(value, str):
                 value = Path(value)
             setattr(self, key, value)
+
+        from personal_agent.execution import resolve_execution_policy
+        self.execution_policy = resolve_execution_policy(self)

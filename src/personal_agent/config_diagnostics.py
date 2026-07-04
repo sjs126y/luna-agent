@@ -18,6 +18,7 @@ KNOWN_TOP_LEVEL_KEYS = {
     "compression",
     "gateway",
     "cron",
+    "execution",
     "mcp",
     "memory",
     "plugins",
@@ -41,6 +42,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "platform_send_max_retries",
     },
     "cron": {"enabled"},
+    "execution": {"mode", "policy"},
     "mcp": {"enabled", "servers"},
     "memory": {"provider", "external_provider", "review_interval", "embedding"},
     "plugins": {"dirs", "enabled", "disabled"},
@@ -77,6 +79,7 @@ VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages"}
 VALID_COMPRESSION_ENGINES = {"compressor", "simple", "none", "off", "disabled"}
 VALID_MEMORY_PROVIDERS = {"file"}
 VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "embedding"}
+VALID_EXECUTION_MODES = {"guarded", "standard", "trusted", "sovereign"}
 
 PLATFORM_ENV = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
@@ -393,6 +396,11 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
             _positive_int(embedding, "chunk_size", "memory.embedding.chunk_size", errors)
 
     _bool_value(sections["cron"], "enabled", "cron.enabled", errors)
+
+    execution = sections["execution"]
+    _execution_mode_value(execution, "mode", "execution.mode", errors)
+    if "policy" in execution and not isinstance(execution["policy"], dict):
+        errors.append("execution.policy 必须是对象。")
 
     sandbox = sections["sandbox"]
     _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)
@@ -750,6 +758,10 @@ def _enum_value(
     value = section[key]
     if not isinstance(value, str) or value not in choices:
         errors.append(f"{label} 不支持: {value}，可选: {', '.join(sorted(choices))}")
+
+
+def _execution_mode_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    _enum_value(section, key, label, VALID_EXECUTION_MODES, errors)
 
 
 def _bool_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:

@@ -530,8 +530,15 @@ def _tool_category(name: str) -> str:
         "write": "write",
         "edit": "write",
         "bash": "bash",
+        "process_list": "background",
+        "process_wait": "background",
+        "process_kill": "background",
+        "web_fetch": "network",
+        "web_search": "network",
     }
-    return _CATEGORY_MAP.get(name, "write")
+    if name in {"read", "grep", "glob"}:
+        return "read"
+    return _CATEGORY_MAP.get(name, "write" if _looks_destructive(name) else "default")
 
 
 def _scope_gate(tc: dict, entry, agent: Any) -> str | None:
@@ -544,14 +551,25 @@ def _scope_gate(tc: dict, entry, agent: Any) -> str | None:
     if agent is None:
         return None  # no guard checks without agent context
 
-    # ② destructive guard — check category in allowed set
-    if entry.is_destructive:
-        category = _tool_category(tc["name"])
-        if category not in agent._destructive_allowed and "all" not in agent._destructive_allowed:
-            return (
-                f"Error: destructive tool '{tc['name']}' requires authorization. "
-                f"Send /allow {category} or /allow all to enable for this turn."
-            )
+    # ② execution policy — sandbox boundaries are hard checks in precheck/tool handlers;
+    # this layer decides whether an otherwise valid action is allowed, denied, or asks.
+    category = _tool_category(tc["name"])
+    policy = getattr(agent, "_execution_policy", None)
+    decision = "ask" if entry.is_destructive else "allow"
+    if policy is not None:
+        decision = policy.permission_for(category)
+        if decision == "allow" and entry.is_destructive and category == "default":
+            decision = policy.permission_for("destructive")
+    if decision == "deny":
+        return (
+            f"Error: tool '{tc['name']}' is denied by execution mode "
+            f"'{getattr(policy, 'mode', 'unknown')}'."
+        )
+    if decision == "ask" and category not in agent._destructive_allowed and "all" not in agent._destructive_allowed:
+        return (
+            f"Error: tool '{tc['name']}' requires authorization. "
+            f"Send /allow {category} or /allow all to enable for this turn."
+        )
 
     # ③ guardrail — per-turn call quota
     if agent._tool_calls_this_turn >= agent._max_tool_calls_per_turn:
@@ -573,6 +591,16 @@ def _scope_gate(tc: dict, entry, agent: Any) -> str | None:
 
     agent._tool_calls_this_turn += 1
     return None
+
+
+def _looks_destructive(name: str) -> bool:
+    return name in {
+        "worktree_create",
+        "worktree_merge",
+        "worktree_cleanup",
+        "task",
+        "todo",
+    }
 
 
 # ── checkpoint ────────────────────────────────────────

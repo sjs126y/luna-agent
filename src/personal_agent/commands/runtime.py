@@ -236,9 +236,9 @@ async def _session(runtime: CommandRuntime, args: str) -> str:
 
 
 async def _allow(runtime: CommandRuntime, category: str) -> str:
-    valid = {"write", "bash", "all"}
+    valid = {"write", "bash", "background", "network", "destructive", "default", "all"}
     if category not in valid:
-        return f"用法: /allow [write|bash|all]，当前有效类别: {', '.join(sorted(valid))}"
+        return f"用法: /allow [write|bash|background|network|destructive|all]，当前有效类别: {', '.join(sorted(valid))}"
     custom = await _call_optional(runtime, "allow_category", category)
     if custom is not None:
         return str(custom)

@@ -73,7 +73,8 @@ def _configure(settings=None, **kwargs) -> None:
     )
     from personal_agent.plugins.builtin.tools.builtin.file_write import set_max_write_bytes
 
-    set_allow_network(settings.bash_allow_network)
+    policy = getattr(settings, "execution_policy", None)
+    set_allow_network(getattr(policy, "network", None) == "allow")
     set_restrict_paths(settings.bash_restrict_paths)
     set_work_dir(settings.bash_work_dir)
     set_max_write_bytes(settings.file_max_write_bytes)

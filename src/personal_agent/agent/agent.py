@@ -53,6 +53,7 @@ class Agent:
     _max_tool_calls_per_turn: int = 20
     _destructive_calls_this_turn: int = 0
     _max_destructive_per_turn: int = 3
+    _execution_policy: Any = None
     _pending_skill_injection: str | None = None  # set by Gateway, consumed by context
     _last_skill_injection: str = ""
     _last_skill_summaries: str = ""
@@ -79,6 +80,7 @@ def init_agent(
     memory_review_interval: int = 10,
     system_prompt_template: str = "",
     enabled_toolsets: list[str] | None = None,
+    execution_policy=None,
 ) -> Agent:
     """Wire an Agent instance. Flat initialization — no 1700-line magic."""
     from concurrent.futures import ThreadPoolExecutor
@@ -93,6 +95,7 @@ def init_agent(
         _memory_manager=memory_manager,
         _compressor=compressor,
         enabled_toolsets=enabled_toolsets,
+        _execution_policy=execution_policy,
         _llm_pool=pool,
         _tool_pool=pool,  # shared pool for MVP, separate later
     )

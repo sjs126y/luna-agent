@@ -55,6 +55,26 @@ sandbox:
     assert "cp .env.example .env" in report["recommended_commands"]
 
 
+def test_config_report_validates_execution_mode(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+execution:
+  mode: invalid
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text("LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n", encoding="utf-8")
+
+    report = build_config_report(tmp_path)
+
+    assert any("execution.mode 不支持" in error for error in report["errors"])
+
+
 def test_config_report_reports_deprecated_keys_and_platform_env(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

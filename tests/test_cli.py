@@ -30,6 +30,24 @@ def test_tokens_estimate_command_outputs_number():
     assert result.output.strip().isdigit()
 
 
+def test_doctor_report_includes_execution_policy():
+    from personal_agent.config import Settings
+
+    settings = Settings(
+        execution_mode="sovereign",
+        llm_api_key="test",
+        llm_base_url="https://example.test",
+    )
+    report = build_doctor_report(settings)
+    text = format_doctor_report(report)
+
+    assert report["execution"]["mode"] == "sovereign"
+    assert report["execution"]["isolation"] == "policy-only"
+    assert "Execution:" in text
+    assert "mode: sovereign" in text
+    assert "warning:" in text
+
+
 def test_tokens_session_command_outputs_chinese_budget():
     result = runner.invoke(app, ["tokens", "session", "--context-limit", "1000"])
 

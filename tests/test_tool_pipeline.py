@@ -143,6 +143,7 @@ class MockAgent:
         self._destructive_allowed: set[str] = set()
         self._tool_calls_this_turn: int = 0
         self._max_tool_calls_per_turn: int = 20
+        self._execution_policy = None
 
 
 def test_scope_gate_destructive_blocked_by_default():
@@ -247,6 +248,79 @@ def test_scope_gate_tool_call_quota():
     result = _scope_gate(tc, entry, agent)
     assert result is not None
     assert "limit" in result.lower()
+
+
+def test_scope_gate_guarded_denies_bash_even_with_allow():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._destructive_allowed.add("bash")
+    agent._execution_policy = ExecutionPolicy(
+        mode="guarded",
+        permissions={"default": "deny", "bash": "deny"},
+    )
+    tc = {"name": "bash", "input": {"command": "ls"}}
+    entry = ToolEntry(
+        name="bash",
+        description="Bash",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+    )
+
+    result = _scope_gate(tc, entry, agent)
+    assert result is not None
+    assert "denied by execution mode" in result
+
+
+def test_scope_gate_standard_bash_requires_allow():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "ask", "bash": "ask"},
+    )
+    tc = {"name": "bash", "input": {"command": "ls"}}
+    entry = ToolEntry(
+        name="bash",
+        description="Bash",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+    )
+
+    blocked = _scope_gate(tc, entry, agent)
+    assert blocked is not None
+    agent._destructive_allowed.add("bash")
+    assert _scope_gate(tc, entry, agent) is None
+
+
+def test_scope_gate_trusted_allows_workspace_write_policy():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.executor import _scope_gate
+    from personal_agent.tools.entry import ToolEntry
+
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="trusted",
+        permissions={"default": "ask", "write": "allow"},
+    )
+    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
+    entry = ToolEntry(
+        name="write",
+        description="Write",
+        schema={},
+        handler=lambda **kw: "ok",
+        toolset="builtin",
+        is_destructive=True,
+    )
+
+    assert _scope_gate(tc, entry, agent) is None
 
 
 # ── Executor _exec_one integration ─────────────────────
