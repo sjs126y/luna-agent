@@ -1043,6 +1043,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         plugins = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
 
     from personal_agent.llm.token_counter import tokenizer_status
+    from personal_agent.tools.registry import tool_registry
 
     sandbox_roots = [
         {"path": str(root), "exists": Path(root).exists()}
@@ -1083,6 +1084,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
             "history_limit": settings.agent_runtime_history_limit,
         },
         "execution": settings.execution_policy.as_dict(),
+        "tools": tool_registry.catalog_summary(settings.enabled_toolsets),
         "sandbox": {
             "roots": sandbox_roots,
             "blocked_count": len(settings.sandbox_blocked),
@@ -1138,6 +1140,7 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
             "isolation": "policy-only",
             "warnings": [],
         },
+        "tools": _empty_tool_summary(),
         "sandbox": {
             "roots": sandbox_roots,
             "blocked_count": 0,
@@ -1163,6 +1166,7 @@ def format_doctor_report(report: dict[str, Any]) -> str:
     runtime = report.get("runtime", {})
     memory = report.get("memory", {})
     gateway = report.get("gateway", {})
+    tools = report.get("tools", {})
     config = report.get("config", {})
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
@@ -1235,10 +1239,21 @@ def format_doctor_report(report: dict[str, Any]) -> str:
         f"  network: {report.get('execution', {}).get('network', '-')}",
         f"  permissions: {_format_permissions(report.get('execution', {}).get('permissions', {}))}",
         "",
-        "Sandbox:",
+        "Tools:",
+        f"  total: {tools.get('total', 0)}",
+        f"  available: {tools.get('available', 0)}",
+        f"  unavailable: {tools.get('unavailable', 0)}",
+        f"  core: {tools.get('core', 0)}",
+        f"  destructive: {tools.get('destructive', 0)}",
+        f"  by toolset: {_format_counts(tools.get('by_toolset', {}))}",
+        f"  by permission: {_format_counts(tools.get('by_permission', {}))}",
+        f"  high risk: {_list_or_none(tools.get('high_risk', []))}",
     ]
+    for item in tools.get("unavailable_tools", []):
+        lines.append(f"  unavailable: {item.get('name') or '-'} ({item.get('reason') or '-'})")
     for warning in report.get("execution", {}).get("warnings", []):
         lines.append(f"  warning: {warning}")
+    lines.extend(["", "Sandbox:"])
     for root in report["sandbox"]["roots"]:
         lines.append(f"  - {root['path']} [{_status(root['exists'])}]")
     lines.append(f"  blocked 规则: {report['sandbox']['blocked_count']}")
@@ -1846,6 +1861,28 @@ def _entrypoint_status_text(report: dict[str, Any]) -> str:
 def _list_or_none(items) -> str:
     values = list(items or [])
     return ", ".join(str(item) for item in values) if values else "无"
+
+
+def _format_counts(counts) -> str:
+    if not isinstance(counts, dict) or not counts:
+        return "无"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+
+
+def _empty_tool_summary() -> dict[str, Any]:
+    return {
+        "total": 0,
+        "available": 0,
+        "unavailable": 0,
+        "core": 0,
+        "parallel_safe": 0,
+        "destructive": 0,
+        "by_toolset": {},
+        "by_permission": {},
+        "high_risk": [],
+        "unavailable_tools": [],
+        "items": [],
+    }
 
 
 def _format_permissions(permissions) -> str:

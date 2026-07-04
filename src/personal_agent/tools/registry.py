@@ -8,6 +8,7 @@ On bridge mode: deferrable tools replaced with tool_search/describe/call.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -112,6 +113,69 @@ class ToolRegistry:
             logger.exception("Tool '%s' failed", name)
             return f"Error: {exc}"
 
+    # ── catalog ────────────────────────────────────────
+
+    def catalog(self, enabled_toolsets: list[str] | None = None) -> list[dict]:
+        """Return stable metadata for registered tools without executing them."""
+        from personal_agent.tools.toolsets import TOOLSETS, is_core_tool, resolve_toolsets
+
+        resolved = resolve_toolsets(enabled_toolsets, self.all_names)
+        result: list[dict] = []
+        for name in sorted(resolved):
+            entry = self._entries.get(name)
+            if entry is None:
+                continue
+            available, unavailable_reason = _entry_availability(entry)
+            result.append({
+                "name": entry.name,
+                "description": entry.description,
+                "toolset": entry.toolset,
+                "groups": _tool_groups(entry.name, entry.toolset, TOOLSETS),
+                "permission_category": entry.permission_category,
+                "is_core": is_core_tool(entry.name),
+                "is_parallel_safe": entry.is_parallel_safe,
+                "is_destructive": entry.is_destructive,
+                "has_precheck": entry.precheck is not None,
+                "has_check_fn": entry.check_fn is not None,
+                "available": available,
+                "unavailable_reason": unavailable_reason,
+                "input_properties": sorted(
+                    (entry.schema.get("properties") or {}).keys()
+                    if isinstance(entry.schema, dict)
+                    else []
+                ),
+            })
+        return result
+
+    def catalog_summary(self, enabled_toolsets: list[str] | None = None) -> dict:
+        items = self.catalog(enabled_toolsets)
+        by_toolset = Counter(str(item["toolset"]) for item in items)
+        by_permission = Counter(str(item["permission_category"]) for item in items)
+        high_risk_categories = {"write", "bash", "background", "network"}
+        high_risk = [
+            item["name"]
+            for item in items
+            if item["is_destructive"] or item["permission_category"] in high_risk_categories
+        ]
+        unavailable = [
+            {"name": item["name"], "reason": item["unavailable_reason"]}
+            for item in items
+            if not item["available"]
+        ]
+        return {
+            "total": len(items),
+            "available": sum(1 for item in items if item["available"]),
+            "unavailable": len(unavailable),
+            "core": sum(1 for item in items if item["is_core"]),
+            "parallel_safe": sum(1 for item in items if item["is_parallel_safe"]),
+            "destructive": sum(1 for item in items if item["is_destructive"]),
+            "by_toolset": dict(sorted(by_toolset.items())),
+            "by_permission": dict(sorted(by_permission.items())),
+            "high_risk": high_risk,
+            "unavailable_tools": unavailable,
+            "items": items,
+        }
+
 
 tool_registry = ToolRegistry()
 
@@ -124,6 +188,24 @@ def _entry_to_schema(entry: ToolEntry) -> dict:
         "description": entry.description,
         "input_schema": entry.schema,
     }
+
+
+def _entry_availability(entry: ToolEntry) -> tuple[bool, str]:
+    if entry.check_fn is None:
+        return True, ""
+    try:
+        if entry.check_fn():
+            return True, ""
+    except Exception as exc:
+        return False, f"check_fn error: {type(exc).__name__}: {exc}"
+    return False, "check_fn returned False"
+
+
+def _tool_groups(name: str, toolset: str, groups: dict[str, set[str]]) -> list[str]:
+    result = sorted(group for group, names in groups.items() if name in names)
+    if toolset == "mcp" and "mcp" not in result:
+        result.append("mcp")
+    return result
 
 
 def _assemble_with_bridge(active: list[ToolEntry], is_core) -> list[dict]:

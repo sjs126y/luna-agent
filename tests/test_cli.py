@@ -43,7 +43,10 @@ def test_doctor_report_includes_execution_policy():
 
     assert report["execution"]["mode"] == "sovereign"
     assert report["execution"]["isolation"] == "policy-only"
+    assert report["tools"]["total"] >= 0
+    assert "by_permission" in report["tools"]
     assert "Execution:" in text
+    assert "Tools:" in text
     assert "mode: sovereign" in text
     assert "warning:" in text
 
@@ -855,6 +858,7 @@ def test_format_doctor_report_includes_summary_and_issues():
 
     assert "总体状态: 需要注意" in text
     assert "Agents:" in text
+    assert "Tools:" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text

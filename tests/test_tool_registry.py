@@ -82,3 +82,48 @@ async def test_unregister(registry):
     registry.unregister("x")
     assert registry.get("x") is None
     assert registry.generation == 2
+
+
+def test_catalog_reports_metadata_and_availability(registry):
+    async def dummy(**kw):
+        return "ok"
+
+    registry.register(ToolEntry(
+        name="read",
+        description="Read a file",
+        schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        handler=dummy,
+        toolset="builtin",
+        permission_category="read",
+    ))
+    registry.register(ToolEntry(
+        name="writer",
+        description="Write something",
+        schema={},
+        handler=dummy,
+        toolset="custom",
+        permission_category="write",
+        check_fn=lambda: False,
+        precheck=lambda args: None,
+        is_parallel_safe=False,
+        is_destructive=True,
+    ))
+
+    catalog = {item["name"]: item for item in registry.catalog()}
+
+    assert catalog["read"]["available"] is True
+    assert catalog["read"]["groups"] == ["file"]
+    assert catalog["read"]["input_properties"] == ["path"]
+    assert catalog["writer"]["available"] is False
+    assert catalog["writer"]["unavailable_reason"] == "check_fn returned False"
+    assert catalog["writer"]["has_precheck"] is True
+    assert catalog["writer"]["is_destructive"] is True
+
+    summary = registry.catalog_summary()
+    assert summary["total"] == 2
+    assert summary["available"] == 1
+    assert summary["unavailable"] == 1
+    assert summary["by_permission"] == {"read": 1, "write": 1}
+    assert summary["by_toolset"] == {"builtin": 1, "custom": 1}
+    assert summary["high_risk"] == ["writer"]
+    assert summary["unavailable_tools"] == [{"name": "writer", "reason": "check_fn returned False"}]
