@@ -316,7 +316,7 @@ class FeishuAdapter(BasePlatformAdapter):
                 timestamp=float(msg.create_time or time.time()),
             )
             # ── platform hook: on_after_parse ──
-            modified = await self.hooks.fire("on_after_parse", event_data, event)
+            modified = await self.hooks.fire("on_after_parse", event, event_data)
             if modified is not None:
                 event = modified
             self.handle_message(event)

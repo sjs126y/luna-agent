@@ -146,7 +146,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 raw_update = modified
 
         # ── platform hook: on_after_parse ──
-        modified = await self.hooks.fire("on_after_parse", raw_update, event)
+        modified = await self.hooks.fire("on_after_parse", event, raw_update)
         if modified is not None:
             event = modified
 

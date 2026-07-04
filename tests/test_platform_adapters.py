@@ -71,6 +71,55 @@ def test_feishu_receive_id_type_and_error_format():
 
 
 @pytest.mark.asyncio
+async def test_feishu_after_parse_without_hooks_keeps_message_event(tmp_path: Path, monkeypatch):
+    from personal_agent.models.messages import MessageEvent
+    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+
+    adapter = FeishuAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+    event_data = SimpleNamespace(
+        event=SimpleNamespace(
+            sender=SimpleNamespace(
+                sender_id=SimpleNamespace(open_id="ou-user", union_id="", user_id="")
+            ),
+            message=SimpleNamespace(
+                content='{"text": "hello"}',
+                chat_type="p2p",
+                message_id="mid-1",
+                chat_id="oc-chat",
+                create_time="123456",
+            ),
+        )
+    )
+
+    await adapter._handle_feishu_event(event_data)
+
+    assert len(captured) == 1
+    assert isinstance(captured[0], MessageEvent)
+    assert captured[0].text == "hello"
+    assert captured[0].source.platform == "feishu"
+
+
+@pytest.mark.asyncio
+async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: Path, monkeypatch):
+    from personal_agent.models.messages import MessageEvent, SessionSource
+    from personal_agent.plugins.builtin.platforms.telegram.adapter import TelegramAdapter
+
+    adapter = TelegramAdapter(_settings(tmp_path, telegram_bot_token="token"), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+    event = MessageEvent(
+        text="hello",
+        source=SessionSource(platform="telegram", user_id="u1", chat_id="c1"),
+    )
+
+    await adapter._handle_telegram_event(event, raw_update=object())
+
+    assert captured == [event]
+
+
+@pytest.mark.asyncio
 async def test_wechat_connect_without_creds_reports_error(tmp_path: Path):
     from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
