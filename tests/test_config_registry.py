@@ -10,9 +10,27 @@ def test_config_registry_paths_are_unique():
 
     assert len(paths) == len(set(paths))
     assert "execution.mode" in paths
+    assert "LLM_API_KEY" in paths
+    assert "sandbox.roots" in paths
     assert "gateway.platform_send_max_retries" in paths
+    assert "profiles" in paths
     assert CONFIG_REGISTRY.get("execution.mode") is not None
     assert CONFIG_REGISTRY.get_by_attr("execution_mode") is CONFIG_REGISTRY.get("execution.mode")
+
+
+def test_config_registry_keeps_field_order_and_metadata():
+    from personal_agent.config_registry import CONFIG_FIELDS
+
+    paths = [field.path for field in CONFIG_FIELDS]
+    fields = {field.path: field for field in CONFIG_FIELDS}
+
+    assert paths[:3] == ["execution.mode", "execution.policy", "LLM_PROVIDER"]
+    assert paths[-1] == "profiles"
+    assert fields["LLM_API_KEY"].sensitive is True
+    assert fields["sandbox.roots"].allow_csv is True
+    assert fields["gateway.platform_send_max_retries"].minimum == 0
+    assert fields["profiles"].env_key == "PROFILES"
+    assert fields["profiles"].yaml_path == "profiles"
 
 
 def test_config_registry_rejects_duplicate_path_and_attr():

@@ -249,70 +249,215 @@ MEMORY_PROVIDERS = ("file",)
 EXTERNAL_MEMORY_PROVIDERS = ("embedding", "none")
 
 
+def _field(
+    path: str,
+    attr: str,
+    source: str,
+    default: Any,
+    value_type: str,
+    section: str,
+    description: str,
+    **kwargs: Any,
+) -> ConfigField:
+    return ConfigField(path, attr, source, default, value_type, section, description, **kwargs)
+
+
+def _yaml_field(
+    path: str,
+    attr: str,
+    default: Any,
+    value_type: str,
+    section: str,
+    description: str,
+    **kwargs: Any,
+) -> ConfigField:
+    return _field(path, attr, "config.yaml", default, value_type, section, description, **kwargs)
+
+
+def _env_field(
+    path: str,
+    attr: str,
+    default: Any,
+    value_type: str,
+    section: str,
+    description: str,
+    **kwargs: Any,
+) -> ConfigField:
+    return _field(path, attr, ".env", default, value_type, section, description, **kwargs)
+
+
+def _mixed_field(
+    path: str,
+    attr: str,
+    default: Any,
+    value_type: str,
+    section: str,
+    description: str,
+    **kwargs: Any,
+) -> ConfigField:
+    return _field(path, attr, "config.yaml/.env", default, value_type, section, description, **kwargs)
+
+
+def _execution_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("execution.mode", "execution_mode", "standard", "str", "execution", "Execution mode profile.", choices=EXECUTION_MODES),
+        _yaml_field("execution.policy", "execution_policy_overrides", {}, "dict", "execution", "Execution policy overrides."),
+    )
+
+
+def _llm_fields() -> tuple[ConfigField, ...]:
+    return (
+        _env_field("LLM_PROVIDER", "llm_provider", "deepseek", "str", "llm", "LLM provider.", choices=LLM_PROVIDERS),
+        _env_field("LLM_API_KEY", "llm_api_key", "", "str", "llm", "LLM API key.", sensitive=True),
+        _env_field("LLM_BASE_URL", "llm_base_url", "", "str", "llm", "LLM base URL."),
+        _env_field("LLM_MODEL", "llm_model", "deepseek-chat", "str", "llm", "LLM model name."),
+        _env_field("LLM_API_MODE", "llm_api_mode", "auto", "str", "llm", "LLM API compatibility mode."),
+        _env_field("LLM_MAX_TOKENS", "llm_max_tokens", 4096, "int", "llm", "Maximum LLM output tokens.", minimum=1),
+    )
+
+
+def _platform_env_fields() -> tuple[ConfigField, ...]:
+    return (
+        _env_field("FEISHU_APP_ID", "feishu_app_id", "", "str", "platforms", "Feishu app id."),
+        _env_field("FEISHU_APP_SECRET", "feishu_app_secret", "", "str", "platforms", "Feishu app secret.", sensitive=True),
+        _env_field("TELEGRAM_BOT_TOKEN", "telegram_bot_token", "", "str", "platforms", "Telegram bot token.", sensitive=True),
+        _env_field("WEIXIN_TOKEN", "weixin_token", "", "str", "platforms", "WeChat token.", sensitive=True),
+        _env_field("WEIXIN_ACCOUNT_ID", "weixin_account_id", "", "str", "platforms", "WeChat account id."),
+        _env_field("WEIXIN_USER_ID", "weixin_user_id", "", "str", "platforms", "WeChat user id."),
+        _env_field("WEIXIN_BASE_URL", "weixin_base_url", "https://ilinkai.weixin.qq.com", "str", "platforms", "WeChat API base URL."),
+        _env_field("QQ_BOT_BASE_URL", "qq_bot_base_url", "", "str", "platforms", "QQ/OneBot HTTP base URL."),
+        _env_field("QQ_BOT_TOKEN", "qq_bot_token", "", "str", "platforms", "QQ/OneBot token.", sensitive=True),
+        _env_field("QQ_BOT_WEBHOOK_SECRET", "qq_bot_webhook_secret", "", "str", "platforms", "QQ webhook secret.", sensitive=True),
+    )
+
+
+def _agent_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("agent.max_iterations", "max_iterations", 30, "int", "agent", "Maximum agent loop iterations.", minimum=1),
+        _yaml_field("agent.max_tool_calls_per_turn", "max_tool_calls_per_turn", 20, "int", "agent", "Maximum tool calls per turn.", minimum=1),
+        _yaml_field("agents.max_concurrent_runs", "agent_runtime_max_concurrent_runs", 4, "int", "agents", "Maximum concurrent delegated agent runs.", minimum=1),
+        _yaml_field("agents.max_tool_calls", "agent_runtime_max_tool_calls", 10, "int", "agents", "Maximum delegated agent tool calls.", minimum=1),
+        _yaml_field("agents.max_tokens", "agent_runtime_max_tokens", 4096, "int", "agents", "Delegated agent token budget.", minimum=1),
+        _yaml_field("agents.history_limit", "agent_runtime_history_limit", 100, "int", "agents", "Delegated agent history limit.", minimum=1),
+    )
+
+
+def _storage_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("storage.data_dir", "agent_data_dir", "./data", "path", "storage", "Runtime data directory."),
+        _yaml_field("storage.log_level", "log_level", "INFO", "str", "storage", "Log level."),
+    )
+
+
+def _toolset_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("toolsets.enabled", "enabled_toolsets", ["all"], "list", "toolsets", "Enabled toolsets."),
+    )
+
+
+def _compression_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("compression.engine", "compressor_engine", "compressor", "str", "compression", "Compression engine.", choices=COMPRESSION_ENGINES),
+        _yaml_field("compression.model", "compressor_model", "", "str", "compression", "Compression model."),
+        _yaml_field("compression.max_tokens", "compressor_max_tokens", 500, "int", "compression", "Compression max tokens.", minimum=1),
+        _yaml_field("compression.tail_token_budget", "tail_token_budget", 20000, "int", "compression", "Tail token budget.", minimum=1),
+        _yaml_field("compression.threshold_ratio", "compression_threshold_ratio", 0.6, "float", "compression", "Compression threshold ratio.", minimum=0, maximum=1),
+    )
+
+
+def _memory_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("memory.provider", "memory_provider", "file", "str", "memory", "Built-in memory provider.", choices=MEMORY_PROVIDERS),
+        _yaml_field("memory.external_provider", "memory_external_provider", "none", "str", "memory", "External memory provider.", choices=EXTERNAL_MEMORY_PROVIDERS),
+        _yaml_field("memory.review_interval", "memory_review_interval", 10, "int", "memory", "Memory review interval.", minimum=0),
+        _yaml_field("memory.embedding.model", "memory_embedding_model", "BAAI/bge-small-zh-v1.5", "str", "memory", "Embedding model."),
+        _yaml_field("memory.embedding.relevance_threshold", "memory_embedding_relevance_threshold", 0.3, "float", "memory", "Embedding relevance threshold."),
+        _yaml_field("memory.embedding.max_prefetch", "memory_embedding_max_prefetch", 3, "int", "memory", "Embedding prefetch limit.", minimum=1),
+        _yaml_field("memory.embedding.chunk_size", "memory_embedding_chunk_size", 800, "int", "memory", "Embedding chunk size.", minimum=1),
+    )
+
+
+def _cron_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("cron.enabled", "enable_cron", False, "bool", "cron", "Enable cron scheduler."),
+    )
+
+
+def _sandbox_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("sandbox.roots", "sandbox_roots", ["./data"], "list[path]", "sandbox", "Sandbox root directories.", allow_csv=True),
+        _yaml_field("sandbox.blocked", "sandbox_blocked", [], "list", "sandbox", "Blocked sandbox path patterns."),
+        _yaml_field("sandbox.bash_work_dir", "bash_work_dir", "./data", "path", "sandbox", "Bash working directory."),
+        _yaml_field("sandbox.bash_restrict_paths", "bash_restrict_paths", True, "bool", "sandbox", "Restrict bash paths."),
+        _yaml_field("sandbox.bash_allow_network", "bash_allow_network", False, "bool", "sandbox", "Allow bash network commands."),
+        _yaml_field("sandbox.file_max_write_bytes", "file_max_write_bytes", 100000, "int", "sandbox", "Maximum file write size.", minimum=1),
+        _yaml_field("sandbox.audit_enabled", "audit_enabled", True, "bool", "sandbox", "Enable tool audit logging."),
+    )
+
+
+def _gateway_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("gateway.platform_reconnect_delays", "platform_reconnect_delays", [1, 2, 5, 10, 30, 60], "list[int]", "gateway", "Platform reconnect delays.", allow_csv=True, minimum=1),
+        _yaml_field("gateway.platform_pending_warning_threshold", "platform_pending_warning_threshold", 10, "int", "gateway", "Pending message warning threshold.", minimum=1),
+        _yaml_field("gateway.platform_chat_locks_maxsize", "platform_chat_locks_maxsize", 64, "int", "gateway", "Gateway chat lock cache size.", minimum=1),
+        _yaml_field("gateway.platform_message_dedupe_max_size", "platform_message_dedupe_max_size", 1024, "int", "gateway", "Gateway message dedupe cache size.", minimum=1),
+        _yaml_field("gateway.platform_send_max_retries", "platform_send_max_retries", 2, "int", "gateway", "Platform send retry limit.", minimum=0),
+    )
+
+
+def _session_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("session.expire_days", "session_expire_days", 30, "int", "session", "Session expiry in days.", minimum=0),
+        _yaml_field("session.override", "session_override", {}, "dict", "session", "Session routing overrides."),
+    )
+
+
+def _mcp_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("mcp.enabled", "mcp_enabled", False, "bool", "mcp", "Enable MCP."),
+        _yaml_field("mcp.servers", "mcp_servers", [], "list", "mcp", "Configured MCP servers."),
+    )
+
+
+def _plugin_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("plugins.dirs", "plugins_dirs", ["./plugins", "./data/plugins"], "list[path]", "plugins", "Plugin directories.", allow_csv=True),
+        _yaml_field("plugins.enabled", "plugins_enabled", [], "list", "plugins", "Enabled plugins."),
+        _yaml_field("plugins.disabled", "plugins_disabled", [], "list", "plugins", "Disabled plugins."),
+    )
+
+
+def _auth_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("auth.enabled", "auth_enabled", False, "bool", "auth", "Enable auth."),
+        _yaml_field("auth.admins", "auth_admins", [], "list", "auth", "Admin users."),
+        _yaml_field("auth.allowed_users", "auth_allowed_users", [], "list", "auth", "Allowed users."),
+    )
+
+
+def _profile_fields() -> tuple[ConfigField, ...]:
+    return (
+        _mixed_field("profiles", "profile_map", {}, "dict", "profiles", "Session profile map.", env_key="PROFILES", yaml_path="profiles"),
+    )
+
+
 CONFIG_FIELDS: tuple[ConfigField, ...] = (
-    ConfigField("execution.mode", "execution_mode", "config.yaml", "standard", "str", "execution", "Execution mode profile.", choices=EXECUTION_MODES),
-    ConfigField("execution.policy", "execution_policy_overrides", "config.yaml", {}, "dict", "execution", "Execution policy overrides."),
-    ConfigField("LLM_PROVIDER", "llm_provider", ".env", "deepseek", "str", "llm", "LLM provider.", choices=LLM_PROVIDERS),
-    ConfigField("LLM_API_KEY", "llm_api_key", ".env", "", "str", "llm", "LLM API key.", sensitive=True),
-    ConfigField("LLM_BASE_URL", "llm_base_url", ".env", "", "str", "llm", "LLM base URL."),
-    ConfigField("LLM_MODEL", "llm_model", ".env", "deepseek-chat", "str", "llm", "LLM model name."),
-    ConfigField("LLM_API_MODE", "llm_api_mode", ".env", "auto", "str", "llm", "LLM API compatibility mode."),
-    ConfigField("LLM_MAX_TOKENS", "llm_max_tokens", ".env", 4096, "int", "llm", "Maximum LLM output tokens.", minimum=1),
-    ConfigField("FEISHU_APP_ID", "feishu_app_id", ".env", "", "str", "platforms", "Feishu app id."),
-    ConfigField("FEISHU_APP_SECRET", "feishu_app_secret", ".env", "", "str", "platforms", "Feishu app secret.", sensitive=True),
-    ConfigField("TELEGRAM_BOT_TOKEN", "telegram_bot_token", ".env", "", "str", "platforms", "Telegram bot token.", sensitive=True),
-    ConfigField("WEIXIN_TOKEN", "weixin_token", ".env", "", "str", "platforms", "WeChat token.", sensitive=True),
-    ConfigField("WEIXIN_ACCOUNT_ID", "weixin_account_id", ".env", "", "str", "platforms", "WeChat account id."),
-    ConfigField("WEIXIN_USER_ID", "weixin_user_id", ".env", "", "str", "platforms", "WeChat user id."),
-    ConfigField("WEIXIN_BASE_URL", "weixin_base_url", ".env", "https://ilinkai.weixin.qq.com", "str", "platforms", "WeChat API base URL."),
-    ConfigField("QQ_BOT_BASE_URL", "qq_bot_base_url", ".env", "", "str", "platforms", "QQ/OneBot HTTP base URL."),
-    ConfigField("QQ_BOT_TOKEN", "qq_bot_token", ".env", "", "str", "platforms", "QQ/OneBot token.", sensitive=True),
-    ConfigField("QQ_BOT_WEBHOOK_SECRET", "qq_bot_webhook_secret", ".env", "", "str", "platforms", "QQ webhook secret.", sensitive=True),
-    ConfigField("agent.max_iterations", "max_iterations", "config.yaml", 30, "int", "agent", "Maximum agent loop iterations.", minimum=1),
-    ConfigField("agent.max_tool_calls_per_turn", "max_tool_calls_per_turn", "config.yaml", 20, "int", "agent", "Maximum tool calls per turn.", minimum=1),
-    ConfigField("agents.max_concurrent_runs", "agent_runtime_max_concurrent_runs", "config.yaml", 4, "int", "agents", "Maximum concurrent delegated agent runs.", minimum=1),
-    ConfigField("agents.max_tool_calls", "agent_runtime_max_tool_calls", "config.yaml", 10, "int", "agents", "Maximum delegated agent tool calls.", minimum=1),
-    ConfigField("agents.max_tokens", "agent_runtime_max_tokens", "config.yaml", 4096, "int", "agents", "Delegated agent token budget.", minimum=1),
-    ConfigField("agents.history_limit", "agent_runtime_history_limit", "config.yaml", 100, "int", "agents", "Delegated agent history limit.", minimum=1),
-    ConfigField("storage.data_dir", "agent_data_dir", "config.yaml", "./data", "path", "storage", "Runtime data directory."),
-    ConfigField("storage.log_level", "log_level", "config.yaml", "INFO", "str", "storage", "Log level."),
-    ConfigField("toolsets.enabled", "enabled_toolsets", "config.yaml", ["all"], "list", "toolsets", "Enabled toolsets."),
-    ConfigField("compression.engine", "compressor_engine", "config.yaml", "compressor", "str", "compression", "Compression engine.", choices=COMPRESSION_ENGINES),
-    ConfigField("compression.model", "compressor_model", "config.yaml", "", "str", "compression", "Compression model."),
-    ConfigField("compression.max_tokens", "compressor_max_tokens", "config.yaml", 500, "int", "compression", "Compression max tokens.", minimum=1),
-    ConfigField("compression.tail_token_budget", "tail_token_budget", "config.yaml", 20000, "int", "compression", "Tail token budget.", minimum=1),
-    ConfigField("compression.threshold_ratio", "compression_threshold_ratio", "config.yaml", 0.6, "float", "compression", "Compression threshold ratio.", minimum=0, maximum=1),
-    ConfigField("memory.provider", "memory_provider", "config.yaml", "file", "str", "memory", "Built-in memory provider.", choices=MEMORY_PROVIDERS),
-    ConfigField("memory.external_provider", "memory_external_provider", "config.yaml", "none", "str", "memory", "External memory provider.", choices=EXTERNAL_MEMORY_PROVIDERS),
-    ConfigField("memory.review_interval", "memory_review_interval", "config.yaml", 10, "int", "memory", "Memory review interval.", minimum=0),
-    ConfigField("memory.embedding.model", "memory_embedding_model", "config.yaml", "BAAI/bge-small-zh-v1.5", "str", "memory", "Embedding model."),
-    ConfigField("memory.embedding.relevance_threshold", "memory_embedding_relevance_threshold", "config.yaml", 0.3, "float", "memory", "Embedding relevance threshold."),
-    ConfigField("memory.embedding.max_prefetch", "memory_embedding_max_prefetch", "config.yaml", 3, "int", "memory", "Embedding prefetch limit.", minimum=1),
-    ConfigField("memory.embedding.chunk_size", "memory_embedding_chunk_size", "config.yaml", 800, "int", "memory", "Embedding chunk size.", minimum=1),
-    ConfigField("cron.enabled", "enable_cron", "config.yaml", False, "bool", "cron", "Enable cron scheduler."),
-    ConfigField("sandbox.roots", "sandbox_roots", "config.yaml", ["./data"], "list[path]", "sandbox", "Sandbox root directories.", allow_csv=True),
-    ConfigField("sandbox.blocked", "sandbox_blocked", "config.yaml", [], "list", "sandbox", "Blocked sandbox path patterns."),
-    ConfigField("sandbox.bash_work_dir", "bash_work_dir", "config.yaml", "./data", "path", "sandbox", "Bash working directory."),
-    ConfigField("sandbox.bash_restrict_paths", "bash_restrict_paths", "config.yaml", True, "bool", "sandbox", "Restrict bash paths."),
-    ConfigField("sandbox.bash_allow_network", "bash_allow_network", "config.yaml", False, "bool", "sandbox", "Allow bash network commands."),
-    ConfigField("sandbox.file_max_write_bytes", "file_max_write_bytes", "config.yaml", 100000, "int", "sandbox", "Maximum file write size.", minimum=1),
-    ConfigField("sandbox.audit_enabled", "audit_enabled", "config.yaml", True, "bool", "sandbox", "Enable tool audit logging."),
-    ConfigField("gateway.platform_reconnect_delays", "platform_reconnect_delays", "config.yaml", [1, 2, 5, 10, 30, 60], "list[int]", "gateway", "Platform reconnect delays.", allow_csv=True, minimum=1),
-    ConfigField("gateway.platform_pending_warning_threshold", "platform_pending_warning_threshold", "config.yaml", 10, "int", "gateway", "Pending message warning threshold.", minimum=1),
-    ConfigField("gateway.platform_chat_locks_maxsize", "platform_chat_locks_maxsize", "config.yaml", 64, "int", "gateway", "Gateway chat lock cache size.", minimum=1),
-    ConfigField("gateway.platform_message_dedupe_max_size", "platform_message_dedupe_max_size", "config.yaml", 1024, "int", "gateway", "Gateway message dedupe cache size.", minimum=1),
-    ConfigField("gateway.platform_send_max_retries", "platform_send_max_retries", "config.yaml", 2, "int", "gateway", "Platform send retry limit.", minimum=0),
-    ConfigField("session.expire_days", "session_expire_days", "config.yaml", 30, "int", "session", "Session expiry in days.", minimum=0),
-    ConfigField("session.override", "session_override", "config.yaml", {}, "dict", "session", "Session routing overrides."),
-    ConfigField("mcp.enabled", "mcp_enabled", "config.yaml", False, "bool", "mcp", "Enable MCP."),
-    ConfigField("mcp.servers", "mcp_servers", "config.yaml", [], "list", "mcp", "Configured MCP servers."),
-    ConfigField("plugins.dirs", "plugins_dirs", "config.yaml", ["./plugins", "./data/plugins"], "list[path]", "plugins", "Plugin directories.", allow_csv=True),
-    ConfigField("plugins.enabled", "plugins_enabled", "config.yaml", [], "list", "plugins", "Enabled plugins."),
-    ConfigField("plugins.disabled", "plugins_disabled", "config.yaml", [], "list", "plugins", "Disabled plugins."),
-    ConfigField("auth.enabled", "auth_enabled", "config.yaml", False, "bool", "auth", "Enable auth."),
-    ConfigField("auth.admins", "auth_admins", "config.yaml", [], "list", "auth", "Admin users."),
-    ConfigField("auth.allowed_users", "auth_allowed_users", "config.yaml", [], "list", "auth", "Allowed users."),
-    ConfigField("profiles", "profile_map", "config.yaml/.env", {}, "dict", "profiles", "Session profile map.", env_key="PROFILES", yaml_path="profiles"),
+    *_execution_fields(),
+    *_llm_fields(),
+    *_platform_env_fields(),
+    *_agent_fields(),
+    *_storage_fields(),
+    *_toolset_fields(),
+    *_compression_fields(),
+    *_memory_fields(),
+    *_cron_fields(),
+    *_sandbox_fields(),
+    *_gateway_fields(),
+    *_session_fields(),
+    *_mcp_fields(),
+    *_plugin_fields(),
+    *_auth_fields(),
+    *_profile_fields(),
 )
 
 
