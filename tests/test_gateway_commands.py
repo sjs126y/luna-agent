@@ -119,6 +119,18 @@ async def test_gateway_session_command_uses_shared_service(gateway):
 
 
 @pytest.mark.asyncio
+async def test_gateway_message_inner_backfills_envelope_before_commands(gateway):
+    event = _event("/session list")
+
+    result = await gateway._handle_message_inner(event)
+
+    assert result is not None
+    assert event.envelope is not None
+    assert event.envelope.text == "/session list"
+    assert event.envelope.source.chat_id == "c1"
+
+
+@pytest.mark.asyncio
 async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypatch):
     await gateway._handle_command(_event("/session work"), "telegram:c1:u1")
     captured = []

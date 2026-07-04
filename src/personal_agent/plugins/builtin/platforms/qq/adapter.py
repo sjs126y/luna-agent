@@ -18,7 +18,7 @@ from typing import Any
 
 import aiohttp
 
-from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+from personal_agent.models.messages import MessageEnvelope, MessageEvent, MessagePart, SessionSource
 from personal_agent.platforms.core import (
     BasePlatformAdapter,
     ChatInfo,
@@ -157,22 +157,38 @@ class QQAdapter(BasePlatformAdapter):
             chat_id = f"private:{user_id}" if user_id else ""
             chat_type = "dm"
 
-        return MessageEvent(
+        source = SessionSource(
+            platform="qq",
+            user_id=user_id,
+            user_name=user_name,
+            chat_id=chat_id,
+            chat_type=chat_type,
+        )
+        message_id = str(payload.get("message_id") or "")
+        event = MessageEvent(
             text=text,
             message_type="command" if text.startswith("/") else "text",
-            source=SessionSource(
-                platform="qq",
-                user_id=user_id,
-                user_name=user_name,
-                chat_id=chat_id,
-                chat_type=chat_type,
-            ),
+            source=source,
             parts=parts,
             attachments=attachments,
             raw_message=payload,
-            message_id=str(payload.get("message_id") or ""),
+            message_id=message_id,
             timestamp=float(payload.get("time") or time.time()),
         )
+        event.envelope = MessageEnvelope(
+            id=message_id,
+            source=source,
+            text=text,
+            parts=parts,
+            attachments=[
+                part.to_attachment_ref(f"{message_id or 'qq'}:{index}")
+                for index, part in enumerate(attachments, start=1)
+            ],
+            thread_id=source.thread_id,
+            raw=payload,
+            metadata={"message_type": event.message_type},
+        )
+        return event
 
     def _verify_signature(self, payload: dict[str, Any], signature: str) -> bool:
         if not self._webhook_secret:

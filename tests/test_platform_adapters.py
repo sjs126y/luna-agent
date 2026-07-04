@@ -100,6 +100,8 @@ async def test_feishu_after_parse_without_hooks_keeps_message_event(tmp_path: Pa
     assert isinstance(captured[0], MessageEvent)
     assert captured[0].text == "hello"
     assert captured[0].source.platform == "feishu"
+    assert captured[0].envelope is not None
+    assert captured[0].envelope.text == "hello"
 
 
 @pytest.mark.asyncio
@@ -118,6 +120,8 @@ async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: 
     await adapter._handle_telegram_event(event, raw_update=object())
 
     assert captured == [event]
+    assert event.envelope is not None
+    assert event.envelope.text == "hello"
 
 
 @pytest.mark.asyncio
@@ -222,6 +226,9 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
     assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
     assert captured[0].attachments[0].file_id == "img-1"
     assert captured[0].attachments[-1].name == "report.pdf"
+    assert captured[0].envelope is not None
+    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "voice", "video", "file"]
+    assert captured[0].envelope.attachments[0].platform_file_id == "img-1"
     assert adapter._context_tokens["wx-user"] == "ctx-token"
 
 
@@ -364,6 +371,9 @@ async def test_qq_webhook_payload_summarizes_media_segments(tmp_path: Path, monk
     assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
     assert captured[0].attachments[0].url == "https://example.test/a.png"
     assert captured[0].attachments[-1].name == "report.pdf"
+    assert captured[0].envelope is not None
+    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "voice", "video", "file"]
+    assert captured[0].envelope.attachments[0].url == "https://example.test/a.png"
 
 
 @pytest.mark.asyncio

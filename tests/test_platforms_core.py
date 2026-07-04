@@ -21,6 +21,47 @@ def test_platform_core_is_public_import_path():
     assert platform_registry is not None
 
 
+def test_message_event_to_envelope_preserves_text_and_attachments():
+    from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+
+    event = MessageEvent(
+        text="see [image: https://example.test/a.png]",
+        source=SessionSource(platform="qq", user_id="u1", chat_id="group:1", thread_id="t1"),
+        parts=[
+            MessagePart(type="text", text="see "),
+            MessagePart(type="image", url="https://example.test/a.png"),
+        ],
+        attachments=[MessagePart(type="image", url="https://example.test/a.png", name="a.png")],
+        message_id="m1",
+        reply_to_text="previous",
+    )
+
+    envelope = event.to_envelope()
+
+    assert event.envelope is envelope
+    assert envelope.id == "m1"
+    assert envelope.source.platform == "qq"
+    assert envelope.thread_id == "t1"
+    assert envelope.reply_to == "previous"
+    assert envelope.render_text() == event.text
+    assert envelope.attachments[0].id == "m1:1"
+    assert envelope.attachments[0].kind == "image"
+    assert envelope.attachments[0].url == "https://example.test/a.png"
+    assert envelope.as_dict()["attachments"][0]["name"] == "a.png"
+
+
+def test_response_envelope_renders_text_fallback():
+    from personal_agent.models.messages import MessagePart, ResponseEnvelope
+
+    response = ResponseEnvelope(parts=[
+        MessagePart(type="text", text="file "),
+        MessagePart(type="file", name="report.pdf"),
+    ])
+
+    assert response.render_text() == "file [file: report.pdf]"
+    assert response.as_dict()["parts"][1]["type"] == "file"
+
+
 @pytest.mark.asyncio
 async def test_base_adapter_send_message_falls_back_to_text():
     from personal_agent.models.messages import MessagePart, OutboundMessage

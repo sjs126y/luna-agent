@@ -28,6 +28,19 @@ class MessagePart:
         detail = self.name or self.url or self.path or self.file_id or self.text
         return f"[{self.type}: {detail}]" if detail else f"[{self.type}]"
 
+    def to_attachment_ref(self, attachment_id: str = "") -> "AttachmentRef":
+        detail = self.file_id or self.url or self.path or self.name or self.text
+        return AttachmentRef(
+            id=attachment_id or detail,
+            kind=self.type,
+            name=self.name,
+            mime_type=self.mime_type,
+            url=self.url,
+            platform_file_id=self.file_id,
+            local_path=self.path,
+            metadata=dict(self.metadata),
+        )
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "type": self.type,
@@ -103,6 +116,95 @@ class SessionSource:
 
 
 @dataclass
+class AttachmentRef:
+    """Stable reference for an attachment carried by a platform message."""
+    id: str
+    kind: str
+    name: str = ""
+    mime_type: str = ""
+    size: int = 0
+    url: str = ""
+    platform_file_id: str = ""
+    local_path: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "name": self.name,
+            "mime_type": self.mime_type,
+            "size": self.size,
+            "url": self.url,
+            "platform_file_id": self.platform_file_id,
+            "local_path": self.local_path,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
+class MessageEnvelope:
+    """Hermes-style normalized platform message envelope."""
+    id: str = ""
+    source: SessionSource = field(default_factory=lambda: SessionSource(platform="", user_id=""))
+    text: str = ""
+    parts: list[MessagePart] = field(default_factory=list)
+    attachments: list[AttachmentRef] = field(default_factory=list)
+    reply_to: str = ""
+    thread_id: str | None = None
+    raw: Any = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def render_text(self) -> str:
+        if self.text:
+            return self.text
+        return "".join(part.render_text() for part in self.parts)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "source": {
+                "platform": self.source.platform,
+                "user_id": self.source.user_id,
+                "user_name": self.source.user_name,
+                "chat_id": self.source.chat_id,
+                "chat_type": self.source.chat_type,
+                "thread_id": self.source.thread_id,
+            },
+            "text": self.text,
+            "parts": [part.as_dict() for part in self.parts],
+            "attachments": [attachment.as_dict() for attachment in self.attachments],
+            "reply_to": self.reply_to,
+            "thread_id": self.thread_id,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
+class ResponseEnvelope:
+    """Structured outbound response envelope for future platform renderers."""
+    text: str = ""
+    parts: list[MessagePart] = field(default_factory=list)
+    attachments: list[AttachmentRef] = field(default_factory=list)
+    reply_to: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def render_text(self) -> str:
+        if self.text:
+            return self.text
+        return "".join(part.render_text() for part in self.parts)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "parts": [part.as_dict() for part in self.parts],
+            "attachments": [attachment.as_dict() for attachment in self.attachments],
+            "reply_to": self.reply_to,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
 class MessageEvent:
     """Normalized incoming message from any platform."""
     text: str
@@ -110,11 +212,43 @@ class MessageEvent:
     source: SessionSource = field(default_factory=lambda: SessionSource(platform="", user_id=""))
     parts: list[MessagePart] = field(default_factory=list)
     attachments: list[MessagePart] = field(default_factory=list)
+    envelope: MessageEnvelope | None = None
     raw_message: Any = None          # original platform-specific object
     message_id: str | None = None
     reply_to_text: str | None = None
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     internal: bool = False           # system-generated, skip auth
+
+    def to_envelope(self) -> MessageEnvelope:
+        if self.envelope is not None:
+            return self.envelope
+        parts = list(self.parts)
+        if not parts and self.text:
+            parts = [MessagePart(type="text", text=self.text)]
+        attachments = [
+            part.to_attachment_ref(_attachment_id(self.message_id, index))
+            for index, part in enumerate(self.attachments, start=1)
+        ]
+        self.envelope = MessageEnvelope(
+            id=str(self.message_id or ""),
+            source=self.source,
+            text=self.text,
+            parts=parts,
+            attachments=attachments,
+            reply_to=self.reply_to_text or "",
+            thread_id=self.source.thread_id,
+            raw=self.raw_message,
+            metadata={
+                "message_type": self.message_type,
+                "internal": self.internal,
+            },
+        )
+        return self.envelope
+
+
+def _attachment_id(message_id: str | None, index: int) -> str:
+    prefix = str(message_id or "attachment").strip() or "attachment"
+    return f"{prefix}:{index}"
 
 
 @dataclass

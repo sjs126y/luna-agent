@@ -162,6 +162,8 @@ class TelegramAdapter(BasePlatformAdapter):
         if modified is not None:
             event = modified
 
+        if event.envelope is None:
+            event.to_envelope()
         self.handle_message(event)
 
     # ── typing indicator ──────────────────────────────

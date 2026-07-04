@@ -329,6 +329,8 @@ class FeishuAdapter(BasePlatformAdapter):
             modified = await self.hooks.fire("on_after_parse", event, event_data)
             if modified is not None:
                 event = modified
+            if event.envelope is None:
+                event.to_envelope()
             self.handle_message(event)
         except Exception:
             logger.exception("_handle_feishu_event failed")
@@ -399,6 +401,7 @@ class FeishuAdapter(BasePlatformAdapter):
             source=source,
             raw_message=None,
             )
+        event.to_envelope()
         logger.debug("Debounce flush: chat=%s delivering accumulated %d chars",
                       source_info.get("chat_id", "")[:16], len(text))
         self.handle_message(event)

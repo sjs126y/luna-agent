@@ -241,6 +241,8 @@ class Gateway:
             trace_id.reset(token)
 
     async def _handle_message_inner(self, event) -> str | None:
+        if getattr(event, "envelope", None) is None and hasattr(event, "to_envelope"):
+            event.to_envelope()
         session_key = self._session_router.active_key(event.source)
 
         # 1. Hook: on_message_received (only if hooks registered)

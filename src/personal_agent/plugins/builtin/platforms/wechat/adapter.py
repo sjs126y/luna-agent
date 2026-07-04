@@ -25,7 +25,7 @@ from personal_agent.platforms.core import (
     PlatformCapabilities,
     SendResult,
 )
-from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+from personal_agent.models.messages import MessageEnvelope, MessageEvent, MessagePart, SessionSource
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +305,19 @@ class WeChatAdapter(BasePlatformAdapter):
                 raw_message=msg,
                 message_id=msg_id,
                 timestamp=msg.get("create_time", time.time()),
+            )
+            event.envelope = MessageEnvelope(
+                id=msg_id,
+                source=source,
+                text=combined,
+                parts=event.parts,
+                attachments=[
+                    part.to_attachment_ref(f"{msg_id or 'wechat'}:{index}")
+                    for index, part in enumerate(attachments, start=1)
+                ],
+                thread_id=source.thread_id,
+                raw=msg,
+                metadata={"message_type": event.message_type},
             )
             logger.info("WeChat inbound: user=%s text=%s",
                        sender[:12] if sender else "?", combined[:60])
