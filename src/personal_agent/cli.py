@@ -1538,6 +1538,23 @@ def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str
     return lines
 
 
+def _format_effective_config_section(effective_config: dict[str, Any]) -> list[str]:
+    sections = effective_config.get("sections") or {}
+    if not sections:
+        return []
+    lines = [f"Effective Config: {effective_config.get('field_count', 0)} fields"]
+    for section, fields in sorted(sections.items()):
+        lines.append(f"  {section}:")
+        for item in fields:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path") or "-"
+            value = _format_config_value(item.get("value"))
+            source = item.get("source") or "-"
+            lines.append(f"    {path}: {value} ({source})")
+    return lines
+
+
 def _format_config_value(value: Any) -> str:
     if isinstance(value, bool):
         return _yes(value)
@@ -1558,7 +1575,11 @@ def _format_config_value(value: Any) -> str:
 
 def _format_doctor_section(report: dict[str, Any], section: str) -> str:
     if section == "config":
-        return format_config_report(report.get("config", {}))
+        lines = [format_config_report(report.get("config", {}))]
+        details = _format_effective_config_section(report.get("effective_config", {}))
+        if details:
+            lines.extend(["", *details])
+        return "\n".join(lines)
     if section == "plugins":
         return format_plugin_list(report.get("plugins", []))
     lines = [f"Personal Agent 诊断: {section}"]
@@ -1592,6 +1613,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
 def format_config_report(report: dict[str, Any]) -> str:
     files = report.get("files", {})
     env = report.get("env", {})
+    registry_fields = report.get("registry_fields", {})
+    registry_coverage = report.get("registry_coverage", {})
     lines = [
         "配置检查",
         f"目录: {report.get('base_dir') or '-'}",
@@ -1610,8 +1633,11 @@ def format_config_report(report: dict[str, Any]) -> str:
         f"  缺失环境变量: {_list_or_none(env.get('missing_llm_env', []))}",
         "",
         "配置字段:",
-        f"  known fields: {report.get('registry_fields', {}).get('field_count', 0)}",
-        f"  sections: {_list_or_none((report.get('registry_fields', {}).get('sections') or {}).keys())}",
+        f"  known fields: {registry_fields.get('field_count', 0)}",
+        f"  config.yaml fields: {registry_coverage.get('config_yaml_field_count', registry_fields.get('config_yaml_field_count', 0))}",
+        f"  sections: {_list_or_none((registry_fields.get('sections') or {}).keys())}",
+        f"  config sections: {_list_or_none(registry_coverage.get('config_yaml_sections', []))}",
+        f"  present sections: {_list_or_none(registry_coverage.get('present_config_sections', []))}",
         "",
         "平台:",
     ]
@@ -1636,6 +1662,12 @@ def format_config_report(report: dict[str, Any]) -> str:
         lines.append("已废弃配置:")
         for item in report["deprecated_keys"]:
             lines.append(f"  - {item['key']}: {item['message']}")
+    if report.get("registry_validation_errors"):
+        lines.extend(["", "Registry 校验错误:"])
+        lines.extend(f"  - {error}" for error in report["registry_validation_errors"])
+    if report.get("registry_validation_warnings"):
+        lines.extend(["", "Registry 校验警告:"])
+        lines.extend(f"  - {warning}" for warning in report["registry_validation_warnings"])
     if report.get("migration_hints"):
         lines.extend(["", "迁移建议:"])
         lines.extend(f"  - {hint}" for hint in report["migration_hints"])

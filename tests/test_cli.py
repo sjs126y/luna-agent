@@ -629,6 +629,7 @@ def test_format_config_report_shows_next_steps():
     assert "配置检查" in text
     assert "配置字段:" in text
     assert "known fields:" in text
+    assert "config.yaml fields:" in text
     assert "未知配置: old" in text
     assert "平台:" in text
     assert "platforms/qq" in text
@@ -636,6 +637,59 @@ def test_format_config_report_shows_next_steps():
     assert "迁移建议" in text
     assert "推荐命令" in text
     assert "运行 personal-agent init" in text
+
+
+def test_format_doctor_config_section_includes_grouped_effective_config():
+    report = {
+        "config": {
+            "ok": True,
+            "base_dir": "demo",
+            "files": {
+                "config": {"exists": True, "path": "demo/config.yaml"},
+                "env": {"exists": True, "path": "demo/.env"},
+                "env_example": {"exists": True, "path": "demo/.env.example"},
+            },
+            "env": {
+                "llm_provider": "deepseek",
+                "llm_api_key_set": True,
+                "llm_base_url_set": True,
+                "llm_model_set": True,
+                "missing_llm_env": [],
+                "platforms": [],
+            },
+            "registry_fields": {"field_count": 2, "sections": {"execution": [], "llm": []}},
+            "registry_coverage": {
+                "config_yaml_field_count": 1,
+                "config_yaml_sections": ["execution"],
+                "present_config_sections": ["execution"],
+            },
+            "directories": [],
+            "warnings": [],
+            "errors": [],
+        },
+        "effective_config": {
+            "field_count": 2,
+            "sections": {
+                "execution": [{
+                    "path": "execution.mode",
+                    "value": "standard",
+                    "source": "config.yaml",
+                }],
+                "llm": [{
+                    "path": "LLM_API_KEY",
+                    "value": "<set>",
+                    "source": ".env",
+                }],
+            },
+        },
+    }
+
+    text = format_doctor_report(report, section="config")
+
+    assert "配置检查" in text
+    assert "Effective Config: 2 fields" in text
+    assert "execution.mode: standard (config.yaml)" in text
+    assert "LLM_API_KEY: <set> (.env)" in text
 
 
 def test_format_plugin_report_includes_traceback_when_requested():
