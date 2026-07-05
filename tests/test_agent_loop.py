@@ -85,6 +85,14 @@ async def test_simple_response(provider):
     assert result["completed"]
     assert result["api_calls"] == 1
     assert result["messages"][-1]["role"] == "assistant"
+    report = result["turn_report"]
+    assert report["status"] == "completed"
+    assert report["completed"] is True
+    assert report["llm"]["calls"] == 1
+    assert report["llm"]["input_tokens"] == 5
+    assert report["llm"]["output_tokens"] == 3
+    assert report["tools"]["total"] == 0
+    assert report["final_response_summary"] == "Hello!"
     assert [event.type for event in recorder.events] == [
         "turn_start",
         "llm_start",
@@ -200,6 +208,8 @@ async def test_empty_response_retry(provider):
     assert result["completed"]
     assert transport.calls == 2
     assert "OK" in result["final_response"]
+    assert result["turn_report"]["retries"][0]["category"] == "empty_response"
+    assert result["turn_report"]["llm"]["calls"] == 2
 
 
 @pytest.mark.asyncio
@@ -235,11 +245,61 @@ async def test_tool_use_loop(provider):
     assert result["completed"]
     assert transport.calls == 2
     assert "Done" in result["final_response"]
+    report = result["turn_report"]
+    assert report["llm"]["calls"] == 2
+    assert report["tools"]["total"] == 1
+    assert report["tools"]["success"] == 1
+    assert report["tools"]["items"][0]["tool_name"] == "echo"
+    assert report["tools"]["items"][0]["tool_use_id"] == "c1"
+    assert report["tools"]["items"][0]["status"] == "success"
+    assert report["tools"]["items"][0]["decision_stage"] == "runtime_guard"
 
     # Verify tool_result was appended
     tool_results = [m for m in result["messages"] if isinstance(m.get("content"), list)
                     and any(b.get("type") == "tool_result" for b in m["content"])]
     assert len(tool_results) >= 1
+
+
+@pytest.mark.asyncio
+async def test_turn_report_records_denied_tool_decision(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "w1", "name": "danger", "input": {"value": "x"}}],
+            usage={"input_tokens": 4, "output_tokens": 1},
+        ),
+        NormalizedResponse(text="Done!", finish_reason="end_turn",
+                          usage={"input_tokens": 3, "output_tokens": 2}),
+    ])
+    agent = init_agent(transport, provider)
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _danger(value: str = ""):
+        return f"danger:{value}"
+
+    tool_registry.register(ToolEntry(
+        name="danger",
+        description="Danger",
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        handler=_danger,
+        permission_category="write",
+        is_destructive=True,
+    ))
+
+    ctx = await build_turn_context(agent, "Test")
+    result = await run_conversation(agent, ctx)
+
+    item = result["turn_report"]["tools"]["items"][0]
+    assert result["turn_report"]["tools"]["denied"] == 1
+    assert item["tool_name"] == "danger"
+    assert item["tool_use_id"] == "w1"
+    assert item["status"] == "denied"
+    assert item["decision_stage"] == "permission"
+    assert item["permission_category"] == "write"
+    assert item["reason_code"] == "permission_required"
+    assert item["required_allow"] == "write"
 
 
 @pytest.mark.asyncio
@@ -253,6 +313,8 @@ async def test_llm_failure_returns_failed_status(provider):
     assert result["status"] == "failed"
     assert result["error"] == "RuntimeError: transport boom"
     assert "模型调用出错" in result["final_response"]
+    assert result["turn_report"]["status"] == "failed"
+    assert result["turn_report"]["error"] == "RuntimeError: transport boom"
 
 
 @pytest.mark.asyncio
@@ -328,6 +390,8 @@ async def test_streaming_emits_deltas_when_sink_opts_in(provider):
     assert len(text_deltas) == 3  # "Hey" → 3 chars
     assert "".join(e.data["chunk"] for e in text_deltas) == "Hey"
     assert result["completed"]
+    assert result["turn_report"]["event_counts"]["assistant_delta"] == 3
+    assert result["turn_report"]["event_counts"]["thinking_delta"] == 1
 
 
 @pytest.mark.asyncio

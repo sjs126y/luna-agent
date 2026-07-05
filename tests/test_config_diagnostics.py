@@ -75,6 +75,65 @@ sandbox:
     assert any("execution.mode 不支持" in error for error in report["errors"])
 
 
+def test_config_report_includes_registry_field_summary(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text("LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n", encoding="utf-8")
+
+    report = build_config_report(tmp_path)
+
+    registry = report["registry_fields"]
+    assert registry["field_count"] > 0
+    assert registry["config_yaml_field_count"] > 0
+    assert registry["env_field_count"] > 0
+    assert report["registry_schema"]["version"] == 1
+    assert report["registry_schema"]["field_count"] == registry["field_count"]
+    assert report["registry_snapshot"]["field_count"] == registry["field_count"]
+    assert report["registry_source_counts"]
+    assert report["registry_coverage"]["config_yaml_field_count"] > 0
+    assert "storage" in report["registry_coverage"]["present_config_sections"]
+    assert "gateway" in registry["sections"]
+    assert any(
+        item["path"] == "gateway.platform_send_max_retries"
+        for item in registry["sections"]["gateway"]
+    )
+
+
+def test_config_report_includes_registry_validation_errors(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+gateway:
+  platform_send_max_retries: -1
+sandbox:
+  bash_allow_network: "yes"
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text("LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n", encoding="utf-8")
+
+    report = build_config_report(tmp_path)
+
+    assert any(
+        "gateway.platform_send_max_retries 必须大于等于 0" in error
+        for error in report["registry_validation_errors"]
+    )
+    assert any(
+        "sandbox.bash_allow_network 必须是 true/false" in error
+        for error in report["registry_validation_errors"]
+    )
+    assert set(report["registry_validation_errors"]).issubset(set(report["errors"]))
+
+
 def test_config_report_accepts_execution_policy_overrides(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

@@ -10,6 +10,14 @@ from typing import Any
 
 import yaml
 
+from personal_agent.config_loader import ConfigLoader
+from personal_agent.config_registry import (
+    CONFIG_REGISTRY,
+    registry_coverage,
+    registry_fields_summary,
+    registry_schema,
+    validate_registry_config,
+)
 from personal_agent.execution import (
     VALID_EXECUTION_MODES,
     VALID_PERMISSION_CATEGORIES,
@@ -124,7 +132,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     directories = _directory_report(base, config)
     unknown_keys = [
         key for key in sorted(config)
-        if key not in KNOWN_TOP_LEVEL_KEYS and key not in DEPRECATED_TOP_LEVEL_KEYS
+        if key not in _known_top_level_keys() and key not in DEPRECATED_TOP_LEVEL_KEYS
     ]
     deprecated_keys = [
         {"key": key, "message": DEPRECATED_TOP_LEVEL_KEYS[key]}
@@ -132,6 +140,9 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         if key in DEPRECATED_TOP_LEVEL_KEYS
     ]
     validation = _validate_config(config)
+    registry_validation = validate_registry_config(config)
+    registry_snapshot = ConfigLoader(base_dir=base).load(strict=False)
+    coverage = registry_coverage(config)
     env_validation = _validate_env(
         llm_provider=llm_provider,
         llm_api_mode=llm_api_mode,
@@ -172,9 +183,13 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
 
     errors.extend(env_validation["errors"])
     errors.extend(validation["errors"])
+    errors.extend(registry_validation["errors"])
+    errors.extend(registry_snapshot.errors)
     errors.extend(mcp_servers["errors"])
     warnings.extend(env_validation["warnings"])
     warnings.extend(validation["warnings"])
+    warnings.extend(registry_validation["warnings"])
+    warnings.extend(registry_snapshot.warnings)
     warnings.extend(path_warnings)
     warnings.extend(mcp_servers["warnings"])
 
@@ -232,11 +247,26 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         "unknown_nested_keys": validation["unknown_nested_keys"],
         "deprecated_keys": deprecated_keys,
         "migration_hints": migration_hints,
+        "registry_fields": registry_fields_summary(),
+        "registry_schema": registry_schema(),
+        "registry_snapshot": registry_snapshot.as_dict(),
+        "registry_coverage": coverage,
+        "registry_validation_errors": registry_validation["errors"],
+        "registry_validation_warnings": registry_validation["warnings"],
+        "registry_loader_errors": list(registry_snapshot.errors),
+        "registry_loader_warnings": list(registry_snapshot.warnings),
+        "registry_source_counts": dict(registry_snapshot.source_counts),
         "recommended_commands": recommended_commands,
         "errors": errors,
         "warnings": warnings,
         "path_warnings": path_warnings,
-        "validation_errors": validation["errors"] + env_validation["errors"] + mcp_servers["errors"],
+        "validation_errors": (
+            validation["errors"]
+            + registry_validation["errors"]
+            + list(registry_snapshot.errors)
+            + env_validation["errors"]
+            + mcp_servers["errors"]
+        ),
         "next_steps": next_steps,
     }
 
@@ -312,7 +342,7 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     unknown_nested_keys: list[str] = []
 
     sections: dict[str, dict[str, Any]] = {}
-    for section, allowed_keys in KNOWN_SECTION_KEYS.items():
+    for section, allowed_keys in _known_section_keys().items():
         raw = config.get(section)
         if raw is None:
             sections[section] = {}
@@ -445,6 +475,25 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         "warnings": _dedupe(warnings),
         "unknown_nested_keys": sorted(_dedupe(unknown_nested_keys)),
     }
+
+
+def _known_top_level_keys() -> set[str]:
+    return set(KNOWN_TOP_LEVEL_KEYS) | CONFIG_REGISTRY.yaml_known_sections()
+
+
+def _known_section_keys() -> dict[str, set[str] | None]:
+    result: dict[str, set[str] | None] = {
+        section: None if keys is None else set(keys)
+        for section, keys in CONFIG_REGISTRY.yaml_known_keys_by_section().items()
+    }
+    for section, keys in KNOWN_SECTION_KEYS.items():
+        if keys is None:
+            result[section] = None
+            continue
+        if section in result and result[section] is None:
+            continue
+        result.setdefault(section, set()).update(keys)
+    return result
 
 
 def _directory_report(base: Path, config: dict[str, Any]) -> list[dict[str, Any]]:

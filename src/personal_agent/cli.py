@@ -14,6 +14,7 @@ import typer
 
 from personal_agent.config import Settings
 from personal_agent.config_diagnostics import build_config_report, ensure_config_dirs
+from personal_agent.config_registry import effective_config_snapshot
 from personal_agent.context_budget import build_context_budget
 from personal_agent.cli_chat import run_cli_once_sync, run_cli_repl_sync
 from personal_agent.cli_shell import ShellRenderOptions, run_cli_shell_sync
@@ -899,6 +900,7 @@ async def _serve_dry_run(*, json_output: bool = False) -> None:
             typer.echo("启动检查未通过。")
         runtime = report.get("runtime", {})
         typer.echo(f"数据目录: {runtime.get('data_dir') or report.get('data_dir') or '-'}")
+        typer.echo(f"Boot: {_format_boot_summary(runtime.get('boot', {}))}")
         typer.echo(f"插件数: {runtime.get('plugins', 0)}")
         typer.echo(f"Gateway 已创建: {_yes(runtime.get('gateway_created', False))}")
         typer.echo(f"Gateway 运行: {_yes(runtime.get('gateway_running', False))}")
@@ -994,10 +996,21 @@ async def _build_serve_dry_run_report() -> dict[str, Any]:
             "next_steps": list(config_report.get("next_steps", [])) if errors else [],
         }
     except Exception as exc:
+        boot = _boot_dict_from_exception(exc)
+        runtime_error = {
+            "initialized": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        if boot:
+            runtime_error.update({
+                "boot": boot,
+                "boot_ok": bool(boot.get("ok", False)),
+                "boot_failed_step": str(boot.get("failed_step") or ""),
+            })
         return {
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",
-            "runtime": {"initialized": False, "error": f"{type(exc).__name__}: {exc}"},
+            "runtime": runtime_error,
             "gateway": {},
             "platforms": [],
             "config": build_config_report(Path(".")),
@@ -1054,30 +1067,38 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
             "_plugins": plugins,
         }
     except Exception as exc:
-        return {
-            "runtime": {
-                "initialized": False,
-                "error": f"{type(exc).__name__}: {exc}",
-                "data_dir": str(settings.agent_data_dir),
-                "db_open": False,
-                "mcp_enabled": bool(settings.mcp_enabled),
-                "mcp_running": False,
-                "mcp": {
-                    "enabled": bool(settings.mcp_enabled),
-                    "running": False,
-                    "configured_count": len(settings.mcp_servers),
-                    "connected_count": 0,
-                    "total_tools": 0,
-                    "registered_tools": [],
-                    "servers": [],
-                },
-                "gateway_created": False,
-                "gateway_running": False,
-                "gateway": {},
-                "plugins": 0,
-                "cached_agents": 0,
-                "closed": True,
+        boot = _boot_dict_from_exception(exc)
+        runtime_data = {
+            "initialized": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "data_dir": str(settings.agent_data_dir),
+            "db_open": False,
+            "mcp_enabled": bool(settings.mcp_enabled),
+            "mcp_running": False,
+            "mcp": {
+                "enabled": bool(settings.mcp_enabled),
+                "running": False,
+                "configured_count": len(settings.mcp_servers),
+                "connected_count": 0,
+                "total_tools": 0,
+                "registered_tools": [],
+                "servers": [],
             },
+            "gateway_created": False,
+            "gateway_running": False,
+            "gateway": {},
+            "plugins": 0,
+            "cached_agents": 0,
+            "closed": True,
+        }
+        if boot:
+            runtime_data.update({
+                "boot": boot,
+                "boot_ok": bool(boot.get("ok", False)),
+                "boot_failed_step": str(boot.get("failed_step") or ""),
+            })
+        return {
+            "runtime": runtime_data,
             "memory": {
                 "provider": settings.memory_provider,
                 "external_provider_config": settings.memory_external_provider,
@@ -1168,6 +1189,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "llm_model": settings.llm_model,
         "mcp_enabled": settings.mcp_enabled,
         "config": config_report,
+        "effective_config": effective_config_snapshot(settings),
         "runtime": runtime_health["runtime"],
         "memory": runtime_health["memory"],
         "gateway": runtime_health["runtime"].get("gateway", {}),
@@ -1193,6 +1215,10 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
 
 
 def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
+    from personal_agent.runtime import BootReport
+
+    boot_report = BootReport.bootstrap()
+    boot_report.error("settings", f"{type(exc).__name__}: {exc}")
     config_report = build_config_report(Path("."))
     data_dir = _config_directory(config_report, "data_dir", "./data")
     sandbox_roots = [
@@ -1209,6 +1235,7 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
         "llm_model": config_report.get("env", {}).get("llm_model") or "-",
         "mcp_enabled": False,
         "config": config_report,
+        "effective_config": {"field_count": 0, "fields": [], "sections": {}},
         "runtime": {
             "initialized": False,
             "db_open": False,
@@ -1217,6 +1244,9 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
             "gateway_running": False,
             "cached_agents": 0,
             "error": f"Settings 初始化失败: {type(exc).__name__}: {exc}",
+            "boot": boot_report.as_dict(),
+            "boot_ok": False,
+            "boot_failed_step": "settings",
         },
         "memory": {
             "builtin_available": False,
@@ -1288,6 +1318,75 @@ def _doctor_section_payload(report: dict[str, Any], section: str) -> dict[str, A
     return report
 
 
+def _boot_dict_from_exception(exc: BaseException) -> dict[str, Any]:
+    from personal_agent.runtime import boot_report_from_exception
+
+    boot_report = boot_report_from_exception(exc)
+    return boot_report.as_dict() if boot_report is not None else {}
+
+
+def _format_boot_summary(boot: dict[str, Any]) -> str:
+    if not isinstance(boot, dict) or not boot:
+        return "-"
+    summary = boot.get("summary") or {}
+    state = "正常" if boot.get("ok") else f"失败({boot.get('failed_step') or '-'})"
+    return (
+        f"{state} "
+        f"total={summary.get('total', 0)} "
+        f"ok={summary.get('ok', 0)} "
+        f"skipped={summary.get('skipped', 0)} "
+        f"not_run={summary.get('not_run', 0)} "
+        f"error={summary.get('error', 0)}"
+    )
+
+
+def _format_boot_step_lines(boot: dict[str, Any]) -> list[str]:
+    if not isinstance(boot, dict) or not boot.get("steps"):
+        return ["  - 无"]
+    lines = []
+    for step in boot.get("steps", []):
+        name = step.get("name") or "-"
+        status = step.get("status") or "-"
+        duration = step.get("duration", 0.0)
+        detail = step.get("detail") or ""
+        error = step.get("error") or ""
+        suffix = ""
+        if detail:
+            suffix += f" detail={detail}"
+        if error:
+            suffix += f" error={error}"
+        lines.append(f"  - {name}: {status} {duration:.3f}s{suffix}")
+    return lines
+
+
+def _format_turn_summary(turns: dict[str, Any]) -> str:
+    if not isinstance(turns, dict) or not turns:
+        return "-"
+    return (
+        f"stored={turns.get('stored', 0)} "
+        f"last={turns.get('last_status') or '-'} "
+        f"duration={float(turns.get('last_duration') or 0.0):.3f}s "
+        f"llm={turns.get('last_llm_calls', 0)} "
+        f"tools={turns.get('last_tool_calls', 0)} "
+        f"retries={turns.get('last_retries', 0)}"
+    )
+
+
+def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
+    if not isinstance(turns, dict) or not turns:
+        return ["  stored: 0"]
+    return [
+        f"  stored: {turns.get('stored', 0)}",
+        f"  last status: {turns.get('last_status') or '-'}",
+        f"  last duration: {float(turns.get('last_duration') or 0.0):.3f}s",
+        f"  last llm calls: {turns.get('last_llm_calls', 0)}",
+        f"  last tool calls: {turns.get('last_tool_calls', 0)}",
+        f"  last tokens: in={turns.get('last_input_tokens', 0)} out={turns.get('last_output_tokens', 0)}",
+        f"  last retries: {turns.get('last_retries', 0)}",
+        f"  last error: {turns.get('last_error') or '-'}",
+    ]
+
+
 def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
@@ -1319,6 +1418,8 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         "",
         "Runtime:",
         f"  初始化: {_yes(runtime.get('initialized', False))}",
+        f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
+        f"  Turns: {_format_turn_summary(runtime.get('turns', {}))}",
         f"  DB 打开: {_yes(runtime.get('db_open', False))}",
         f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
         f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1333,6 +1434,9 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  unknown keys: {_list_or_none(config.get('unknown_keys', []))}",
         f"  errors: {len(config.get('errors', []))}",
         f"  warnings: {len(config.get('warnings', []))}",
+    ]
+    lines.extend(_format_effective_config_lines(report.get("effective_config", {})))
+    lines.extend([
         "",
         "Gateway:",
         f"  started: {_yes(gateway.get('started', False))}",
@@ -1366,7 +1470,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  history limit: {report.get('agents', {}).get('history_limit', 0)}",
         "",
         "Execution:",
-    ]
+    ])
     lines.extend(_format_execution_lines(report.get("execution", {})))
     lines.extend(["", "Tools:"])
     lines.extend(_format_tool_summary_lines(tools))
@@ -1507,9 +1611,73 @@ def _format_execution_lines(execution: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str]:
+    fields = {
+        str(item.get("path")): item
+        for item in effective_config.get("fields", [])
+        if isinstance(item, dict)
+    }
+    paths = [
+        "execution.mode",
+        "sandbox.bash_allow_network",
+        "sandbox.bash_restrict_paths",
+        "gateway.platform_send_max_retries",
+        "gateway.platform_message_dedupe_max_size",
+        "memory.external_provider",
+        "plugins.enabled",
+        "LLM_API_KEY",
+    ]
+    lines = ["", f"Effective Config: {effective_config.get('field_count', 0)} fields"]
+    for path in paths:
+        item = fields.get(path)
+        if not item:
+            continue
+        lines.append(f"  {path}: {_format_config_value(item.get('value'))}")
+    return lines
+
+
+def _format_effective_config_section(effective_config: dict[str, Any]) -> list[str]:
+    sections = effective_config.get("sections") or {}
+    if not sections:
+        return []
+    lines = [f"Effective Config: {effective_config.get('field_count', 0)} fields"]
+    for section, fields in sorted(sections.items()):
+        lines.append(f"  {section}:")
+        for item in fields:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path") or "-"
+            value = _format_config_value(item.get("value"))
+            source = item.get("source") or "-"
+            lines.append(f"    {path}: {value} ({source})")
+    return lines
+
+
+def _format_config_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return _yes(value)
+    if isinstance(value, str):
+        return value if value else "无"
+    if value is None:
+        return "无"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list):
+        return _list_or_none(value)
+    if isinstance(value, dict):
+        if not value:
+            return "无"
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
+
+
 def _format_doctor_section(report: dict[str, Any], section: str) -> str:
     if section == "config":
-        return format_config_report(report.get("config", {}))
+        lines = [format_config_report(report.get("config", {}))]
+        details = _format_effective_config_section(report.get("effective_config", {}))
+        if details:
+            lines.extend(["", *details])
+        return "\n".join(lines)
     if section == "plugins":
         return format_plugin_list(report.get("plugins", []))
     lines = [f"Personal Agent 诊断: {section}"]
@@ -1518,6 +1686,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         gateway = report.get("gateway", {})
         lines.extend([
             f"  初始化: {_yes(runtime.get('initialized', False))}",
+            f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
+            f"  Turns: {_format_turn_summary(runtime.get('turns', {}))}",
             f"  DB 打开: {_yes(runtime.get('db_open', False))}",
             f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
             f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1526,6 +1696,10 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
             f"  pending messages: {gateway.get('pending_messages', 0)}",
             f"  runtime 错误: {runtime.get('error') or '-'}",
         ])
+        lines.extend(["", "Boot steps:"])
+        lines.extend(_format_boot_step_lines(runtime.get("boot", {})))
+        lines.extend(["", "Turns:"])
+        lines.extend(_format_turn_detail_lines(runtime.get("turns", {})))
     elif section == "platforms":
         platforms = report.get("platforms", [])
         if platforms:
@@ -1543,6 +1717,10 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
 def format_config_report(report: dict[str, Any]) -> str:
     files = report.get("files", {})
     env = report.get("env", {})
+    registry_fields = report.get("registry_fields", {})
+    registry_schema = report.get("registry_schema", {})
+    registry_coverage = report.get("registry_coverage", {})
+    registry_source_counts = report.get("registry_source_counts", {})
     lines = [
         "配置检查",
         f"目录: {report.get('base_dir') or '-'}",
@@ -1559,6 +1737,16 @@ def format_config_report(report: dict[str, Any]) -> str:
         f"  base URL: {_yes(env.get('llm_base_url_set', False))}",
         f"  model: {_yes(env.get('llm_model_set', False))}",
         f"  缺失环境变量: {_list_or_none(env.get('missing_llm_env', []))}",
+        "",
+        "配置字段:",
+        f"  schema version: {registry_schema.get('version', '-')}",
+        f"  known fields: {registry_fields.get('field_count', 0)}",
+        f"  schema fields: {registry_schema.get('field_count', 0)}",
+        f"  config.yaml fields: {registry_coverage.get('config_yaml_field_count', registry_fields.get('config_yaml_field_count', 0))}",
+        f"  sections: {_list_or_none((registry_fields.get('sections') or {}).keys())}",
+        f"  config sections: {_list_or_none(registry_coverage.get('config_yaml_sections', []))}",
+        f"  present sections: {_list_or_none(registry_coverage.get('present_config_sections', []))}",
+        f"  source counts: {_format_counts(registry_source_counts)}",
         "",
         "平台:",
     ]
@@ -1583,6 +1771,18 @@ def format_config_report(report: dict[str, Any]) -> str:
         lines.append("已废弃配置:")
         for item in report["deprecated_keys"]:
             lines.append(f"  - {item['key']}: {item['message']}")
+    if report.get("registry_validation_errors"):
+        lines.extend(["", "Registry 校验错误:"])
+        lines.extend(f"  - {error}" for error in report["registry_validation_errors"])
+    if report.get("registry_validation_warnings"):
+        lines.extend(["", "Registry 校验警告:"])
+        lines.extend(f"  - {warning}" for warning in report["registry_validation_warnings"])
+    if report.get("registry_loader_errors"):
+        lines.extend(["", "Registry Loader 错误:"])
+        lines.extend(f"  - {error}" for error in report["registry_loader_errors"])
+    if report.get("registry_loader_warnings"):
+        lines.extend(["", "Registry Loader 警告:"])
+        lines.extend(f"  - {warning}" for warning in report["registry_loader_warnings"])
     if report.get("migration_hints"):
         lines.extend(["", "迁移建议:"])
         lines.extend(f"  - {hint}" for hint in report["migration_hints"])
@@ -1809,6 +2009,9 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
             issues.append(f"Runtime 初始化失败: {runtime.get('error') or '未知错误'}")
         elif not runtime.get("db_open", False):
             issues.append("Runtime DB 未打开。")
+        boot = runtime.get("boot") or {}
+        if boot and not boot.get("ok", False):
+            issues.append(f"Runtime boot 失败: {boot.get('failed_step') or '未知阶段'}")
 
     memory = report.get("memory", {})
     if memory and not memory.get("builtin_available", False):

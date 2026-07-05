@@ -48,6 +48,10 @@ def test_doctor_report_includes_execution_policy():
     assert report["execution"]["profile"]["sandbox"]["hard_prechecks_enforced"] is True
     assert report["execution"]["permissions"]["background"] == "ask"
     assert report["execution"]["overrides"]["tool_permissions"]["background"] == "ask"
+    assert report["effective_config"]["field_count"] > 0
+    effective_fields = {item["path"]: item for item in report["effective_config"]["fields"]}
+    assert effective_fields["execution.mode"]["value"] == "sovereign"
+    assert effective_fields["LLM_API_KEY"]["value"] == "<set>"
     assert report["tools"]["total"] >= 0
     assert "by_permission" in report["tools"]
     assert "Execution:" in text
@@ -55,6 +59,9 @@ def test_doctor_report_includes_execution_policy():
     assert "by risk:" in text
     assert "mode: sovereign" in text
     assert "profile: Sovereign" in text
+    assert "Effective Config:" in text
+    assert "execution.mode: sovereign" in text
+    assert "LLM_API_KEY: <set>" in text
     assert "effective permissions:" in text
     assert "overrides: background=ask" in text
     assert "hard prechecks: enforced" in text
@@ -609,6 +616,8 @@ def test_format_config_report_shows_next_steps():
             }],
         },
         "directories": [{"kind": "data_dir", "path": "demo/data", "exists": False, "required": True}],
+        "registry_schema": {"version": 1, "field_count": 3},
+        "registry_source_counts": {"default": 2, ".env": 1},
         "unknown_keys": ["old"],
         "deprecated_keys": [],
         "migration_hints": ["确认或移除未知顶层配置: old。"],
@@ -620,6 +629,12 @@ def test_format_config_report_shows_next_steps():
     text = format_config_report(report)
 
     assert "配置检查" in text
+    assert "配置字段:" in text
+    assert "schema version: 1" in text
+    assert "schema fields: 3" in text
+    assert "source counts: .env=1, default=2" in text
+    assert "known fields:" in text
+    assert "config.yaml fields:" in text
     assert "未知配置: old" in text
     assert "平台:" in text
     assert "platforms/qq" in text
@@ -627,6 +642,63 @@ def test_format_config_report_shows_next_steps():
     assert "迁移建议" in text
     assert "推荐命令" in text
     assert "运行 personal-agent init" in text
+
+
+def test_format_doctor_config_section_includes_grouped_effective_config():
+    report = {
+        "config": {
+            "ok": True,
+            "base_dir": "demo",
+            "files": {
+                "config": {"exists": True, "path": "demo/config.yaml"},
+                "env": {"exists": True, "path": "demo/.env"},
+                "env_example": {"exists": True, "path": "demo/.env.example"},
+            },
+            "env": {
+                "llm_provider": "deepseek",
+                "llm_api_key_set": True,
+                "llm_base_url_set": True,
+                "llm_model_set": True,
+                "missing_llm_env": [],
+                "platforms": [],
+            },
+            "registry_fields": {"field_count": 2, "sections": {"execution": [], "llm": []}},
+            "registry_schema": {"version": 1, "field_count": 2},
+            "registry_source_counts": {"default": 2},
+            "registry_coverage": {
+                "config_yaml_field_count": 1,
+                "config_yaml_sections": ["execution"],
+                "present_config_sections": ["execution"],
+            },
+            "directories": [],
+            "warnings": [],
+            "errors": [],
+        },
+        "effective_config": {
+            "field_count": 2,
+            "sections": {
+                "execution": [{
+                    "path": "execution.mode",
+                    "value": "standard",
+                    "source": "config.yaml",
+                }],
+                "llm": [{
+                    "path": "LLM_API_KEY",
+                    "value": "<set>",
+                    "source": ".env",
+                }],
+            },
+        },
+    }
+
+    text = format_doctor_report(report, section="config")
+
+    assert "配置检查" in text
+    assert "schema version: 1" in text
+    assert "schema fields: 2" in text
+    assert "Effective Config: 2 fields" in text
+    assert "execution.mode: standard (config.yaml)" in text
+    assert "LLM_API_KEY: <set> (.env)" in text
 
 
 def test_format_plugin_report_includes_traceback_when_requested():
@@ -824,6 +896,26 @@ def test_format_doctor_report_includes_summary_and_issues():
                 "stderr_tail": ["startup failed"],
             }],
         },
+        "runtime": {
+            "initialized": True,
+            "db_open": True,
+            "mcp_running": True,
+            "gateway_created": True,
+            "gateway_running": True,
+            "cached_agents": 0,
+            "error": "",
+            "turns": {
+                "stored": 2,
+                "last_status": "failed",
+                "last_error": "RuntimeError: boom",
+                "last_duration": 1.2345,
+                "last_llm_calls": 1,
+                "last_tool_calls": 3,
+                "last_input_tokens": 10,
+                "last_output_tokens": 5,
+                "last_retries": 1,
+            },
+        },
         "platforms": [{
             "key": "platforms/telegram",
             "name": "Telegram",
@@ -876,6 +968,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "总体状态: 需要注意" in text
     assert "Agents:" in text
     assert "Tools:" in text
+    assert "Turns: stored=2 last=failed duration=1.234s llm=1 tools=3 retries=1" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
@@ -887,6 +980,13 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "capabilities=text,markdown,typing,max=4096" in text
     assert "平台 telegram 连接失败: RuntimeError: no token" in text
     assert "插件 user/demo: 加载错误: boom" in text
+
+    runtime_text = format_doctor_report(report, section="runtime")
+    assert "Turns:" in runtime_text
+    assert "  stored: 2" in runtime_text
+    assert "  last status: failed" in runtime_text
+    assert "  last tokens: in=10 out=5" in runtime_text
+    assert "  last error: RuntimeError: boom" in runtime_text
 
 
 def _plugin_report(
