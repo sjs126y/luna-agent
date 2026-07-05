@@ -406,6 +406,7 @@ def chat(
     once: str = typer.Option("", "--once", "-o", help="只运行一轮消息后退出。"),
     session: str = typer.Option("default", "--session", "-s", help="CLI 会话名。"),
     simple: bool = typer.Option(False, "--simple", help="使用旧版简单 REPL。"),
+    ui: str = typer.Option("classic", "--ui", help="渲染器: classic (默认) | inline (CC/Codex 风格行内滚动，实验性)。"),
     verbose: bool = typer.Option(False, "--verbose", help="显示更详细的模型和工具事件。"),
     quiet_events: bool = typer.Option(False, "--quiet-events", help="隐藏模型和工具事件，只显示对话与命令结果。"),
 ) -> None:
@@ -416,6 +417,10 @@ def chat(
             run_cli_once_sync(one_shot, session_name=session)
         elif simple:
             run_cli_repl_sync(session_name=session)
+        elif ui == "inline":
+            from personal_agent.tui.app import run_inline_tui_sync
+
+            run_inline_tui_sync(session_name=session)
         else:
             run_cli_shell_sync(
                 session_name=session,
