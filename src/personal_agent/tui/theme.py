@@ -20,18 +20,31 @@ RESET = "\x1b[0m"
 # minimal look) instead of fighting it.
 DIM = "2"
 BOLD = "1"
-USER_BAR = "36"       # user prompt bar ▍: cyan
-USER = "1"            # user name: bold
+USER_BAR = "90"       # user prompt bar ▍: bright-black (gray)
+USER = "90"           # user name: gray
+USER_MSG = "90"       # user message body: gray, so it recedes vs. the AI reply
 AGENT_BAR = "35"      # agent prompt bar ▍: magenta
 AGENT = "1;35"        # "Agent" label: bold magenta
 TOOL_ACTIVE = "36"    # running tool line: cyan
 TOOL_OK = "32"        # completed tool ✓: green
 TOOL_ERR = "31"       # failed tool ✗: red
+TOOL_HINT = "2"       # "(Ctrl+O 展开)" hint: dim
 THINKING = "2"        # thinking hint: dim
 EXPAND_HEADER = "34"  # Ctrl+O expand header: blue
 STATUS = "2"          # status bar: dim
-STATUS_ACCENT = "36"  # status bar highlighted segment (mode): cyan
+STATUS_ACCENT = "36"  # status bar highlighted segment (token meter): cyan
 CONFIRM = "1;33"      # inline tool confirmation prompt: bold yellow
+
+# Per-mode accent colors so the current execution mode is instantly readable.
+MODE_STYLES = {
+    "normal": "32",       # green: safe, default
+    "acceptEdits": "33",  # yellow: edits auto-accepted
+    "auto": "1;31",       # bold red: fully autonomous, most caution
+}
+
+
+def mode_style(mode: str) -> str:
+    return MODE_STYLES.get(mode, "36")
 
 # Vertical bar that leads user / agent lines (CC/Codex-style gutter).
 BAR = "▍"
@@ -59,6 +72,18 @@ def divider(width: int) -> str:
 def gutter(bar_code: str, label: str, label_code: str) -> str:
     """Render a leading colored bar + label, e.g. ``▍你`` / ``▍Agent``."""
     return f"{sgr(BAR, bar_code)}{sgr(label, label_code)}"
+
+
+def humanize(n: int) -> str:
+    """Compact token count: 1659 -> 1.7k, 1_000_000 -> 1M."""
+    n = int(n)
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        v = n / 1000
+        return (f"{v:.1f}".rstrip("0").rstrip(".")) + "k"
+    v = n / 1_000_000
+    return (f"{v:.1f}".rstrip("0").rstrip(".")) + "M"
 
 
 def spark_meter(fraction: float, cells: int = 5) -> str:

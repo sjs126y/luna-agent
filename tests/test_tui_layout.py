@@ -63,3 +63,43 @@ def test_active_region_shows_pending_confirm():
     text = _active_text(state)
     assert "允许执行 write_file?" in text
     assert "[y/n/a]" in text
+
+
+def test_active_region_shows_expand_hint_when_idle_with_expandable():
+    state = UIState()
+    state.last_expandable = ("read", "DATA")
+    text = _active_text(state)
+    assert "Ctrl+O 展开" in text
+
+
+def test_status_bar_uses_distinct_mode_colors():
+    from personal_agent.tui import theme
+    from personal_agent.tui.layout import _status_bar
+
+    seen = set()
+    for mode in ("normal", "acceptEdits", "auto"):
+        state = UIState()
+        state.exec_mode = mode
+        bar = _status_bar(state)
+        assert mode in bar
+        # the mode's color code appears in the raw (pre-plain) string
+        code = theme.mode_style(mode)
+        assert f"\x1b[{code}m" in bar
+        seen.add(code)
+    assert len(seen) == 3  # three distinct colors
+
+
+def test_keyhint_bar_below_input_lists_shortcuts():
+    from personal_agent.tui.layout import _keyhint_bar
+
+    bar = _keyhint_bar()
+    for token in ("发送", "换行", "展开", "停止", "模式", "命令"):
+        assert token in bar
+
+
+def test_humanize_compacts_counts():
+    from personal_agent.tui import theme
+
+    assert theme.humanize(999) == "999"
+    assert theme.humanize(1659) == "1.7k"
+    assert theme.humanize(1_000_000) == "1M"

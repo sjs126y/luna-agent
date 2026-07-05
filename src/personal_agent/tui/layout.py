@@ -81,12 +81,18 @@ def build_layout(
                 preview = "…" + preview
             gutter = theme.gutter(theme.AGENT_BAR, "Agent", theme.AGENT)
             lines.append(f"{gutter}  {preview}{cursor}")
+        # Hint that the last tool's full output can be expanded with Ctrl+O.
+        if state.last_expandable and not tools and not state.pending_confirm:
+            lines.append(theme.sgr("  (Ctrl+O 展开上一个工具输出)", theme.TOOL_HINT))
         if state.pending_confirm:
             lines.append(theme.sgr(f"  ⚠ {state.pending_confirm}  [y/n/a]", theme.CONFIRM))
         return ANSI("\n".join(lines))
 
     def status_content() -> ANSI:
         return ANSI(_status_bar(state))
+
+    def keyhint_content() -> ANSI:
+        return ANSI(_keyhint_bar())
 
     active_window = Window(
         content=FormattedTextControl(active_content),
@@ -95,6 +101,10 @@ def build_layout(
     )
     status_window = Window(
         content=FormattedTextControl(status_content),
+        height=1,
+    )
+    keyhint_window = Window(
+        content=FormattedTextControl(keyhint_content),
         height=1,
     )
     # multiline=True so Ctrl+J can add real newlines; height grows with content
@@ -115,10 +125,13 @@ def build_layout(
         get_line_prefix=_line_prefix,
     )
 
+    # Status + key hints now live BELOW the input box (per user preference),
+    # so the eye reads: live output → your input → context/mode → key hints.
     body = HSplit([
         ConditionalContainer(active_window, filter=Condition(state.has_active_region)),
-        status_window,
         input_area,
+        status_window,
+        keyhint_window,
     ])
     # FloatContainer hosts the completion menu popup above the input line.
     root = FloatContainer(
@@ -135,14 +148,32 @@ def build_layout(
 
 
 def _status_bar(state: UIState) -> str:
-    # Mode gets a colored accent; everything else stays dim so it recedes.
-    mode = theme.sgr(state.exec_mode, theme.STATUS_ACCENT)
+    # Info line (below input): mode in its own color · model · context meter.
+    mode = theme.sgr(f"● {state.exec_mode}", theme.mode_style(state.exec_mode))
     parts: list[str] = [mode, theme.dim(state.model or "-")]
     if state.context_window:
         used = state.input_tokens + state.output_tokens
         frac = used / state.context_window if state.context_window else 0.0
         pct = int(frac * 100)
         meter = theme.sgr(theme.spark_meter(frac), theme.STATUS_ACCENT)
-        parts.append(theme.dim(f"{used:,}/{state.context_window:,} ") + meter + theme.dim(f" {pct}%"))
-    hint = theme.dim("⏎ 发送 · Ctrl+J 换行 · Ctrl+C 停止 · Shift+Tab 模式 · /help")
-    return theme.dim("  ·  ").join(parts) + theme.dim("   ") + hint
+        usage = (
+            f"{theme.humanize(used)}/{theme.humanize(state.context_window)}"
+        )
+        parts.append(f"{meter} {theme.dim(usage)} {theme.sgr(f'{pct}%', theme.STATUS_ACCENT)}")
+    return theme.dim("   ").join(parts)
+
+
+def _keyhint_bar() -> str:
+    # Key hints line (below the info line). Keys highlighted, labels dim.
+    def key(k: str, label: str) -> str:
+        return theme.sgr(k, theme.STATUS_ACCENT) + theme.dim(f" {label}")
+
+    hints = [
+        key("⏎", "发送"),
+        key("Ctrl+J", "换行"),
+        key("Ctrl+O", "展开"),
+        key("Ctrl+C", "停止"),
+        key("⇧Tab", "模式"),
+        key("/", "命令"),
+    ]
+    return theme.dim("  ").join(hints)
