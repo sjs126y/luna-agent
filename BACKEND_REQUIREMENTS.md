@@ -110,6 +110,52 @@ async def execute_tool_calls(tool_calls, messages, *, agent, hooks, event_sink, 
 
 ---
 
+## 需求 5：`/mode` 真正切换 execution policy profile（Phase 3 执行模式，后端大功能）
+
+**背景 — 现在有两条独立的「模式」轴，别混淆**：
+
+1. **`_destructive_allowed`（授权集合）** — 每轮的临时授权，`/allow write`、`/allow all` 写进
+   `agent._destructive_allowed`。**前端现有的 `/mode normal|acceptEdits|auto` 就是叠在这条轴上的
+   便捷标签**（normal 清空、acceptEdits 授权 write、auto 授权 all）。这条已经能用，不需要后端做。
+2. **`ExecutionPolicy.mode`（策略 profile）** — `guarded|standard|trusted|sovereign`，在
+   `execution.py::resolve_execution_policy(settings)` 里根据 config.yaml `execution.mode`
+   **在 agent 创建时解析一次**，决定每个工具 category 的 `allow|deny|ask`（见 `MODE_PROFILES`）。
+   **目前没有运行时切换它的通道** —— 改了只能重启。
+
+**这条需求 = 让用户在会话中动态切换第 2 条轴（policy profile）**，这是你说的「后端一个大功能」。
+
+**要做的（后端）**：
+
+- 提供一个运行时重解析/切换 execution policy 的入口，例如在 `CommandRuntime` 或
+  `ConversationService` 上加 `async def set_execution_mode(mode: str) -> str`：
+  - 校验 `mode in EXECUTION_MODES`（`config_registry.py:244`）。
+  - 重新构造 `ExecutionPolicy`（`resolve_execution_policy` 目前吃 settings，可能要改成能直接吃
+    一个 mode 字符串，或在 settings 上覆盖后重解析）。
+  - 把新 policy 挂到当前会话的 agent 上（`agent._execution_policy`，见 `agent/agent.py:56`），
+    并处理 agent LRU 缓存里已存在的实例（要么直接改属性，要么让缓存失效重建）。
+  - 决定是否持久化：是只影响本会话，还是写回 config.yaml `execution.mode`。建议**只影响本会话**，
+    避免污染全局配置；跨会话仍读 config。
+- 决定 `guarded/standard/trusted/sovereign` 四档要不要跟前端的 `normal/acceptEdits/auto` 合并成
+  一套词汇，还是并存两个概念。**这是产品决策，需要你和 gpt 定**：
+  - 方案 A：前端 `/mode` 继续管授权集合（轻量），另开一个 `/policy guarded|standard|...` 管
+    execution profile（重量）。两者正交。
+  - 方案 B：把 `/mode` 的三档直接映射到 execution profile 的四档（比如 normal→standard、
+    auto→sovereign），废掉授权集合那套。改动更大，语义要重新对齐。
+
+**前端配合（等后端定了我再做，改动很小）**：
+
+- 状态栏已经在显示 `exec_mode`（现在显示的是授权集合推断出的 normal/acceptEdits/auto）。
+  后端确定 policy 切换入口和词汇后，我把状态栏改成读真正的 `execution_policy.mode`，
+  并把 `/mode` 或新 `/policy` 命令、`Shift+Tab` 循环接到后端的 `set_execution_mode` 上。
+- `conversation/command_runtime.py::current_execution_mode`（已存在）可以扩展成返回真正的
+  policy mode；前端 `_refresh_mode` 已经在每轮/每命令后调它，接上即可。
+
+**验收**：`/policy trusted`（或定好的命令）后，一个原本在 `standard` 下需要 ask 的 write 工具，
+在 `trusted` 下按 profile 直接放行；`/policy guarded` 后 bash 被 deny；状态栏实时反映当前 profile；
+重启后回到 config.yaml 的默认档。
+
+---
+
 ## 验收（后端做完后一起过）
 
 1. `uv run pytest -q` 全绿（前端已加的确认相关测试见 `tests/test_tui_app.py`、
@@ -128,9 +174,8 @@ async def execute_tool_calls(tool_calls, messages, *, agent, hooks, event_sink, 
 - `theme.py` 集中配色；markdown 代码块高亮 / 表格 / 列表对齐。
 - 活跃区高度上限（12 行）+ 超长流式截尾 + 超多工具折叠。
 - `--ui inline|classic` flag 与 config.yaml `agent.ui`（默认 classic）。
-- `/mode [normal|acceptEdits|auto]` 命令 + 状态栏显示 + `Shift+Tab` 循环切换
-  （**注意**：现版 `/mode` 是叠在 `_destructive_allowed` 授权集合上的便捷标签，
-  **没有**接 `_execution_policy` 的 mode 枚举 `guarded/standard/trusted/sovereign`。
-  若要让 `/mode` 真正翻转 execution policy profile，那是另一条独立的后端需求，
-  需要时再单列。）
+- `/mode [normal|acceptEdits|auto]` 命令 + 状态栏显示 + `Shift+Tab` 循环切换。
+  **注意**：现版 `/mode` 只叠在 `_destructive_allowed` 授权集合上（轻量、已能用），
+  **没有**接 `_execution_policy` 的 profile 枚举 `guarded/standard/trusted/sovereign`。
+  让它真正翻转 execution policy profile 是后端大功能，已单列为**需求 5**。
 - 确认框 UI、`confirm_tool` 回调、y/n/a 与 Ctrl+C 键绑定、runtime 签名探测降级。
