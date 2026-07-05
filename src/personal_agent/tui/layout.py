@@ -12,8 +12,10 @@ lands ABOVE this region and enters native scrollback.
 
 from __future__ import annotations
 
+from prompt_toolkit.completion import Completer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.history import History
 from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
@@ -24,7 +26,12 @@ from personal_agent.tui.state import UIState
 _DIVIDER = "\x1b[2m" + "─" * 50 + "\x1b[0m"
 
 
-def build_layout(state: UIState) -> tuple[HSplit, TextArea]:
+def build_layout(
+    state: UIState,
+    *,
+    completer: Completer | None = None,
+    history: History | None = None,
+) -> tuple[HSplit, TextArea]:
     """Return (root_container, input_area). Caller owns key bindings."""
 
     def active_content() -> ANSI:
@@ -50,7 +57,15 @@ def build_layout(state: UIState) -> tuple[HSplit, TextArea]:
         content=FormattedTextControl(status_content),
         height=1,
     )
-    input_area = TextArea(height=1, prompt="› ", multiline=False, wrap_lines=False)
+    input_area = TextArea(
+        height=1,
+        prompt="› ",
+        multiline=False,
+        wrap_lines=False,
+        completer=completer,
+        complete_while_typing=True,  # slash menu pops as you type '/'
+        history=history,
+    )
 
     root = HSplit([
         ConditionalContainer(active_window, filter=Condition(state.has_active_region)),

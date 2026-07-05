@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import asyncio
 
+from pathlib import Path
+
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import run_in_terminal
+from prompt_toolkit.history import FileHistory, History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
 
@@ -28,7 +31,11 @@ class InlineTuiApp:
         self.state = UIState()
         self.state.exec_mode = "normal"
         self.state.model = getattr(getattr(runtime, "settings", None), "llm_model", "") or ""
-        self.root, self.input_area = build_layout(self.state)
+        self.root, self.input_area = build_layout(
+            self.state,
+            completer=self._build_completer(),
+            history=self._build_history(),
+        )
         self.renderer = InlineRenderer(
             state=self.state,
             invalidate=self._invalidate,
@@ -37,6 +44,23 @@ class InlineTuiApp:
         )
         self._turn_task: asyncio.Task | None = None
         self.app: Application | None = None
+
+    # ── reuse the classic shell's completer + history ──
+    def _build_completer(self):
+        try:
+            from personal_agent.cli_shell import SLASH_COMMANDS, SlashCompleter
+
+            return SlashCompleter(SLASH_COMMANDS)
+        except Exception:
+            return None
+
+    def _build_history(self) -> History:
+        try:
+            data_dir = Path(getattr(self.runtime.settings, "agent_data_dir", "data"))
+            data_dir.mkdir(parents=True, exist_ok=True)
+            return FileHistory(str(data_dir / "cli_history.txt"))
+        except Exception:
+            return InMemoryHistory()
 
     # ── prompt_toolkit callbacks the renderer uses ──
     def _invalidate(self) -> None:
@@ -96,6 +120,17 @@ class InlineTuiApp:
 
         @kb.add("enter")
         def _(event) -> None:
+            # If the completion menu is open, accept it instead of submitting,
+            # so a bare '/' + Enter picks the top command (matches classic shell).
+            buf = event.current_buffer
+            state = buf.complete_state
+            if state is not None:
+                completion = state.current_completion or (
+                    state.completions[0] if state.completions else None
+                )
+                if completion is not None:
+                    buf.apply_completion(completion)
+                    return
             self._on_enter()
 
         @kb.add("c-j")
@@ -109,12 +144,26 @@ class InlineTuiApp:
             else:
                 self.input_area.text = ""
 
+        @kb.add("c-o")
+        def _(event) -> None:
+            self._expand_last()
+
         @kb.add("c-d")
         def _(event) -> None:
             if not self.input_area.text:
                 event.app.exit()
 
         return kb
+
+    def _expand_last(self) -> None:
+        """Print the most recent expandable output (tool result / thinking) into
+        scrollback. Inline model: no full-screen pager, just print above."""
+        if self.state.last_expandable is None:
+            return
+        name, full = self.state.last_expandable
+        header = f"\x1b[34m$ {name}\x1b[0m"
+        body = "\n".join(f"  {line}" for line in (full.splitlines() or [full]))
+        self._print_above(f"{header}\n{body}")
 
     async def run(self) -> None:
         self.app = Application(
