@@ -9,6 +9,7 @@ import pytest_asyncio
 
 from personal_agent.config import Settings
 from personal_agent.conversation import ConversationService
+from personal_agent.conversation.service import TURN_REPORT_HISTORY_LIMIT
 from personal_agent.db.database import Database
 from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
@@ -91,6 +92,31 @@ def _messages(user_text="hello", assistant_text="echo:hello"):
     ]
 
 
+def _turn_report(
+    *,
+    status="completed",
+    duration=1.25,
+    error="",
+    llm_calls=1,
+    tool_calls=2,
+    input_tokens=10,
+    output_tokens=5,
+    retries=None,
+):
+    return {
+        "status": status,
+        "duration": duration,
+        "error": error,
+        "llm": {
+            "calls": llm_calls,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        },
+        "tools": {"total": tool_calls, "items": []},
+        "retries": list(retries or []),
+    }
+
+
 @pytest.mark.asyncio
 async def test_run_turn_persists_history_and_invokes_session_hook(service, monkeypatch):
     svc, manager, _db = service
@@ -143,7 +169,7 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
             "final_response": "echo:hello",
             "messages": ctx.messages,
             "completed": True,
-            "turn_report": {"status": "completed", "llm": {"calls": 1}},
+            "turn_report": _turn_report(llm_calls=1, tool_calls=0),
         }
 
     monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
@@ -156,6 +182,22 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
     assert result.final_response == "echo:hello"
     assert result.turn_report["status"] == "completed"
     assert result.turn_report["llm"]["calls"] == 1
+    assert len(svc.turn_reports) == 1
+    envelope = svc.turn_reports[-1]
+    assert envelope["session_key"] == "cli:default:local"
+    assert envelope["source"]["platform"] == "cli"
+    assert envelope["source"]["user_id"] == "local"
+    assert envelope["status"] == "completed"
+    assert envelope["report"] == result.turn_report
+    summary = svc.turn_report_summary()
+    assert summary["stored"] == 1
+    assert summary["last_status"] == "completed"
+    assert summary["last_duration"] == 1.25
+    assert summary["last_llm_calls"] == 1
+    assert summary["last_tool_calls"] == 0
+    assert summary["last_input_tokens"] == 10
+    assert summary["last_output_tokens"] == 5
+    assert summary["last_retries"] == 0
 
 
 @pytest.mark.asyncio
@@ -178,6 +220,72 @@ async def test_run_turn_keeps_empty_turn_report_for_legacy_loop(service, monkeyp
     result = await svc.run_turn("cli:default:local", _source(), "hello")
 
     assert result.turn_report == {}
+    assert len(svc.turn_reports) == 0
+    assert svc.turn_report_summary()["stored"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_turn_records_failed_stopped_and_context_reports(service, monkeypatch):
+    svc, _manager, _db = service
+    reports = [
+        _turn_report(status="failed", error="RuntimeError: boom"),
+        _turn_report(status="stopped", duration=0.5, llm_calls=0, tool_calls=0),
+        _turn_report(status="context_overflow", duration=0.1, retries=[{"category": "limit"}]),
+    ]
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages(user_text=text))
+
+    async def run_conversation(agent, ctx):
+        report = reports.pop(0)
+        return {
+            "final_response": "result",
+            "messages": ctx.messages,
+            "completed": report["status"] == "completed",
+            "status": report["status"],
+            "error": report["error"],
+            "context_overflow": report["status"] == "context_overflow",
+            "turn_report": report,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    failed = await svc.run_turn("cli:default:local", _source(), "failed")
+    stopped = await svc.run_turn("cli:default:local", _source(), "stopped")
+    overflow = await svc.run_turn("cli:default:local", _source(), "overflow")
+
+    assert failed.status == "failed"
+    assert stopped.status == "stopped"
+    assert overflow.status == "context_overflow"
+    assert [item["status"] for item in svc.turn_reports] == ["failed", "stopped", "context_overflow"]
+    summary = svc.turn_report_summary()
+    assert summary["stored"] == 3
+    assert summary["last_status"] == "context_overflow"
+    assert summary["last_retries"] == 1
+
+
+@pytest.mark.asyncio
+async def test_turn_report_history_keeps_recent_limit(service):
+    svc, _manager, _db = service
+    source = _source()
+
+    for index in range(TURN_REPORT_HISTORY_LIMIT + 5):
+        svc.record_turn_report(
+            f"cli:{index}:local",
+            source,
+            _turn_report(status="completed", duration=float(index), llm_calls=index),
+        )
+
+    assert len(svc.turn_reports) == TURN_REPORT_HISTORY_LIMIT
+    assert svc.turn_reports[0]["session_key"] == "cli:5:local"
+    assert svc.turn_reports[-1]["session_key"] == f"cli:{TURN_REPORT_HISTORY_LIMIT + 4}:local"
+    recent = svc.recent_turn_reports(limit=3)
+    assert [item["session_key"] for item in recent] == [
+        f"cli:{TURN_REPORT_HISTORY_LIMIT + 2}:local",
+        f"cli:{TURN_REPORT_HISTORY_LIMIT + 3}:local",
+        f"cli:{TURN_REPORT_HISTORY_LIMIT + 4}:local",
+    ]
 
 
 @pytest.mark.asyncio

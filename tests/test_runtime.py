@@ -120,6 +120,26 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["boot"]["ok"] is True
         assert health["boot_ok"] is True
         assert health["boot_failed_step"] == ""
+        assert health["turns"]["stored"] == 0
+        runtime.conversation_service.record_turn_report(
+            "cli:default:local",
+            type("Source", (), {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"})(),
+            {
+                "status": "completed",
+                "duration": 1.5,
+                "error": "",
+                "llm": {"calls": 1, "input_tokens": 10, "output_tokens": 5},
+                "tools": {"total": 2, "items": []},
+                "retries": [{}],
+            },
+        )
+        turn_health = runtime.health_snapshot()["turns"]
+        assert turn_health["stored"] == 1
+        assert turn_health["last_status"] == "completed"
+        assert turn_health["last_duration"] == 1.5
+        assert turn_health["last_llm_calls"] == 1
+        assert turn_health["last_tool_calls"] == 2
+        assert turn_health["last_retries"] == 1
         assert health["gateway_created"] is False
         assert health["gateway_running"] is False
         assert health["gateway"] == {}

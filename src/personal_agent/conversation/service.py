@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import inspect
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from personal_agent.conversation.events import ConversationEvent, EventRecorder, emit_event
+
+TURN_REPORT_HISTORY_LIMIT = 50
 
 
 @dataclass
@@ -51,6 +54,7 @@ class ConversationService:
             if isinstance(agent_cache, OrderedDict)
             else OrderedDict(agent_cache or {})
         )
+        self.turn_reports: deque[dict[str, Any]] = deque(maxlen=TURN_REPORT_HISTORY_LIMIT)
 
     async def run_turn(self, session_key: str, source, text: str) -> ConversationTurnResult:
         return await self.run_turn_events(session_key, source, text)
@@ -132,6 +136,10 @@ class ConversationService:
             context_overflow=context_overflow,
         )
 
+        turn_report = dict(result.get("turn_report") or {})
+        if turn_report:
+            self.record_turn_report(session_key, source, turn_report)
+
         return ConversationTurnResult(
             final_response=final_response,
             messages=result.get("messages", []),
@@ -143,8 +151,44 @@ class ConversationService:
             status=status,
             error=error,
             events=list(recorder.events),
-            turn_report=dict(result.get("turn_report") or {}),
+            turn_report=turn_report,
         )
+
+    def record_turn_report(self, session_key: str, source, report: dict[str, Any]) -> None:
+        if not report:
+            return
+        self.turn_reports.append({
+            "session_key": session_key,
+            "source": _source_snapshot(source),
+            "created_at": datetime.now(UTC).isoformat(),
+            "status": str(report.get("status") or ""),
+            "report": dict(report),
+        })
+
+    def recent_turn_reports(self, limit: int = 10) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        return list(self.turn_reports)[-limit:]
+
+    def turn_report_summary(self) -> dict[str, Any]:
+        if not self.turn_reports:
+            return _empty_turn_report_summary()
+        last = self.turn_reports[-1]
+        report = last.get("report") or {}
+        llm = report.get("llm") or {}
+        tools = report.get("tools") or {}
+        retries = report.get("retries") or []
+        return {
+            "stored": len(self.turn_reports),
+            "last_status": str(report.get("status") or last.get("status") or ""),
+            "last_error": str(report.get("error") or ""),
+            "last_duration": float(report.get("duration") or 0.0),
+            "last_llm_calls": int(llm.get("calls") or 0),
+            "last_tool_calls": int(tools.get("total") or 0),
+            "last_input_tokens": int(llm.get("input_tokens") or 0),
+            "last_output_tokens": int(llm.get("output_tokens") or 0),
+            "last_retries": len(retries) if isinstance(retries, list) else 0,
+        }
 
     async def get_or_create_agent(self, session_key: str):
         agent = self.agent_cache.get(session_key)
@@ -362,6 +406,29 @@ def _minimal_turn_messages(user_text: str, assistant_text: str) -> list[dict]:
         {"role": "user", "content": [{"type": "text", "text": user_text}]},
         {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
     ]
+
+
+def _source_snapshot(source) -> dict[str, str]:
+    return {
+        "platform": str(getattr(source, "platform", "") or ""),
+        "user_id": str(getattr(source, "user_id", "") or ""),
+        "chat_id": str(getattr(source, "chat_id", "") or ""),
+        "chat_type": str(getattr(source, "chat_type", "") or ""),
+    }
+
+
+def _empty_turn_report_summary() -> dict[str, Any]:
+    return {
+        "stored": 0,
+        "last_status": "",
+        "last_error": "",
+        "last_duration": 0.0,
+        "last_llm_calls": 0,
+        "last_tool_calls": 0,
+        "last_input_tokens": 0,
+        "last_output_tokens": 0,
+        "last_retries": 0,
+    }
 
 
 def _turn_status(result: dict[str, Any], *, completed: bool, context_overflow: bool) -> str:

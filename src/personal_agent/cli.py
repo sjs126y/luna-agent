@@ -1359,6 +1359,34 @@ def _format_boot_step_lines(boot: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _format_turn_summary(turns: dict[str, Any]) -> str:
+    if not isinstance(turns, dict) or not turns:
+        return "-"
+    return (
+        f"stored={turns.get('stored', 0)} "
+        f"last={turns.get('last_status') or '-'} "
+        f"duration={float(turns.get('last_duration') or 0.0):.3f}s "
+        f"llm={turns.get('last_llm_calls', 0)} "
+        f"tools={turns.get('last_tool_calls', 0)} "
+        f"retries={turns.get('last_retries', 0)}"
+    )
+
+
+def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
+    if not isinstance(turns, dict) or not turns:
+        return ["  stored: 0"]
+    return [
+        f"  stored: {turns.get('stored', 0)}",
+        f"  last status: {turns.get('last_status') or '-'}",
+        f"  last duration: {float(turns.get('last_duration') or 0.0):.3f}s",
+        f"  last llm calls: {turns.get('last_llm_calls', 0)}",
+        f"  last tool calls: {turns.get('last_tool_calls', 0)}",
+        f"  last tokens: in={turns.get('last_input_tokens', 0)} out={turns.get('last_output_tokens', 0)}",
+        f"  last retries: {turns.get('last_retries', 0)}",
+        f"  last error: {turns.get('last_error') or '-'}",
+    ]
+
+
 def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
@@ -1391,6 +1419,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         "Runtime:",
         f"  初始化: {_yes(runtime.get('initialized', False))}",
         f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
+        f"  Turns: {_format_turn_summary(runtime.get('turns', {}))}",
         f"  DB 打开: {_yes(runtime.get('db_open', False))}",
         f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
         f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1658,6 +1687,7 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         lines.extend([
             f"  初始化: {_yes(runtime.get('initialized', False))}",
             f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
+            f"  Turns: {_format_turn_summary(runtime.get('turns', {}))}",
             f"  DB 打开: {_yes(runtime.get('db_open', False))}",
             f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
             f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1668,6 +1698,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         ])
         lines.extend(["", "Boot steps:"])
         lines.extend(_format_boot_step_lines(runtime.get("boot", {})))
+        lines.extend(["", "Turns:"])
+        lines.extend(_format_turn_detail_lines(runtime.get("turns", {})))
     elif section == "platforms":
         platforms = report.get("platforms", [])
         if platforms:

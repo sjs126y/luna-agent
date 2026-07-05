@@ -896,6 +896,26 @@ def test_format_doctor_report_includes_summary_and_issues():
                 "stderr_tail": ["startup failed"],
             }],
         },
+        "runtime": {
+            "initialized": True,
+            "db_open": True,
+            "mcp_running": True,
+            "gateway_created": True,
+            "gateway_running": True,
+            "cached_agents": 0,
+            "error": "",
+            "turns": {
+                "stored": 2,
+                "last_status": "failed",
+                "last_error": "RuntimeError: boom",
+                "last_duration": 1.2345,
+                "last_llm_calls": 1,
+                "last_tool_calls": 3,
+                "last_input_tokens": 10,
+                "last_output_tokens": 5,
+                "last_retries": 1,
+            },
+        },
         "platforms": [{
             "key": "platforms/telegram",
             "name": "Telegram",
@@ -948,6 +968,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "总体状态: 需要注意" in text
     assert "Agents:" in text
     assert "Tools:" in text
+    assert "Turns: stored=2 last=failed duration=1.234s llm=1 tools=3 retries=1" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
@@ -959,6 +980,13 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "capabilities=text,markdown,typing,max=4096" in text
     assert "平台 telegram 连接失败: RuntimeError: no token" in text
     assert "插件 user/demo: 加载错误: boom" in text
+
+    runtime_text = format_doctor_report(report, section="runtime")
+    assert "Turns:" in runtime_text
+    assert "  stored: 2" in runtime_text
+    assert "  last status: failed" in runtime_text
+    assert "  last tokens: in=10 out=5" in runtime_text
+    assert "  last error: RuntimeError: boom" in runtime_text
 
 
 def _plugin_report(

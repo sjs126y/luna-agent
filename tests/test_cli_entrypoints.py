@@ -85,6 +85,7 @@ def test_init_then_doctor_json_uses_real_runtime_bootstrap(tmp_path, monkeypatch
     assert data["runtime"]["boot"]["ok"] is True
     assert data["runtime"]["boot_ok"] is True
     assert data["runtime"]["boot_failed_step"] == ""
+    assert data["runtime"]["turns"]["stored"] == 0
     assert data["runtime"]["gateway_created"] is False
     assert data["gateway"] == {}
     assert data["config"]["files"]["config"]["exists"] is True
