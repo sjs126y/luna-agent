@@ -1,186 +1,141 @@
 # Codex 交接记录
 
-更新时间：2026-07-05 01:25 CST
+更新时间：2026-07-05 10:50 CST
 
 ## 当前状态
 
-- 当前分支：`feature/config-management`
-- 基线：`main` / `feature/backend-upgrade` 在 `1b2b276 [codex] add platform message envelopes`
-- 当前 HEAD：`e104240 [codex] organize config field declarations`
-- 这一轮目标：配置整理从旁路诊断推进到主加载链路，并整理字段声明结构
-- 当前结论：配置管理阶段性完成，可以先收住；后续除非要做 init 模板生成、diagnostics 去重或插件配置，否则不必继续深挖配置
+- 当前分支：`feature/backend-upgrade`
+- 当前 HEAD：`48d4777 [codex] expose recent turn reports`
+- 最近完成主线：
+  - Execution / Boot diagnostics
+  - Agent turn execution reports
+  - Turn report runtime summaries
+- 当前结论：
+  - 配置整理阶段已经完成并稳定。
+  - BootReport 与 AgentTurnReport 这条运行时可观测性链路已经阶段性完成。
+  - 后续如果继续推进，优先级更适合放在 turn report v3、审计统一、或前端/后台消费，而不是继续补当前缺口。
 
-## 本轮完成内容
+## 最近完成内容
 
-### v1 — 配置 registry 快照
+### BootReport v1 — 启动成功路径结构化
 
-- 新增 `ConfigField` 和 `CONFIG_FIELDS`，把核心配置字段集中登记。
-- 新增 effective config snapshot，doctor 可以看到 Settings 的有效配置。
-- 保留原 `Settings` 加载方式，registry 只作为诊断/展示的事实源雏形。
-- commit：`c247743 [codex] add config registry snapshot`
+- 在 `src/personal_agent/runtime.py` 增加：
+  - `BootStep`
+  - `BootReport`
+- `create_app_runtime()` 记录启动阶段：
+  - `settings`
+  - `data_dir`
+  - `plugins.*`
+  - `sandbox`
+  - `audit`
+  - `mcp`
+  - `database`
+  - `compression_chain`
+  - `session_store`
+  - `system_files`
+  - `memory`
+  - `memory_review`
+  - `conversation`
+  - `runtime`
+- `AppRuntime.health_snapshot()` 暴露：
+  - `boot`
+  - `boot_ok`
+  - `boot_failed_step`
+- doctor / serve dry-run 文本和 JSON 接入 boot 摘要。
+- commit：`f496791 [codex] add runtime boot report`
 
-### v2 — registry 校验与诊断接入
+### BootReport v2 — 启动失败路径可诊断
 
-- `ConfigField` 增加基础元数据：
-  - `minimum`
-  - `maximum`
-  - `choices`
-  - `allow_csv`
-  - `required`
-  - `template_default`
-- 增加 registry coverage、schema/field summary、基础 value validation。
-- `build_config_report()` 接入：
-  - `registry_coverage`
-  - `registry_validation_errors`
-  - `registry_validation_warnings`
-- `doctor --section config` 增强 grouped effective config 展示。
-- commit：`93aeae4 [codex] expand config registry diagnostics`
+- `BootReport` 增加预置阶段列表和 `not_run` 状态。
+- 启动失败时将 `BootReport` 附着到异常对象，不改变原异常类型。
+- doctor / serve dry-run 失败路径读取异常上的 boot report。
+- settings 初始化失败也返回完整 boot 阶段列表。
+- `doctor --section runtime` 可显示失败阶段和未执行阶段。
+- commit：`f34bc25 [codex] report runtime boot failures`
 
-### v3 — ConfigRegistry API 与 ConfigSnapshot
+### AgentTurnReport v1 — 每轮执行结构化报告
 
-- 新增 `ConfigRegistry` 类：
-  - `get(path)`
-  - `get_by_attr(attr)`
-  - `by_section()`
-  - `yaml_fields()`
-  - `env_fields()`
-  - `schema()`
-  - `coverage()`
-  - `validate_config()`
-  - `snapshot_from_settings()`
-- 新增 `ConfigSnapshot` 雏形。
-- 保留旧 helper 函数作为 wrapper，避免影响已有调用。
-- 字段模型预留：
-  - `owner`
-  - `namespace`
-  - `plugin_key`
-- `config_diagnostics` 输出 `registry_schema`。
-- commit：`0633a72 [codex] add config registry api`
+- 新增 `src/personal_agent/agent/report.py`：
+  - `AgentTurnReport`
+  - `TurnLlmReport`
+  - `TurnToolReport`
+  - `TurnRetryReport`
+  - `TurnReportRecorder`
+- `run_conversation()` 内部统一生成 `turn_report`：
+  - 汇总 llm calls / tokens
+  - 汇总 tool decision + tool result
+  - 汇总 retry
+  - 记录 final status / duration / error
+- 所有返回路径统一附加：
+  - `result["turn_report"]`
+- `ConversationTurnResult` 增加：
+  - `turn_report`
+- commit：`c70ee9b [codex] add agent turn reports`
 
-### v4 — ConfigLoader 接管 Settings 主链路
+### AgentTurnReport v2 — 运行时消费与诊断摘要
 
-- 新增 `src/personal_agent/config_loader.py`。
-- `ConfigLoader` 由 `CONFIG_REGISTRY` 驱动读取：
-  - `.env`
-  - `config.yaml`
-  - explicit overrides
-  - defaults
-- 优先级固定为：
-  - `overrides > .env > config.yaml > default`
-- `Settings()` 改为：
-  - `ConfigLoader.load(strict=True)`
-  - 将 `snapshot.attr_values` 写入实例属性
-  - 保留 `raw_env`、`raw_config`、`cron_jobs_path`、`execution_policy`
-- `ConfigSnapshot` 增强：
-  - `values`
-  - `attr_values`
-  - `sources`
-  - `source_counts`
-  - `raw_env`
-  - `raw_config`
-  - `errors`
-  - `warnings`
-- `ConfigSnapshot.as_dict()` 对敏感字段脱敏；运行时 typed snapshot 仍保留真实 secret 给 `Settings` 使用。
-- 支持 `PROFILES` JSON 覆盖/合并 `config.yaml profiles`。
-- `build_config_report()` 接入：
-  - `registry_snapshot`
-  - `registry_loader_errors`
-  - `registry_loader_warnings`
-  - `registry_source_counts`
-- commit：`270619b [codex] route settings through config loader`
+- `ConversationService` 增加内存 ring buffer：
+  - `turn_reports`
+  - `record_turn_report()`
+  - `recent_turn_reports()`
+  - `turn_report_summary()`
+- 默认保留最近 `50` 条 turn report envelope。
+- envelope 字段：
+  - `session_key`
+  - `source`
+  - `created_at`
+  - `status`
+  - `report`
+- `AppRuntime.health_snapshot()` 暴露：
+  - `turns`
+- doctor 完整报告 Runtime 区增加 Turns 摘要。
+- `doctor --section runtime` 增加 Turns 明细小节。
+- JSON doctor / serve dry-run 会自然带出 `runtime.turns`。
+- commit：`48d4777 [codex] expose recent turn reports`
 
-### 声明整理 — config field declarations
+## 当前运行时可观测性形态
 
-- `CONFIG_FIELDS` 从巨型 tuple 拆成按域函数：
-  - `_execution_fields()`
-  - `_llm_fields()`
-  - `_platform_env_fields()`
-  - `_agent_fields()`
-  - `_storage_fields()`
-  - `_toolset_fields()`
-  - `_compression_fields()`
-  - `_memory_fields()`
-  - `_cron_fields()`
-  - `_sandbox_fields()`
-  - `_gateway_fields()`
-  - `_session_fields()`
-  - `_mcp_fields()`
-  - `_plugin_fields()`
-  - `_auth_fields()`
-  - `_profile_fields()`
-- 增加轻量 helper：
-  - `_yaml_field`
-  - `_env_field`
-  - `_mixed_field`
-- 不改 loader、Settings、doctor 行为。
-- 新增测试锁住关键字段顺序和 metadata。
-- commit：`e104240 [codex] organize config field declarations`
+### 启动链路
 
-## 当前配置管理形态
+- `src/personal_agent/runtime.py`
+  - `BootReport.bootstrap()`
+  - `boot_report_from_exception()`
+  - `AppRuntime.health_snapshot()`
+- 覆盖启动成功与失败两条路径。
 
-### 核心事实源
+### 对话执行链路
 
-- `src/personal_agent/config_registry.py`
-  - `ConfigField`
-  - `ConfigRegistry`
-  - `ConfigSnapshot`
-  - `CONFIG_FIELDS`
-  - `CONFIG_REGISTRY`
-
-新增核心配置的标准入口是增加一个 `ConfigField`，例如：
-
-```python
-_yaml_field(
-    "gateway.max_payload_bytes",
-    "gateway_max_payload_bytes",
-    1048576,
-    "int",
-    "gateway",
-    "Maximum outbound platform payload bytes.",
-    minimum=1,
-)
-```
-
-然后使用方直接读：
-
-```python
-settings.gateway_max_payload_bytes
-```
-
-### 主加载链路
-
-- `src/personal_agent/config_loader.py`
-  - `ConfigLoader`
-  - `ConfigLoaderError`
-  - `load_yaml_config`
-  - `load_env_config`
-  - `convert_config_value`
-
-`Settings()` 已经不再手写逐段读取配置，而是从 loader snapshot 生成。
+- `src/personal_agent/agent/report.py`
+  - 负责聚合单轮 agent 执行报告
+- `src/personal_agent/agent/loop.py`
+  - 每轮 `run_conversation()` 都会返回 `turn_report`
+- `src/personal_agent/conversation/service.py`
+  - 持有最近 turn report 的内存历史
+  - 可输出运行时摘要
 
 ### 诊断展示
 
-- `src/personal_agent/config_diagnostics.py`
-  - 已接入 registry schema、loader snapshot、source counts、loader errors/warnings
 - `src/personal_agent/cli.py`
-  - `format_config_report()` 展示 schema version、schema fields、source counts 等
+  - 完整 doctor：Runtime 区显示 Boot + Turns 摘要
+  - `doctor --section runtime`：显示 Boot steps + Turns 明细
+  - `doctor --json`：可读到 `runtime.boot` 与 `runtime.turns`
+  - `serve --dry-run --json`：可读到 `runtime.boot`
 
 ## 关键测试
 
-- `tests/test_config_registry.py`
-  - registry API
-  - schema stability
-  - sensitive masking
-  - field order / metadata
-- `tests/test_config_loader.py`
-  - defaults
-  - env/yaml/override 优先级
-  - Path/list/path/int/bool 转换
-  - PROFILES 合并
-  - strict/non-strict errors
-  - Settings 接入 loader
-- `tests/test_config_diagnostics.py`
-  - config report 接入 registry snapshot / schema / source counts
+- `tests/test_runtime.py`
+  - boot success / boot failure / mcp cleanup / runtime health turns
+- `tests/test_agent_loop.py`
+  - turn report success / retry / denied tool / failed llm / streaming deltas
+- `tests/test_conversation_service.py`
+  - turn report 透传
+  - turn report ring buffer
+  - failed / stopped / context_overflow report recording
+  - recent limit summary
+- `tests/test_cli.py`
+  - doctor runtime Boot / Turns 文本格式
+- `tests/test_cli_entrypoints.py`
+  - doctor JSON 包含 runtime boot / turns
 
 ## 已验证
 
@@ -194,33 +149,40 @@ uv run pytest -q
 结果：
 
 ```text
-591 passed
+598 passed
 ```
 
 ## 注意事项
 
 - 测试会修改 `src/personal_agent/skills/builtin/.usage.json`，提交前必须恢复。
-- `LLM_API_MODE` 没有在 registry loader 层加 choices 限制，因为测试和 transport registry 允许自定义 mode；语义诊断仍在 doctor 层处理。
-- `ConfigSnapshot.as_dict()` 会脱敏 secret；typed snapshot 的 `attr_values` 保留真实值供 runtime 使用。
-- 当前不读取 `os.environ`，保持项目既有行为：只读取 `.env` 文件。
-- 插件动态注册配置暂未做；用户也判断短期不太可能推进。
+- turn report v2 目前只做内存态 ring buffer，不写数据库、不写 JSONL。
+- `AppRuntime.health_snapshot()` 只暴露 turn report 摘要，不暴露完整 recent list。
+- doctor 现在已经同时承担：
+  - boot 诊断
+  - turn 运行摘要
+  后续如果继续扩张，要留意输出噪音，不建议直接把完整 turn report 塞进完整 doctor。
 
 ## 后续可选方向
 
-当前配置整理可以先收住。以后如需继续，建议顺序：
+当前这部分可以先收住。以后如需继续，建议顺序：
 
-1. `init` 模板从 registry/schema 生成或至少部分生成。
-2. `config_diagnostics.py` 手写规则逐步去重，减少与 loader 的重复校验。
-3. 前端/配置页消费 `registry_schema()`。
-4. 插件配置 namespace 真正接入 registry（低优先级）。
+1. AgentTurnReport v3：
+   - 前端/后台模式消费 recent turn reports
+   - 或增加单独 runtime/turns API，而不是继续膨胀 doctor
+2. 审计统一：
+   - turn report / tool decision / tool result / audit log 做统一关联
+3. 持久化 turn report：
+   - JSONL 或 DB
+   - 这一步要先定义脱敏、保留周期、schema 稳定性
+4. 更新 `FRONTEND_ROADMAP.md`，把 Boot/Turn diagnostics 作为现成后端能力标进去
 
 ## 最近提交
 
 ```text
+48d4777 [codex] expose recent turn reports
+c70ee9b [codex] add agent turn reports
+f34bc25 [codex] report runtime boot failures
+f496791 [codex] add runtime boot report
+9fb5e59 [codex] update config handoff notes
 e104240 [codex] organize config field declarations
-270619b [codex] route settings through config loader
-0633a72 [codex] add config registry api
-93aeae4 [codex] expand config registry diagnostics
-c247743 [codex] add config registry snapshot
-1b2b276 [codex] add platform message envelopes
 ```
