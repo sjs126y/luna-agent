@@ -226,6 +226,73 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_run_turn_events_forwards_confirm_callback(service, monkeypatch):
+    svc, _manager, _db = service
+    confirm_seen = []
+
+    async def confirm(decision):
+        return "allow"
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx, *, event_sink=None, confirm=None):
+        confirm_seen.append(confirm)
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+            "turn_report": _turn_report(llm_calls=1, tool_calls=0),
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn_events(
+        "cli:default:local",
+        _source(),
+        "hello",
+        confirm=confirm,
+    )
+
+    assert result.final_response == "echo:hello"
+    assert confirm_seen == [confirm]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_events_keeps_legacy_loop_without_confirm(service, monkeypatch):
+    svc, _manager, _db = service
+    called = []
+
+    async def confirm(decision):
+        return "allow"
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx):
+        called.append(True)
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn_events(
+        "cli:default:local",
+        _source(),
+        "hello",
+        confirm=confirm,
+    )
+
+    assert result.final_response == "echo:hello"
+    assert called == [True]
+
+
+@pytest.mark.asyncio
 async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
     from personal_agent.conversation.events import emit_event
 

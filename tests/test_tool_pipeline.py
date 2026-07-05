@@ -611,6 +611,218 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_tool_confirm_deny_keeps_permission_denied_result():
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("confirm_write_demo")
+    calls = 0
+    decisions = []
+
+    async def handler():
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    async def confirm(decision):
+        decisions.append(decision)
+        return "deny"
+
+    tool_registry.register(ToolEntry(
+        name="confirm_write_demo",
+        description="confirm",
+        schema={},
+        handler=handler,
+        permission_category="write",
+        is_destructive=True,
+    ))
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "write": "ask"},
+    )
+    recorder = EventRecorder()
+
+    try:
+        result = await execute_tool_call_result(
+            {"id": "c1", "name": "confirm_write_demo", "input": {}},
+            agent=agent,
+            event_sink=recorder,
+            confirm=confirm,
+        )
+    finally:
+        if original is None:
+            tool_registry.unregister("confirm_write_demo")
+        else:
+            tool_registry.register(original)
+
+    assert result.status == "denied"
+    assert result.category == "authorization"
+    assert calls == 0
+    assert len(decisions) == 1
+    assert decisions[0].tool_name == "confirm_write_demo"
+    assert decisions[0].permission_category == "write"
+    assert recorder.events[-2].data["reason_code"] == "permission_required"
+    assert recorder.events[-1].data["status"] == "denied"
+    assert "write" not in agent._destructive_allowed
+
+
+@pytest.mark.asyncio
+async def test_tool_confirm_allow_executes_once_without_persisting_grant():
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("confirm_allow_demo")
+    calls = 0
+    decisions = []
+
+    async def handler():
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    async def confirm(decision):
+        decisions.append(decision)
+        return "allow"
+
+    tool_registry.register(ToolEntry(
+        name="confirm_allow_demo",
+        description="confirm",
+        schema={},
+        handler=handler,
+        permission_category="write",
+        is_destructive=True,
+    ))
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "write": "ask"},
+    )
+    recorder = EventRecorder()
+
+    try:
+        result = await execute_tool_call_result(
+            {"id": "c1", "name": "confirm_allow_demo", "input": {}},
+            agent=agent,
+            event_sink=recorder,
+            confirm=confirm,
+        )
+    finally:
+        if original is None:
+            tool_registry.unregister("confirm_allow_demo")
+        else:
+            tool_registry.register(original)
+
+    assert result.status == "success"
+    assert result.content == "ok"
+    assert calls == 1
+    assert len(decisions) == 1
+    assert recorder.events[-2].data["allowed"] is True
+    assert recorder.events[-2].data["stage"] == "runtime_guard"
+    assert recorder.events[-1].data["status"] == "success"
+    assert "write" not in agent._destructive_allowed
+
+
+@pytest.mark.asyncio
+async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_calls
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("confirm_always_demo")
+    calls = 0
+    decisions = []
+
+    async def handler():
+        nonlocal calls
+        calls += 1
+        return f"ok:{calls}"
+
+    async def confirm(decision):
+        decisions.append(decision)
+        return "always"
+
+    tool_registry.register(ToolEntry(
+        name="confirm_always_demo",
+        description="confirm",
+        schema={},
+        handler=handler,
+        permission_category="write",
+        is_destructive=True,
+    ))
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "write": "ask"},
+    )
+    messages = []
+
+    try:
+        results = await execute_tool_calls(
+            [
+                {"id": "c1", "name": "confirm_always_demo", "input": {}},
+                {"id": "c2", "name": "confirm_always_demo", "input": {}},
+            ],
+            messages,
+            agent=agent,
+            confirm=confirm,
+        )
+    finally:
+        if original is None:
+            tool_registry.unregister("confirm_always_demo")
+        else:
+            tool_registry.register(original)
+
+    assert [result.status for result in results] == ["success", "success"]
+    assert [result.content for result in results] == ["ok:1", "ok:2"]
+    assert calls == 2
+    assert len(decisions) == 1
+    assert "write" in agent._destructive_allowed
+    assert messages[-1]["content"][0]["content"] == "ok:1"
+    assert messages[-1]["content"][1]["content"] == "ok:2"
+
+
+@pytest.mark.asyncio
+async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
+    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "background": "ask"},
+    )
+    confirm_calls = 0
+
+    async def confirm(_decision):
+        nonlocal confirm_calls
+        confirm_calls += 1
+        return "always"
+
+    result = await execute_tool_call_result(
+        {"id": "p0", "name": "process_start", "input": {"command": "rm -rf /"}},
+        agent=agent,
+        confirm=confirm,
+    )
+
+    assert result.status == "denied"
+    assert result.category == "precheck"
+    assert confirm_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_tool_end_event_includes_guard_metadata_for_success():
     from personal_agent.conversation.events import EventRecorder
     from personal_agent.tools.entry import ToolEntry

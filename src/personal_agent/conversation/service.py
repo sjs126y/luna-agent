@@ -68,6 +68,7 @@ class ConversationService:
         text: str,
         *,
         event_sink=None,
+        confirm=None,
     ) -> ConversationTurnResult:
         recorder = EventRecorder(event_sink)
         if self.plugin_manager is not None:
@@ -85,8 +86,12 @@ class ConversationService:
         try:
             agent = await self.get_or_create_agent(session_key)
             ctx = await build_turn_context(agent, text, history)
-            if _accepts_event_sink(run_conversation):
+            if _accepts_event_sink(run_conversation) and _accepts_confirm(run_conversation):
+                result = await run_conversation(agent, ctx, event_sink=recorder, confirm=confirm)
+            elif _accepts_event_sink(run_conversation):
                 result = await run_conversation(agent, ctx, event_sink=recorder)
+            elif _accepts_confirm(run_conversation):
+                result = await run_conversation(agent, ctx, confirm=confirm)
             else:
                 result = await run_conversation(agent, ctx)
         except Exception as exc:
@@ -727,6 +732,21 @@ def _final_response_for_status(status: str, final_response: Any, error: str = ""
 
 def _accepts_event_sink(func: Any) -> bool:
     try:
-        return "event_sink" in inspect.signature(func).parameters
+        params = inspect.signature(func).parameters
     except (TypeError, ValueError):
         return True
+    return "event_sink" in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in params.values()
+    )
+
+
+def _accepts_confirm(func: Any) -> bool:
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return True
+    return "confirm" in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in params.values()
+    )

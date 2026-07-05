@@ -89,6 +89,7 @@ async def execute_tool_calls(
     agent: Any = None,
     hooks: Any = None,
     event_sink: Any = None,
+    confirm: Any = None,
 ) -> list[ToolExecutionResult]:
     """Execute all tool calls, append results to messages in original order.
 
@@ -120,6 +121,7 @@ async def execute_tool_calls(
                         agent=agent,
                         hooks=hooks,
                         event_sink=event_sink,
+                        confirm=confirm,
                     )
                     for _, tc in batch
                 ],
@@ -145,6 +147,7 @@ async def execute_tool_calls(
                 agent=agent,
                 hooks=hooks,
                 event_sink=event_sink,
+                confirm=confirm,
             )
             i += 1
 
@@ -179,6 +182,7 @@ async def execute_tool_call_result(
     agent: Any = None,
     hooks: Any = None,
     event_sink: Any = None,
+    confirm: Any = None,
     timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
 ) -> ToolExecutionResult:
     """Execute a single tool call through the security pipeline.
@@ -267,6 +271,28 @@ async def execute_tool_call_result(
             started=started,
         ))
     tool_decision = tool_decision_from_guard(tc, guard_decision)
+    if _needs_tool_confirm(tool_decision) and confirm is not None:
+        answer = await _confirm_tool_decision(confirm, tool_decision)
+        if answer in {"allow", "always"}:
+            added_grants = _add_confirm_grants(
+                agent,
+                tool_decision,
+                persist=answer == "always",
+            )
+            try:
+                guard_decision = evaluate_execution_guards(tc, entry, agent)
+            except Exception as exc:
+                return await _finish(_result(
+                    tc,
+                    status="error",
+                    category="execution_guard",
+                    error=f"{type(exc).__name__}: {exc}",
+                    started=started,
+                ))
+            finally:
+                if answer == "allow":
+                    _remove_confirm_grants(agent, added_grants)
+            tool_decision = tool_decision_from_guard(tc, guard_decision)
     await _emit_tool_decision(event_sink, tool_decision)
     if not guard_decision.allowed:
         return await _finish(_result(
@@ -400,6 +426,61 @@ def format_tool_result(result: ToolExecutionResult) -> str:
     if result.error:
         return result.error if result.error.lower().startswith("error:") else f"Error: {result.error}"
     return "Error: tool execution produced no result"
+
+
+def _needs_tool_confirm(decision: ToolDecision) -> bool:
+    return (
+        decision.stage == "permission"
+        and decision.reason_code == "permission_required"
+        and decision.permission_decision == "ask"
+        and not decision.allowed
+    )
+
+
+async def _confirm_tool_decision(confirm: Any, decision: ToolDecision) -> str:
+    try:
+        answer = await confirm(decision)
+    except Exception:
+        logger.exception("Tool confirmation callback failed")
+        return "deny"
+    answer_text = str(answer or "").strip().lower()
+    if answer_text in {"allow", "deny", "always"}:
+        return answer_text
+    return "deny"
+
+
+def _add_confirm_grants(agent: Any, decision: ToolDecision, *, persist: bool) -> set[str]:
+    if agent is None:
+        return set()
+    grants = getattr(agent, "_destructive_allowed", None)
+    if grants is None:
+        grants = set()
+        try:
+            agent._destructive_allowed = grants
+        except Exception:
+            return set()
+    category = str(decision.permission_category or "")
+    required = str(decision.required_allow or "")
+    tokens = {item for item in (required, category) if item}
+    added: set[str] = set()
+    for token in tokens:
+        if token not in grants:
+            grants.add(token)
+            added.add(token)
+    return set() if persist else added
+
+
+def _remove_confirm_grants(agent: Any, added: set[str]) -> None:
+    if not added or agent is None:
+        return
+    grants = getattr(agent, "_destructive_allowed", None)
+    if grants is None:
+        return
+    for token in added:
+        try:
+            grants.discard(token)
+        except AttributeError:
+            return
 
 
 async def _emit_tool_decision(event_sink: Any, decision: ToolDecision) -> None:
