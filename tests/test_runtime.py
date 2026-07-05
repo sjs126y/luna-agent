@@ -99,10 +99,27 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert runtime.memory_review_service is not None
         assert (runtime.system_dir / "AGENT.md").exists()
         assert runtime.mcp_manager is None
+        boot = runtime.boot_report.as_dict()
+        boot_steps = {step["name"]: step for step in boot["steps"]}
+        assert boot["ok"] is True
+        assert boot["failed_step"] == ""
+        assert boot_steps["settings"]["status"] == "ok"
+        assert boot_steps["plugins.discover"]["status"] == "ok"
+        assert boot_steps["plugins.load_enabled"]["status"] == "ok"
+        assert boot_steps["plugins.configure"]["status"] == "ok"
+        assert boot_steps["sandbox"]["status"] == "ok"
+        assert boot_steps["mcp"]["status"] == "skipped"
+        assert boot_steps["database"]["status"] == "ok"
+        assert boot_steps["memory"]["status"] == "ok"
+        assert boot_steps["conversation"]["status"] == "ok"
+        assert boot_steps["runtime"]["status"] == "ok"
         health = runtime.health_snapshot()
         assert health["db_open"] is True
         assert health["mcp"]["running"] is False
         assert health["mcp"]["total_tools"] == 0
+        assert health["boot"]["ok"] is True
+        assert health["boot_ok"] is True
+        assert health["boot_failed_step"] == ""
         assert health["gateway_created"] is False
         assert health["gateway_running"] is False
         assert health["gateway"] == {}
@@ -151,6 +168,52 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
         await create_app_runtime(settings)
 
     assert stopped == [True]
+
+
+@pytest.mark.asyncio
+async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
+    plugins_dir = tmp_path / "plugins"
+    _write_memory_plugin(plugins_dir / "memory")
+    _write_mcp_plugin(plugins_dir / "mcp")
+
+    class FakeMCPManager:
+        def __init__(self, configs):
+            self.configs = configs
+            self.stopped = False
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            self.stopped = True
+
+        def health_snapshot(self):
+            return {
+                "running": not self.stopped,
+                "configured_count": len(self.configs),
+                "connected_count": len(self.configs),
+                "total_tools": 0,
+                "registered_tools": [],
+                "servers": [],
+            }
+
+    monkeypatch.setattr("personal_agent.mcp.manager.MCPManager", FakeMCPManager)
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[plugins_dir],
+        plugins_enabled=["user/memory", "user/mcp"],
+        plugins_disabled=["memory/file", "memory/embedding"],
+        mcp_enabled=True,
+    )
+
+    runtime = await create_app_runtime(settings)
+    try:
+        boot_steps = {step["name"]: step for step in runtime.boot_report.as_dict()["steps"]}
+        assert boot_steps["mcp"]["status"] == "ok"
+        assert boot_steps["mcp"]["detail"].startswith("servers=")
+        assert runtime.health_snapshot()["mcp_running"] is True
+    finally:
+        await runtime.close()
 
 
 @pytest.mark.asyncio

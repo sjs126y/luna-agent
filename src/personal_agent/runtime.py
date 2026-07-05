@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from time import monotonic
+from typing import Any, Literal
 
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
@@ -21,6 +22,93 @@ from personal_agent.conversation import ConversationService
 logger = logging.getLogger(__name__)
 
 
+BootStepStatus = Literal["pending", "ok", "skipped", "error"]
+
+
+@dataclass
+class BootStep:
+    name: str
+    status: BootStepStatus = "pending"
+    detail: str = ""
+    error: str = ""
+    duration: float = 0.0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "status": self.status,
+            "detail": self.detail,
+            "error": self.error,
+            "duration": self.duration,
+        }
+
+
+class _BootStepContext:
+    def __init__(self, step: BootStep) -> None:
+        self._step = step
+        self._started = 0.0
+
+    def __enter__(self) -> BootStep:
+        self._started = monotonic()
+        return self._step
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self._step.duration = max(monotonic() - self._started, 0.0)
+        if exc is not None:
+            self._step.status = "error"
+            exc_name = exc_type.__name__ if exc_type is not None else type(exc).__name__
+            self._step.error = f"{exc_name}: {exc}"
+        elif self._step.status == "pending":
+            self._step.status = "ok"
+        return False
+
+
+@dataclass
+class BootReport:
+    steps: list[BootStep] = field(default_factory=list)
+
+    def step(self, name: str, detail: str = "") -> _BootStepContext:
+        step = BootStep(name=name, detail=detail)
+        self.steps.append(step)
+        return _BootStepContext(step)
+
+    def skip(self, name: str, detail: str = "") -> BootStep:
+        step = BootStep(name=name, status="skipped", detail=detail)
+        self.steps.append(step)
+        return step
+
+    def error(self, name: str, error: str, detail: str = "") -> BootStep:
+        step = BootStep(name=name, status="error", detail=detail, error=error)
+        self.steps.append(step)
+        return step
+
+    @property
+    def ok(self) -> bool:
+        return not any(step.status in {"pending", "error"} for step in self.steps)
+
+    @property
+    def failed_step(self) -> str:
+        for step in self.steps:
+            if step.status == "error":
+                return step.name
+        return ""
+
+    def summary(self) -> dict[str, int]:
+        counts = {"pending": 0, "ok": 0, "skipped": 0, "error": 0}
+        for step in self.steps:
+            counts[step.status] += 1
+        counts["total"] = len(self.steps)
+        return counts
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "failed_step": self.failed_step,
+            "summary": self.summary(),
+            "steps": [step.as_dict() for step in self.steps],
+        }
+
+
 @dataclass
 class AppRuntime:
     settings: Settings
@@ -34,6 +122,7 @@ class AppRuntime:
     mcp_manager: Any | None
     data_dir: Path
     system_dir: Path
+    boot_report: BootReport = field(default_factory=BootReport)
     gateway: Any | None = None
     gateway_started: bool = False
     closed: bool = False
@@ -89,12 +178,16 @@ class AppRuntime:
             enabled=bool(self.settings.mcp_enabled),
             configured_count=len(self.settings.mcp_servers),
         )
+        boot = self.boot_report.as_dict()
         return {
             "data_dir": str(self.data_dir),
             "db_open": getattr(self.db, "_conn", None) is not None,
             "mcp_enabled": bool(self.settings.mcp_enabled),
             "mcp_running": self.mcp_manager is not None,
             "mcp": mcp_health,
+            "boot": boot,
+            "boot_ok": bool(boot["ok"]),
+            "boot_failed_step": str(boot["failed_step"]),
             "gateway_created": self.gateway is not None,
             "gateway_running": bool(self.gateway is not None and self.gateway_started),
             "gateway": self.gateway.health_snapshot() if self.gateway is not None else {},
@@ -105,42 +198,74 @@ class AppRuntime:
 
 
 async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
-    settings = settings or Settings()
-    data_dir = settings.agent_data_dir
-    data_dir.mkdir(parents=True, exist_ok=True)
+    boot_report = BootReport()
+    if settings is None:
+        with boot_report.step("settings", "default"):
+            settings = Settings()
+    else:
+        with boot_report.step("settings", "provided"):
+            settings = settings
 
-    plugin_manager = PluginManager(settings)
-    plugin_manager.discover()
-    plugin_manager.load_enabled()
-    await plugin_manager.invoke_hook("configure", settings=settings)
+    with boot_report.step("data_dir", str(settings.agent_data_dir)):
+        data_dir = settings.agent_data_dir
+        data_dir.mkdir(parents=True, exist_ok=True)
 
-    init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
+    with boot_report.step("plugins.discover"):
+        plugin_manager = PluginManager(settings)
+        plugin_manager.discover()
+    with boot_report.step("plugins.load_enabled"):
+        plugin_manager.load_enabled()
+    with boot_report.step("plugins.configure"):
+        await plugin_manager.invoke_hook("configure", settings=settings)
+
+    with boot_report.step("sandbox"):
+        init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
     if settings.audit_enabled:
-        set_audit_path(data_dir / "audit.log")
+        with boot_report.step("audit", str(data_dir / "audit.log")):
+            set_audit_path(data_dir / "audit.log")
+    else:
+        boot_report.skip("audit", "disabled")
 
-    mcp_manager = await start_mcp_manager(settings, plugin_manager)
+    mcp_manager = None
     db: Database | None = None
     try:
-        db = Database(data_dir / "state.db")
-        await db.initialize()
+        if not settings.mcp_enabled:
+            boot_report.skip("mcp", "disabled")
+        else:
+            mcp_server_count = len(settings.mcp_servers) + len(plugin_manager.get_mcp_servers())
+            if mcp_server_count == 0:
+                boot_report.skip("mcp", "servers=0")
+            else:
+                with boot_report.step("mcp", f"servers={mcp_server_count}"):
+                    mcp_manager = await start_mcp_manager(settings, plugin_manager)
 
-        compression_chain = CompressionChain(data_dir / "compression_chain.json")
-        compression_chain.load()
-        session_store = SessionStore(db, data_dir, chain=compression_chain)
-        await session_store.initialize()
-        await session_store.expire_sessions(settings.session_expire_days)
+        with boot_report.step("database", str(data_dir / "state.db")):
+            db = Database(data_dir / "state.db")
+            await db.initialize()
 
-        system_dir = data_dir / "system"
-        ensure_system_files(system_dir)
-        memory_manager = await create_memory_manager(settings, plugin_manager, system_dir, data_dir)
-        memory_review_service = MemoryReviewService()
-        conversation_service = ConversationService(
-            settings=settings,
-            plugin_manager=plugin_manager,
-            session_store=session_store,
-            compression_chain=compression_chain,
-            memory_manager=memory_manager,
-        )
+        with boot_report.step("compression_chain", str(data_dir / "compression_chain.json")):
+            compression_chain = CompressionChain(data_dir / "compression_chain.json")
+            compression_chain.load()
+        with boot_report.step("session_store"):
+            session_store = SessionStore(db, data_dir, chain=compression_chain)
+            await session_store.initialize()
+            await session_store.expire_sessions(settings.session_expire_days)
+
+        with boot_report.step("system_files", str(data_dir / "system")):
+            system_dir = data_dir / "system"
+            ensure_system_files(system_dir)
+        with boot_report.step("memory"):
+            memory_manager = await create_memory_manager(settings, plugin_manager, system_dir, data_dir)
+        with boot_report.step("memory_review"):
+            memory_review_service = MemoryReviewService()
+        with boot_report.step("conversation"):
+            conversation_service = ConversationService(
+                settings=settings,
+                plugin_manager=plugin_manager,
+                session_store=session_store,
+                compression_chain=compression_chain,
+                memory_manager=memory_manager,
+            )
     except Exception:
         if mcp_manager is not None:
             await mcp_manager.stop()
@@ -148,19 +273,21 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             await db.close()
         raise
 
-    return AppRuntime(
-        settings=settings,
-        plugin_manager=plugin_manager,
-        db=db,
-        compression_chain=compression_chain,
-        session_store=session_store,
-        memory_manager=memory_manager,
-        conversation_service=conversation_service,
-        memory_review_service=memory_review_service,
-        mcp_manager=mcp_manager,
-        data_dir=data_dir,
-        system_dir=system_dir,
-    )
+    with boot_report.step("runtime"):
+        return AppRuntime(
+            settings=settings,
+            plugin_manager=plugin_manager,
+            db=db,
+            compression_chain=compression_chain,
+            session_store=session_store,
+            memory_manager=memory_manager,
+            conversation_service=conversation_service,
+            memory_review_service=memory_review_service,
+            mcp_manager=mcp_manager,
+            data_dir=data_dir,
+            system_dir=system_dir,
+            boot_report=boot_report,
+        )
 
 
 def _mcp_health_snapshot(

@@ -900,6 +900,7 @@ async def _serve_dry_run(*, json_output: bool = False) -> None:
             typer.echo("启动检查未通过。")
         runtime = report.get("runtime", {})
         typer.echo(f"数据目录: {runtime.get('data_dir') or report.get('data_dir') or '-'}")
+        typer.echo(f"Boot: {_format_boot_summary(runtime.get('boot', {}))}")
         typer.echo(f"插件数: {runtime.get('plugins', 0)}")
         typer.echo(f"Gateway 已创建: {_yes(runtime.get('gateway_created', False))}")
         typer.echo(f"Gateway 运行: {_yes(runtime.get('gateway_running', False))}")
@@ -1195,6 +1196,10 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
 
 
 def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
+    from personal_agent.runtime import BootReport
+
+    boot_report = BootReport()
+    boot_report.error("settings", f"{type(exc).__name__}: {exc}")
     config_report = build_config_report(Path("."))
     data_dir = _config_directory(config_report, "data_dir", "./data")
     sandbox_roots = [
@@ -1220,6 +1225,9 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
             "gateway_running": False,
             "cached_agents": 0,
             "error": f"Settings 初始化失败: {type(exc).__name__}: {exc}",
+            "boot": boot_report.as_dict(),
+            "boot_ok": False,
+            "boot_failed_step": "settings",
         },
         "memory": {
             "builtin_available": False,
@@ -1291,6 +1299,39 @@ def _doctor_section_payload(report: dict[str, Any], section: str) -> dict[str, A
     return report
 
 
+def _format_boot_summary(boot: dict[str, Any]) -> str:
+    if not isinstance(boot, dict) or not boot:
+        return "-"
+    summary = boot.get("summary") or {}
+    state = "正常" if boot.get("ok") else f"失败({boot.get('failed_step') or '-'})"
+    return (
+        f"{state} "
+        f"total={summary.get('total', 0)} "
+        f"ok={summary.get('ok', 0)} "
+        f"skipped={summary.get('skipped', 0)} "
+        f"error={summary.get('error', 0)}"
+    )
+
+
+def _format_boot_step_lines(boot: dict[str, Any]) -> list[str]:
+    if not isinstance(boot, dict) or not boot.get("steps"):
+        return ["  - 无"]
+    lines = []
+    for step in boot.get("steps", []):
+        name = step.get("name") or "-"
+        status = step.get("status") or "-"
+        duration = step.get("duration", 0.0)
+        detail = step.get("detail") or ""
+        error = step.get("error") or ""
+        suffix = ""
+        if detail:
+            suffix += f" detail={detail}"
+        if error:
+            suffix += f" error={error}"
+        lines.append(f"  - {name}: {status} {duration:.3f}s{suffix}")
+    return lines
+
+
 def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
@@ -1322,6 +1363,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         "",
         "Runtime:",
         f"  初始化: {_yes(runtime.get('initialized', False))}",
+        f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
         f"  DB 打开: {_yes(runtime.get('db_open', False))}",
         f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
         f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1588,6 +1630,7 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         gateway = report.get("gateway", {})
         lines.extend([
             f"  初始化: {_yes(runtime.get('initialized', False))}",
+            f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
             f"  DB 打开: {_yes(runtime.get('db_open', False))}",
             f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
             f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1596,6 +1639,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
             f"  pending messages: {gateway.get('pending_messages', 0)}",
             f"  runtime 错误: {runtime.get('error') or '-'}",
         ])
+        lines.extend(["", "Boot steps:"])
+        lines.extend(_format_boot_step_lines(runtime.get("boot", {})))
     elif section == "platforms":
         platforms = report.get("platforms", [])
         if platforms:
@@ -1905,6 +1950,9 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
             issues.append(f"Runtime 初始化失败: {runtime.get('error') or '未知错误'}")
         elif not runtime.get("db_open", False):
             issues.append("Runtime DB 未打开。")
+        boot = runtime.get("boot") or {}
+        if boot and not boot.get("ok", False):
+            issues.append(f"Runtime boot 失败: {boot.get('failed_step') or '未知阶段'}")
 
     memory = report.get("memory", {})
     if memory and not memory.get("builtin_available", False):
