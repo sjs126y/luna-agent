@@ -32,6 +32,13 @@ from personal_agent.tui.state import UIState
 
 _DIVIDER = "\x1b[2m" + "─" * 50 + "\x1b[0m"
 
+# Cap the bottom active region so a long stream / many live tools can't push the
+# input box off-screen. Finalized content already lives in scrollback; the active
+# region is only a live preview, so trimming it loses nothing permanent.
+_MAX_ACTIVE_LINES = 12
+_MAX_ACTIVE_TOOLS = 6
+_STREAM_TAIL_CHARS = 2000
+
 
 def build_layout(
     state: UIState,
@@ -45,11 +52,19 @@ def build_layout(
         lines: list[str] = [_DIVIDER]
         if state.thinking_chars:
             lines.append(f"\x1b[2m💭 思考中… ({state.thinking_chars} 字)\x1b[0m")
-        for item in state.active_tools.values():
+        tools = list(state.active_tools.values())
+        for item in tools[:_MAX_ACTIVE_TOOLS]:
             lines.append(f"\x1b[36m⚙ {item.display_name}…\x1b[0m")
+        if len(tools) > _MAX_ACTIVE_TOOLS:
+            lines.append(f"\x1b[2m… 还有 {len(tools) - _MAX_ACTIVE_TOOLS} 个工具在运行\x1b[0m")
         if state.stream_text:
             cursor = "\x1b[36m▌\x1b[0m" if state.streaming else ""
-            lines.append(f"\x1b[1;36mPersonal Agent:\x1b[0m {state.stream_text}{cursor}")
+            # Only the tail matters as a live preview; the full reply finalizes
+            # into scrollback via assistant_message.
+            preview = state.stream_text[-_STREAM_TAIL_CHARS:]
+            if len(state.stream_text) > _STREAM_TAIL_CHARS:
+                preview = "…" + preview
+            lines.append(f"\x1b[1;36mPersonal Agent:\x1b[0m {preview}{cursor}")
         return ANSI("\n".join(lines))
 
     def status_content() -> ANSI:
@@ -57,7 +72,7 @@ def build_layout(
 
     active_window = Window(
         content=FormattedTextControl(active_content),
-        height=Dimension(min=0, weight=1),
+        height=Dimension(min=0, max=_MAX_ACTIVE_LINES, weight=1),
         wrap_lines=True,
     )
     status_window = Window(
