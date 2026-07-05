@@ -21,9 +21,12 @@ def _make():
     def invalidate() -> None:
         calls["n"] += 1
 
+    async def print_above(text: str) -> None:
+        printed.append(text)
+
     r = InlineRenderer(
         invalidate=invalidate,
-        print_above=printed.append,
+        print_above=print_above,
         width=60,
     )
     return r, printed, calls

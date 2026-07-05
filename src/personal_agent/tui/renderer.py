@@ -10,7 +10,7 @@ Both default to no-ops so the renderer can be unit-tested without a terminal.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 import time
 
 from personal_agent.conversation.events import ConversationEvent
@@ -20,7 +20,7 @@ from personal_agent.tui.renderer_base import Renderer
 
 
 def _noop() -> None: ...
-def _noop_print(_text: str) -> None: ...
+async def _noop_print(_text: str) -> None: ...
 
 
 class InlineRenderer(Renderer):
@@ -31,7 +31,7 @@ class InlineRenderer(Renderer):
         *,
         state: UIState | None = None,
         invalidate: Callable[[], None] = _noop,
-        print_above: Callable[[str], None] = _noop_print,
+        print_above: Callable[[str], Awaitable[None]] = _noop_print,
         width: int = 80,
     ) -> None:
         self.state = state or UIState()
@@ -74,7 +74,7 @@ class InlineRenderer(Renderer):
         self.state.stream_text = ""
         self.state.streaming = False
         if text:
-            self._print_above(render_markdown(text, width=self.width))
+            await self._print_above(render_markdown(text, width=self.width))
         self._invalidate()
 
     async def on_llm_end(self, event: ConversationEvent) -> None:
@@ -132,7 +132,7 @@ class InlineRenderer(Renderer):
         if full:
             self.state.last_expandable = (item.display_name, full)
         # Print the completed tool trace line into scrollback.
-        self._print_above(render_plain(self._tool_line(item), width=self.width))
+        await self._print_above(render_plain(self._tool_line(item), width=self.width))
         self._invalidate()
 
     async def on_turn_end(self, event: ConversationEvent) -> None:

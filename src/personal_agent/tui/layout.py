@@ -16,9 +16,16 @@ from prompt_toolkit.completion import Completer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.history import History
-from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
+from prompt_toolkit.layout.containers import (
+    ConditionalContainer,
+    Float,
+    FloatContainer,
+    HSplit,
+    Window,
+)
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.widgets import TextArea
 
 from personal_agent.tui.state import UIState
@@ -31,7 +38,7 @@ def build_layout(
     *,
     completer: Completer | None = None,
     history: History | None = None,
-) -> tuple[HSplit, TextArea]:
+) -> tuple[FloatContainer, TextArea]:
     """Return (root_container, input_area). Caller owns key bindings."""
 
     def active_content() -> ANSI:
@@ -57,21 +64,40 @@ def build_layout(
         content=FormattedTextControl(status_content),
         height=1,
     )
+    # multiline=True so Ctrl+J can add real newlines; height grows with content
+    # (1 line idle, up to 6). Enter is bound by the app to submit, not newline.
+    # get_line_prefix aligns wrapped/continuation lines under the "› " prompt so
+    # a Ctrl+J newline doesn't look mis-indented against the first line.
+    def _line_prefix(line_number: int, wrap_count: int):
+        return "  " if (line_number > 0 or wrap_count > 0) else ""
+
     input_area = TextArea(
-        height=1,
+        height=Dimension(min=1, max=6),
         prompt="› ",
-        multiline=False,
-        wrap_lines=False,
+        multiline=True,
+        wrap_lines=True,
         completer=completer,
         complete_while_typing=True,  # slash menu pops as you type '/'
         history=history,
+        get_line_prefix=_line_prefix,
     )
 
-    root = HSplit([
+    body = HSplit([
         ConditionalContainer(active_window, filter=Condition(state.has_active_region)),
         status_window,
         input_area,
     ])
+    # FloatContainer hosts the completion menu popup above the input line.
+    root = FloatContainer(
+        content=body,
+        floats=[
+            Float(
+                xcursor=True,
+                ycursor=True,
+                content=CompletionsMenu(max_height=8, scroll_offset=1),
+            ),
+        ],
+    )
     return root, input_area
 
 

@@ -41,10 +41,10 @@ def test_completer_and_history_wired():
     assert app.input_area.buffer.history is not None
 
 
-def test_expand_last_noop_when_empty(capsys):
+def test_expand_last_noop_when_empty():
     app = _app()
     printed: list[str] = []
-    app._print_above = printed.append  # type: ignore[method-assign]
+    app._print_above_nowait = printed.append  # type: ignore[method-assign]
     app._expand_last()
     assert printed == []
 
@@ -52,7 +52,7 @@ def test_expand_last_noop_when_empty(capsys):
 def test_expand_last_prints_when_present():
     app = _app()
     printed: list[str] = []
-    app._print_above = printed.append  # type: ignore[method-assign]
+    app._print_above_nowait = printed.append  # type: ignore[method-assign]
     app.state.last_expandable = ("read", "line1\nline2")
     app._expand_last()
     assert len(printed) == 1
@@ -60,11 +60,26 @@ def test_expand_last_prints_when_present():
     assert "line1" in printed[0] and "line2" in printed[0]
 
 
+def test_expand_last_dedups_repeated_presses():
+    app = _app()
+    printed: list[str] = []
+    app._print_above_nowait = printed.append  # type: ignore[method-assign]
+    app.state.last_expandable = ("read", "data")
+    app._expand_last()
+    app._expand_last()
+    app._expand_last()
+    assert len(printed) == 1  # same content only printed once
+
+
 @pytest.mark.asyncio
 async def test_submit_routes_message_to_runtime():
     app = _app()
     printed: list[str] = []
-    app._print_above = printed.append  # type: ignore[method-assign]
+
+    async def print_above(text):
+        printed.append(text)
+
+    app._print_above = print_above  # type: ignore[method-assign]
     await app._submit("hello")
     assert app.runtime.sent == ["hello"]
     # user line echoed above
@@ -87,7 +102,11 @@ async def test_command_not_sent_as_message():
 
     app.runtime.handle_command = handle_command  # type: ignore[method-assign]
     printed: list[str] = []
-    app._print_above = printed.append  # type: ignore[method-assign]
+
+    async def print_above(text):
+        printed.append(text)
+
+    app._print_above = print_above  # type: ignore[method-assign]
     await app._submit("/help")
     assert app.runtime.sent == []  # not routed as a message
     assert any("command output" in line for line in printed)

@@ -43,6 +43,7 @@ class InlineTuiApp:
             width=self._term_width(),
         )
         self._turn_task: asyncio.Task | None = None
+        self._last_expanded: tuple[str, str] | None = None
         self.app: Application | None = None
 
     # ── reuse the classic shell's completer + history ──
@@ -67,8 +68,13 @@ class InlineTuiApp:
         if self.app is not None:
             self.app.invalidate()
 
-    def _print_above(self, text: str) -> None:
-        # Schedule a print above the app; enters native scrollback.
+    async def _print_above(self, text: str) -> None:
+        # Print above the app -> native scrollback. Awaited so concurrent tool
+        # lines / replies print in order and none get dropped.
+        await run_in_terminal(lambda: print(text))
+
+    def _print_above_nowait(self, text: str) -> None:
+        # For sync key handlers that can't await (Ctrl+O, exit echo).
         asyncio.ensure_future(run_in_terminal(lambda: print(text)))
 
     def _term_width(self) -> int:
@@ -86,9 +92,9 @@ class InlineTuiApp:
         # Slash / builtin commands go through the runtime, result printed above.
         command_result = await self.runtime.handle_command(text)
         if command_result is not None:
-            self._print_above(str(command_result))
+            await self._print_above(str(command_result))
             return
-        self._print_above(f"\x1b[1m你:\x1b[0m {text}")
+        await self._print_above(f"\x1b[1m你:\x1b[0m {text}")
         result = await self.runtime.run_message_events(text, event_sink=self.renderer)
         return result
 
@@ -157,13 +163,17 @@ class InlineTuiApp:
 
     def _expand_last(self) -> None:
         """Print the most recent expandable output (tool result / thinking) into
-        scrollback. Inline model: no full-screen pager, just print above."""
+        scrollback. Inline model: no full-screen pager, just print above.
+        Dedup: pressing Ctrl+O repeatedly on the same content prints it once."""
         if self.state.last_expandable is None:
             return
+        if self.state.last_expandable == self._last_expanded:
+            return  # already expanded this content; don't restack
+        self._last_expanded = self.state.last_expandable
         name, full = self.state.last_expandable
         header = f"\x1b[34m$ {name}\x1b[0m"
         body = "\n".join(f"  {line}" for line in (full.splitlines() or [full]))
-        self._print_above(f"{header}\n{body}")
+        self._print_above_nowait(f"{header}\n{body}")
 
     async def run(self) -> None:
         self.app = Application(
