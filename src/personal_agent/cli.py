@@ -406,12 +406,18 @@ def chat(
     once: str = typer.Option("", "--once", "-o", help="只运行一轮消息后退出。"),
     session: str = typer.Option("default", "--session", "-s", help="CLI 会话名。"),
     simple: bool = typer.Option(False, "--simple", help="使用旧版简单 REPL。"),
-    ui: str = typer.Option("classic", "--ui", help="渲染器: classic (默认) | inline (CC/Codex 风格行内滚动，实验性)。"),
+    ui: str = typer.Option("", "--ui", help="渲染器: classic (默认) | inline (CC/Codex 风格行内滚动，实验性)。不传则读 config.yaml agent.ui。"),
     verbose: bool = typer.Option(False, "--verbose", help="显示更详细的模型和工具事件。"),
     quiet_events: bool = typer.Option(False, "--quiet-events", help="隐藏模型和工具事件，只显示对话与命令结果。"),
 ) -> None:
     """Interactive multi-turn chat loop."""
     one_shot = once or message
+    # --ui overrides; when unset, fall back to config.yaml agent.ui (default classic).
+    if not ui:
+        try:
+            ui = getattr(Settings(), "agent_ui", "classic") or "classic"
+        except Exception:
+            ui = "classic"
     try:
         if one_shot:
             run_cli_once_sync(one_shot, session_name=session)
@@ -1377,6 +1383,17 @@ def _format_turn_summary(turns: dict[str, Any]) -> str:
     )
 
 
+def _format_tool_truth_summary(tool_truth: dict[str, Any]) -> str:
+    if not isinstance(tool_truth, dict) or not tool_truth:
+        return "-"
+    return (
+        f"inspected={tool_truth.get('inspected', 0)} "
+        f"with_tools={tool_truth.get('turns_with_tools', 0)} "
+        f"mismatches={tool_truth.get('claim_mismatches', 0)} "
+        f"denied={tool_truth.get('denied_tool_calls', 0)}"
+    )
+
+
 def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
     if not isinstance(turns, dict) or not turns:
         return ["  stored: 0"]
@@ -1392,6 +1409,23 @@ def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
     ]
 
 
+def _format_tool_truth_detail_lines(tool_truth: dict[str, Any]) -> list[str]:
+    if not isinstance(tool_truth, dict) or not tool_truth:
+        return ["  inspected: 0"]
+    return [
+        f"  stored: {tool_truth.get('stored', 0)}",
+        f"  inspected: {tool_truth.get('inspected', 0)}",
+        f"  turns with tools: {tool_truth.get('turns_with_tools', 0)}",
+        f"  turns without tools: {tool_truth.get('turns_without_tools', 0)}",
+        f"  claim mismatches: {tool_truth.get('claim_mismatches', 0)}",
+        f"  denied tool calls: {tool_truth.get('denied_tool_calls', 0)}",
+        f"  failed tool calls: {tool_truth.get('failed_tool_calls', 0)}",
+        f"  tool counts: {_format_counts(tool_truth.get('tool_counts', {}))}",
+        f"  warnings: {_format_counts(tool_truth.get('warning_counts', {}))}",
+        f"  last warning: {tool_truth.get('last_warning') or '-'}",
+    ]
+
+
 def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
@@ -1404,6 +1438,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
     gateway = report.get("gateway", {})
     tools = report.get("tools", {})
     config = report.get("config", {})
+    tool_truth = runtime.get("tool_truth", {})
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
         "Personal Agent 诊断",
@@ -1425,6 +1460,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  初始化: {_yes(runtime.get('initialized', False))}",
         f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
         f"  Turns: {_format_turn_summary(runtime.get('turns', {}))}",
+        f"  Tool Truth: {_format_tool_truth_summary(tool_truth)}",
         f"  DB 打开: {_yes(runtime.get('db_open', False))}",
         f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
         f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
