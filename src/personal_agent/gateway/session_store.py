@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 from personal_agent.models.session import SessionEntry
 from personal_agent.persistence.json_store import read_json_object, write_json_atomic
@@ -187,6 +188,23 @@ class SessionStore:
     async def export(self, session_id: str, output_path: str) -> int:
         """Export session as JSONL — user/assistant text only."""
         return await self._db.export_jsonl(session_id, output_path)
+
+    async def save_tool_runs(self, runs: list[dict[str, Any]]) -> int:
+        return await self._db.save_tool_runs(runs)
+
+    async def recent_tool_runs(
+        self,
+        *,
+        limit: int = 20,
+        session_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self._db.recent_tool_runs(limit=limit, session_key=session_key)
+
+    async def get_tool_run(self, run_id: int) -> dict[str, Any] | None:
+        return await self._db.get_tool_run(run_id)
+
+    async def tool_run_summary(self, *, limit: int = 50) -> dict[str, Any]:
+        return await self._db.tool_run_summary(limit=limit)
 
     async def expire_sessions(self, max_age_days: int = 30) -> int:
         """Remove sessions inactive for > max_age_days. Returns count removed."""

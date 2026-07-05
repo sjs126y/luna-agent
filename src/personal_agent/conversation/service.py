@@ -7,6 +7,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+import time
 from typing import Any
 
 from personal_agent.conversation.events import ConversationEvent, EventRecorder, emit_event
@@ -55,6 +56,7 @@ class ConversationService:
             else OrderedDict(agent_cache or {})
         )
         self.turn_reports: deque[dict[str, Any]] = deque(maxlen=TURN_REPORT_HISTORY_LIMIT)
+        self._recent_tool_runs: deque[dict[str, Any]] = deque(maxlen=TURN_REPORT_HISTORY_LIMIT)
 
     async def run_turn(self, session_key: str, source, text: str) -> ConversationTurnResult:
         return await self.run_turn_events(session_key, source, text)
@@ -113,18 +115,22 @@ class ConversationService:
 
         if status == "completed" and completed and not context_overflow:
             if was_compressed:
-                await self.session_store.create_compressed_session(
+                stored_session_id = await self.session_store.create_compressed_session(
                     session_key, source, result["messages"]
                 )
+                if not stored_session_id:
+                    stored_session_id = current_id
             else:
                 await self.session_store.save_transcript(
                     current_id, result["messages"], previous_count
                 )
+                stored_session_id = current_id
         else:
             minimal_messages = _minimal_turn_messages(text, final_response)
             await self.session_store.save_transcript(
                 current_id, history + minimal_messages, previous_count
             )
+            stored_session_id = current_id
         await emit_event(
             recorder,
             "turn_end",
@@ -139,6 +145,12 @@ class ConversationService:
         turn_report = dict(result.get("turn_report") or {})
         if turn_report:
             self.record_turn_report(session_key, source, turn_report)
+        await self._record_tool_runs(
+            stored_session_id,
+            session_key,
+            recorder.events,
+            turn_id=str(turn_report.get("turn_id") or ""),
+        )
 
         return ConversationTurnResult(
             final_response=final_response,
@@ -270,6 +282,24 @@ class ConversationService:
             "last_claimed_but_no_tool_call": bool(last.get("claimed_but_no_tool_call", False)),
         }
 
+    async def recent_tool_runs(
+        self,
+        *,
+        limit: int = 20,
+        session_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self.session_store.recent_tool_runs(limit=limit, session_key=session_key)
+
+    async def get_tool_run(self, run_id: int) -> dict[str, Any] | None:
+        return await self.session_store.get_tool_run(run_id)
+
+    async def tool_run_summary(self, *, limit: int = 50) -> dict[str, Any]:
+        return await self.session_store.tool_run_summary(limit=limit)
+
+    def tool_run_memory_summary(self, limit: int = 50) -> dict[str, Any]:
+        recent = list(self._recent_tool_runs)[-limit:] if limit > 0 else []
+        return _tool_run_summary(recent)
+
     async def get_or_create_agent(self, session_key: str):
         agent = self.agent_cache.get(session_key)
         if agent is not None:
@@ -294,6 +324,31 @@ class ConversationService:
                 self.agent_cache.popitem(last=False)
         self.agent_cache[session_key] = agent
         return agent
+
+    async def _record_tool_runs(
+        self,
+        session_id: str,
+        session_key: str,
+        events: list[ConversationEvent],
+        *,
+        turn_id: str = "",
+    ) -> None:
+        runs = _tool_runs_from_events(
+            session_id,
+            session_key,
+            events,
+            turn_id=turn_id,
+        )
+        if not runs:
+            return
+        try:
+            await self.session_store.save_tool_runs(runs)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Failed to persist tool runs")
+            return
+        self._recent_tool_runs.extend(runs)
 
     async def load_history(self, session_key: str, source) -> list[dict]:
         session = await self.session_store.get_or_create(session_key, source)
@@ -530,6 +585,94 @@ def _empty_tool_truth_summary() -> dict[str, Any]:
     }
 
 
+def _tool_runs_from_events(
+    session_id: str,
+    session_key: str,
+    events: list[ConversationEvent],
+    *,
+    turn_id: str = "",
+) -> list[dict[str, Any]]:
+    resolved_turn_id = turn_id
+    for event in events:
+        if event.type == "turn_start":
+            resolved_turn_id = str(event.data.get("turn_id") or resolved_turn_id)
+            break
+    created_at = time.time()
+    runs: list[dict[str, Any]] = []
+    for event in events:
+        if event.type != "tool_end":
+            continue
+        data = event.data
+        runs.append({
+            "session_id": session_id,
+            "session_key": session_key,
+            "turn_id": resolved_turn_id,
+            "tool_use_id": str(data.get("tool_use_id") or data.get("tool_name") or "tool"),
+            "tool_name": str(data.get("tool_name") or ""),
+            "status": str(data.get("status") or ""),
+            "category": str(data.get("category") or ""),
+            "duration": _as_float(data.get("duration")),
+            "input_summary": str(data.get("input_summary") or ""),
+            "output_summary": str(data.get("output_summary") or ""),
+            "full_output": str(data.get("full_output") or ""),
+            "output_truncated": bool(data.get("output_truncated", False)),
+            "error": str(data.get("error") or ""),
+            "guard_stage": str(data.get("guard_stage") or ""),
+            "reason_code": str(data.get("guard_reason_code") or data.get("reason_code") or ""),
+            "permission_category": str(data.get("permission_category") or ""),
+            "permission_decision": str(data.get("permission_decision") or ""),
+            "required_allow": str(data.get("required_allow") or ""),
+            "execution_mode": str(data.get("execution_mode") or ""),
+            "grant_matched": str(data.get("grant_matched") or ""),
+            "created_at": created_at,
+        })
+    return runs
+
+
+def _tool_run_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        return _empty_tool_run_summary()
+    tool_counts: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    truncated = 0
+    for item in items:
+        tool_name = str(item.get("tool_name") or "")
+        status = str(item.get("status") or "")
+        category = str(item.get("category") or "")
+        if tool_name:
+            tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+        if status:
+            status_counts[status] = status_counts.get(status, 0) + 1
+        if category:
+            category_counts[category] = category_counts.get(category, 0) + 1
+        if item.get("output_truncated"):
+            truncated += 1
+    return {
+        "inspected": len(items),
+        "tool_counts": dict(sorted(tool_counts.items())),
+        "status_counts": dict(sorted(status_counts.items())),
+        "category_counts": dict(sorted(category_counts.items())),
+        "denied": int(status_counts.get("denied", 0)),
+        "failed": int(status_counts.get("error", 0)),
+        "timeouts": int(status_counts.get("timeout", 0)),
+        "truncated": truncated,
+    }
+
+
+def _empty_tool_run_summary() -> dict[str, Any]:
+    return {
+        "inspected": 0,
+        "tool_counts": {},
+        "status_counts": {},
+        "category_counts": {},
+        "denied": 0,
+        "failed": 0,
+        "timeouts": 0,
+        "truncated": 0,
+    }
+
+
 def _status_counts_snapshot(value: Any) -> dict[str, int]:
     counts = {
         "success": 0,
@@ -547,6 +690,13 @@ def _status_counts_snapshot(value: Any) -> dict[str, int]:
         except (TypeError, ValueError):
             counts[str(key)] = 0
     return counts
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _turn_status(result: dict[str, Any], *, completed: bool, context_overflow: bool) -> str:

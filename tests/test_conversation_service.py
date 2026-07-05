@@ -226,6 +226,89 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
+    from personal_agent.conversation.events import emit_event
+
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages(user_text=text))
+
+    async def run_conversation(agent, ctx, *, event_sink=None):
+        await emit_event(
+            event_sink,
+            "turn_start",
+            "开始处理",
+            turn_id="turn-tool",
+            user_message="run pwd",
+        )
+        await emit_event(
+            event_sink,
+            "tool_start",
+            "调用工具 bash",
+            tool_name="bash",
+            tool_use_id="call-1",
+            input_summary='{"cmd": "pwd"}',
+        )
+        await emit_event(
+            event_sink,
+            "tool_end",
+            "工具 bash success",
+            tool_name="bash",
+            tool_use_id="call-1",
+            status="success",
+            category="",
+            duration=0.25,
+            input_summary='{"cmd": "pwd"}',
+            output_summary="/workspace",
+            full_output="/workspace",
+            output_truncated=False,
+            guard_stage="runtime_guard",
+            guard_reason_code="allowed",
+            permission_category="bash",
+            permission_decision="allow",
+            required_allow="",
+            execution_mode="sovereign",
+            grant_matched="",
+        )
+        return {
+            "final_response": "done",
+            "messages": _messages(user_text="run pwd", assistant_text="done"),
+            "completed": True,
+            "turn_report": _turn_report(
+                tool_calls=1,
+                tool_names=["bash"],
+                status_counts={"success": 1},
+            ) | {"turn_id": "turn-tool"},
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "run pwd")
+    runs = await svc.recent_tool_runs(limit=5)
+    summary = svc.tool_run_memory_summary()
+    db_summary = await svc.tool_run_summary(limit=5)
+
+    assert result.status == "completed"
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["session_key"] == "cli:default:local"
+    assert run["turn_id"] == "turn-tool"
+    assert run["tool_use_id"] == "call-1"
+    assert run["tool_name"] == "bash"
+    assert run["status"] == "success"
+    assert run["full_output"] == "/workspace"
+    assert run["guard_stage"] == "runtime_guard"
+    assert run["reason_code"] == "allowed"
+    assert summary["inspected"] == 1
+    assert summary["tool_counts"] == {"bash": 1}
+    assert summary["status_counts"] == {"success": 1}
+    assert db_summary["inspected"] == 1
+    assert db_summary["tool_counts"] == {"bash": 1}
+
+
+@pytest.mark.asyncio
 async def test_run_turn_keeps_empty_turn_report_for_legacy_loop(service, monkeypatch):
     svc, _manager, _db = service
 

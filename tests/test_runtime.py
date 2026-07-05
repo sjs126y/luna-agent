@@ -122,6 +122,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["boot_failed_step"] == ""
         assert health["turns"]["stored"] == 0
         assert health["tool_truth"]["inspected"] == 0
+        assert health["tool_runs"]["inspected"] == 0
         runtime.conversation_service.record_turn_report(
             "cli:default:local",
             type("Source", (), {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"})(),
@@ -160,6 +161,23 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert truth_health["turns_with_tools"] == 1
         assert truth_health["tool_counts"] == {"bash": 1, "search": 1}
         assert truth_health["denied_tool_calls"] == 1
+        runtime.conversation_service._recent_tool_runs.append({
+            "tool_name": "bash",
+            "status": "success",
+            "category": "",
+            "output_truncated": False,
+        })
+        runtime.conversation_service._recent_tool_runs.append({
+            "tool_name": "write",
+            "status": "denied",
+            "category": "permission",
+            "output_truncated": True,
+        })
+        run_health = runtime.health_snapshot()["tool_runs"]
+        assert run_health["inspected"] == 2
+        assert run_health["tool_counts"] == {"bash": 1, "write": 1}
+        assert run_health["denied"] == 1
+        assert run_health["truncated"] == 1
         assert health["gateway_created"] is False
         assert health["gateway_running"] is False
         assert health["gateway"] == {}

@@ -46,6 +46,7 @@ class ToolExecutionResult:
     input_summary: str = ""
     output_summary: str = ""
     attempts: int = 0
+    output_truncated: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -222,6 +223,7 @@ async def execute_tool_call_result(
             input_summary=result.input_summary,
             output_summary=result.output_summary,
             full_output=result.content or result.error,
+            output_truncated=result.output_truncated,
             guard_stage=tool_decision.stage if tool_decision else "",
             guard_reason_code=tool_decision.reason_code if tool_decision else "",
             permission_category=tool_decision.permission_category if tool_decision else "",
@@ -360,8 +362,10 @@ async def execute_tool_call_result(
         ))
 
     # ── 3. post-process ──────────────────────────────
+    output_truncated = False
     if len(result) > MAX_RESULT_CHARS:
         result = result[:MAX_RESULT_CHARS] + f"\n\n...({len(result) - MAX_RESULT_CHARS} more chars truncated)"
+        output_truncated = True
 
     status: ToolExecutionStatus = "success"
     category = ""
@@ -371,6 +375,7 @@ async def execute_tool_call_result(
             modified = await hooks.fire("on_after_tool_exec", tc, result)
             if isinstance(modified, str):
                 result = modified
+                output_truncated = False
         except Exception as exc:
             status = "error"
             category = "hook"
@@ -385,6 +390,7 @@ async def execute_tool_call_result(
         error=error,
         attempts=attempts,
         started=started,
+        output_truncated=output_truncated,
     ))
 
 
@@ -435,13 +441,15 @@ def _result(
     error: str = "",
     attempts: int = 0,
     started: float | None = None,
+    output_truncated: bool = False,
 ) -> ToolExecutionResult:
     normalized = _normalize_tool_call(tc)
     result_text = _coerce_tool_output(content) if content else ""
     error_text = _coerce_tool_output(error) if error else ""
     visible = result_text or error_text
-    if len(visible) > MAX_RESULT_CHARS:
+    if len(visible) > MAX_RESULT_CHARS and not output_truncated:
         visible = visible[:MAX_RESULT_CHARS] + f"\n\n...({len(visible) - MAX_RESULT_CHARS} more chars truncated)"
+        output_truncated = True
         if result_text:
             result_text = visible
         else:
@@ -458,6 +466,7 @@ def _result(
         input_summary=_summarize_value(normalized["input"]),
         output_summary=_summarize_text(visible),
         attempts=attempts,
+        output_truncated=output_truncated,
     )
 
 

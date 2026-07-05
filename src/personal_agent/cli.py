@@ -1394,6 +1394,17 @@ def _format_tool_truth_summary(tool_truth: dict[str, Any]) -> str:
     )
 
 
+def _format_tool_runs_summary(tool_runs: dict[str, Any]) -> str:
+    if not isinstance(tool_runs, dict) or not tool_runs:
+        return "-"
+    return (
+        f"stored={tool_runs.get('inspected', 0)} "
+        f"denied={tool_runs.get('denied', 0)} "
+        f"failed={tool_runs.get('failed', 0)} "
+        f"truncated={tool_runs.get('truncated', 0)}"
+    )
+
+
 def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
     if not isinstance(turns, dict) or not turns:
         return ["  stored: 0"]
@@ -1426,6 +1437,21 @@ def _format_tool_truth_detail_lines(tool_truth: dict[str, Any]) -> list[str]:
     ]
 
 
+def _format_tool_runs_detail_lines(tool_runs: dict[str, Any]) -> list[str]:
+    if not isinstance(tool_runs, dict) or not tool_runs:
+        return ["  stored: 0"]
+    return [
+        f"  stored: {tool_runs.get('inspected', 0)}",
+        f"  denied: {tool_runs.get('denied', 0)}",
+        f"  failed: {tool_runs.get('failed', 0)}",
+        f"  timeouts: {tool_runs.get('timeouts', 0)}",
+        f"  truncated: {tool_runs.get('truncated', 0)}",
+        f"  tool counts: {_format_counts(tool_runs.get('tool_counts', {}))}",
+        f"  status counts: {_format_counts(tool_runs.get('status_counts', {}))}",
+        f"  category counts: {_format_counts(tool_runs.get('category_counts', {}))}",
+    ]
+
+
 def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
@@ -1439,6 +1465,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
     tools = report.get("tools", {})
     config = report.get("config", {})
     tool_truth = runtime.get("tool_truth", {})
+    tool_runs = runtime.get("tool_runs", {})
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
         "Personal Agent 诊断",
@@ -1461,6 +1488,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
         f"  Turns: {_format_turn_summary(runtime.get('turns', {}))}",
         f"  Tool Truth: {_format_tool_truth_summary(tool_truth)}",
+        f"  Tool Runs: {_format_tool_runs_summary(tool_runs)}",
         f"  DB 打开: {_yes(runtime.get('db_open', False))}",
         f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
         f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1743,6 +1771,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         lines.extend(_format_turn_detail_lines(runtime.get("turns", {})))
         lines.extend(["", "Tool Truth:"])
         lines.extend(_format_tool_truth_detail_lines(runtime.get("tool_truth", {})))
+        lines.extend(["", "Tool Runs:"])
+        lines.extend(_format_tool_runs_detail_lines(runtime.get("tool_runs", {})))
     elif section == "platforms":
         platforms = report.get("platforms", [])
         if platforms:

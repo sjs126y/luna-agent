@@ -720,9 +720,49 @@ async def test_execute_tool_call_result_structured_success_and_error():
     assert recorder.events[0].data["tool_name"] == "structured_demo"
     assert recorder.events[1].data["allowed"] is True
     assert recorder.events[2].data["status"] == "success"
+    assert recorder.events[2].data["output_truncated"] is False
     assert unknown.status == "error"
     assert unknown.category == "unknown_tool"
     assert "unknown tool" in format_tool_result(unknown)
+
+
+@pytest.mark.asyncio
+async def test_tool_end_marks_truncated_output():
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import MAX_RESULT_CHARS, execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("large_output_demo")
+    recorder = EventRecorder()
+
+    async def handler():
+        return "x" * (MAX_RESULT_CHARS + 20)
+
+    tool_registry.register(ToolEntry(
+        name="large_output_demo",
+        description="large",
+        schema={},
+        handler=handler,
+    ))
+
+    try:
+        result = await execute_tool_call_result({
+            "id": "call-large",
+            "name": "large_output_demo",
+            "input": {},
+        }, event_sink=recorder)
+    finally:
+        if original is None:
+            tool_registry.unregister("large_output_demo")
+        else:
+            tool_registry.register(original)
+
+    tool_end = recorder.events[-1]
+    assert result.output_truncated is True
+    assert tool_end.type == "tool_end"
+    assert tool_end.data["output_truncated"] is True
+    assert len(tool_end.data["full_output"]) > MAX_RESULT_CHARS
 
 
 @pytest.mark.asyncio
