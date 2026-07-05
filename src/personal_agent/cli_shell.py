@@ -46,7 +46,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/session", "管理会话 (list/switch/rename/delete)"),
     ("/usage", "查看上下文预算"),
     ("/allow", "授权危险操作 (write/bash/all)"),
-    ("/mode", "切换执行模式 (normal/acceptEdits/auto)"),
+    ("/mode", "切换执行模式 (Read Only/Ask First/Edit Freely/Full Auto)"),
     ("/stop", "停止当前处理"),
     ("/export", "导出会话 JSONL"),
     ("/agents", "查看子 agent 运行记录"),

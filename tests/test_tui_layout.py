@@ -95,7 +95,7 @@ def test_hint_bar_uses_distinct_mode_colors():
     from personal_agent.tui.layout import _hint_bar
 
     seen = set()
-    for mode in ("normal", "acceptEdits", "auto"):
+    for mode in ("Read Only", "Ask First", "Edit Freely", "Full Auto"):
         state = UIState()
         state.exec_mode = mode
         bar = _hint_bar(state)
@@ -103,7 +103,7 @@ def test_hint_bar_uses_distinct_mode_colors():
         code = theme.mode_style(mode)
         assert f"\x1b[{code}m" in bar
         seen.add(code)
-    assert len(seen) == 3  # three distinct colors
+    assert len(seen) == 4  # four distinct colors
 
 
 def test_keyhint_bar_below_input_lists_shortcuts():

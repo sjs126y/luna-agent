@@ -47,7 +47,7 @@ class InlineTuiApp:
     def __init__(self, runtime) -> None:
         self.runtime = runtime
         self.state = UIState()
-        self.state.exec_mode = "normal"
+        self.state.exec_mode = "Ask First"
         self.state.model = getattr(getattr(runtime, "settings", None), "llm_model", "") or ""
         self.root, self.input_area = build_layout(
             self.state,
@@ -229,7 +229,7 @@ class InlineTuiApp:
             return True
         return any(p.kind is p.VAR_KEYWORD for p in params.values())
 
-    _MODE_CYCLE = ("normal", "acceptEdits", "auto")
+    _MODE_CYCLE = ("Read Only", "Ask First", "Edit Freely", "Full Auto")
 
     async def _cycle_mode(self) -> None:
         """Advance to the next execution mode via the /mode command path."""

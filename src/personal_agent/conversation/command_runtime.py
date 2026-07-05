@@ -70,11 +70,11 @@ class ConversationCommandRuntime:
         )
 
     async def current_execution_mode(self) -> str:
-        from personal_agent.commands.runtime import current_mode
+        from personal_agent.commands.runtime import current_mode, current_mode_from_policy
 
         agent = self.conversation_service.get_cached_agent(self.session_key)
         if agent is None:
-            return "normal"
+            return current_mode_from_policy(getattr(self.settings, "execution_policy", None))
         return current_mode(agent)
 
     async def allow_category(self, category: str) -> str:

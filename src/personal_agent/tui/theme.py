@@ -36,9 +36,14 @@ CONFIRM = "1;33"      # inline tool confirmation prompt: bold yellow
 
 # Per-mode accent colors so the current execution mode is instantly readable.
 MODE_STYLES = {
-    "normal": "32",       # green: safe, default
-    "acceptEdits": "33",  # yellow: edits auto-accepted
-    "auto": "1;31",       # bold red: fully autonomous, most caution
+    "Read Only": "32",
+    "Ask First": "36",
+    "Edit Freely": "33",
+    "Full Auto": "1;31",
+    # Legacy names are kept for old cached/runtime values.
+    "normal": "36",
+    "acceptEdits": "33",
+    "auto": "1;31",
 }
 
 

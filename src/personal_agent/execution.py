@@ -242,6 +242,20 @@ def resolve_execution_policy(settings) -> ExecutionPolicy:
     )
 
 
+def resolve_execution_policy_for_mode(settings, mode: object) -> ExecutionPolicy:
+    """Resolve a policy for a runtime-selected mode without mutating settings."""
+
+    class _ModeSettings:
+        def __init__(self, base, execution_mode: str) -> None:
+            self._base = base
+            self.execution_mode = execution_mode
+
+        def __getattr__(self, name: str):
+            return getattr(self._base, name)
+
+    return resolve_execution_policy(_ModeSettings(settings, _normalize_mode(mode)))
+
+
 def _profile_for_mode(mode: str) -> ExecutionModeProfile:
     return MODE_PROFILES.get(mode, MODE_PROFILES["standard"])
 

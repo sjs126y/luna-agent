@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.commands.runtime import handle_slash_command
+from personal_agent.commands.runtime import current_mode_from_policy, handle_slash_command
 from personal_agent.config import Settings
 from personal_agent.models.messages import SessionSource
 from personal_agent.plugins.models import CommandEntry
@@ -25,6 +25,7 @@ class Agent:
     tools = []
     model = "deepseek-chat"
     _memory_manager = None
+    _execution_policy = None
 
     class Provider:
         model = "deepseek-chat"
@@ -213,32 +214,47 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_mode_command_switches_grants_and_reports(tmp_path):
+async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
     runtime = Runtime(tmp_path)
 
-    # default: no grants -> normal
+    runtime.agent._destructive_allowed.add("write")
+
+    # default execution mode is the standard profile.
     result = await handle_slash_command(runtime, "/mode")
-    assert "当前模式: normal" in result.response
+    assert "当前模式: Ask First" in result.response
 
     result = await handle_slash_command(runtime, "/mode acceptEdits")
-    assert "acceptEdits" in result.response
-    assert runtime.agent._destructive_allowed == {"write"}
+    assert "Edit Freely" in result.response
+    assert runtime.agent._execution_policy.mode == "trusted"
+    assert runtime.agent._destructive_allowed == set()
 
-    # querying now reflects the acceptEdits grant
+    # Querying now reflects the policy, not any /allow grant.
+    runtime.agent._destructive_allowed.add("write")
     result = await handle_slash_command(runtime, "/mode")
-    assert "当前模式: acceptEdits" in result.response
+    assert "当前模式: Edit Freely" in result.response
 
     result = await handle_slash_command(runtime, "/mode auto")
-    assert "auto" in result.response
-    assert runtime.agent._destructive_allowed == {"all"}
+    assert "Full Auto" in result.response
+    assert runtime.agent._execution_policy.mode == "sovereign"
+    assert runtime.agent._destructive_allowed == set()
 
-    # normal clears grants back out
+    result = await handle_slash_command(runtime, "/mode Read Only")
+    assert "Read Only" in result.response
+    assert runtime.agent._execution_policy.mode == "guarded"
+
     result = await handle_slash_command(runtime, "/mode normal")
-    assert "normal" in result.response
+    assert "Ask First" in result.response
+    assert runtime.agent._execution_policy.mode == "standard"
     assert runtime.agent._destructive_allowed == set()
 
     result = await handle_slash_command(runtime, "/mode bogus")
     assert "用法" in result.response
+
+
+def test_current_mode_from_policy_uses_execution_profile(tmp_path):
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[], execution_mode="sovereign")
+
+    assert current_mode_from_policy(settings.execution_policy) == "Full Auto"
 
 
 @pytest.mark.asyncio

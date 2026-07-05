@@ -32,7 +32,7 @@ class _Runtime:
         self.sent.append(text)
         return None
 
-    mode = "normal"
+    mode = "Ask First"
 
     async def current_execution_mode(self) -> str:
         return self.mode
@@ -158,13 +158,13 @@ async def test_refresh_mode_updates_status_after_command():
     app._print_above = print_above  # type: ignore[method-assign]
 
     async def handle_command(text):
-        app.runtime.mode = "auto"
-        return "执行模式已切换: auto"
+        app.runtime.mode = "Full Auto"
+        return "执行模式已切换: Full Auto"
 
     app.runtime.handle_command = handle_command  # type: ignore[method-assign]
-    assert app.state.exec_mode == "normal"
-    await app._submit("/mode auto")
-    assert app.state.exec_mode == "auto"
+    assert app.state.exec_mode == "Ask First"
+    await app._submit("/mode Full Auto")
+    assert app.state.exec_mode == "Full Auto"
 
 
 @pytest.mark.asyncio
@@ -179,18 +179,20 @@ async def test_cycle_mode_advances_and_wraps():
 
     async def handle_command(text):
         # emulate backend: /mode X sets the runtime's reported mode
-        app.runtime.mode = text.split()[1]
+        app.runtime.mode = text.removeprefix("/mode ").strip()
         return f"执行模式已切换: {app.runtime.mode}"
 
     app.runtime.handle_command = handle_command  # type: ignore[method-assign]
 
-    assert app.state.exec_mode == "normal"
+    assert app.state.exec_mode == "Ask First"
     await app._cycle_mode()
-    assert app.state.exec_mode == "acceptEdits"
+    assert app.state.exec_mode == "Edit Freely"
     await app._cycle_mode()
-    assert app.state.exec_mode == "auto"
+    assert app.state.exec_mode == "Full Auto"
     await app._cycle_mode()
-    assert app.state.exec_mode == "normal"  # wraps
+    assert app.state.exec_mode == "Read Only"
+    await app._cycle_mode()
+    assert app.state.exec_mode == "Ask First"  # wraps
 
 
 @pytest.mark.asyncio
