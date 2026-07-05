@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from personal_agent.config import Settings
-from personal_agent.runtime import create_app_runtime, start_mcp_manager
+from personal_agent.runtime import boot_report_from_exception, create_app_runtime, start_mcp_manager
 
 
 def _write_memory_plugin(plugin_dir):
@@ -139,6 +139,32 @@ async def test_create_app_runtime_requires_builtin_memory(tmp_path):
 
     with pytest.raises(RuntimeError, match="No built-in memory provider"):
         await create_app_runtime(settings)
+
+
+@pytest.mark.asyncio
+async def test_create_app_runtime_attaches_boot_report_on_failure(tmp_path):
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[],
+        plugins_disabled=["memory/file", "memory/embedding"],
+        mcp_enabled=False,
+    )
+
+    with pytest.raises(RuntimeError, match="No built-in memory provider") as exc_info:
+        await create_app_runtime(settings)
+
+    boot_report = boot_report_from_exception(exc_info.value)
+    assert boot_report is not None
+    boot = boot_report.as_dict()
+    boot_steps = {step["name"]: step for step in boot["steps"]}
+    assert boot["ok"] is False
+    assert boot["failed_step"] == "memory"
+    assert boot_steps["database"]["status"] == "ok"
+    assert boot_steps["system_files"]["status"] == "ok"
+    assert boot_steps["memory"]["status"] == "error"
+    assert boot_steps["memory_review"]["status"] == "not_run"
+    assert boot_steps["conversation"]["status"] == "not_run"
+    assert boot_steps["runtime"]["status"] == "not_run"
 
 
 @pytest.mark.asyncio

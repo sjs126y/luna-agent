@@ -252,7 +252,13 @@ def test_doctor_json_reports_runtime_failure_without_traceback(tmp_path, monkeyp
     _init_local_project(tmp_path, monkeypatch)
 
     async def broken_runtime(settings):
-        raise RuntimeError("broken bootstrap")
+        from personal_agent.runtime import BootReport
+
+        boot_report = BootReport.bootstrap()
+        boot_report.error("memory", "RuntimeError: broken bootstrap")
+        exc = RuntimeError("broken bootstrap")
+        boot_report.attach_to_exception(exc)
+        raise exc
 
     monkeypatch.setattr("personal_agent.runtime.create_app_runtime", broken_runtime)
 
@@ -262,6 +268,32 @@ def test_doctor_json_reports_runtime_failure_without_traceback(tmp_path, monkeyp
     data = json.loads(result.output)
     assert data["runtime"]["initialized"] is False
     assert "RuntimeError: broken bootstrap" in data["runtime"]["error"]
+    assert data["runtime"]["boot"]["ok"] is False
+    assert data["runtime"]["boot_failed_step"] == "memory"
+    assert "Traceback" not in result.output
+
+
+def test_serve_dry_run_json_reports_runtime_failure_boot(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+
+    async def broken_runtime(settings):
+        from personal_agent.runtime import BootReport
+
+        boot_report = BootReport.bootstrap()
+        boot_report.error("database", "RuntimeError: db broken")
+        exc = RuntimeError("db broken")
+        boot_report.attach_to_exception(exc)
+        raise exc
+
+    monkeypatch.setattr("personal_agent.runtime.create_app_runtime", broken_runtime)
+
+    result = runner.invoke(app, ["serve", "--dry-run", "--json"])
+
+    assert result.exit_code == 1, result.output
+    data = json.loads(result.output)
+    assert data["runtime"]["initialized"] is False
+    assert data["runtime"]["boot"]["ok"] is False
+    assert data["runtime"]["boot_failed_step"] == "database"
     assert "Traceback" not in result.output
 
 

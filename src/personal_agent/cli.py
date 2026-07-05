@@ -996,10 +996,21 @@ async def _build_serve_dry_run_report() -> dict[str, Any]:
             "next_steps": list(config_report.get("next_steps", [])) if errors else [],
         }
     except Exception as exc:
+        boot = _boot_dict_from_exception(exc)
+        runtime_error = {
+            "initialized": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        if boot:
+            runtime_error.update({
+                "boot": boot,
+                "boot_ok": bool(boot.get("ok", False)),
+                "boot_failed_step": str(boot.get("failed_step") or ""),
+            })
         return {
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",
-            "runtime": {"initialized": False, "error": f"{type(exc).__name__}: {exc}"},
+            "runtime": runtime_error,
             "gateway": {},
             "platforms": [],
             "config": build_config_report(Path(".")),
@@ -1056,30 +1067,38 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
             "_plugins": plugins,
         }
     except Exception as exc:
-        return {
-            "runtime": {
-                "initialized": False,
-                "error": f"{type(exc).__name__}: {exc}",
-                "data_dir": str(settings.agent_data_dir),
-                "db_open": False,
-                "mcp_enabled": bool(settings.mcp_enabled),
-                "mcp_running": False,
-                "mcp": {
-                    "enabled": bool(settings.mcp_enabled),
-                    "running": False,
-                    "configured_count": len(settings.mcp_servers),
-                    "connected_count": 0,
-                    "total_tools": 0,
-                    "registered_tools": [],
-                    "servers": [],
-                },
-                "gateway_created": False,
-                "gateway_running": False,
-                "gateway": {},
-                "plugins": 0,
-                "cached_agents": 0,
-                "closed": True,
+        boot = _boot_dict_from_exception(exc)
+        runtime_data = {
+            "initialized": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "data_dir": str(settings.agent_data_dir),
+            "db_open": False,
+            "mcp_enabled": bool(settings.mcp_enabled),
+            "mcp_running": False,
+            "mcp": {
+                "enabled": bool(settings.mcp_enabled),
+                "running": False,
+                "configured_count": len(settings.mcp_servers),
+                "connected_count": 0,
+                "total_tools": 0,
+                "registered_tools": [],
+                "servers": [],
             },
+            "gateway_created": False,
+            "gateway_running": False,
+            "gateway": {},
+            "plugins": 0,
+            "cached_agents": 0,
+            "closed": True,
+        }
+        if boot:
+            runtime_data.update({
+                "boot": boot,
+                "boot_ok": bool(boot.get("ok", False)),
+                "boot_failed_step": str(boot.get("failed_step") or ""),
+            })
+        return {
+            "runtime": runtime_data,
             "memory": {
                 "provider": settings.memory_provider,
                 "external_provider_config": settings.memory_external_provider,
@@ -1198,7 +1217,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
 def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
     from personal_agent.runtime import BootReport
 
-    boot_report = BootReport()
+    boot_report = BootReport.bootstrap()
     boot_report.error("settings", f"{type(exc).__name__}: {exc}")
     config_report = build_config_report(Path("."))
     data_dir = _config_directory(config_report, "data_dir", "./data")
@@ -1299,6 +1318,13 @@ def _doctor_section_payload(report: dict[str, Any], section: str) -> dict[str, A
     return report
 
 
+def _boot_dict_from_exception(exc: BaseException) -> dict[str, Any]:
+    from personal_agent.runtime import boot_report_from_exception
+
+    boot_report = boot_report_from_exception(exc)
+    return boot_report.as_dict() if boot_report is not None else {}
+
+
 def _format_boot_summary(boot: dict[str, Any]) -> str:
     if not isinstance(boot, dict) or not boot:
         return "-"
@@ -1309,6 +1335,7 @@ def _format_boot_summary(boot: dict[str, Any]) -> str:
         f"total={summary.get('total', 0)} "
         f"ok={summary.get('ok', 0)} "
         f"skipped={summary.get('skipped', 0)} "
+        f"not_run={summary.get('not_run', 0)} "
         f"error={summary.get('error', 0)}"
     )
 

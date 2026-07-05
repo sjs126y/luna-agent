@@ -22,13 +22,32 @@ from personal_agent.conversation import ConversationService
 logger = logging.getLogger(__name__)
 
 
-BootStepStatus = Literal["pending", "ok", "skipped", "error"]
+BootStepStatus = Literal["not_run", "pending", "ok", "skipped", "error"]
+
+BOOT_STEP_NAMES: tuple[str, ...] = (
+    "settings",
+    "data_dir",
+    "plugins.discover",
+    "plugins.load_enabled",
+    "plugins.configure",
+    "sandbox",
+    "audit",
+    "mcp",
+    "database",
+    "compression_chain",
+    "session_store",
+    "system_files",
+    "memory",
+    "memory_review",
+    "conversation",
+    "runtime",
+)
 
 
 @dataclass
 class BootStep:
     name: str
-    status: BootStepStatus = "pending"
+    status: BootStepStatus = "not_run"
     detail: str = ""
     error: str = ""
     duration: float = 0.0
@@ -50,6 +69,9 @@ class _BootStepContext:
 
     def __enter__(self) -> BootStep:
         self._started = monotonic()
+        self._step.status = "pending"
+        self._step.error = ""
+        self._step.duration = 0.0
         return self._step
 
     def __exit__(self, exc_type, exc, tb) -> bool:
@@ -67,24 +89,42 @@ class _BootStepContext:
 class BootReport:
     steps: list[BootStep] = field(default_factory=list)
 
+    @classmethod
+    def bootstrap(cls) -> BootReport:
+        return cls([BootStep(name=name) for name in BOOT_STEP_NAMES])
+
     def step(self, name: str, detail: str = "") -> _BootStepContext:
-        step = BootStep(name=name, detail=detail)
-        self.steps.append(step)
+        step = self._step(name)
+        step.detail = detail
+        step.error = ""
         return _BootStepContext(step)
 
     def skip(self, name: str, detail: str = "") -> BootStep:
-        step = BootStep(name=name, status="skipped", detail=detail)
-        self.steps.append(step)
+        step = self._step(name)
+        step.status = "skipped"
+        step.detail = detail
+        step.error = ""
+        step.duration = 0.0
         return step
 
     def error(self, name: str, error: str, detail: str = "") -> BootStep:
-        step = BootStep(name=name, status="error", detail=detail, error=error)
-        self.steps.append(step)
+        step = self._step(name)
+        step.status = "error"
+        step.detail = detail
+        step.error = error
+        step.duration = 0.0
         return step
+
+    def attach_to_exception(self, exc: BaseException) -> BaseException:
+        try:
+            setattr(exc, "boot_report", self)
+        except Exception:
+            logger.debug("Unable to attach boot report to exception", exc_info=True)
+        return exc
 
     @property
     def ok(self) -> bool:
-        return not any(step.status in {"pending", "error"} for step in self.steps)
+        return not any(step.status in {"not_run", "pending", "error"} for step in self.steps)
 
     @property
     def failed_step(self) -> str:
@@ -94,7 +134,7 @@ class BootReport:
         return ""
 
     def summary(self) -> dict[str, int]:
-        counts = {"pending": 0, "ok": 0, "skipped": 0, "error": 0}
+        counts = {"not_run": 0, "pending": 0, "ok": 0, "skipped": 0, "error": 0}
         for step in self.steps:
             counts[step.status] += 1
         counts["total"] = len(self.steps)
@@ -107,6 +147,19 @@ class BootReport:
             "summary": self.summary(),
             "steps": [step.as_dict() for step in self.steps],
         }
+
+    def _step(self, name: str) -> BootStep:
+        for step in self.steps:
+            if step.name == name:
+                return step
+        step = BootStep(name=name)
+        self.steps.append(step)
+        return step
+
+
+def boot_report_from_exception(exc: BaseException) -> BootReport | None:
+    report = getattr(exc, "boot_report", None)
+    return report if isinstance(report, BootReport) else None
 
 
 @dataclass
@@ -198,37 +251,37 @@ class AppRuntime:
 
 
 async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
-    boot_report = BootReport()
-    if settings is None:
-        with boot_report.step("settings", "default"):
-            settings = Settings()
-    else:
-        with boot_report.step("settings", "provided"):
-            settings = settings
-
-    with boot_report.step("data_dir", str(settings.agent_data_dir)):
-        data_dir = settings.agent_data_dir
-        data_dir.mkdir(parents=True, exist_ok=True)
-
-    with boot_report.step("plugins.discover"):
-        plugin_manager = PluginManager(settings)
-        plugin_manager.discover()
-    with boot_report.step("plugins.load_enabled"):
-        plugin_manager.load_enabled()
-    with boot_report.step("plugins.configure"):
-        await plugin_manager.invoke_hook("configure", settings=settings)
-
-    with boot_report.step("sandbox"):
-        init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
-    if settings.audit_enabled:
-        with boot_report.step("audit", str(data_dir / "audit.log")):
-            set_audit_path(data_dir / "audit.log")
-    else:
-        boot_report.skip("audit", "disabled")
-
+    boot_report = BootReport.bootstrap()
     mcp_manager = None
     db: Database | None = None
     try:
+        if settings is None:
+            with boot_report.step("settings", "default"):
+                settings = Settings()
+        else:
+            with boot_report.step("settings", "provided"):
+                settings = settings
+
+        with boot_report.step("data_dir", str(settings.agent_data_dir)):
+            data_dir = settings.agent_data_dir
+            data_dir.mkdir(parents=True, exist_ok=True)
+
+        with boot_report.step("plugins.discover"):
+            plugin_manager = PluginManager(settings)
+            plugin_manager.discover()
+        with boot_report.step("plugins.load_enabled"):
+            plugin_manager.load_enabled()
+        with boot_report.step("plugins.configure"):
+            await plugin_manager.invoke_hook("configure", settings=settings)
+
+        with boot_report.step("sandbox"):
+            init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
+        if settings.audit_enabled:
+            with boot_report.step("audit", str(data_dir / "audit.log")):
+                set_audit_path(data_dir / "audit.log")
+        else:
+            boot_report.skip("audit", "disabled")
+
         if not settings.mcp_enabled:
             boot_report.skip("mcp", "disabled")
         else:
@@ -266,28 +319,29 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 compression_chain=compression_chain,
                 memory_manager=memory_manager,
             )
-    except Exception:
+
+        with boot_report.step("runtime"):
+            return AppRuntime(
+                settings=settings,
+                plugin_manager=plugin_manager,
+                db=db,
+                compression_chain=compression_chain,
+                session_store=session_store,
+                memory_manager=memory_manager,
+                conversation_service=conversation_service,
+                memory_review_service=memory_review_service,
+                mcp_manager=mcp_manager,
+                data_dir=data_dir,
+                system_dir=system_dir,
+                boot_report=boot_report,
+            )
+    except Exception as exc:
+        boot_report.attach_to_exception(exc)
         if mcp_manager is not None:
             await mcp_manager.stop()
         if db is not None:
             await db.close()
         raise
-
-    with boot_report.step("runtime"):
-        return AppRuntime(
-            settings=settings,
-            plugin_manager=plugin_manager,
-            db=db,
-            compression_chain=compression_chain,
-            session_store=session_store,
-            memory_manager=memory_manager,
-            conversation_service=conversation_service,
-            memory_review_service=memory_review_service,
-            mcp_manager=mcp_manager,
-            data_dir=data_dir,
-            system_dir=system_dir,
-            boot_report=boot_report,
-        )
 
 
 def _mcp_health_snapshot(
