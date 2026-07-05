@@ -14,9 +14,21 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 
+# ``ansi_dark`` maps onto the terminal's own 16-color palette, so code blocks
+# stay legible whether the terminal is light or dark (unlike truecolor themes
+# such as monokai, which turn muddy on ``color_system="standard"``).
+_CODE_THEME = "ansi_dark"
+
+
 def render_markdown(text: str, *, width: int = 80) -> str:
-    """Return an ANSI-coded string for the given markdown text."""
-    return _render(Markdown(text), width=width)
+    """Return an ANSI-coded string for the given markdown text.
+
+    Code blocks are syntax-highlighted; tables/lists wrap to ``width``.
+    """
+    return _render(
+        Markdown(text, code_theme=_CODE_THEME, inline_code_lexer="text"),
+        width=width,
+    )
 
 
 def render_plain(text: str, *, width: int = 80) -> str:

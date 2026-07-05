@@ -17,6 +17,7 @@ from personal_agent.conversation.events import ConversationEvent
 from personal_agent.tui.markdown import render_markdown, render_plain
 from personal_agent.tui.state import ToolTrace, UIState
 from personal_agent.tui.renderer_base import Renderer
+from personal_agent.tui import theme
 
 
 def _noop() -> None: ...
@@ -142,7 +143,8 @@ class InlineRenderer(Renderer):
 
     # ── helpers ──────────────────────────────────────────
     def _tool_line(self, item: ToolTrace) -> str:
-        mark = "✓" if item.status in ("success", "ok", "") else "✗"
+        ok = item.status in ("success", "ok", "")
+        mark = theme.sgr("✓", theme.TOOL_OK) if ok else theme.sgr("✗", theme.TOOL_ERR)
         dur = f" {item.duration:.1f}s" if item.duration else ""
         summary = f" {item.input_summary}" if item.input_summary else ""
         return f"  ⚙ {item.display_name}{summary}  {mark}{dur}"

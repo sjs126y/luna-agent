@@ -25,6 +25,7 @@ from prompt_toolkit.layout import Layout
 from personal_agent.tui.layout import build_layout
 from personal_agent.tui.renderer import InlineRenderer
 from personal_agent.tui.state import UIState
+from personal_agent.tui import theme
 
 
 class _PrintRequest(NamedTuple):
@@ -189,10 +190,24 @@ class InlineTuiApp:
             await self._print_above(str(command_result))
             await self._refresh_mode()
             return
-        await self._print_above(f"\x1b[1m你:\x1b[0m {text}")
+        await self._print_above(f"{theme.sgr('你:', theme.USER)} {text}")
         result = await self.runtime.run_message_events(text, event_sink=self.renderer)
         await self._refresh_mode()
         return result
+
+    _MODE_CYCLE = ("normal", "acceptEdits", "auto")
+
+    async def _cycle_mode(self) -> None:
+        """Advance to the next execution mode via the /mode command path."""
+        try:
+            idx = self._MODE_CYCLE.index(self.state.exec_mode)
+        except ValueError:
+            idx = -1
+        nxt = self._MODE_CYCLE[(idx + 1) % len(self._MODE_CYCLE)]
+        result = await self.runtime.handle_command(f"/mode {nxt}")
+        if result is not None:
+            await self._print_above(str(result))
+        await self._refresh_mode()
 
     async def _refresh_mode(self) -> None:
         """Sync the status-bar execution mode from the runtime's current grants."""
@@ -263,6 +278,13 @@ class InlineTuiApp:
         def _(event) -> None:
             self._expand_last()
 
+        @kb.add("s-tab")
+        def _(event) -> None:
+            # Cycle execution mode (CC habit); no-op if a turn is running.
+            if self._turn_task and not self._turn_task.done():
+                return
+            asyncio.ensure_future(self._cycle_mode())
+
         @kb.add("c-d")
         def _(event) -> None:
             if not self.input_area.text:
@@ -280,7 +302,7 @@ class InlineTuiApp:
             return  # already expanded this content; don't restack
         self._last_expanded = self.state.last_expandable
         name, full = self.state.last_expandable
-        header = f"\x1b[34m$ {name}\x1b[0m"
+        header = theme.sgr(f"$ {name}", theme.EXPAND_HEADER)
         body = "\n".join(f"  {line}" for line in (full.splitlines() or [full]))
         self._print_above_nowait(f"{header}\n{body}")
 

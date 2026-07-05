@@ -29,8 +29,9 @@ from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.widgets import TextArea
 
 from personal_agent.tui.state import UIState
+from personal_agent.tui import theme
 
-_DIVIDER = "\x1b[2m" + "─" * 50 + "\x1b[0m"
+_DIVIDER = theme.dim("─" * 50)
 
 # Cap the bottom active region so a long stream / many live tools can't push the
 # input box off-screen. Finalized content already lives in scrollback; the active
@@ -51,20 +52,20 @@ def build_layout(
     def active_content() -> ANSI:
         lines: list[str] = [_DIVIDER]
         if state.thinking_chars:
-            lines.append(f"\x1b[2m💭 思考中… ({state.thinking_chars} 字)\x1b[0m")
+            lines.append(theme.sgr(f"💭 思考中… ({state.thinking_chars} 字)", theme.THINKING))
         tools = list(state.active_tools.values())
         for item in tools[:_MAX_ACTIVE_TOOLS]:
-            lines.append(f"\x1b[36m⚙ {item.display_name}…\x1b[0m")
+            lines.append(theme.sgr(f"⚙ {item.display_name}…", theme.TOOL_ACTIVE))
         if len(tools) > _MAX_ACTIVE_TOOLS:
-            lines.append(f"\x1b[2m… 还有 {len(tools) - _MAX_ACTIVE_TOOLS} 个工具在运行\x1b[0m")
+            lines.append(theme.dim(f"… 还有 {len(tools) - _MAX_ACTIVE_TOOLS} 个工具在运行"))
         if state.stream_text:
-            cursor = "\x1b[36m▌\x1b[0m" if state.streaming else ""
+            cursor = theme.sgr("▌", theme.TOOL_ACTIVE) if state.streaming else ""
             # Only the tail matters as a live preview; the full reply finalizes
             # into scrollback via assistant_message.
             preview = state.stream_text[-_STREAM_TAIL_CHARS:]
             if len(state.stream_text) > _STREAM_TAIL_CHARS:
                 preview = "…" + preview
-            lines.append(f"\x1b[1;36mPersonal Agent:\x1b[0m {preview}{cursor}")
+            lines.append(f"{theme.sgr('Personal Agent:', theme.AGENT)} {preview}{cursor}")
         return ANSI("\n".join(lines))
 
     def status_content() -> ANSI:
@@ -122,5 +123,5 @@ def _status_bar(state: UIState) -> str:
         used = state.input_tokens + state.output_tokens
         pct = int(used / state.context_window * 100) if state.context_window else 0
         parts.append(f"{used:,}/{state.context_window:,} ({pct}%)")
-    parts.append("⏎ 发送 · Ctrl+J 换行 · Ctrl+C 停止 · /help")
-    return "\x1b[2m" + "  ·  ".join(parts) + "\x1b[0m"
+    parts.append("⏎ 发送 · Ctrl+J 换行 · Ctrl+C 停止 · Shift+Tab 模式 · /help")
+    return theme.sgr("  ·  ".join(parts), theme.STATUS)

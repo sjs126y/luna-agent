@@ -168,6 +168,32 @@ async def test_refresh_mode_updates_status_after_command():
 
 
 @pytest.mark.asyncio
+async def test_cycle_mode_advances_and_wraps():
+    app = _app()
+    printed: list[str] = []
+
+    async def print_above(text):
+        printed.append(text)
+
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    async def handle_command(text):
+        # emulate backend: /mode X sets the runtime's reported mode
+        app.runtime.mode = text.split()[1]
+        return f"执行模式已切换: {app.runtime.mode}"
+
+    app.runtime.handle_command = handle_command  # type: ignore[method-assign]
+
+    assert app.state.exec_mode == "normal"
+    await app._cycle_mode()
+    assert app.state.exec_mode == "acceptEdits"
+    await app._cycle_mode()
+    assert app.state.exec_mode == "auto"
+    await app._cycle_mode()
+    assert app.state.exec_mode == "normal"  # wraps
+
+
+@pytest.mark.asyncio
 async def test_command_not_sent_as_message():
     app = _app()
 
