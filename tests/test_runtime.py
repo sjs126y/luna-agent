@@ -121,6 +121,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["boot_ok"] is True
         assert health["boot_failed_step"] == ""
         assert health["turns"]["stored"] == 0
+        assert health["tool_truth"]["inspected"] == 0
         runtime.conversation_service.record_turn_report(
             "cli:default:local",
             type("Source", (), {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"})(),
@@ -130,16 +131,35 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
                 "error": "",
                 "llm": {"calls": 1, "input_tokens": 10, "output_tokens": 5},
                 "tools": {"total": 2, "items": []},
+                "tool_truth": {
+                    "calls_total": 2,
+                    "results_total": 2,
+                    "llm_tool_call_count": 2,
+                    "tool_names": ["bash", "search"],
+                    "status_counts": {"success": 1, "denied": 1},
+                    "warnings": [],
+                    "assistant_claim": {
+                        "claimed_tool_use": False,
+                        "claim_phrases": [],
+                        "claimed_but_no_tool_call": False,
+                    },
+                },
                 "retries": [{}],
             },
         )
-        turn_health = runtime.health_snapshot()["turns"]
+        updated_health = runtime.health_snapshot()
+        turn_health = updated_health["turns"]
         assert turn_health["stored"] == 1
         assert turn_health["last_status"] == "completed"
         assert turn_health["last_duration"] == 1.5
         assert turn_health["last_llm_calls"] == 1
         assert turn_health["last_tool_calls"] == 2
         assert turn_health["last_retries"] == 1
+        truth_health = updated_health["tool_truth"]
+        assert truth_health["inspected"] == 1
+        assert truth_health["turns_with_tools"] == 1
+        assert truth_health["tool_counts"] == {"bash": 1, "search": 1}
+        assert truth_health["denied_tool_calls"] == 1
         assert health["gateway_created"] is False
         assert health["gateway_running"] is False
         assert health["gateway"] == {}

@@ -915,6 +915,22 @@ def test_format_doctor_report_includes_summary_and_issues():
                 "last_output_tokens": 5,
                 "last_retries": 1,
             },
+            "tool_truth": {
+                "stored": 2,
+                "inspected": 2,
+                "turns_with_tools": 1,
+                "turns_without_tools": 1,
+                "claim_mismatches": 1,
+                "tool_counts": {"bash": 2, "search": 1},
+                "status_counts": {"success": 2, "error": 0, "denied": 1},
+                "denied_tool_calls": 1,
+                "failed_tool_calls": 0,
+                "warning_counts": {
+                    "assistant_claimed_tool_use_without_tool_call": 1,
+                },
+                "last_warning": "assistant_claimed_tool_use_without_tool_call",
+                "last_claimed_but_no_tool_call": True,
+            },
         },
         "platforms": [{
             "key": "platforms/telegram",
@@ -969,6 +985,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "Agents:" in text
     assert "Tools:" in text
     assert "Turns: stored=2 last=failed duration=1.234s llm=1 tools=3 retries=1" in text
+    assert "Tool Truth: inspected=2 with_tools=1 mismatches=1 denied=1" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
@@ -987,6 +1004,11 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "  last status: failed" in runtime_text
     assert "  last tokens: in=10 out=5" in runtime_text
     assert "  last error: RuntimeError: boom" in runtime_text
+    assert "Tool Truth:" in runtime_text
+    assert "  inspected: 2" in runtime_text
+    assert "  claim mismatches: 1" in runtime_text
+    assert "  tool counts: bash=2, search=1" in runtime_text
+    assert "  warnings: assistant_claimed_tool_use_without_tool_call=1" in runtime_text
 
 
 def _plugin_report(

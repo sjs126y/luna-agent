@@ -1741,6 +1741,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         lines.extend(_format_boot_step_lines(runtime.get("boot", {})))
         lines.extend(["", "Turns:"])
         lines.extend(_format_turn_detail_lines(runtime.get("turns", {})))
+        lines.extend(["", "Tool Truth:"])
+        lines.extend(_format_tool_truth_detail_lines(runtime.get("tool_truth", {})))
     elif section == "platforms":
         platforms = report.get("platforms", [])
         if platforms:

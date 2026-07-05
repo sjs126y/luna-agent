@@ -196,6 +196,80 @@ class ConversationService:
             ),
         }
 
+    def recent_tool_truth(self, limit: int = 10) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        items: list[dict[str, Any]] = []
+        for envelope in list(self.turn_reports)[-limit:]:
+            report = envelope.get("report") or {}
+            tool_truth = report.get("tool_truth") or {}
+            assistant_claim = tool_truth.get("assistant_claim") or {}
+            items.append({
+                "created_at": str(envelope.get("created_at") or ""),
+                "session_key": str(envelope.get("session_key") or ""),
+                "source": dict(envelope.get("source") or {}),
+                "status": str(report.get("status") or envelope.get("status") or ""),
+                "user_message_summary": str(report.get("user_message_summary") or ""),
+                "final_response_summary": str(report.get("final_response_summary") or ""),
+                "calls_total": int(tool_truth.get("calls_total") or 0),
+                "results_total": int(tool_truth.get("results_total") or 0),
+                "llm_tool_call_count": int(tool_truth.get("llm_tool_call_count") or 0),
+                "tool_names": list(tool_truth.get("tool_names") or []),
+                "status_counts": _status_counts_snapshot(tool_truth.get("status_counts") or {}),
+                "warnings": list(tool_truth.get("warnings") or []),
+                "claimed_tool_use": bool(assistant_claim.get("claimed_tool_use", False)),
+                "claimed_but_no_tool_call": bool(
+                    assistant_claim.get("claimed_but_no_tool_call", False)
+                ),
+            })
+        return items
+
+    def tool_truth_summary(self, limit: int = 10) -> dict[str, Any]:
+        recent = self.recent_tool_truth(limit)
+        if not recent:
+            return _empty_tool_truth_summary()
+
+        tool_counts: dict[str, int] = {}
+        status_counts = _status_counts_snapshot({})
+        warning_counts: dict[str, int] = {}
+        turns_with_tools = 0
+        claim_mismatches = 0
+
+        for item in recent:
+            calls_total = int(item.get("calls_total") or 0)
+            if calls_total > 0:
+                turns_with_tools += 1
+            if item.get("claimed_but_no_tool_call"):
+                claim_mismatches += 1
+            for name in item.get("tool_names") or []:
+                name = str(name or "")
+                if not name:
+                    continue
+                tool_counts[name] = tool_counts.get(name, 0) + 1
+            for status, count in (item.get("status_counts") or {}).items():
+                status_counts[status] = status_counts.get(status, 0) + int(count or 0)
+            for warning in item.get("warnings") or []:
+                warning = str(warning or "")
+                if not warning:
+                    continue
+                warning_counts[warning] = warning_counts.get(warning, 0) + 1
+
+        last = recent[-1]
+        return {
+            "stored": len(self.turn_reports),
+            "inspected": len(recent),
+            "turns_with_tools": turns_with_tools,
+            "turns_without_tools": len(recent) - turns_with_tools,
+            "claim_mismatches": claim_mismatches,
+            "tool_counts": dict(sorted(tool_counts.items())),
+            "status_counts": dict(sorted(status_counts.items())),
+            "denied_tool_calls": int(status_counts.get("denied", 0)),
+            "failed_tool_calls": int(status_counts.get("error", 0)),
+            "warning_counts": dict(sorted(warning_counts.items())),
+            "last_warning": str((last.get("warnings") or [""])[-1] or ""),
+            "last_claimed_but_no_tool_call": bool(last.get("claimed_but_no_tool_call", False)),
+        }
+
     async def get_or_create_agent(self, session_key: str):
         agent = self.agent_cache.get(session_key)
         if agent is not None:
@@ -437,6 +511,42 @@ def _empty_turn_report_summary() -> dict[str, Any]:
         "last_tool_truth_warnings": [],
         "last_claimed_but_no_tool_call": False,
     }
+
+
+def _empty_tool_truth_summary() -> dict[str, Any]:
+    return {
+        "stored": 0,
+        "inspected": 0,
+        "turns_with_tools": 0,
+        "turns_without_tools": 0,
+        "claim_mismatches": 0,
+        "tool_counts": {},
+        "status_counts": _status_counts_snapshot({}),
+        "denied_tool_calls": 0,
+        "failed_tool_calls": 0,
+        "warning_counts": {},
+        "last_warning": "",
+        "last_claimed_but_no_tool_call": False,
+    }
+
+
+def _status_counts_snapshot(value: Any) -> dict[str, int]:
+    counts = {
+        "success": 0,
+        "error": 0,
+        "denied": 0,
+        "timeout": 0,
+        "interrupted": 0,
+        "skipped": 0,
+    }
+    if not isinstance(value, dict):
+        return counts
+    for key, raw in value.items():
+        try:
+            counts[str(key)] = int(raw or 0)
+        except (TypeError, ValueError):
+            counts[str(key)] = 0
+    return counts
 
 
 def _turn_status(result: dict[str, Any], *, completed: bool, context_overflow: bool) -> str:

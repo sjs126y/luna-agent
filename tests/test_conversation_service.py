@@ -99,6 +99,12 @@ def _turn_report(
     error="",
     llm_calls=1,
     tool_calls=2,
+    results_total=None,
+    llm_tool_call_count=None,
+    tool_names=None,
+    status_counts=None,
+    user_message_summary="hello",
+    final_response_summary="echo:hello",
     claimed_but_no_tool_call=False,
     tool_truth_warnings=None,
     input_tokens=10,
@@ -109,6 +115,8 @@ def _turn_report(
         "status": status,
         "duration": duration,
         "error": error,
+        "user_message_summary": user_message_summary,
+        "final_response_summary": final_response_summary,
         "llm": {
             "calls": llm_calls,
             "input_tokens": input_tokens,
@@ -117,7 +125,10 @@ def _turn_report(
         "tools": {"total": tool_calls, "items": []},
         "tool_truth": {
             "calls_total": tool_calls,
-            "results_total": tool_calls,
+            "results_total": tool_calls if results_total is None else results_total,
+            "llm_tool_call_count": tool_calls if llm_tool_call_count is None else llm_tool_call_count,
+            "tool_names": list(tool_names or []),
+            "status_counts": dict(status_counts or {"success": tool_calls}),
             "warnings": list(tool_truth_warnings or []),
             "assistant_claim": {
                 "claimed_tool_use": bool(claimed_but_no_tool_call),
@@ -322,6 +333,96 @@ async def test_turn_report_summary_includes_tool_truth_warnings(service):
     assert summary["last_tool_truth_warnings"] == [
         "assistant_claimed_tool_use_without_tool_call"
     ]
+
+
+@pytest.mark.asyncio
+async def test_recent_tool_truth_returns_stable_snapshots(service):
+    svc, _manager, _db = service
+    svc.record_turn_report(
+        "cli:default:local",
+        _source(),
+        _turn_report(
+            tool_calls=2,
+            results_total=1,
+            llm_tool_call_count=2,
+            tool_names=["bash", "search"],
+            status_counts={"success": 1, "denied": 1},
+            user_message_summary="run ls",
+            final_response_summary="done",
+        ),
+    )
+
+    recent = svc.recent_tool_truth()
+
+    assert len(recent) == 1
+    item = recent[0]
+    assert item["session_key"] == "cli:default:local"
+    assert item["source"]["platform"] == "cli"
+    assert item["status"] == "completed"
+    assert item["user_message_summary"] == "run ls"
+    assert item["final_response_summary"] == "done"
+    assert item["calls_total"] == 2
+    assert item["results_total"] == 1
+    assert item["llm_tool_call_count"] == 2
+    assert item["tool_names"] == ["bash", "search"]
+    assert item["status_counts"]["success"] == 1
+    assert item["status_counts"]["denied"] == 1
+    assert item["status_counts"]["error"] == 0
+    assert item["claimed_but_no_tool_call"] is False
+
+
+@pytest.mark.asyncio
+async def test_tool_truth_summary_aggregates_recent_reports(service):
+    svc, _manager, _db = service
+    source = _source()
+    svc.record_turn_report(
+        "cli:tools:local",
+        source,
+        _turn_report(
+            tool_calls=2,
+            tool_names=["bash", "bash"],
+            status_counts={"success": 1, "error": 1},
+        ),
+    )
+    svc.record_turn_report(
+        "cli:claim:local",
+        source,
+        _turn_report(
+            tool_calls=0,
+            tool_names=[],
+            status_counts={},
+            claimed_but_no_tool_call=True,
+            tool_truth_warnings=["assistant_claimed_tool_use_without_tool_call"],
+        ),
+    )
+    svc.record_turn_report(
+        "cli:denied:local",
+        source,
+        _turn_report(
+            tool_calls=1,
+            tool_names=["write_file"],
+            status_counts={"denied": 1},
+        ),
+    )
+
+    summary = svc.tool_truth_summary()
+
+    assert summary["stored"] == 3
+    assert summary["inspected"] == 3
+    assert summary["turns_with_tools"] == 2
+    assert summary["turns_without_tools"] == 1
+    assert summary["claim_mismatches"] == 1
+    assert summary["tool_counts"] == {"bash": 2, "write_file": 1}
+    assert summary["status_counts"]["success"] == 1
+    assert summary["status_counts"]["error"] == 1
+    assert summary["status_counts"]["denied"] == 1
+    assert summary["denied_tool_calls"] == 1
+    assert summary["failed_tool_calls"] == 1
+    assert summary["warning_counts"] == {
+        "assistant_claimed_tool_use_without_tool_call": 1
+    }
+    assert summary["last_warning"] == ""
+    assert summary["last_claimed_but_no_tool_call"] is False
 
 
 @pytest.mark.asyncio
