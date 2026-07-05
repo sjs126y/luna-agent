@@ -272,7 +272,16 @@ async def execute_tool_call_result(
         ))
     tool_decision = tool_decision_from_guard(tc, guard_decision)
     if _needs_tool_confirm(tool_decision) and confirm is not None:
-        answer = await _confirm_tool_decision(confirm, tool_decision)
+        answer = await _confirm_tool_decision(confirm, tool_decision, agent=agent)
+        if answer == "interrupted":
+            await _emit_tool_decision(event_sink, tool_decision)
+            return await _finish(_result(
+                tc,
+                status="denied",
+                category="authorization",
+                error="tool confirmation interrupted",
+                started=started,
+            ))
         if answer in {"allow", "always"}:
             added_grants = _add_confirm_grants(
                 agent,
@@ -437,16 +446,44 @@ def _needs_tool_confirm(decision: ToolDecision) -> bool:
     )
 
 
-async def _confirm_tool_decision(confirm: Any, decision: ToolDecision) -> str:
+async def _confirm_tool_decision(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> str:
+    if _agent_interrupt_requested(agent) or is_interrupted():
+        return "interrupted"
     try:
-        answer = await confirm(decision)
+        answer = await _await_confirm_interruptibly(confirm, decision, agent=agent)
     except Exception:
         logger.exception("Tool confirmation callback failed")
         return "deny"
+    if answer == "interrupted":
+        return "interrupted"
     answer_text = str(answer or "").strip().lower()
     if answer_text in {"allow", "deny", "always"}:
         return answer_text
     return "deny"
+
+
+async def _await_confirm_interruptibly(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> Any:
+    global _active_tool_executions
+    _active_tool_executions += 1
+    task = asyncio.create_task(confirm(decision))
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=0.1)
+            if task in done:
+                return task.result()
+            if _agent_interrupt_requested(agent) or is_interrupted():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                return "interrupted"
+    finally:
+        _active_tool_executions = max(0, _active_tool_executions - 1)
+
+
+def _agent_interrupt_requested(agent: Any) -> bool:
+    return bool(getattr(agent, "_interrupt_requested", False)) if agent is not None else False
 
 
 def _add_confirm_grants(agent: Any, decision: ToolDecision, *, persist: bool) -> set[str]:

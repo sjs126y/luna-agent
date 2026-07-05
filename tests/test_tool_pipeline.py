@@ -823,6 +823,79 @@ async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_tool_confirm_pending_stop_denies_without_executing():
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import clear_interrupted, execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    original = tool_registry.get("confirm_interrupt_demo")
+    calls = 0
+    confirm_started = asyncio.Event()
+    confirm_cancelled = asyncio.Event()
+
+    async def handler():
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    async def confirm(_decision):
+        confirm_started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            confirm_cancelled.set()
+            raise
+
+    tool_registry.register(ToolEntry(
+        name="confirm_interrupt_demo",
+        description="confirm",
+        schema={},
+        handler=handler,
+        permission_category="write",
+        is_destructive=True,
+    ))
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "write": "ask"},
+    )
+    recorder = EventRecorder()
+
+    try:
+        task = asyncio.create_task(execute_tool_call_result(
+            {"id": "c-stop", "name": "confirm_interrupt_demo", "input": {}},
+            agent=agent,
+            event_sink=recorder,
+            confirm=confirm,
+        ))
+        await asyncio.wait_for(confirm_started.wait(), timeout=1)
+        agent._interrupt_requested = True
+        result = await asyncio.wait_for(task, timeout=1)
+    finally:
+        clear_interrupted()
+        if original is None:
+            tool_registry.unregister("confirm_interrupt_demo")
+        else:
+            tool_registry.register(original)
+
+    assert result.status == "denied"
+    assert result.category == "authorization"
+    assert result.error == "tool confirmation interrupted"
+    assert calls == 0
+    assert confirm_cancelled.is_set()
+    assert "write" not in agent._destructive_allowed
+    assert [event.type for event in recorder.events] == [
+        "tool_start",
+        "tool_decision",
+        "tool_end",
+    ]
+    assert recorder.events[-1].data["status"] == "denied"
+    assert recorder.events[-1].data["guard_reason_code"] == "permission_required"
+
+
+@pytest.mark.asyncio
 async def test_tool_end_event_includes_guard_metadata_for_success():
     from personal_agent.conversation.events import EventRecorder
     from personal_agent.tools.entry import ToolEntry
