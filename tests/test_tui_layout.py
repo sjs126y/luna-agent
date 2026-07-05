@@ -30,6 +30,19 @@ def _active_text(state: UIState) -> str:
     raise AssertionError("no active region found")
 
 
+def test_layout_keeps_input_panel_compact_without_spacer():
+    from prompt_toolkit.layout.containers import ConditionalContainer, Window
+
+    root, _ = build_layout(UIState())
+    children = list(root.content.children)
+    assert len(children) == 4
+    # The live active region is first. A weighted spacer before it would make
+    # the full_screen=False application reserve a tall block and split the
+    # prompt from its meter/hints.
+    assert isinstance(children[0], ConditionalContainer)
+    assert all(isinstance(child, (ConditionalContainer, Window)) for child in children)
+
+
 def test_active_region_truncates_many_tools():
     state = UIState()
     for i in range(_MAX_ACTIVE_TOOLS + 4):
@@ -110,7 +123,20 @@ def test_keyhint_bar_below_input_lists_shortcuts():
     from personal_agent.tui.layout import _hint_bar
 
     bar = _hint_bar(UIState())
-    for token in ("发送", "换行", "展开", "停止", "模式", "命令"):
+    for token in (
+        "Enter",
+        "Ctrl+J",
+        "Ctrl+O",
+        "Ctrl+C",
+        "Shift+Tab",
+        "/",
+        "发送",
+        "换行",
+        "展开",
+        "停止",
+        "模式",
+        "命令",
+    ):
         assert token in bar
 
 

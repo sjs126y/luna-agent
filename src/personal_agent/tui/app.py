@@ -202,7 +202,7 @@ class InlineTuiApp:
             await self._refresh_mode()
             return
         bar = theme.sgr(theme.USER_BARCH, theme.USER_BAR)
-        await self._print_above(f"{bar} {theme.sgr(text, theme.USER_MSG)}")
+        await self._print_above(f"\n{bar} {theme.sgr(text, theme.USER_MSG)}")
         result = await self._run_turn(text)
         await self._refresh_mode()
         return result
