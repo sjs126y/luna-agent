@@ -143,6 +143,7 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
             "final_response": "echo:hello",
             "messages": ctx.messages,
             "completed": True,
+            "turn_report": {"status": "completed", "llm": {"calls": 1}},
         }
 
     monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
@@ -153,6 +154,30 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
     assert [event.type for event in result.events] == ["llm_start", "assistant_message", "turn_end"]
     assert [event.type for event in forwarded] == ["llm_start", "assistant_message", "turn_end"]
     assert result.final_response == "echo:hello"
+    assert result.turn_report["status"] == "completed"
+    assert result.turn_report["llm"]["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_turn_keeps_empty_turn_report_for_legacy_loop(service, monkeypatch):
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx):
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "hello")
+
+    assert result.turn_report == {}
 
 
 @pytest.mark.asyncio

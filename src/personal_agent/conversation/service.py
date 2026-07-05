@@ -23,6 +23,7 @@ class ConversationTurnResult:
     status: str = "completed"
     error: str = ""
     events: list[ConversationEvent] = field(default_factory=list)
+    turn_report: dict[str, Any] = field(default_factory=dict)
 
 
 class ConversationService:
@@ -142,6 +143,7 @@ class ConversationService:
             status=status,
             error=error,
             events=list(recorder.events),
+            turn_report=dict(result.get("turn_report") or {}),
         )
 
     async def get_or_create_agent(self, session_key: str):
