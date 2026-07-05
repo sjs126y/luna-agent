@@ -32,21 +32,6 @@ from personal_agent.tui.state import UIState
 from personal_agent.tui import theme
 
 
-def _term_width(default: int = 80) -> int:
-    """Live terminal width, so the divider/status bar track window resizes."""
-    try:
-        from prompt_toolkit.application.current import get_app
-
-        return max(20, get_app().output.get_size().columns)
-    except Exception:
-        try:
-            import shutil
-
-            return max(20, shutil.get_terminal_size().columns)
-        except Exception:
-            return default
-
-
 # Cap the bottom active region so a long stream / many live tools can't push the
 # input box off-screen. Finalized content already lives in scrollback; the active
 # region is only a live preview, so trimming it loses nothing permanent.
@@ -64,59 +49,60 @@ def build_layout(
     """Return (root_container, input_area). Caller owns key bindings."""
 
     def active_content() -> ANSI:
-        lines: list[str] = [theme.divider(_term_width())]
+        lines: list[str] = []
         if state.thinking_chars:
-            lines.append(theme.sgr(f"  💭 思考中… ({state.thinking_chars} 字)", theme.THINKING))
+            lines.append(theme.sgr(f"💭 思考中… ({state.thinking_chars} 字)", theme.THINKING))
         tools = list(state.active_tools.values())
         for item in tools[:_MAX_ACTIVE_TOOLS]:
-            lines.append(f"  {theme.sgr('⚙', theme.TOOL_ACTIVE)} {theme.sgr(item.display_name + '…', theme.TOOL_ACTIVE)}")
+            lines.append(f"{theme.sgr('⚙', theme.TOOL_ACTIVE)} {theme.sgr(item.display_name + '…', theme.TOOL_ACTIVE)}")
         if len(tools) > _MAX_ACTIVE_TOOLS:
-            lines.append(theme.dim(f"  … 还有 {len(tools) - _MAX_ACTIVE_TOOLS} 个工具在运行"))
+            lines.append(theme.dim(f"… 还有 {len(tools) - _MAX_ACTIVE_TOOLS} 个工具在运行"))
         if state.stream_text:
-            cursor = theme.sgr("▌", theme.TOOL_ACTIVE) if state.streaming else ""
+            cursor = theme.sgr("▌", theme.AGENT_BAR) if state.streaming else ""
             # Only the tail matters as a live preview; the full reply finalizes
             # into scrollback via assistant_message.
             preview = state.stream_text[-_STREAM_TAIL_CHARS:]
             if len(state.stream_text) > _STREAM_TAIL_CHARS:
                 preview = "…" + preview
-            gutter = theme.gutter(theme.AGENT_BAR, "Agent", theme.AGENT)
-            lines.append(f"{gutter}  {preview}{cursor}")
-        # Hint that the last tool's full output can be expanded with Ctrl+O.
-        if state.last_expandable and not tools and not state.pending_confirm:
-            lines.append(theme.sgr("  (Ctrl+O 展开上一个工具输出)", theme.TOOL_HINT))
+            bar = theme.sgr(theme.BAR, theme.AGENT_BAR)
+            lines.append(f"{bar} {preview}{cursor}")
         if state.pending_confirm:
-            lines.append(theme.sgr(f"  ⚠ {state.pending_confirm}  [y/n/a]", theme.CONFIRM))
+            lines.append(theme.sgr(f"⚠ {state.pending_confirm}  [y/n/a]", theme.CONFIRM))
         return ANSI("\n".join(lines))
 
-    def status_content() -> ANSI:
-        return ANSI(_status_bar(state))
+    def meter_content() -> ANSI:
+        # Line ABOVE the input: model + context usage meter.
+        return ANSI(_meter_bar(state))
 
-    def keyhint_content() -> ANSI:
-        return ANSI(_keyhint_bar())
+    def hint_content() -> ANSI:
+        # Line BELOW the input: current mode + key hints, hugging the input box.
+        return ANSI(_hint_bar(state))
 
+    # A weighted spacer at the very top absorbs terminal slack, so the whole
+    # stack hugs the BOTTOM of the screen (input + its meter/hint lines stay
+    # together) instead of the fixed windows being shoved to the terminal floor.
+    spacer = Window(height=Dimension(min=0, weight=1))
     active_window = Window(
         content=FormattedTextControl(active_content),
-        height=Dimension(min=0, max=_MAX_ACTIVE_LINES, weight=1),
+        height=Dimension(min=0, max=_MAX_ACTIVE_LINES),
         wrap_lines=True,
     )
-    status_window = Window(
-        content=FormattedTextControl(status_content),
+    meter_window = Window(
+        content=FormattedTextControl(meter_content),
         height=1,
     )
-    keyhint_window = Window(
-        content=FormattedTextControl(keyhint_content),
+    hint_window = Window(
+        content=FormattedTextControl(hint_content),
         height=1,
     )
     # multiline=True so Ctrl+J can add real newlines; height grows with content
     # (1 line idle, up to 6). Enter is bound by the app to submit, not newline.
-    # get_line_prefix aligns wrapped/continuation lines under the "› " prompt so
-    # a Ctrl+J newline doesn't look mis-indented against the first line.
     def _line_prefix(line_number: int, wrap_count: int):
         return "  " if (line_number > 0 or wrap_count > 0) else ""
 
     input_area = TextArea(
         height=Dimension(min=1, max=6),
-        prompt="› ",
+        prompt=theme.sgr("❯ ", theme.PROMPT),
         multiline=True,
         wrap_lines=True,
         completer=completer,
@@ -125,13 +111,14 @@ def build_layout(
         get_line_prefix=_line_prefix,
     )
 
-    # Status + key hints now live BELOW the input box (per user preference),
-    # so the eye reads: live output → your input → context/mode → key hints.
+    # Reading order top→bottom: (slack) → live output → model/context → input →
+    # mode + key hints. Meter sits just above the box, hints just below it.
     body = HSplit([
+        spacer,
         ConditionalContainer(active_window, filter=Condition(state.has_active_region)),
+        meter_window,
         input_area,
-        status_window,
-        keyhint_window,
+        hint_window,
     ])
     # FloatContainer hosts the completion menu popup above the input line.
     root = FloatContainer(
@@ -147,33 +134,34 @@ def build_layout(
     return root, input_area
 
 
-def _status_bar(state: UIState) -> str:
-    # Info line (below input): mode in its own color · model · context meter.
+def _meter_bar(state: UIState) -> str:
+    # Line ABOVE the input box: model name + a colored context-usage meter.
+    model = theme.sgr(state.model or "-", theme.DIM)
+    if not state.context_window:
+        return "  " + model
+    used = state.input_tokens + state.output_tokens
+    frac = used / state.context_window if state.context_window else 0.0
+    pct = int(frac * 100)
+    color = theme.meter_style(frac)
+    meter = theme.sgr(theme.bar_meter(frac), color)
+    usage = theme.dim(f"{theme.humanize(used)}/{theme.humanize(state.context_window)}")
+    pct_s = theme.sgr(f"{pct}%", color)
+    return f"  {model}   {meter} {usage} {pct_s}"
+
+
+def _hint_bar(state: UIState) -> str:
+    # Line BELOW the input box: current mode (colored) + compact key hints.
     mode = theme.sgr(f"● {state.exec_mode}", theme.mode_style(state.exec_mode))
-    parts: list[str] = [mode, theme.dim(state.model or "-")]
-    if state.context_window:
-        used = state.input_tokens + state.output_tokens
-        frac = used / state.context_window if state.context_window else 0.0
-        pct = int(frac * 100)
-        meter = theme.sgr(theme.spark_meter(frac), theme.STATUS_ACCENT)
-        usage = (
-            f"{theme.humanize(used)}/{theme.humanize(state.context_window)}"
-        )
-        parts.append(f"{meter} {theme.dim(usage)} {theme.sgr(f'{pct}%', theme.STATUS_ACCENT)}")
-    return theme.dim("   ").join(parts)
 
-
-def _keyhint_bar() -> str:
-    # Key hints line (below the info line). Keys highlighted, labels dim.
     def key(k: str, label: str) -> str:
-        return theme.sgr(k, theme.STATUS_ACCENT) + theme.dim(f" {label}")
+        return theme.sgr(k, theme.KEY) + theme.dim(label)
 
-    hints = [
+    hints = "  ".join([
         key("⏎", "发送"),
-        key("Ctrl+J", "换行"),
-        key("Ctrl+O", "展开"),
-        key("Ctrl+C", "停止"),
-        key("⇧Tab", "模式"),
+        key("^J", "换行"),
+        key("^O", "展开"),
+        key("^C", "停止"),
+        key("⇧⇥", "模式"),
         key("/", "命令"),
-    ]
-    return theme.dim("  ").join(hints)
+    ])
+    return f"  {mode}   {hints}"

@@ -20,10 +20,10 @@ RESET = "\x1b[0m"
 # minimal look) instead of fighting it.
 DIM = "2"
 BOLD = "1"
-USER_BAR = "90"       # user prompt bar ▍: bright-black (gray)
-USER = "90"           # user name: gray
-USER_MSG = "90"       # user message body: gray, so it recedes vs. the AI reply
-AGENT_BAR = "35"      # agent prompt bar ▍: magenta
+PROMPT = "1;36"       # input prompt symbol ❯: bold cyan
+USER_BAR = "34"       # user message left bar ▌: blue (distinct from AI)
+USER_MSG = "39"       # user message text: default fg (full contrast, readable)
+AGENT_BAR = "35"      # agent streaming bar ▍: magenta
 AGENT = "1;35"        # "Agent" label: bold magenta
 TOOL_ACTIVE = "36"    # running tool line: cyan
 TOOL_OK = "32"        # completed tool ✓: green
@@ -31,8 +31,7 @@ TOOL_ERR = "31"       # failed tool ✗: red
 TOOL_HINT = "2"       # "(Ctrl+O 展开)" hint: dim
 THINKING = "2"        # thinking hint: dim
 EXPAND_HEADER = "34"  # Ctrl+O expand header: blue
-STATUS = "2"          # status bar: dim
-STATUS_ACCENT = "36"  # status bar highlighted segment (token meter): cyan
+KEY = "36"            # keyboard-hint keys (⏎, Ctrl+J…): cyan
 CONFIRM = "1;33"      # inline tool confirmation prompt: bold yellow
 
 # Per-mode accent colors so the current execution mode is instantly readable.
@@ -46,11 +45,18 @@ MODE_STYLES = {
 def mode_style(mode: str) -> str:
     return MODE_STYLES.get(mode, "36")
 
-# Vertical bar that leads user / agent lines (CC/Codex-style gutter).
-BAR = "▍"
 
-# Sparkline ramp for the tiny context-usage meter in the status bar.
-_SPARK = "▁▂▃▄▅▆▇█"
+def meter_style(fraction: float) -> str:
+    """Color the context meter by how full it is: green→yellow→red."""
+    if fraction >= 0.8:
+        return "31"   # red
+    if fraction >= 0.5:
+        return "33"   # yellow
+    return "32"       # green
+
+# Vertical bars that lead message / streaming lines.
+BAR = "▍"
+USER_BARCH = "▌"
 
 
 def sgr(text: str, code: str) -> str:
@@ -62,16 +68,6 @@ def sgr(text: str, code: str) -> str:
 
 def dim(text: str) -> str:
     return sgr(text, DIM)
-
-
-def divider(width: int) -> str:
-    """A dim horizontal rule that fills the given terminal width."""
-    return dim("─" * max(1, width))
-
-
-def gutter(bar_code: str, label: str, label_code: str) -> str:
-    """Render a leading colored bar + label, e.g. ``▍你`` / ``▍Agent``."""
-    return f"{sgr(BAR, bar_code)}{sgr(label, label_code)}"
 
 
 def humanize(n: int) -> str:
@@ -86,16 +82,10 @@ def humanize(n: int) -> str:
     return (f"{v:.1f}".rstrip("0").rstrip(".")) + "M"
 
 
-def spark_meter(fraction: float, cells: int = 5) -> str:
-    """A tiny sparkline bar for a 0..1 fraction (context usage)."""
+def bar_meter(fraction: float, cells: int = 10) -> str:
+    """A solid progress bar for a 0..1 fraction, e.g. ▰▰▰▱▱▱▱▱▱▱."""
     fraction = max(0.0, min(1.0, fraction))
     if cells <= 0:
         return ""
-    # distribute the fraction across cells; each cell picks a ramp glyph
-    per = fraction * cells
-    out: list[str] = []
-    for i in range(cells):
-        level = max(0.0, min(1.0, per - i))
-        idx = int(round(level * (len(_SPARK) - 1)))
-        out.append(_SPARK[idx])
-    return "".join(out)
+    filled = int(round(fraction * cells))
+    return "▰" * filled + "▱" * (cells - filled)

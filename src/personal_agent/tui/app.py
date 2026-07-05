@@ -201,8 +201,8 @@ class InlineTuiApp:
             await self._print_above(str(command_result))
             await self._refresh_mode()
             return
-        gutter = theme.gutter(theme.USER_BAR, "你", theme.USER)
-        await self._print_above(f"{gutter}  {theme.sgr(text, theme.USER_MSG)}")
+        bar = theme.sgr(theme.USER_BARCH, theme.USER_BAR)
+        await self._print_above(f"{bar} {theme.sgr(text, theme.USER_MSG)}")
         result = await self._run_turn(text)
         await self._refresh_mode()
         return result

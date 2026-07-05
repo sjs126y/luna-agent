@@ -19,10 +19,15 @@ from personal_agent.tui.state import ToolTrace, UIState
 
 def _active_text(state: UIState) -> str:
     root, _ = build_layout(state)
-    # body = HSplit([ConditionalContainer(active_window), status, input])
-    active_window = root.content.children[0].content
-    control = active_window.content
-    return to_plain_text(control.text())
+    # The active region is the ConditionalContainer in the body HSplit; find it
+    # rather than hard-coding an index (layout order may change).
+    from prompt_toolkit.layout.containers import ConditionalContainer
+
+    for child in root.content.children:
+        if isinstance(child, ConditionalContainer):
+            control = child.content.content
+            return to_plain_text(control.text())
+    raise AssertionError("no active region found")
 
 
 def test_active_region_truncates_many_tools():
@@ -65,24 +70,36 @@ def test_active_region_shows_pending_confirm():
     assert "[y/n/a]" in text
 
 
-def test_active_region_shows_expand_hint_when_idle_with_expandable():
+def test_hint_bar_shows_expand_key():
+    from personal_agent.tui.layout import _hint_bar
+
+    bar = _hint_bar(UIState())
+    assert "展开" in bar  # Ctrl+O expand is always advertised in the hint bar
+
+
+def test_meter_bar_shows_model_and_usage():
+    from personal_agent.tui.layout import _meter_bar
+
     state = UIState()
-    state.last_expandable = ("read", "DATA")
-    text = _active_text(state)
-    assert "Ctrl+O 展开" in text
+    state.model = "deepseek-v4-flash"
+    state.context_window = 1_000_000
+    state.input_tokens = 213
+    bar = _meter_bar(state)
+    assert "deepseek-v4-flash" in bar
+    assert "213/1M" in bar
+    assert "0%" in bar
 
 
-def test_status_bar_uses_distinct_mode_colors():
+def test_hint_bar_uses_distinct_mode_colors():
     from personal_agent.tui import theme
-    from personal_agent.tui.layout import _status_bar
+    from personal_agent.tui.layout import _hint_bar
 
     seen = set()
     for mode in ("normal", "acceptEdits", "auto"):
         state = UIState()
         state.exec_mode = mode
-        bar = _status_bar(state)
+        bar = _hint_bar(state)
         assert mode in bar
-        # the mode's color code appears in the raw (pre-plain) string
         code = theme.mode_style(mode)
         assert f"\x1b[{code}m" in bar
         seen.add(code)
@@ -90,9 +107,9 @@ def test_status_bar_uses_distinct_mode_colors():
 
 
 def test_keyhint_bar_below_input_lists_shortcuts():
-    from personal_agent.tui.layout import _keyhint_bar
+    from personal_agent.tui.layout import _hint_bar
 
-    bar = _keyhint_bar()
+    bar = _hint_bar(UIState())
     for token in ("发送", "换行", "展开", "停止", "模式", "命令"):
         assert token in bar
 
