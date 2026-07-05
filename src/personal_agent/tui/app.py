@@ -44,6 +44,7 @@ class InlineTuiApp:
         )
         self._turn_task: asyncio.Task | None = None
         self._last_expanded: tuple[str, str] | None = None
+        self._print_lock = asyncio.Lock()
         self.app: Application | None = None
 
     # ── reuse the classic shell's completer + history ──
@@ -69,9 +70,11 @@ class InlineTuiApp:
             self.app.invalidate()
 
     async def _print_above(self, text: str) -> None:
-        # Print above the app -> native scrollback. Awaited so concurrent tool
-        # lines / replies print in order and none get dropped.
-        await run_in_terminal(lambda: print(text))
+        # Print above the app -> native scrollback. A lock serializes concurrent
+        # callers: parallel tools (asyncio.gather) emit tool_end at the same time,
+        # and overlapping run_in_terminal calls clobber/drop each other otherwise.
+        async with self._print_lock:
+            await run_in_terminal(lambda: print(text))
 
     def _print_above_nowait(self, text: str) -> None:
         # For sync key handlers that can't await (Ctrl+O, exit echo).

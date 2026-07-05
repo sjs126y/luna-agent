@@ -6,6 +6,8 @@ prevents launching a second turn while one is running.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from personal_agent.tui.app import InlineTuiApp
@@ -69,6 +71,33 @@ def test_expand_last_dedups_repeated_presses():
     app._expand_last()
     app._expand_last()
     assert len(printed) == 1  # same content only printed once
+
+
+@pytest.mark.asyncio
+async def test_print_above_serializes_concurrent_callers(monkeypatch):
+    # Reproduces the parallel-tools race: several run_in_terminal calls fired
+    # concurrently must not overlap. The lock must serialize them so all N
+    # prints complete and none is dropped.
+    app = _app()
+    active = {"n": 0, "max": 0}
+    done: list[int] = []
+
+    async def fake_run_in_terminal(func):
+        active["n"] += 1
+        active["max"] = max(active["max"], active["n"])
+        await asyncio.sleep(0)  # yield: overlap would show up here
+        func()
+        active["n"] -= 1
+
+    monkeypatch.setattr("personal_agent.tui.app.run_in_terminal", fake_run_in_terminal)
+
+    async def one(i: int) -> None:
+        await app._print_above(str(i))
+        done.append(i)
+
+    await asyncio.gather(*(one(i) for i in range(5)))
+    assert active["max"] == 1  # never more than one in the terminal at once
+    assert len(done) == 5  # none dropped
 
 
 @pytest.mark.asyncio
