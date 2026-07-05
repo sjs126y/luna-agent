@@ -75,12 +75,12 @@ def test_expand_last_dedups_repeated_presses():
 
 @pytest.mark.asyncio
 async def test_print_above_serializes_concurrent_callers(monkeypatch):
-    # Reproduces the parallel-tools race: several run_in_terminal calls fired
-    # concurrently must not overlap. The lock must serialize them so all N
-    # prints complete and none is dropped.
+    # Reproduces the parallel-tools race: several callers enqueue lines at the
+    # same time. One print worker must flush them without overlap or loss.
     app = _app()
     active = {"n": 0, "max": 0}
     done: list[int] = []
+    written: list[str] = []
 
     async def fake_run_in_terminal(func):
         active["n"] += 1
@@ -90,14 +90,35 @@ async def test_print_above_serializes_concurrent_callers(monkeypatch):
         active["n"] -= 1
 
     monkeypatch.setattr("personal_agent.tui.app.run_in_terminal", fake_run_in_terminal)
+    app._write_terminal = written.append  # type: ignore[method-assign]
 
     async def one(i: int) -> None:
         await app._print_above(str(i))
         done.append(i)
 
     await asyncio.gather(*(one(i) for i in range(5)))
+    await app._stop_print_worker()
     assert active["max"] == 1  # never more than one in the terminal at once
     assert len(done) == 5  # none dropped
+    text = "".join(written)
+    for i in range(5):
+        assert f"{i}\n" in text
+
+
+@pytest.mark.asyncio
+async def test_print_above_nowait_uses_same_queue(monkeypatch):
+    app = _app()
+    written: list[str] = []
+
+    async def fake_run_in_terminal(func):
+        func()
+
+    monkeypatch.setattr("personal_agent.tui.app.run_in_terminal", fake_run_in_terminal)
+    app._write_terminal = written.append  # type: ignore[method-assign]
+
+    app._print_above_nowait("expand")
+    await app._stop_print_worker()
+    assert written == ["expand\n"]
 
 
 @pytest.mark.asyncio

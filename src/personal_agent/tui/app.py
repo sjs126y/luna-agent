@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 
 from pathlib import Path
+import sys
+from typing import NamedTuple
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import run_in_terminal
@@ -23,6 +25,11 @@ from prompt_toolkit.layout import Layout
 from personal_agent.tui.layout import build_layout
 from personal_agent.tui.renderer import InlineRenderer
 from personal_agent.tui.state import UIState
+
+
+class _PrintRequest(NamedTuple):
+    text: str | None
+    done: asyncio.Future[None] | None
 
 
 class InlineTuiApp:
@@ -44,7 +51,8 @@ class InlineTuiApp:
         )
         self._turn_task: asyncio.Task | None = None
         self._last_expanded: tuple[str, str] | None = None
-        self._print_lock = asyncio.Lock()
+        self._print_queue: asyncio.Queue[_PrintRequest] = asyncio.Queue()
+        self._print_worker_task: asyncio.Task | None = None
         self.app: Application | None = None
 
     # ── reuse the classic shell's completer + history ──
@@ -70,15 +78,98 @@ class InlineTuiApp:
             self.app.invalidate()
 
     async def _print_above(self, text: str) -> None:
-        # Print above the app -> native scrollback. A lock serializes concurrent
-        # callers: parallel tools (asyncio.gather) emit tool_end at the same time,
-        # and overlapping run_in_terminal calls clobber/drop each other otherwise.
-        async with self._print_lock:
-            await run_in_terminal(lambda: print(text))
+        if not text:
+            return
+        self._ensure_print_worker()
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        await self._print_queue.put(_PrintRequest(text, done))
+        await done
 
     def _print_above_nowait(self, text: str) -> None:
-        # For sync key handlers that can't await (Ctrl+O, exit echo).
-        asyncio.ensure_future(run_in_terminal(lambda: print(text)))
+        if not text:
+            return
+        self._ensure_print_worker()
+        self._print_queue.put_nowait(_PrintRequest(text, None))
+
+    def _ensure_print_worker(self) -> None:
+        if self._print_worker_task is None or self._print_worker_task.done():
+            self._print_worker_task = asyncio.create_task(self._print_worker())
+
+    async def _print_worker(self) -> None:
+        try:
+            while True:
+                request = await self._print_queue.get()
+                if request.text is None:
+                    if request.done is not None and not request.done.done():
+                        request.done.set_result(None)
+                    return
+
+                requests = [request]
+                while not self._print_queue.empty():
+                    next_request = self._print_queue.get_nowait()
+                    if next_request.text is None:
+                        await self._flush_print_requests(requests)
+                        if next_request.done is not None and not next_request.done.done():
+                            next_request.done.set_result(None)
+                        return
+                    requests.append(next_request)
+
+                await self._flush_print_requests(requests)
+        finally:
+            if self._print_worker_task is asyncio.current_task():
+                self._print_worker_task = None
+
+    async def _flush_print_requests(self, requests: list[_PrintRequest]) -> None:
+        texts = [request.text for request in requests if request.text]
+        if not texts:
+            for request in requests:
+                if request.done is not None and not request.done.done():
+                    request.done.set_result(None)
+            return
+
+        payload = "\n".join(text.rstrip("\n") for text in texts)
+        if not payload.endswith("\n"):
+            payload += "\n"
+
+        try:
+            await run_in_terminal(lambda: self._write_terminal(payload))
+        except Exception as exc:
+            for request in requests:
+                if request.done is not None and not request.done.done():
+                    request.done.set_exception(exc)
+            return
+
+        for request in requests:
+            if request.done is not None and not request.done.done():
+                request.done.set_result(None)
+
+    def _write_terminal(self, text: str) -> None:
+        app = self.app
+        if app is not None:
+            try:
+                app.output.enable_autowrap()
+                app.output.write_raw(text)
+                app.output.flush()
+                return
+            except Exception:
+                pass
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+    async def _stop_print_worker(self) -> None:
+        task = self._print_worker_task
+        if task is None:
+            return
+        if task.done():
+            await task
+            self._print_worker_task = None
+            return
+        done = asyncio.get_running_loop().create_future()
+        await self._print_queue.put(_PrintRequest(None, done))
+        await done
+        await task
+        self._print_worker_task = None
 
     def _term_width(self) -> int:
         try:
@@ -185,7 +276,10 @@ class InlineTuiApp:
             full_screen=False,
             mouse_support=False,
         )
-        await self.app.run_async()
+        try:
+            await self.app.run_async()
+        finally:
+            await self._stop_print_worker()
 
 
 async def run_inline_tui(*, session_name: str = "default") -> None:
