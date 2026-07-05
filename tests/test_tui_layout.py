@@ -33,7 +33,7 @@ def _active_text(state: UIState) -> str:
 def test_layout_keeps_input_panel_compact_without_spacer():
     from prompt_toolkit.layout.containers import ConditionalContainer, Window
 
-    root, _ = build_layout(UIState())
+    root, input_area = build_layout(UIState())
     children = list(root.content.children)
     assert len(children) == 4
     # The live active region is first. A weighted spacer before it would make
@@ -41,6 +41,9 @@ def test_layout_keeps_input_panel_compact_without_spacer():
     # prompt from its meter/hints.
     assert isinstance(children[0], ConditionalContainer)
     assert all(isinstance(child, (ConditionalContainer, Window)) for child in children)
+    height = input_area.window.height
+    assert height.preferred == 1
+    assert height.weight == 0
 
 
 def test_active_region_truncates_many_tools():

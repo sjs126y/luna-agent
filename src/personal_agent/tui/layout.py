@@ -98,8 +98,8 @@ def build_layout(
         return "    " if (line_number > 0 or wrap_count > 0) else ""
 
     input_area = TextArea(
-        height=Dimension(min=1, max=6),
-        prompt=theme.sgr("  ❯ ", theme.PROMPT),
+        height=Dimension(min=1, preferred=1, max=6, weight=0),
+        prompt=ANSI(theme.sgr("  ❯ ", theme.PROMPT)),
         multiline=True,
         wrap_lines=True,
         completer=completer,
