@@ -42,8 +42,10 @@ def test_layout_keeps_input_panel_compact_without_spacer():
     assert isinstance(children[0], ConditionalContainer)
     assert all(isinstance(child, (ConditionalContainer, Window)) for child in children)
     height = input_area.window.height
-    assert height.preferred == 1
-    assert height.weight == 0
+    # Input grows from 1 line up to 6. It must NOT pin preferred=1/weight=0:
+    # that combination starved the buffer and made typed text disappear.
+    assert height.min == 1
+    assert height.max == 6
 
 
 def test_active_region_truncates_many_tools():
@@ -149,3 +151,13 @@ def test_humanize_compacts_counts():
     assert theme.humanize(999) == "999"
     assert theme.humanize(1659) == "1.7k"
     assert theme.humanize(1_000_000) == "1M"
+
+
+def test_input_buffer_roundtrips_typed_text():
+    # Regression: an ANSI(...) prompt object routed through a BeforeInput
+    # processor and made typed input disappear in a real terminal. The unit
+    # layer can't render a TTY, but it can assert the buffer accepts text and
+    # the layout builds with the native-tuple prompt.
+    _, input_area = build_layout(UIState())
+    input_area.text = "hello 世界"
+    assert input_area.buffer.text == "hello 世界"
