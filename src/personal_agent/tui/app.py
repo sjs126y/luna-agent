@@ -187,10 +187,25 @@ class InlineTuiApp:
         command_result = await self.runtime.handle_command(text)
         if command_result is not None:
             await self._print_above(str(command_result))
+            await self._refresh_mode()
             return
         await self._print_above(f"\x1b[1m你:\x1b[0m {text}")
         result = await self.runtime.run_message_events(text, event_sink=self.renderer)
+        await self._refresh_mode()
         return result
+
+    async def _refresh_mode(self) -> None:
+        """Sync the status-bar execution mode from the runtime's current grants."""
+        getter = getattr(self.runtime, "current_execution_mode", None)
+        if getter is None:
+            return
+        try:
+            mode = await getter()
+        except Exception:
+            return
+        if mode and mode != self.state.exec_mode:
+            self.state.exec_mode = mode
+            self._invalidate()
 
     def _on_enter(self) -> None:
         text = self.input_area.text

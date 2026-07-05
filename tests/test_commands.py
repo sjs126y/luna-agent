@@ -213,6 +213,35 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_mode_command_switches_grants_and_reports(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    # default: no grants -> normal
+    result = await handle_slash_command(runtime, "/mode")
+    assert "当前模式: normal" in result.response
+
+    result = await handle_slash_command(runtime, "/mode acceptEdits")
+    assert "acceptEdits" in result.response
+    assert runtime.agent._destructive_allowed == {"write"}
+
+    # querying now reflects the acceptEdits grant
+    result = await handle_slash_command(runtime, "/mode")
+    assert "当前模式: acceptEdits" in result.response
+
+    result = await handle_slash_command(runtime, "/mode auto")
+    assert "auto" in result.response
+    assert runtime.agent._destructive_allowed == {"all"}
+
+    # normal clears grants back out
+    result = await handle_slash_command(runtime, "/mode normal")
+    assert "normal" in result.response
+    assert runtime.agent._destructive_allowed == set()
+
+    result = await handle_slash_command(runtime, "/mode bogus")
+    assert "用法" in result.response
+
+
+@pytest.mark.asyncio
 async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypatch):
     runtime = Runtime(tmp_path)
 

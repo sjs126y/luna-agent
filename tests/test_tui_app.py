@@ -32,6 +32,11 @@ class _Runtime:
         self.sent.append(text)
         return None
 
+    mode = "normal"
+
+    async def current_execution_mode(self) -> str:
+        return self.mode
+
 
 def _app() -> InlineTuiApp:
     return InlineTuiApp(_Runtime())
@@ -141,6 +146,25 @@ async def test_submit_ignores_blank():
     app = _app()
     await app._submit("   ")
     assert app.runtime.sent == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_mode_updates_status_after_command():
+    app = _app()
+
+    async def print_above(text):
+        pass
+
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    async def handle_command(text):
+        app.runtime.mode = "auto"
+        return "执行模式已切换: auto"
+
+    app.runtime.handle_command = handle_command  # type: ignore[method-assign]
+    assert app.state.exec_mode == "normal"
+    await app._submit("/mode auto")
+    assert app.state.exec_mode == "auto"
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,9 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         parts = args.split()
         return CommandResult.reply(await _allow(runtime, parts[0] if parts else "write"))
 
+    if command_name == "mode":
+        return CommandResult.reply(await _mode(runtime, args))
+
     if command_name == "stop":
         return CommandResult.reply(await _stop(runtime))
 
@@ -245,6 +248,47 @@ async def _allow(runtime: CommandRuntime, category: str) -> str:
     agent = await runtime.get_agent()
     agent._destructive_allowed.add(category)
     return f"已授权 {category} 操作，本轮对话内有效。"
+
+
+# /mode 是 /allow 授权集合之上的一层便捷标签（见 TUI_PLAN §4-A），不新建权限系统：
+#   normal      清空授权 → destructive 工具触发 ask
+#   acceptEdits 授权 write → 文件编辑自动过，bash/network 仍 ask
+#   auto        授权 all → 等价 /allow all
+_MODE_GRANTS: dict[str, set[str]] = {
+    "normal": set(),
+    "acceptedits": {"write"},
+    "auto": {"all"},
+}
+_MODE_CANONICAL = {"normal": "normal", "acceptedits": "acceptEdits", "auto": "auto"}
+
+
+def current_mode(agent) -> str:
+    """Infer the /mode label from an agent's current destructive grants."""
+    grants = getattr(agent, "_destructive_allowed", set()) or set()
+    if "all" in grants:
+        return "auto"
+    if "write" in grants:
+        return "acceptEdits"
+    return "normal"
+
+
+async def _mode(runtime: CommandRuntime, args: str) -> str:
+    agent = await runtime.get_agent()
+    requested = args.split()[0].lower() if args.split() else ""
+    if not requested:
+        return f"当前模式: {current_mode(agent)}。用法: /mode [normal|acceptEdits|auto]"
+    if requested not in _MODE_GRANTS:
+        return "用法: /mode [normal|acceptEdits|auto]"
+    custom = await _call_optional(runtime, "set_mode", _MODE_CANONICAL[requested])
+    if custom is not None:
+        return str(custom)
+    grants = getattr(agent, "_destructive_allowed", None)
+    if grants is None:
+        agent._destructive_allowed = set(_MODE_GRANTS[requested])
+    else:
+        grants.clear()
+        grants.update(_MODE_GRANTS[requested])
+    return f"执行模式已切换: {_MODE_CANONICAL[requested]}（本轮对话内有效）。"
 
 
 async def _agents(args: str) -> str:
@@ -433,6 +477,7 @@ def help_text(runtime: CommandRuntime | None = None) -> str:
         "/session [current|list|switch <name>|rename <name>|delete [name]] - 管理会话",
         "/usage - 查看当前会话上下文预算",
         "/allow [write|bash|all] - 授权危险操作",
+        "/mode [normal|acceptEdits|auto] - 切换执行模式",
         "/stop - 停止当前处理",
         "/export - 导出当前会话 JSONL",
         "/agents [list|show|clear] - 查看子 agent 运行记录",
