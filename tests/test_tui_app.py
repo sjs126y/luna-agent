@@ -194,6 +194,52 @@ async def test_cycle_mode_advances_and_wraps():
 
 
 @pytest.mark.asyncio
+async def test_confirm_tool_resolves_allow():
+    app = _app()
+    task = asyncio.ensure_future(app.confirm_tool({"tool_name": "write_file"}))
+    await asyncio.sleep(0)  # let confirm_tool set pending + create the future
+    assert app.state.pending_confirm is not None
+    assert "write_file" in app.state.pending_confirm
+    app._resolve_confirm("allow")
+    assert await task == "allow"
+    # cleaned up after resolution
+    assert app.state.pending_confirm is None
+    assert app._confirm_future is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_tool_resolves_deny_and_always():
+    app = _app()
+    task = asyncio.ensure_future(app.confirm_tool({"tool_name": "bash"}))
+    await asyncio.sleep(0)
+    app._resolve_confirm("deny")
+    assert await task == "deny"
+
+    task = asyncio.ensure_future(app.confirm_tool({"tool_name": "bash"}))
+    await asyncio.sleep(0)
+    app._resolve_confirm("always")
+    assert await task == "always"
+
+
+def test_runtime_accepts_confirm_detection():
+    app = _app()
+    # fake runtime's run_message_events is (text, event_sink=None): no confirm
+    assert app._runtime_accepts_confirm() is False
+
+    async def with_confirm(text, event_sink=None, confirm=None):
+        return None
+
+    app.runtime.run_message_events = with_confirm  # type: ignore[method-assign]
+    assert app._runtime_accepts_confirm() is True
+
+    async def with_kwargs(text, event_sink=None, **kw):
+        return None
+
+    app.runtime.run_message_events = with_kwargs  # type: ignore[method-assign]
+    assert app._runtime_accepts_confirm() is True
+
+
+@pytest.mark.asyncio
 async def test_command_not_sent_as_message():
     app = _app()
 

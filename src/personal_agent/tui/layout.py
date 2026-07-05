@@ -66,6 +66,8 @@ def build_layout(
             if len(state.stream_text) > _STREAM_TAIL_CHARS:
                 preview = "…" + preview
             lines.append(f"{theme.sgr('Personal Agent:', theme.AGENT)} {preview}{cursor}")
+        if state.pending_confirm:
+            lines.append(theme.sgr(f"⚠ {state.pending_confirm}  [y/n/a]", theme.CONFIRM))
         return ANSI("\n".join(lines))
 
     def status_content() -> ANSI:

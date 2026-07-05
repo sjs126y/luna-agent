@@ -65,12 +65,23 @@ class UIState:
     # last expandable (display_name, full_text) for Ctrl+O
     last_expandable: tuple[str, str] | None = None
 
+    # pending inline tool confirmation (Phase 4). When set, the active region
+    # shows a "⚠ 允许执行 X? [y/n/a]" prompt and keys y/n/a resolve it. Holds the
+    # human-facing prompt text; the app owns the Future that the answer resolves.
+    pending_confirm: str | None = None
+
     def reset_turn(self) -> None:
         self.stream_text = ""
         self.thinking_chars = 0
         self.streaming = False
         self.active_tools.clear()
         self.tool_seq = 0
+        self.pending_confirm = None
 
     def has_active_region(self) -> bool:
-        return bool(self.streaming or self.stream_text or self.active_tools)
+        return bool(
+            self.streaming
+            or self.stream_text
+            or self.active_tools
+            or self.pending_confirm
+        )

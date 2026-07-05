@@ -54,3 +54,12 @@ def test_active_region_short_stream_not_truncated():
     text = _active_text(state)
     assert "hello world" in text
     assert "…" not in text
+
+
+def test_active_region_shows_pending_confirm():
+    state = UIState()
+    state.pending_confirm = "允许执行 write_file?"
+    assert state.has_active_region() is True
+    text = _active_text(state)
+    assert "允许执行 write_file?" in text
+    assert "[y/n/a]" in text

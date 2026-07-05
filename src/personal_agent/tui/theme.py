@@ -26,6 +26,7 @@ TOOL_ERR = "31"       # failed tool ✗: red
 THINKING = "2"        # thinking hint: dim
 EXPAND_HEADER = "34"  # Ctrl+O expand header: blue
 STATUS = "2"          # status bar: dim
+CONFIRM = "1;33"      # inline tool confirmation prompt: bold yellow
 
 
 def sgr(text: str, code: str) -> str:

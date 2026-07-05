@@ -18,6 +18,7 @@ from typing import NamedTuple
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import run_in_terminal
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory, History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
@@ -31,6 +32,15 @@ from personal_agent.tui import theme
 class _PrintRequest(NamedTuple):
     text: str | None
     done: asyncio.Future[None] | None
+
+
+def _decision_field(decision, name: str) -> str:
+    """Read a field from a ToolDecision-like object (attr or dict)."""
+    if decision is None:
+        return ""
+    if isinstance(decision, dict):
+        return str(decision.get(name) or "")
+    return str(getattr(decision, name, "") or "")
 
 
 class InlineTuiApp:
@@ -52,6 +62,7 @@ class InlineTuiApp:
         )
         self._turn_task: asyncio.Task | None = None
         self._last_expanded: tuple[str, str] | None = None
+        self._confirm_future: asyncio.Future[str] | None = None
         self._print_queue: asyncio.Queue[_PrintRequest] = asyncio.Queue()
         self._print_worker_task: asyncio.Task | None = None
         self.app: Application | None = None
@@ -191,9 +202,31 @@ class InlineTuiApp:
             await self._refresh_mode()
             return
         await self._print_above(f"{theme.sgr('你:', theme.USER)} {text}")
-        result = await self.runtime.run_message_events(text, event_sink=self.renderer)
+        result = await self._run_turn(text)
         await self._refresh_mode()
         return result
+
+    async def _run_turn(self, text: str):
+        """Drive one message turn, offering the inline confirm callback if the
+        runtime accepts one. Falls back cleanly on runtimes that don't (yet)
+        take a ``confirm`` kwarg — see BACKEND_REQUIREMENTS.md."""
+        if self._runtime_accepts_confirm():
+            return await self.runtime.run_message_events(
+                text, event_sink=self.renderer, confirm=self.confirm_tool
+            )
+        return await self.runtime.run_message_events(text, event_sink=self.renderer)
+
+    def _runtime_accepts_confirm(self) -> bool:
+        try:
+            import inspect
+
+            sig = inspect.signature(self.runtime.run_message_events)
+        except (TypeError, ValueError):
+            return False
+        params = sig.parameters
+        if "confirm" in params:
+            return True
+        return any(p.kind is p.VAR_KEYWORD for p in params.values())
 
     _MODE_CYCLE = ("normal", "acceptEdits", "auto")
 
@@ -248,8 +281,24 @@ class InlineTuiApp:
     def _build_keys(self) -> KeyBindings:
         kb = KeyBindings()
 
+        @kb.add("y", filter=Condition(lambda: self._confirm_future is not None))
+        def _(event) -> None:
+            self._resolve_confirm("allow")
+
+        @kb.add("n", filter=Condition(lambda: self._confirm_future is not None))
+        def _(event) -> None:
+            self._resolve_confirm("deny")
+
+        @kb.add("a", filter=Condition(lambda: self._confirm_future is not None))
+        def _(event) -> None:
+            self._resolve_confirm("always")
+
         @kb.add("enter")
         def _(event) -> None:
+            # While a tool confirmation is pending, Enter defaults to allow.
+            if self._confirm_future is not None:
+                self._resolve_confirm("allow")
+                return
             # If the completion menu is open, accept it instead of submitting,
             # so a bare '/' + Enter picks the top command (matches classic shell).
             buf = event.current_buffer
@@ -269,7 +318,9 @@ class InlineTuiApp:
 
         @kb.add("c-c")
         def _(event) -> None:
-            if self._turn_task and not self._turn_task.done():
+            if self._confirm_future is not None:
+                self._resolve_confirm("deny")
+            elif self._turn_task and not self._turn_task.done():
                 asyncio.ensure_future(self._stop())
             else:
                 self.input_area.text = ""
@@ -305,6 +356,36 @@ class InlineTuiApp:
         header = theme.sgr(f"$ {name}", theme.EXPAND_HEADER)
         body = "\n".join(f"  {line}" for line in (full.splitlines() or [full]))
         self._print_above_nowait(f"{header}\n{body}")
+
+    # ── inline tool confirmation (Phase 4 frontend; backend seam pending) ──
+    async def confirm_tool(self, decision) -> str:
+        """Prompt the user to allow/deny a tool, resolving to 'allow'|'deny'|'always'.
+
+        Passed to the backend as the ``confirm`` callback once
+        ``run_turn_events`` / ``execute_tool_calls`` thread one through (see
+        BACKEND_REQUIREMENTS.md). ``decision`` is a ToolDecision-like object;
+        we only read a couple of display fields, tolerating dicts or attrs.
+        """
+        name = _decision_field(decision, "tool_name") or "tool"
+        category = _decision_field(decision, "permission_category") or ""
+        label = f"允许执行 {name}" + (f"（{category}）" if category else "") + "?"
+
+        loop = asyncio.get_running_loop()
+        self._confirm_future = loop.create_future()
+        self.state.pending_confirm = label
+        self._invalidate()
+        try:
+            answer = await self._confirm_future
+        finally:
+            self.state.pending_confirm = None
+            self._confirm_future = None
+            self._invalidate()
+        return answer
+
+    def _resolve_confirm(self, answer: str) -> None:
+        fut = self._confirm_future
+        if fut is not None and not fut.done():
+            fut.set_result(answer)
 
     async def run(self) -> None:
         self.app = Application(
