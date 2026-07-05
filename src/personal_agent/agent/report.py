@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import re
 from time import monotonic
 from typing import Any, Literal
 
@@ -11,6 +12,16 @@ from personal_agent.conversation.events import ConversationEvent, ConversationEv
 TurnStatus = Literal["running", "completed", "failed", "stopped", "context_overflow"]
 
 _SUMMARY_LIMIT = 500
+_CLAIM_PHRASE_LIMIT = 5
+
+_TOOL_CLAIM_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"(?:我|现在|立刻|马上|重新|单独|同时|并行|这次|真正).{0,16}(?:调用|调|读取|读|搜索|搜|查)",
+        r"(?:调用|读取|搜索|并行读取|并行调用|同时读取|同时调用).{0,16}(?:了|完成|成功|结果|返回)",
+        r"(?:读出来了|读到了|搜到了|调用了|已调用|已读取|已搜索|正在调用|正在读取|正在搜索)",
+    )
+)
 
 
 @dataclass
@@ -79,6 +90,7 @@ class AgentTurnReport:
     def __post_init__(self) -> None:
         self._started = monotonic()
         self._tool_items: dict[str, TurnToolReport] = {}
+        self._assistant_claim_phrases: list[str] = []
 
     def apply_event(self, event: ConversationEvent) -> None:
         self.event_counts[event.type] = self.event_counts.get(event.type, 0) + 1
@@ -117,6 +129,7 @@ class AgentTurnReport:
                 message=event.message,
             ))
         elif event.type == "assistant_message":
+            self._record_assistant_claim(event.message)
             self.final_response_summary = _summarize(event.message)
         elif event.type == "stop":
             self.status = "stopped"
@@ -153,17 +166,11 @@ class AgentTurnReport:
 
     def as_dict(self) -> dict[str, Any]:
         tool_items = list(self._tool_items.values())
-        status_counts = {
-            "success": 0,
-            "error": 0,
-            "denied": 0,
-            "timeout": 0,
-            "interrupted": 0,
-            "skipped": 0,
-        }
+        status_counts = _tool_status_counts(tool_items)
         for item in tool_items:
             if item.status in status_counts:
                 status_counts[item.status] += 1
+        tool_truth = self._tool_truth(tool_items, status_counts)
         return {
             "turn_id": self.turn_id,
             "status": self.status,
@@ -181,6 +188,7 @@ class AgentTurnReport:
                 **status_counts,
                 "items": [item.as_dict() for item in tool_items],
             },
+            "tool_truth": tool_truth,
             "retries": [retry.as_dict() for retry in self.retries],
             "event_counts": dict(sorted(self.event_counts.items())),
         }
@@ -235,6 +243,45 @@ class AgentTurnReport:
             item.tool_name = tool_name
         return item
 
+    def _record_assistant_claim(self, text: Any) -> None:
+        for phrase in _extract_tool_claim_phrases(text):
+            if phrase not in self._assistant_claim_phrases:
+                self._assistant_claim_phrases.append(phrase)
+            if len(self._assistant_claim_phrases) >= _CLAIM_PHRASE_LIMIT:
+                break
+
+    def _tool_truth(
+        self,
+        tool_items: list[TurnToolReport],
+        status_counts: dict[str, int],
+    ) -> dict[str, Any]:
+        calls_total = len(tool_items)
+        results_total = sum(1 for item in tool_items if item.status)
+        assistant_claimed = bool(self._assistant_claim_phrases)
+        llm_tool_call_count = int(self.llm.tool_call_count)
+        claimed_but_no_tool_call = (
+            assistant_claimed
+            and calls_total == 0
+            and llm_tool_call_count == 0
+        )
+        warnings = []
+        if claimed_but_no_tool_call:
+            warnings.append("assistant_claimed_tool_use_without_tool_call")
+        return {
+            "calls_total": calls_total,
+            "results_total": results_total,
+            "llm_tool_call_count": llm_tool_call_count,
+            "tool_names": [item.tool_name for item in tool_items],
+            "status_counts": dict(status_counts),
+            "tools": [_truth_tool_item(item) for item in tool_items],
+            "assistant_claim": {
+                "claimed_tool_use": assistant_claimed,
+                "claim_phrases": list(self._assistant_claim_phrases),
+                "claimed_but_no_tool_call": claimed_but_no_tool_call,
+            },
+            "warnings": warnings,
+        }
+
 
 class TurnReportRecorder(ConversationEventSink):
     def __init__(self, forward: ConversationEventSink | None = None) -> None:
@@ -270,3 +317,47 @@ def _as_float(value: Any) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _tool_status_counts(tool_items: list[TurnToolReport]) -> dict[str, int]:
+    return {
+        "success": 0,
+        "error": 0,
+        "denied": 0,
+        "timeout": 0,
+        "interrupted": 0,
+        "skipped": 0,
+    }
+
+
+def _truth_tool_item(item: TurnToolReport) -> dict[str, Any]:
+    return {
+        "id": item.tool_use_id,
+        "name": item.tool_name,
+        "status": item.status,
+        "duration": item.duration,
+        "input_summary": item.input_summary,
+        "output_summary": item.output_summary,
+        "error": item.error,
+        "permission_category": item.permission_category,
+        "permission_decision": item.permission_decision,
+        "guard_stage": item.decision_stage,
+        "reason_code": item.reason_code,
+        "required_allow": item.required_allow,
+        "execution_mode": item.execution_mode,
+    }
+
+
+def _extract_tool_claim_phrases(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    phrases: list[str] = []
+    for pattern in _TOOL_CLAIM_PATTERNS:
+        for match in pattern.finditer(text):
+            phrase = " ".join(match.group(0).split())
+            if phrase and phrase not in phrases:
+                phrases.append(phrase[:120])
+            if len(phrases) >= _CLAIM_PHRASE_LIMIT:
+                return phrases
+    return phrases

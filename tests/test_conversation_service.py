@@ -99,6 +99,8 @@ def _turn_report(
     error="",
     llm_calls=1,
     tool_calls=2,
+    claimed_but_no_tool_call=False,
+    tool_truth_warnings=None,
     input_tokens=10,
     output_tokens=5,
     retries=None,
@@ -113,6 +115,16 @@ def _turn_report(
             "output_tokens": output_tokens,
         },
         "tools": {"total": tool_calls, "items": []},
+        "tool_truth": {
+            "calls_total": tool_calls,
+            "results_total": tool_calls,
+            "warnings": list(tool_truth_warnings or []),
+            "assistant_claim": {
+                "claimed_tool_use": bool(claimed_but_no_tool_call),
+                "claim_phrases": [],
+                "claimed_but_no_tool_call": claimed_but_no_tool_call,
+            },
+        },
         "retries": list(retries or []),
     }
 
@@ -195,6 +207,8 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
     assert summary["last_duration"] == 1.25
     assert summary["last_llm_calls"] == 1
     assert summary["last_tool_calls"] == 0
+    assert summary["last_claimed_but_no_tool_call"] is False
+    assert summary["last_tool_truth_warnings"] == []
     assert summary["last_input_tokens"] == 10
     assert summary["last_output_tokens"] == 5
     assert summary["last_retries"] == 0
@@ -285,6 +299,28 @@ async def test_turn_report_history_keeps_recent_limit(service):
         f"cli:{TURN_REPORT_HISTORY_LIMIT + 2}:local",
         f"cli:{TURN_REPORT_HISTORY_LIMIT + 3}:local",
         f"cli:{TURN_REPORT_HISTORY_LIMIT + 4}:local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_turn_report_summary_includes_tool_truth_warnings(service):
+    svc, _manager, _db = service
+    svc.record_turn_report(
+        "cli:default:local",
+        _source(),
+        _turn_report(
+            tool_calls=0,
+            claimed_but_no_tool_call=True,
+            tool_truth_warnings=["assistant_claimed_tool_use_without_tool_call"],
+        ),
+    )
+
+    summary = svc.turn_report_summary()
+
+    assert summary["last_tool_calls"] == 0
+    assert summary["last_claimed_but_no_tool_call"] is True
+    assert summary["last_tool_truth_warnings"] == [
+        "assistant_claimed_tool_use_without_tool_call"
     ]
 
 

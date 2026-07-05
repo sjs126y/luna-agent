@@ -177,6 +177,8 @@ class ConversationService:
         report = last.get("report") or {}
         llm = report.get("llm") or {}
         tools = report.get("tools") or {}
+        tool_truth = report.get("tool_truth") or {}
+        assistant_claim = tool_truth.get("assistant_claim") or {}
         retries = report.get("retries") or []
         return {
             "stored": len(self.turn_reports),
@@ -188,6 +190,10 @@ class ConversationService:
             "last_input_tokens": int(llm.get("input_tokens") or 0),
             "last_output_tokens": int(llm.get("output_tokens") or 0),
             "last_retries": len(retries) if isinstance(retries, list) else 0,
+            "last_tool_truth_warnings": list(tool_truth.get("warnings") or []),
+            "last_claimed_but_no_tool_call": bool(
+                assistant_claim.get("claimed_but_no_tool_call", False)
+            ),
         }
 
     async def get_or_create_agent(self, session_key: str):
@@ -428,6 +434,8 @@ def _empty_turn_report_summary() -> dict[str, Any]:
         "last_input_tokens": 0,
         "last_output_tokens": 0,
         "last_retries": 0,
+        "last_tool_truth_warnings": [],
+        "last_claimed_but_no_tool_call": False,
     }
 
 

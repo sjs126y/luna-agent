@@ -92,6 +92,11 @@ async def test_simple_response(provider):
     assert report["llm"]["input_tokens"] == 5
     assert report["llm"]["output_tokens"] == 3
     assert report["tools"]["total"] == 0
+    assert report["tool_truth"]["calls_total"] == 0
+    assert report["tool_truth"]["results_total"] == 0
+    assert report["tool_truth"]["assistant_claim"]["claimed_tool_use"] is False
+    assert report["tool_truth"]["assistant_claim"]["claimed_but_no_tool_call"] is False
+    assert report["tool_truth"]["warnings"] == []
     assert report["final_response_summary"] == "Hello!"
     assert [event.type for event in recorder.events] == [
         "turn_start",
@@ -253,6 +258,12 @@ async def test_tool_use_loop(provider):
     assert report["tools"]["items"][0]["tool_use_id"] == "c1"
     assert report["tools"]["items"][0]["status"] == "success"
     assert report["tools"]["items"][0]["decision_stage"] == "runtime_guard"
+    assert report["tool_truth"]["calls_total"] == 1
+    assert report["tool_truth"]["results_total"] == 1
+    assert report["tool_truth"]["llm_tool_call_count"] == 1
+    assert report["tool_truth"]["tool_names"] == ["echo"]
+    assert report["tool_truth"]["status_counts"]["success"] == 1
+    assert report["tool_truth"]["assistant_claim"]["claimed_but_no_tool_call"] is False
 
     # Verify tool_result was appended
     tool_results = [m for m in result["messages"] if isinstance(m.get("content"), list)
@@ -300,6 +311,34 @@ async def test_turn_report_records_denied_tool_decision(provider):
     assert item["permission_category"] == "write"
     assert item["reason_code"] == "permission_required"
     assert item["required_allow"] == "write"
+    truth = result["turn_report"]["tool_truth"]
+    assert truth["calls_total"] == 1
+    assert truth["results_total"] == 1
+    assert truth["status_counts"]["denied"] == 1
+    assert truth["assistant_claim"]["claimed_but_no_tool_call"] is False
+
+
+@pytest.mark.asyncio
+async def test_turn_report_flags_claimed_tool_use_without_tool_call(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="好的，我现在并行读取全部 md 文件。",
+            finish_reason="end_turn",
+            usage={"input_tokens": 4, "output_tokens": 6},
+        ),
+    ])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "读取所有 md 文件")
+
+    result = await run_conversation(agent, ctx)
+
+    truth = result["turn_report"]["tool_truth"]
+    assert truth["calls_total"] == 0
+    assert truth["llm_tool_call_count"] == 0
+    assert truth["assistant_claim"]["claimed_tool_use"] is True
+    assert truth["assistant_claim"]["claimed_but_no_tool_call"] is True
+    assert truth["assistant_claim"]["claim_phrases"]
+    assert truth["warnings"] == ["assistant_claimed_tool_use_without_tool_call"]
 
 
 @pytest.mark.asyncio
