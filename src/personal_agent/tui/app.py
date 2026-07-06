@@ -26,7 +26,12 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
 
 from personal_agent.tui.layout import SLASH_MENU_VISIBLE_ITEMS, build_layout
-from personal_agent.tui.renderer import InlineRenderer
+from personal_agent.tui.renderer import (
+    InlineRenderer,
+    compact_tool_title,
+    format_expand_block,
+    tool_summary_from_mapping,
+)
 from personal_agent.tui.state import ConfirmPrompt, SlashMenuItem, UIState
 from personal_agent.tui import theme
 
@@ -276,29 +281,26 @@ def _format_tool_run_detail(item: dict) -> tuple[str, tuple[str, str] | None]:
     if not isinstance(item, dict):
         return "Tool run detail: missing", None
     run_id = _field(item, "id") or "-"
-    name = _field(item, "tool_name") or "tool"
+    name = _field(item, "display_name") or _field(item, "tool_name") or "tool"
     output = _field(item, "full_output") or _field(item, "output_summary")
+    summary = tool_summary_from_mapping(item)
     lines = [
         theme.sgr(f"Tool Run #{run_id}", theme.EXPAND_HEADER),
-        f"  tool      {name}",
-        f"  status    {_field(item, 'status') or '-'}",
-        f"  category  {_field(item, 'category') or '-'}",
-        f"  duration  {_format_duration(item.get('duration'))}",
-        f"  session   {_field(item, 'session_key') or '-'}",
-        f"  turn      {_field(item, 'turn_id') or '-'}",
-        f"  mode      {_field(item, 'execution_mode') or '-'}",
+        f"  tool       {name}",
+        f"  status     {_field(item, 'status') or '-'}",
+        f"  duration   {_format_duration(item.get('duration'))}",
+        f"  mode       {_field(item, 'execution_mode') or '-'}",
         f"  permission {_field(item, 'permission_category') or '-'} / {_field(item, 'permission_decision') or '-'}",
     ]
-    input_summary = _field(item, "input_summary")
-    if input_summary:
-        lines.append(f"  input     {_fit(input_summary, 120)}")
+    if summary:
+        lines.append(f"  {_fit(summary, 140)}")
     error = _field(item, "error")
     if error:
-        lines.append(f"  error     {_fit(error, 120)}")
+        lines.append(f"  Error      {_fit(error, 120)}")
     if output:
-        lines.append(f"  output    {_fit(output, 160)}")
+        lines.append(f"  Output     {_fit(output, 160)}")
         lines.append(theme.sgr("  Ctrl+O", theme.KEY) + theme.sgr(" expand full output", theme.HINT_LABEL))
-    expandable = (f"tool run #{run_id} {name}", output) if output else None
+    expandable = (compact_tool_title(name, run_id), output) if output else None
     return "\n".join(lines), expandable
 
 
@@ -398,9 +400,15 @@ class InlineTuiApp:
         text = self.input_area.text
         slash_mode = text.startswith("/") and "\n" not in text
         slash_items = self._slash_menu_items(text) if slash_mode else ()
-        self._set_slash_state(slash_mode, slash_items)
+        empty_message = self._slash_empty_message(text, slash_mode, slash_items)
+        self._set_slash_state(slash_mode, slash_items, empty_message)
 
-    def _set_slash_state(self, slash_mode: bool, slash_items: tuple[SlashMenuItem, ...]) -> None:
+    def _set_slash_state(
+        self,
+        slash_mode: bool,
+        slash_items: tuple[SlashMenuItem, ...],
+        empty_message: str = "",
+    ) -> None:
         selected = self.state.slash_selected
         scroll = self.state.slash_scroll
         if not slash_mode or not slash_items:
@@ -421,11 +429,13 @@ class InlineTuiApp:
             or self.state.slash_items != slash_items
             or self.state.slash_selected != selected
             or self.state.slash_scroll != scroll
+            or self.state.slash_empty_message != empty_message
         ):
             self.state.slash_mode = slash_mode
             self.state.slash_items = slash_items
             self.state.slash_selected = selected
             self.state.slash_scroll = scroll
+            self.state.slash_empty_message = empty_message
             self._invalidate()
 
     def _clamped_slash_view(
@@ -447,13 +457,13 @@ class InlineTuiApp:
         return selected, scroll
 
     def _selected_slash_item(self) -> SlashMenuItem | None:
-        if not self.state.has_slash_menu():
+        if not self.state.slash_items:
             return None
         index = max(0, min(self.state.slash_selected, len(self.state.slash_items) - 1))
         return self.state.slash_items[index]
 
     def _move_slash_selection(self, delta: int) -> None:
-        if not self.state.has_slash_menu():
+        if not self.state.slash_items:
             return
         count = len(self.state.slash_items)
         selected = (self.state.slash_selected + delta) % count
@@ -475,6 +485,42 @@ class InlineTuiApp:
         self.input_area.buffer.cursor_position = len(item.text)
         self._on_input_text_changed(self.input_area.buffer)
         return True
+
+    def _clear_slash_input(self) -> None:
+        self.input_area.text = ""
+        self._on_input_text_changed(self.input_area.buffer)
+
+    def _slash_empty_message(
+        self,
+        text: str,
+        slash_mode: bool,
+        slash_items: tuple[SlashMenuItem, ...],
+    ) -> str:
+        if not slash_mode or slash_items:
+            return ""
+        query = text.strip()
+        if query in ("", "/") or self._is_complete_slash_command(query):
+            return ""
+        if self._slash_choice_tasks:
+            return ""
+        return "No matches"
+
+    def _is_complete_slash_command(self, query: str) -> bool:
+        tokens = query.split()
+        if not tokens:
+            return False
+        command = self._find_slash_command(tokens[0])
+        if command is None:
+            return False
+        if len(tokens) == 1:
+            return not command.children and not command.arguments
+        child = self._find_child_command(command, tokens)
+        if child is None:
+            return False
+        command_tokens = child.text.split()
+        supplied_args = len(tokens) - len(command_tokens)
+        required_args = sum(1 for arg in child.arguments if arg.required)
+        return supplied_args >= required_args
 
     def _slash_menu_items(self, text: str) -> tuple[SlashMenuItem, ...]:
         return tuple(
@@ -653,7 +699,7 @@ class InlineTuiApp:
         if self.state.slash_mode:
             text = self.input_area.text
             slash_items = self._slash_menu_items(text)
-            self._set_slash_state(True, slash_items)
+            self._set_slash_state(True, slash_items, self._slash_empty_message(text, True, slash_items))
 
     # ── prompt_toolkit callbacks the renderer uses ──
     def _invalidate(self) -> None:
@@ -925,6 +971,13 @@ class InlineTuiApp:
         def _(event) -> None:
             self._resolve_confirm("deny")
 
+        @kb.add("escape", filter=Condition(lambda: self._confirm_future is None), eager=True)
+        def _(event) -> None:
+            if self.state.slash_mode:
+                self._clear_slash_input()
+            else:
+                self.input_area.text = ""
+
         @kb.add("enter", eager=True)
         def _(event) -> None:
             # While a tool confirmation is pending, Enter uses the visible
@@ -1003,9 +1056,7 @@ class InlineTuiApp:
             return  # already expanded this content; don't restack
         self._last_expanded = self.state.last_expandable
         name, full = self.state.last_expandable
-        header = theme.sgr(f"展开 {name}", theme.EXPAND_HEADER)
-        body = "\n".join(f"  {line}" for line in (full.splitlines() or [full]))
-        self._print_above_nowait(f"{header}\n{body}")
+        self._print_above_nowait(format_expand_block(name, full))
 
     async def confirm_tool(self, decision) -> str:
         """Prompt the user to allow/deny a tool, resolving to 'allow'|'deny'|'always'.

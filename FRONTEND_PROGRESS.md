@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 17:05 CST
+更新时间：2026-07-06 20:40 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -38,6 +38,11 @@
   - `Up/Down` 在菜单内移动选择。
   - `Enter` 只插入当前候选，不直接执行。
   - 当命令完整且没有后续候选时，菜单收起；下一次 `Enter` 才执行命令。
+- 已完成视觉细调：
+  - 当前选中行有轻量 row highlight，不只依赖 `›` 标记。
+  - 候选很多时 header 显示克制的位置提示，例如 `5/8`。
+  - 无匹配候选时显示 `No matches`；动态候选加载中不会提前显示空结果。
+  - `Esc` 在 confirm 中仍拒绝；在 slash 模式下关闭并清空命令输入；普通输入下清空输入。
 - 已关闭 prompt_toolkit 内置补全浮层，避免隐藏 completion state 抢 `Up/Down/Enter`。
 
 最近相关提交：
@@ -51,13 +56,16 @@
 
 - 前端消费 `tool_start`、`tool_decision`、`tool_end` 事件。
 - 优先读结构化字段，例如 `display_name`、`input_summary`、`output_summary`、`full_output`、`risk_level`、`command_preview`、`url_preview`、`affected_paths`。
+- 实时工具 trace 和 `/tool-runs show` 共享摘要优先级：`command_preview`、`url_preview`、`affected_paths`、`process_label`、known JSON args、`input_preview` / `input_summary`。
+- 工具摘要已改用短英文标签，例如 `Cmd`、`URL`、`Path`、`Process`、`Query`，减少 raw JSON 和突兀中文标签。
 - 有 `full_output` / `error` / `output_summary` 时，会设置 `state.last_expandable`，用户可用 `Ctrl+O` 展开。
+- `Ctrl+O` 展开标题已改为短标题，例如 `read #7`；展开块有轻量边界，避免和普通 assistant 输出混在一起。
 
 历史工具查询：
 
 - `/tool-runs`、`/tool-runs summary`、`/tool-runs show <id>` 已接入。
 - 前端不直接调用 `ConversationQueryService`，而是消费 `CommandResult.kind == "tool_runs"` 的结构化 `payload`。
-- `/tool-runs show <id>` 若有完整输出，也接到 `Ctrl+O` 展开。
+- `/tool-runs show <id>` 若有完整输出，也接到 `Ctrl+O` 展开；展示顺序已和实时 trace 的重点字段对齐。
 
 ### Confirm UI
 
@@ -68,6 +76,8 @@
   - `Esc` / `n` 拒绝。
   - `a` allow once。
   - `Shift+A` allow always。
+- 面板已压缩成短标签风格：`Risk`、`Cmd`、`Path`、`URL`、`Process`、`Input`。
+- 仅展示 `available_actions` 允许的动作；`default_action` 会明确显示为 `Enter allow once` 或 `Enter deny`，`none` 时不把 Enter 标成 allow。
 
 ## 已接后端能力
 
@@ -92,43 +102,24 @@
 - 状态行中文化没必要。
 - 多工具结果列表 / Ctrl+O 选择展开：用户感兴趣，但之前尝试失败过，暂缓，不作为当前优先项。
 
-## 准备做但尚未开始
+## 最近完成
 
-用户刚同意 1、2、3 可以一起做，但随后要求先写本文档，因此以下事项尚未实现。下一位 Codex 接手前应先确认用户是否仍要继续这些微调。
+### 2026-07-06 20:40 CST
 
-### 1. Slash 菜单视觉细调
+- 完成 slash 菜单视觉细调：row highlight、候选位置提示、`No matches` 空状态、`Esc` 关闭 slash 菜单。
+- 完成 tool trace / `/tool-runs show` 展示精简：统一摘要优先级、短英文标签、短展开标题、展开块边界。
+- 完成 confirm 面板压缩：短标签、可用动作过滤、默认动作显式化、去掉冗余元信息。
 
-目标：在现有可选择菜单基础上做更清楚、更克制的视觉层级。
+已验证：
 
-可做项：
+```bash
+uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
+python -m compileall -q src/personal_agent/tui
+git diff --check
+uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
+```
 
-- 当前选中行增加轻量 row highlight，而不只是 `›` 标记。
-- `Esc` 在 slash 菜单打开时关闭/清空菜单状态，避免和确认框冲突。
-- 候选很多时增加轻量位置提示，例如 `2/5` 或 `more`，但不要做得太重。
-- 空结果可以显示简短 `No matches`，避免用户误判 UI 没响应。
-
-### 2. Tool trace / Tool Runs 展示精简
-
-目标：实时工具 trace 和 `/tool-runs show` 的展示更一致、更少 raw 感。
-
-可做项：
-
-- 统一实时 tool trace 与 `/tool-runs show` 的字段顺序。
-- 对常见工具做更好的摘要优先级：`command_preview`、`url_preview`、`affected_paths`、`process_label` 优先于 raw JSON。
-- `Ctrl+O` 展开标题改得更短，例如 `read #7`、`web_search #12`。
-- 长输出展开块增加轻量边界，避免和普通 assistant 输出混在一起。
-
-### 3. Confirm 面板压缩
-
-目标：安全确认更像产品 UI，减少冗余文案。
-
-可做项：
-
-- 改成短标签风格：`Risk`、`Cmd`、`Path`、`URL`、`Enter`、`Esc`。
-- 风险行、详情行、动作行分层更清楚。
-- `available_actions` 不包含的动作不显示。
-- `default_action` 更明显，例如 `Enter allow once` / `Enter deny`。
-- 保持面板高度克制，避免挤压输入区。
+结果：TUI tests `71 passed`，command/gateway tests `55 passed`。
 
 ## 不建议现在做
 

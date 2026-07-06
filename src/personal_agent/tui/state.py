@@ -115,6 +115,7 @@ class UIState:
     slash_items: tuple[SlashMenuItem, ...] = ()
     slash_selected: int = 0
     slash_scroll: int = 0
+    slash_empty_message: str = ""
 
     def reset_turn(self) -> None:
         self.stream_text = ""
@@ -133,4 +134,4 @@ class UIState:
         )
 
     def has_slash_menu(self) -> bool:
-        return self.slash_mode and bool(self.slash_items)
+        return self.slash_mode and (bool(self.slash_items) or bool(self.slash_empty_message))

@@ -193,7 +193,7 @@ class InlineRenderer(Renderer):
         )
         full = item.error or item.full_output or item.output_summary
         if full:
-            self.state.last_expandable = (item.display_name, full)
+            self.state.last_expandable = (compact_tool_title(item.display_name, item.index), full)
         # Print the completed tool trace line into scrollback.
         await self._print_above(render_plain(self._tool_line(item), width=self.width))
         self._invalidate()
@@ -271,7 +271,7 @@ class InlineRenderer(Renderer):
         if item.risk_summary and item.status in {"denied", "error"}:
             summary += f" {theme.dim(item.risk_summary)}"
         if _should_hint_expand(item):
-            summary += f" {theme.sgr('Ctrl+O 展开', theme.TOOL_HINT)}"
+            summary += f" {theme.sgr('Ctrl+O expand', theme.TOOL_HINT)}"
         return f"  ⚙ {item.display_name}{summary}  {mark}{dur}"
 
 
@@ -327,10 +327,8 @@ def _apply_tool_display_metadata(item: ToolTrace, data: dict) -> None:
 
 
 def _tool_summary(item: ToolTrace) -> str:
-    if item.process_label and not item.command_preview:
-        return f"进程: {item.process_label}"
     if item.command_preview:
-        parts = [f"命令: {item.command_preview}"]
+        parts = [f"Cmd {item.command_preview}"]
         if item.process_label and item.process_label != item.command_preview:
             parts.append(item.process_label)
         if item.cwd:
@@ -339,7 +337,7 @@ def _tool_summary(item: ToolTrace) -> str:
             parts.append(f"{item.timeout_seconds:g}s")
         return " · ".join(parts)
     if item.url_preview:
-        prefix = f"{item.method.upper()} " if item.method else "网络: "
+        prefix = f"{item.method.upper()} " if item.method else "URL "
         target = item.url_preview
         if item.host and item.host not in target:
             target = f"{target} ({item.host})"
@@ -347,8 +345,10 @@ def _tool_summary(item: ToolTrace) -> str:
     if item.affected_paths:
         paths = ", ".join(item.affected_paths[:3])
         if len(item.affected_paths) > 3:
-            paths += f" 等 {len(item.affected_paths)} 个路径"
-        return f"路径: {paths}"
+            paths += f" +{len(item.affected_paths) - 3}"
+        return f"Path {paths}"
+    if item.process_label:
+        return f"Process {item.process_label}"
     args = _parse_json_object(item.input_preview) or _parse_json_object(item.input_summary)
     if args is not None:
         summary = _known_tool_args_summary(item.name, args)
@@ -356,6 +356,38 @@ def _tool_summary(item: ToolTrace) -> str:
             return summary
         return _generic_args_summary(args)
     return item.input_preview or item.input_summary
+
+
+def compact_tool_title(name: str, index: object) -> str:
+    label = " ".join(str(name or "tool").split()) or "tool"
+    return f"{label} #{index}"
+
+
+def format_expand_block(title: str, body: str) -> str:
+    header = theme.sgr(title, theme.EXPAND_HEADER)
+    border = theme.sgr("─" * min(48, max(12, len(title) + 4)), theme.EXPAND_BORDER)
+    content = "\n".join(f"  {line}" for line in (body.splitlines() or [body]))
+    return f"{header}\n{border}\n{content}\n{border}"
+
+
+def tool_summary_from_mapping(item: dict) -> str:
+    trace = ToolTrace(
+        index=_optional_int(item.get("id")),
+        tool_use_id=str(item.get("tool_use_id") or item.get("id") or ""),
+        name=str(item.get("tool_name") or "tool"),
+        display_name=str(item.get("display_name") or item.get("tool_name") or "tool"),
+        input_summary=str(item.get("input_summary") or ""),
+        input_preview=str(item.get("input_preview") or item.get("input_summary") or ""),
+        affected_paths=tuple(_string_list(item.get("affected_paths"))),
+        command_preview=str(item.get("command_preview") or ""),
+        url_preview=str(item.get("url_preview") or ""),
+        host=str(item.get("host") or ""),
+        cwd=str(item.get("cwd") or ""),
+        timeout_seconds=_optional_float(item.get("timeout_seconds")),
+        method=str(item.get("method") or ""),
+        process_label=str(item.get("process_label") or ""),
+    )
+    return _tool_summary(trace)
 
 
 def _parse_json_object(text: str) -> dict | None:
@@ -374,13 +406,13 @@ def _known_tool_args_summary(tool_name: str, args: dict) -> str:
     if name.endswith("web_search") or name == "web_search":
         query = str(args.get("query") or "").strip()
         max_results = args.get("max_results")
-        parts = [f"搜索: {query}" if query else "搜索"]
+        parts = [f"Query {query}" if query else "Query"]
         if max_results not in (None, ""):
-            parts.append(f"{max_results} 条")
+            parts.append(f"{max_results} results")
         return " · ".join(parts)
     if name.endswith("web_fetch") or name == "web_fetch":
         url = str(args.get("url") or args.get("uri") or "").strip()
-        return f"网络: {url}" if url else ""
+        return f"URL {url}" if url else ""
     return ""
 
 
@@ -388,16 +420,16 @@ def _generic_args_summary(args: dict) -> str:
     for key in ("query", "url", "path", "file_path", "command", "cmd"):
         value = args.get(key)
         if value not in (None, ""):
-            return f"{_arg_label(key)}: {value}"
+            return f"{_arg_label(key)} {value}"
     return ""
 
 
 def _arg_label(key: str) -> str:
     return {
-        "query": "查询",
-        "url": "网络",
-        "path": "路径",
-        "file_path": "路径",
-        "command": "命令",
-        "cmd": "命令",
+        "query": "Query",
+        "url": "URL",
+        "path": "Path",
+        "file_path": "Path",
+        "command": "Cmd",
+        "cmd": "Cmd",
     }.get(key, key)

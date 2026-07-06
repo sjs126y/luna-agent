@@ -76,9 +76,9 @@ async def test_tool_lifecycle_and_expandable():
         "duration": 0.3, "full_output": "DATA",
     }))
     assert "t1" not in r.state.active_tools
-    assert r.state.last_expandable == ("read", "DATA")
+    assert r.state.last_expandable == ("read #1", "DATA")
     assert any("read" in line for line in printed)
-    assert "Ctrl+O 展开" not in "\n".join(printed)
+    assert "Ctrl+O expand" not in "\n".join(printed)
 
 
 @pytest.mark.asyncio
@@ -95,8 +95,8 @@ async def test_tool_end_hints_expand_for_long_output():
     text = "\n".join(printed)
     assert "Read file" in text
     assert "large.log" in text
-    assert "Ctrl+O 展开" in text
-    assert r.state.last_expandable == ("Read file", "line1\nline2\nline3\nline4")
+    assert "Ctrl+O expand" in text
+    assert r.state.last_expandable == ("Read file #1", "line1\nline2\nline3\nline4")
 
 
 @pytest.mark.asyncio
@@ -153,8 +153,8 @@ async def test_tool_end_summarizes_web_search_args_without_raw_json():
     }))
     text = "\n".join(printed)
     assert "Web search" in text
-    assert "搜索: MCP 最新进展 2026" in text
-    assert "5 条" in text
+    assert "Query MCP 最新进展 2026" in text
+    assert "5 results" in text
     assert '"max_results"' not in text
     assert '{"' not in text
 
@@ -171,7 +171,7 @@ async def test_tool_end_shows_process_label():
     }))
     text = "\n".join(printed)
     assert "Start process" in text
-    assert "进程: vite dev server" in text
+    assert "Process vite dev server" in text
 
 
 @pytest.mark.asyncio

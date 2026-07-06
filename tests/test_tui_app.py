@@ -192,6 +192,7 @@ async def test_dynamic_argument_choices_refresh_slash_menu(monkeypatch):
     app = _app()
     app.input_area.text = "/tools show r"
     assert app.state.slash_items == ()
+    assert app.state.slash_empty_message == ""
 
     await asyncio.sleep(0)
     await asyncio.sleep(0)
@@ -220,7 +221,8 @@ def test_expand_last_prints_when_present():
     app.state.last_expandable = ("read", "line1\nline2")
     app._expand_last()
     assert len(printed) == 1
-    assert "展开 read" in printed[0]
+    assert "read" in printed[0]
+    assert "──" in printed[0]
     assert "line1" in printed[0] and "line2" in printed[0]
 
 
@@ -632,8 +634,9 @@ async def test_tool_run_detail_payload_sets_expandable_output(monkeypatch):
 
     text = "\n".join(printed)
     assert "Tool Run #7" in text
+    assert "Path README.md" in text
     assert "Ctrl+O" in text
-    assert app.state.last_expandable == ("tool run #7 read", "line1\nline2")
+    assert app.state.last_expandable == ("read #7", "line1\nline2")
 
 
 def test_slash_mode_tracks_input_text():
@@ -658,6 +661,16 @@ def test_complete_leaf_slash_command_hides_menu_but_stays_in_command_mode():
     app.input_area.text = "/usage"
     assert app.state.slash_mode is True
     assert app.state.slash_items == ()
+    assert app.state.has_slash_menu() is False
+
+
+def test_unknown_slash_command_shows_no_matches():
+    app = _app()
+    app.input_area.text = "/definitely-not-a-command"
+    assert app.state.slash_mode is True
+    assert app.state.slash_items == ()
+    assert app.state.slash_empty_message == "No matches"
+    assert app.state.has_slash_menu() is True
 
 
 def test_partial_slash_command_shows_matching_candidates():
@@ -690,6 +703,16 @@ def test_slash_menu_selection_moves_and_applies_current_candidate():
     assert app.input_area.text == "/memory list"
     assert app.state.slash_mode is True
     assert app.state.slash_items == ()
+
+
+def test_clear_slash_input_closes_menu():
+    app = _app()
+    app.input_area.text = "/a"
+    assert app.state.has_slash_menu() is True
+    app._clear_slash_input()
+    assert app.input_area.text == ""
+    assert app.state.slash_mode is False
+    assert app.state.has_slash_menu() is False
 
 
 def test_slash_menu_scrolls_when_selection_moves_past_visible_rows():

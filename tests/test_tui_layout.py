@@ -105,6 +105,19 @@ def test_slash_command_slot_marks_selected_scrolled_row():
     assert "/cmd0" not in text
     assert "/cmd1" in text
     assert "› /cmd4" in text
+    assert "5/5" in text
+
+
+def test_slash_command_slot_shows_empty_state():
+    state = UIState(
+        slash_mode=True,
+        slash_empty_message="No matches",
+    )
+
+    text = to_plain_text(ANSI(_slash_menu(state)))
+
+    assert "commands" in text
+    assert "No matches" in text
 
 
 def test_hint_bar_hidden_while_typing_slash_command():

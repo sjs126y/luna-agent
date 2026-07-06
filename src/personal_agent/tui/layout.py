@@ -182,19 +182,26 @@ def _hint_bar(state: UIState) -> str:
     return f"  {mode}   {hints}"
 
 
-def _slash_menu_header() -> str:
+def _slash_menu_header(state: UIState) -> str:
+    count = len(state.slash_items)
+    position = ""
+    if count > SLASH_MENU_VISIBLE_ITEMS:
+        selected = max(0, min(state.slash_selected, count - 1))
+        position = f" · {selected + 1}/{count}"
     return (
         "  "
         + theme.sgr("commands", theme.SLASH_BORDER)
-        + theme.sgr("  type to filter · ↑/↓ selects · Enter applies", theme.SLASH_META)
+        + theme.sgr(f"  type to filter · ↑/↓ selects · Enter applies{position}", theme.SLASH_META)
     )
 
 
 def _slash_menu(state: UIState) -> str:
-    lines = [_slash_menu_header()]
+    lines = [_slash_menu_header(state)]
     max_items = SLASH_MENU_VISIBLE_ITEMS
     count = len(state.slash_items)
     if count <= 0:
+        if state.slash_empty_message:
+            lines.append("    " + theme.sgr(state.slash_empty_message, theme.SLASH_EMPTY))
         return "\n".join(lines)
     selected = max(0, min(state.slash_selected, count - 1))
     offset = max(0, min(state.slash_scroll, max(0, count - max_items)))
@@ -205,28 +212,22 @@ def _slash_menu(state: UIState) -> str:
 
     for row, item in enumerate(state.slash_items[offset:offset + max_items]):
         index = offset + row
-        marker = theme.sgr("›", theme.SLASH_MARK) if index == selected else theme.sgr(" ", theme.SLASH_BORDER)
+        selected_row = index == selected
+        marker = theme.sgr("›", theme.SLASH_MARK) if selected_row else theme.sgr(" ", theme.SLASH_BORDER)
         description = f"  {theme.sgr(item.description, theme.SLASH_META)}" if item.description else ""
         label = item.display_text or item.text
-        lines.append(f"  {marker} {theme.sgr(label, theme.SLASH_ITEM)}{description}")
+        item_style = theme.SLASH_SELECTED if selected_row else theme.SLASH_ITEM
+        lines.append(f"  {marker} {theme.sgr(label, item_style)}{description}")
     return "\n".join(lines)
 
 
 def _confirm_lines(confirm) -> list[str]:
     accent = theme.risk_style(confirm.risk_level)
     lines = [
-        theme.sgr("╭─ confirm ─────────────────────────────────────────", theme.CONFIRM_BORDER),
-        f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr(confirm.display_name, accent)}",
+        theme.sgr("╭ confirm", theme.CONFIRM_BORDER)
+        + "  "
+        + theme.sgr(confirm.display_name, accent),
     ]
-    meta = " · ".join(
-        part for part in (
-            confirm.permission_category,
-            confirm.execution_mode,
-            confirm.risk_level,
-        ) if part
-    )
-    if meta:
-        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr(meta, theme.CONFIRM_DIM)}")
     if confirm.risk_summary:
         lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr('Risk ', accent)}{theme.sgr(confirm.risk_summary, theme.CONFIRM_TEXT)}")
     lines.extend(_confirm_detail_lines(confirm))
@@ -248,7 +249,7 @@ def _confirm_lines(confirm) -> list[str]:
         action_parts.append(theme.sgr("Esc", theme.KEY) + theme.sgr(" deny", theme.HINT_LABEL))
     if action_parts:
         lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}" + "   ".join(action_parts))
-    lines.append(theme.sgr("╰───────────────────────────────────────────────────", theme.CONFIRM_BORDER))
+    lines.append(theme.sgr("╰", theme.CONFIRM_BORDER))
     return lines
 
 
