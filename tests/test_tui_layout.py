@@ -11,6 +11,7 @@ from prompt_toolkit.formatted_text import to_plain_text
 
 from personal_agent.tui.layout import (
     _MAX_ACTIVE_TOOLS,
+    _SLASH_MENU_LINES,
     _STREAM_TAIL_CHARS,
     build_layout,
 )
@@ -30,12 +31,16 @@ def _active_text(state: UIState) -> str:
     raise AssertionError("no active region found")
 
 
+def _layout_children(state: UIState):
+    root, input_area = build_layout(state)
+    return root, input_area, list(root.content.children)
+
+
 def test_layout_keeps_input_panel_compact_without_spacer():
     from prompt_toolkit.layout.containers import ConditionalContainer, Window
 
-    root, input_area = build_layout(UIState())
-    children = list(root.content.children)
-    assert len(children) == 4
+    _, input_area, children = _layout_children(UIState())
+    assert len(children) == 5
     # The live active region is first. A weighted spacer before it would make
     # the full_screen=False application reserve a tall block and split the
     # prompt from its meter/hints.
@@ -47,6 +52,33 @@ def test_layout_keeps_input_panel_compact_without_spacer():
     assert height.min == 1
     assert height.max == 6
     assert input_area.window.dont_extend_height()
+    assert "bg:#242837" in input_area.window.style
+
+
+def test_slash_command_slot_is_conditional_and_fixed_height():
+    from prompt_toolkit.layout.containers import ConditionalContainer
+
+    state = UIState()
+    state.slash_mode = True
+    _, _, children = _layout_children(state)
+    slash_slot = children[3]
+    assert isinstance(slash_slot, ConditionalContainer)
+    assert bool(slash_slot.filter()) is True
+    assert slash_slot.content.height.min == _SLASH_MENU_LINES
+    assert slash_slot.content.height.max == _SLASH_MENU_LINES
+
+    state.slash_mode = False
+    assert bool(slash_slot.filter()) is False
+
+
+def test_slash_command_slot_shows_command_header():
+    state = UIState(slash_mode=True)
+    _, _, children = _layout_children(state)
+    slash_slot = children[3]
+    header_window = slash_slot.content.children[0]
+    text = to_plain_text(header_window.content.text())
+    assert "commands" in text
+    assert "继续输入过滤" in text
 
 
 def test_active_region_truncates_many_tools():

@@ -100,6 +100,10 @@ class UIState:
     # Future that resolves to allow / deny / always.
     pending_confirm: ConfirmPrompt | None = None
 
+    # True while the input buffer is in slash-command mode. The layout uses this
+    # to reserve command-menu space below the prompt so the input moves upward.
+    slash_mode: bool = False
+
     def reset_turn(self) -> None:
         self.stream_text = ""
         self.thinking_chars = 0

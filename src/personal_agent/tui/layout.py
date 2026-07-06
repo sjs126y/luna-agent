@@ -5,6 +5,7 @@ Structure (validated in scripts/spike_inline.py, Phase 0):
         ConditionalContainer(active_window),   # streaming reply + live tools
         meter_window,                          # model + context meter
         input_area,                            # active prompt
+        slash_window,                          # reserved slash command area
         hint_window,                           # mode + key hints
     ])
 The app is full_screen=False, so finalized content printed via run_in_terminal
@@ -39,6 +40,7 @@ from personal_agent.tui import theme
 _MAX_ACTIVE_LINES = 12
 _MAX_ACTIVE_TOOLS = 6
 _STREAM_TAIL_CHARS = 2000
+_SLASH_MENU_LINES = 5
 
 
 def build_layout(
@@ -79,6 +81,9 @@ def build_layout(
         # Line BELOW the input: current mode + key hints, hugging the input box.
         return ANSI(_hint_bar(state))
 
+    def slash_header_content() -> ANSI:
+        return ANSI(_slash_menu_header())
+
     active_window = Window(
         content=FormattedTextControl(active_content),
         height=Dimension(min=0, max=_MAX_ACTIVE_LINES),
@@ -92,6 +97,20 @@ def build_layout(
         content=FormattedTextControl(hint_content),
         height=1,
     )
+    slash_header_window = Window(
+        content=FormattedTextControl(slash_header_content),
+        height=1,
+        style="bg:#202331",
+        wrap_lines=False,
+    )
+    slash_menu = HSplit(
+        [
+            slash_header_window,
+            CompletionsMenu(max_height=_SLASH_MENU_LINES - 1, scroll_offset=1),
+        ],
+        height=Dimension.exact(_SLASH_MENU_LINES),
+        style="bg:#202331",
+    )
     # multiline=True so Ctrl+J can add real newlines; height grows with content
     # (1 line idle, up to 6). Enter is bound by the app to submit, not newline.
     def _line_prefix(line_number: int, wrap_count: int):
@@ -103,36 +122,35 @@ def build_layout(
         # object routes through a BeforeInput processor that fights the buffer's
         # own text/cursor rendering and made typed input vanish. A (style, text)
         # tuple is the supported way to color a TextArea prompt.
-        prompt=[("bold ansicyan", "  ❯ ")],
+        prompt=[
+            ("bg:#242837 #8ab4ff bold", " ▌ "),
+            ("bg:#242837 #9cdcfe bold", "❯ "),
+        ],
         multiline=True,
         wrap_lines=True,
         dont_extend_height=True,
+        style="bg:#242837 #e6e6e6",
         completer=completer,
         complete_while_typing=True,  # slash menu pops as you type '/'
         history=history,
         get_line_prefix=_line_prefix,
     )
 
-    # Reading order top→bottom: live output → model/context → input → mode/key
-    # hints. There is deliberately no weighted spacer: in full_screen=False
+    # Reading order top→bottom: live output → model/context → input → slash menu
+    # slot → mode/key hints. There is deliberately no weighted spacer: in full_screen=False
     # mode it makes prompt_toolkit reserve a tall app region and visually splits
     # the input from its meter/hints.
     body = HSplit([
         ConditionalContainer(active_window, filter=Condition(state.has_active_region)),
         meter_window,
         input_area,
+        ConditionalContainer(slash_menu, filter=Condition(lambda: state.slash_mode)),
         hint_window,
     ])
     # FloatContainer hosts the completion menu popup above the input line.
     root = FloatContainer(
         content=body,
-        floats=[
-            Float(
-                xcursor=True,
-                ycursor=True,
-                content=CompletionsMenu(max_height=8, scroll_offset=1),
-            ),
-        ],
+        floats=[],
     )
     return root, input_area
 
@@ -168,6 +186,14 @@ def _hint_bar(state: UIState) -> str:
         key("/", "命令"),
     ])
     return f"  {mode}   {hints}"
+
+
+def _slash_menu_header() -> str:
+    return (
+        "  "
+        + theme.sgr("commands", theme.SLASH_BORDER)
+        + theme.dim("  继续输入过滤，Enter 选择")
+    )
 
 
 def _confirm_lines(confirm) -> list[str]:

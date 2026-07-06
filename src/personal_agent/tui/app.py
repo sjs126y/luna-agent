@@ -64,6 +64,7 @@ class InlineTuiApp:
             completer=self._build_completer(),
             history=self._build_history(),
         )
+        self.input_area.buffer.on_text_changed += self._on_input_text_changed
         self.renderer = InlineRenderer(
             state=self.state,
             invalidate=self._invalidate,
@@ -93,6 +94,13 @@ class InlineTuiApp:
             return FileHistory(str(data_dir / "cli_history.txt"))
         except Exception:
             return InMemoryHistory()
+
+    def _on_input_text_changed(self, _buffer) -> None:
+        text = self.input_area.text
+        slash_mode = text.startswith("/") and "\n" not in text
+        if self.state.slash_mode != slash_mode:
+            self.state.slash_mode = slash_mode
+            self._invalidate()
 
     # ── prompt_toolkit callbacks the renderer uses ──
     def _invalidate(self) -> None:

@@ -357,3 +357,16 @@ async def test_command_not_sent_as_message():
     await app._submit("/help")
     assert app.runtime.sent == []  # not routed as a message
     assert any("command output" in line for line in printed)
+
+
+def test_slash_mode_tracks_input_text():
+    app = _app()
+    assert app.state.slash_mode is False
+    app.input_area.text = "/"
+    assert app.state.slash_mode is True
+    app.input_area.text = "/he"
+    assert app.state.slash_mode is True
+    app.input_area.text = "/he\nsecond"
+    assert app.state.slash_mode is False
+    app.input_area.text = "hello"
+    assert app.state.slash_mode is False
