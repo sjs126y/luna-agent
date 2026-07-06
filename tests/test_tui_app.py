@@ -65,6 +65,18 @@ def test_completer_uses_command_registry_metadata():
     assert any(item.text == "/commands" for item in completions)
 
 
+def test_completer_offers_child_commands_without_placeholders():
+    from prompt_toolkit.document import Document
+
+    app = _app()
+    completions = list(app.input_area.completer.get_completions(Document("/mode "), None))
+    texts = {item.text for item in completions}
+    assert "/mode list" in texts
+    assert "/mode show" in texts
+    assert "/mode set" in texts
+    assert all("<mode>" not in text for text in texts)
+
+
 def test_expand_last_noop_when_empty():
     app = _app()
     printed: list[str] = []
@@ -415,9 +427,35 @@ def test_slash_mode_tracks_input_text():
     assert app.state.slash_mode is False
     app.input_area.text = "/"
     assert app.state.slash_mode is True
+    assert app.state.slash_items
     app.input_area.text = "/he"
     assert app.state.slash_mode is True
+    assert any(item.text == "/help" for item in app.state.slash_items)
     app.input_area.text = "/he\nsecond"
     assert app.state.slash_mode is False
+    assert app.state.slash_items == ()
     app.input_area.text = "hello"
     assert app.state.slash_mode is False
+    assert app.state.slash_items == ()
+
+
+def test_complete_leaf_slash_command_hides_menu_but_stays_in_command_mode():
+    app = _app()
+    app.input_area.text = "/usage"
+    assert app.state.slash_mode is True
+    assert app.state.slash_items == ()
+
+
+def test_partial_slash_command_shows_matching_candidates():
+    app = _app()
+    app.input_area.text = "/a"
+    assert [item.text for item in app.state.slash_items] == ["/allow", "/agents"]
+
+
+def test_parent_slash_command_shows_child_candidates():
+    app = _app()
+    app.input_area.text = "/mode"
+    texts = [item.text for item in app.state.slash_items]
+    assert "/mode list" in texts
+    assert "/mode show" in texts
+    assert "/mode set" in texts

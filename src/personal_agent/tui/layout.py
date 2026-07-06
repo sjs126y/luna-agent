@@ -20,14 +20,12 @@ from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.history import History
 from prompt_toolkit.layout.containers import (
     ConditionalContainer,
-    Float,
     FloatContainer,
     HSplit,
     Window,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.widgets import TextArea
 
 from personal_agent.tui.state import UIState
@@ -81,8 +79,8 @@ def build_layout(
         # Line BELOW the input: current mode + key hints, hugging the input box.
         return ANSI(_hint_bar(state))
 
-    def slash_header_content() -> ANSI:
-        return ANSI(_slash_menu_header())
+    def slash_content() -> ANSI:
+        return ANSI(_slash_menu(state))
 
     active_window = Window(
         content=FormattedTextControl(active_content),
@@ -97,19 +95,11 @@ def build_layout(
         content=FormattedTextControl(hint_content),
         height=1,
     )
-    slash_header_window = Window(
-        content=FormattedTextControl(slash_header_content),
-        height=1,
+    slash_menu = Window(
+        content=FormattedTextControl(slash_content),
+        height=Dimension(min=1, max=_SLASH_MENU_LINES),
         style="bg:#202331",
         wrap_lines=False,
-    )
-    slash_menu = HSplit(
-        [
-            slash_header_window,
-            CompletionsMenu(max_height=_SLASH_MENU_LINES - 1, scroll_offset=1),
-        ],
-        height=Dimension.exact(_SLASH_MENU_LINES),
-        style="bg:#202331",
     )
     # multiline=True so Ctrl+J can add real newlines; height grows with content
     # (1 line idle, up to 6). Enter is bound by the app to submit, not newline.
@@ -144,8 +134,8 @@ def build_layout(
         ConditionalContainer(active_window, filter=Condition(state.has_active_region)),
         meter_window,
         input_area,
-        ConditionalContainer(slash_menu, filter=Condition(lambda: state.slash_mode)),
-        hint_window,
+        ConditionalContainer(slash_menu, filter=Condition(state.has_slash_menu)),
+        ConditionalContainer(hint_window, filter=Condition(lambda: not state.slash_mode)),
     ])
     # FloatContainer hosts the completion menu popup above the input line.
     root = FloatContainer(
@@ -192,8 +182,17 @@ def _slash_menu_header() -> str:
     return (
         "  "
         + theme.sgr("commands", theme.SLASH_BORDER)
-        + theme.dim("  type to filter · Enter selects")
+        + theme.sgr("  type to filter · Enter selects", theme.SLASH_META)
     )
+
+
+def _slash_menu(state: UIState) -> str:
+    lines = [_slash_menu_header()]
+    for index, item in enumerate(state.slash_items[:_SLASH_MENU_LINES - 1]):
+        marker = theme.sgr("›", theme.SLASH_MARK) if index == 0 else theme.sgr(" ", theme.SLASH_BORDER)
+        description = f"  {theme.sgr(item.description, theme.SLASH_META)}" if item.description else ""
+        lines.append(f"  {marker} {theme.sgr(item.text, theme.SLASH_ITEM)}{description}")
+    return "\n".join(lines)
 
 
 def _confirm_lines(confirm) -> list[str]:

@@ -69,6 +69,14 @@ class ConfirmPrompt:
     available_actions: tuple[str, ...] = ("allow_once", "allow_always", "deny")
 
 
+@dataclass(frozen=True)
+class SlashMenuItem:
+    """One slash-command candidate drawn by the inline TUI."""
+
+    text: str
+    description: str = ""
+
+
 @dataclass
 class UIState:
     """Everything the bottom active region needs to draw the current turn."""
@@ -100,9 +108,10 @@ class UIState:
     # Future that resolves to allow / deny / always.
     pending_confirm: ConfirmPrompt | None = None
 
-    # True while the input buffer is in slash-command mode. The layout uses this
-    # to reserve command-menu space below the prompt so the input moves upward.
+    # True while the input buffer is in slash-command mode. slash_items controls
+    # whether a visible command menu is needed.
     slash_mode: bool = False
+    slash_items: tuple[SlashMenuItem, ...] = ()
 
     def reset_turn(self) -> None:
         self.stream_text = ""
@@ -119,3 +128,6 @@ class UIState:
             or self.active_tools
             or self.pending_confirm
         )
+
+    def has_slash_menu(self) -> bool:
+        return self.slash_mode and bool(self.slash_items)

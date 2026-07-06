@@ -15,7 +15,7 @@ from personal_agent.tui.layout import (
     _STREAM_TAIL_CHARS,
     build_layout,
 )
-from personal_agent.tui.state import ConfirmPrompt, ToolTrace, UIState
+from personal_agent.tui.state import ConfirmPrompt, SlashMenuItem, ToolTrace, UIState
 
 
 def _active_text(state: UIState) -> str:
@@ -55,30 +55,53 @@ def test_layout_keeps_input_panel_compact_without_spacer():
     assert "bg:#242837" in input_area.window.style
 
 
-def test_slash_command_slot_is_conditional_and_fixed_height():
+def test_slash_command_slot_is_conditional_and_bounded_height():
     from prompt_toolkit.layout.containers import ConditionalContainer
 
     state = UIState()
     state.slash_mode = True
+    state.slash_items = (SlashMenuItem("/usage", "查看当前会话上下文预算"),)
     _, _, children = _layout_children(state)
     slash_slot = children[3]
     assert isinstance(slash_slot, ConditionalContainer)
     assert bool(slash_slot.filter()) is True
-    assert slash_slot.content.height.min == _SLASH_MENU_LINES
+    assert slash_slot.content.height.min == 1
     assert slash_slot.content.height.max == _SLASH_MENU_LINES
 
+    state.slash_items = ()
+    assert bool(slash_slot.filter()) is False
     state.slash_mode = False
     assert bool(slash_slot.filter()) is False
 
 
-def test_slash_command_slot_shows_command_header():
-    state = UIState(slash_mode=True)
+def test_slash_command_slot_draws_dark_command_rows():
+    state = UIState(
+        slash_mode=True,
+        slash_items=(
+            SlashMenuItem("/allow", "授权本轮工具权限"),
+            SlashMenuItem("/agents", "查看子 agent 运行记录"),
+        ),
+    )
     _, _, children = _layout_children(state)
     slash_slot = children[3]
-    header_window = slash_slot.content.children[0]
-    text = to_plain_text(header_window.content.text())
+    text = to_plain_text(slash_slot.content.content.text())
     assert "commands" in text
     assert "type to filter" in text
+    assert "/allow" in text
+    assert "/agents" in text
+
+
+def test_hint_bar_hidden_while_typing_slash_command():
+    from prompt_toolkit.layout.containers import ConditionalContainer
+
+    state = UIState(slash_mode=True)
+    _, _, children = _layout_children(state)
+    hint_slot = children[4]
+    assert isinstance(hint_slot, ConditionalContainer)
+    assert bool(hint_slot.filter()) is False
+
+    state.slash_mode = False
+    assert bool(hint_slot.filter()) is True
 
 
 def test_active_region_truncates_many_tools():

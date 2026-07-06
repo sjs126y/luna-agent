@@ -15,10 +15,11 @@ import asyncio
 from pathlib import Path
 import sys
 import unicodedata
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import run_in_terminal
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory, History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -26,13 +27,34 @@ from prompt_toolkit.layout import Layout
 
 from personal_agent.tui.layout import build_layout
 from personal_agent.tui.renderer import InlineRenderer
-from personal_agent.tui.state import ConfirmPrompt, UIState
+from personal_agent.tui.state import ConfirmPrompt, SlashMenuItem, UIState
 from personal_agent.tui import theme
 
 
 class _PrintRequest(NamedTuple):
     text: str | None
     done: asyncio.Future[None] | None
+
+
+class _SlashCommand(NamedTuple):
+    text: str
+    description: str = ""
+    children: tuple["_SlashCommand", ...] = ()
+
+
+class _InlineSlashCompleter(Completer):
+    def __init__(self, items_for_text: Callable[[str], tuple[SlashMenuItem, ...]]) -> None:
+        self._items_for_text = items_for_text
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        for item in self._items_for_text(text):
+            yield Completion(
+                item.text,
+                start_position=-len(text),
+                display=item.text,
+                display_meta=item.description,
+            )
 
 
 def _decision_field(decision, name: str) -> str:
@@ -71,12 +93,52 @@ def _command_response_text(result) -> str:
     return str(result)
 
 
+def _slash_command_from_dict(item: object) -> _SlashCommand | None:
+    if not isinstance(item, dict):
+        return None
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None
+    text = f"/{name.lstrip('/')}"
+    description = str(item.get("summary") or "")
+    children = tuple(
+        child for child in (
+            _slash_child_from_dict(text, value)
+            for value in item.get("children", [])
+        ) if child is not None
+    )
+    return _SlashCommand(text=text, description=description, children=children)
+
+
+def _slash_child_from_dict(parent: str, item: object) -> _SlashCommand | None:
+    if not isinstance(item, dict):
+        return None
+    usage = str(item.get("usage") or "").strip()
+    name = str(item.get("name") or "").strip()
+    text = _completion_text_from_usage(usage) if usage else ""
+    if not text and name:
+        text = f"{parent} {name.lstrip('/')}"
+    if not text:
+        return None
+    return _SlashCommand(text=text, description=str(item.get("summary") or ""))
+
+
+def _completion_text_from_usage(usage: str) -> str:
+    parts: list[str] = []
+    for token in usage.split():
+        if token.startswith("<") or token.startswith("["):
+            break
+        parts.append(token)
+    return " ".join(parts)
+
+
 class InlineTuiApp:
     def __init__(self, runtime) -> None:
         self.runtime = runtime
         self.state = UIState()
         self.state.exec_mode = "Ask First"
         self.state.model = getattr(getattr(runtime, "settings", None), "llm_model", "") or ""
+        self._slash_commands = self._load_slash_commands()
         self.root, self.input_area = build_layout(
             self.state,
             completer=self._build_completer(),
@@ -96,26 +158,30 @@ class InlineTuiApp:
         self._print_worker_task: asyncio.Task | None = None
         self.app: Application | None = None
 
-    # ── reuse the classic shell's completer + history ──
+    # ── command registry completer + history ──
     def _build_completer(self):
+        if not self._slash_commands:
+            return None
+        return _InlineSlashCompleter(self._slash_menu_items)
+
+    def _load_slash_commands(self) -> tuple[_SlashCommand, ...]:
         try:
-            from personal_agent.cli_shell import SlashCompleter
             from personal_agent.commands.registry import command_specs_as_dict
 
             data = command_specs_as_dict(self.runtime)
-            commands = [
-                (f"/{item['name']}", str(item.get("summary") or ""))
-                for item in data.get("commands", [])
-                if item.get("name")
-            ]
-            commands.extend(
-                (f"/{item['name']}", str(item.get("summary") or ""))
-                for item in data.get("plugin_commands", [])
-                if item.get("name")
-            )
-            return SlashCompleter(tuple(commands))
         except Exception:
-            return None
+            return ()
+
+        commands: list[_SlashCommand] = []
+        for item in data.get("commands", []):
+            command = _slash_command_from_dict(item)
+            if command is not None:
+                commands.append(command)
+        for item in data.get("plugin_commands", []):
+            command = _slash_command_from_dict(item)
+            if command is not None:
+                commands.append(command)
+        return tuple(commands)
 
     def _build_history(self) -> History:
         try:
@@ -128,9 +194,54 @@ class InlineTuiApp:
     def _on_input_text_changed(self, _buffer) -> None:
         text = self.input_area.text
         slash_mode = text.startswith("/") and "\n" not in text
-        if self.state.slash_mode != slash_mode:
+        slash_items = self._slash_menu_items(text) if slash_mode else ()
+        if self.state.slash_mode != slash_mode or self.state.slash_items != slash_items:
             self.state.slash_mode = slash_mode
+            self.state.slash_items = slash_items
             self._invalidate()
+
+    def _slash_menu_items(self, text: str) -> tuple[SlashMenuItem, ...]:
+        return tuple(
+            SlashMenuItem(text=item.text, description=item.description)
+            for item in self._slash_candidates(text)
+        )
+
+    def _slash_candidates(self, text: str) -> tuple[_SlashCommand, ...]:
+        if not text.startswith("/") or "\n" in text:
+            return ()
+        query = text.strip()
+        if query in ("", "/"):
+            return self._slash_commands
+
+        tokens = query.split()
+        command_text = tokens[0] if tokens else query
+        trailing_space = text.endswith(" ")
+        command = self._find_slash_command(command_text)
+
+        if len(tokens) <= 1 and not trailing_space:
+            matches = tuple(item for item in self._slash_commands if item.text.startswith(command_text))
+            if command is not None and len(matches) == 1:
+                return command.children
+            return matches
+
+        if command is None or not command.children:
+            return ()
+
+        prefix = f"{command_text} " if len(tokens) == 1 and trailing_space else query
+        matches = tuple(item for item in command.children if item.text.startswith(prefix))
+        if (
+            len(matches) == 1
+            and matches[0].text == query
+            and not matches[0].children
+        ):
+            return ()
+        return matches
+
+    def _find_slash_command(self, text: str) -> _SlashCommand | None:
+        for item in self._slash_commands:
+            if item.text == text:
+                return item
+        return None
 
     # ── prompt_toolkit callbacks the renderer uses ──
     def _invalidate(self) -> None:
