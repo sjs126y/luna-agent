@@ -10,6 +10,7 @@ import asyncio
 
 import pytest
 
+from personal_agent.commands.runtime import CommandResult
 from personal_agent.tui.app import InlineTuiApp
 
 
@@ -23,6 +24,8 @@ class _Runtime:
         self.settings = _Settings()
         self.sent: list[str] = []
         self.commands: list[str] = []
+        self.plugin_manager = None
+        self.plugin_command_scopes = ("slash", "cli")
 
     async def handle_command(self, text: str):
         self.commands.append(text)
@@ -31,6 +34,12 @@ class _Runtime:
     async def run_message_events(self, text: str, event_sink=None):
         self.sent.append(text)
         return None
+
+    async def get_agent(self):
+        return object()
+
+    def plugin_command_kwargs(self, args: str) -> dict:
+        return {"args": args, "runtime": self}
 
     mode = "Ask First"
 
@@ -46,6 +55,14 @@ def test_completer_and_history_wired():
     app = _app()
     assert app.input_area.completer is not None
     assert app.input_area.buffer.history is not None
+
+
+def test_completer_uses_command_registry_metadata():
+    from prompt_toolkit.document import Document
+
+    app = _app()
+    completions = list(app.input_area.completer.get_completions(Document("/comm"), None))
+    assert any(item.text == "/commands" for item in completions)
 
 
 def test_expand_last_noop_when_empty():
@@ -344,10 +361,6 @@ def test_enter_keeps_draft_while_turn_running():
 async def test_command_not_sent_as_message():
     app = _app()
 
-    async def handle_command(text):
-        return "command output"
-
-    app.runtime.handle_command = handle_command  # type: ignore[method-assign]
     printed: list[str] = []
 
     async def print_above(text):
@@ -356,7 +369,45 @@ async def test_command_not_sent_as_message():
     app._print_above = print_above  # type: ignore[method-assign]
     await app._submit("/help")
     assert app.runtime.sent == []  # not routed as a message
+    assert any("/commands" in line for line in printed)
+
+
+@pytest.mark.asyncio
+async def test_command_falls_back_to_runtime_handler_for_non_slash():
+    app = _app()
+    printed: list[str] = []
+
+    async def handle_command(text):
+        return "command output"
+
+    async def print_above(text):
+        printed.append(text)
+
+    app.runtime.handle_command = handle_command  # type: ignore[method-assign]
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("custom")
+    assert app.runtime.sent == []
     assert any("command output" in line for line in printed)
+
+
+@pytest.mark.asyncio
+async def test_command_continue_text_routes_through_inline_turn(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        return CommandResult.continue_with("skill message")
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/python-expert skill message")
+    assert app.runtime.sent == ["skill message"]
+    assert any("skill message" in line for line in printed)
 
 
 def test_slash_mode_tracks_input_text():

@@ -13,6 +13,7 @@
 - `/stop` 打断 pending confirm 后的固定 `tool_end.status/category/error` 收口。
 - `retry` / `stop` / `error` 的增强状态字段：`max_attempts`, `recoverable`, `reason`, `stopped_tools`, `stopped_agents`, `category`, `detail_id`。
 - 协议 schema 入口：`frontend_protocol_schema()` 和 `personal-agent protocol schema --json`。
+- Slash command registry 和 `CommandResult v2`：inline TUI 补全使用 registry metadata，并能消费 `continue_text` 继续进入 inline event renderer。
 
 ## 当前活跃需求
 
@@ -63,7 +64,7 @@ async def get_tool_run(
 - 已有基础策略：长工具输出在摘要行提示 `Ctrl+O 展开`，完整输出作为新的展开块打印到当前 scrollback 位置。后续只调整阈值、样式和复制体验。
 - 继续调整确认面板的视觉密度、风险层级和键盘提示。
 - 保持工具 trace 简洁化，避免 raw JSON、过度拟人化描述和过多中文标签。
-- 已有基础策略：输入框增加低调背景和左侧强调；输入 `/` 时预留固定命令区域，输入框上移，后续命令内容等后端能力稳定后再细化。
+- 已有基础策略：输入框增加低调背景和左侧强调；输入 `/` 时预留固定命令区域，输入框上移，命令候选来自后端 slash command registry。
 
 当前不推进：
 

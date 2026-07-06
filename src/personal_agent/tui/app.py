@@ -53,6 +53,24 @@ def _decision_list(decision, name: str) -> list[str]:
     return []
 
 
+def _command_continue_text(result) -> str | None:
+    value = getattr(result, "continue_text", None)
+    if value:
+        return str(value)
+    if isinstance(result, dict) and result.get("continue_text"):
+        return str(result["continue_text"])
+    return None
+
+
+def _command_response_text(result) -> str:
+    value = getattr(result, "response", None)
+    if value is not None:
+        return str(value)
+    if isinstance(result, dict) and result.get("response") is not None:
+        return str(result["response"])
+    return str(result)
+
+
 class InlineTuiApp:
     def __init__(self, runtime) -> None:
         self.runtime = runtime
@@ -81,9 +99,21 @@ class InlineTuiApp:
     # ── reuse the classic shell's completer + history ──
     def _build_completer(self):
         try:
-            from personal_agent.cli_shell import SLASH_COMMANDS, SlashCompleter
+            from personal_agent.cli_shell import SlashCompleter
+            from personal_agent.commands.registry import command_specs_as_dict
 
-            return SlashCompleter(SLASH_COMMANDS)
+            data = command_specs_as_dict(self.runtime)
+            commands = [
+                (f"/{item['name']}", str(item.get("summary") or ""))
+                for item in data.get("commands", [])
+                if item.get("name")
+            ]
+            commands.extend(
+                (f"/{item['name']}", str(item.get("summary") or ""))
+                for item in data.get("plugin_commands", [])
+                if item.get("name")
+            )
+            return SlashCompleter(tuple(commands))
         except Exception:
             return None
 
@@ -214,15 +244,39 @@ class InlineTuiApp:
         if not command_text:
             return
         # Slash / builtin commands go through the runtime, result printed above.
-        command_result = await self.runtime.handle_command(command_text)
+        command_result = await self._handle_command(command_text)
         if command_result is not None:
-            await self._print_above(str(command_result))
+            continue_text = _command_continue_text(command_result)
+            if continue_text is not None:
+                await self._print_above(self._user_message_block(continue_text))
+                result = await self._run_turn(continue_text)
+                await self._refresh_mode()
+                return result
+            response = _command_response_text(command_result)
+            if response:
+                await self._print_above(response)
             await self._refresh_mode()
             return
         await self._print_above(self._user_message_block(text))
         result = await self._run_turn(text)
         await self._refresh_mode()
         return result
+
+    async def _handle_command(self, text: str):
+        if text.startswith("/"):
+            try:
+                from personal_agent.commands.runtime import handle_slash_command
+
+                result = await handle_slash_command(self.runtime, text)
+            except Exception:
+                result = None
+            else:
+                if getattr(result, "handled", False):
+                    return result
+        handler = getattr(self.runtime, "handle_command", None)
+        if handler is None:
+            return None
+        return await handler(text)
 
     def _user_message_block(self, text: str) -> str:
         width = max(20, self._term_width())
