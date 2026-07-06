@@ -21,7 +21,7 @@
 - 输入框已有低调背景和左侧提示符；多行输入/折行会保持同一左侧蓝色强调条；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
 - 状态栏显示当前执行模式、模型、真正的 context usage，以及最近一轮模型 input/output token。
 - 顶部 context meter 优先读 `llm_end.data.context_used_tokens`、`context_window`、`context_percent`；不会再用 `input_tokens + output_tokens` 伪装成上下文占用。
-- `input_tokens` / `output_tokens` 只作为最近一轮模型消耗显示，例如 `turn in 213 out 34`。
+- `input_tokens` / `output_tokens` 只作为最近一轮模型消耗显示，例如 `↓213 | ↑34`。
 - cache usage 和 activity 不再放在顶部 meter line；它们保留为结构化状态/详情数据。
 
 ### Slash Command UI
@@ -174,7 +174,7 @@
 ### 2026-07-07 00:56 CST
 
 - 按后端最新语义修正顶部 meter：context meter 只读 `llm_end.context_used_tokens/context_window/context_percent`。
-- 最近一轮模型消耗独立显示为 `turn in <input> out <output>`。
+- 最近一轮模型消耗独立显示为 `↓<input> | ↑<output>`。
 - 移除顶部常驻 cache summary 和 activity badge，避免把诊断/运行状态混进 context usage。
 - `UIState` 保留 `context_budget`，后续若做 `/usage` 结构化 UI 或 context breakdown 可直接消费。
 

@@ -277,7 +277,7 @@ def test_meter_bar_shows_model_and_usage():
     assert "deepseek-v4-flash" in bar
     assert "12.3k/1M" in bar
     assert "1%" in bar
-    assert "turn in 213 out 34" in bar
+    assert "↓213 | ↑34" in bar
 
 
 def test_meter_bar_without_context_does_not_fake_usage():
@@ -290,7 +290,7 @@ def test_meter_bar_without_context_does_not_fake_usage():
     state.output_tokens = 20_000
     bar = _meter_bar(state)
     assert "120k/1M" not in bar
-    assert "turn in 100k out 20k" in bar
+    assert "↓100k | ↑20k" in bar
 
 
 def test_meter_bar_does_not_show_cache_summary():

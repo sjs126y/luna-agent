@@ -187,7 +187,7 @@ def _turn_token_summary(state: UIState) -> str:
     if not state.input_tokens and not state.output_tokens:
         return ""
     return theme.dim(
-        f"turn in {theme.humanize(state.input_tokens)} out {theme.humanize(state.output_tokens)}"
+        f"↓{theme.humanize(state.input_tokens)} | ↑{theme.humanize(state.output_tokens)}"
     )
 
 
