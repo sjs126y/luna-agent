@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -97,7 +98,15 @@ class ConversationService:
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             final = f"抱歉，本轮处理出错了：{exc}"
-            await emit_event(recorder, "error", "本轮处理失败", error=error)
+            await emit_event(
+                recorder,
+                "error",
+                "本轮处理失败",
+                error=error,
+                category="runtime",
+                recoverable=False,
+                detail_id=_event_detail_id("runtime", error),
+            )
             result = {
                 "final_response": final,
                 "messages": _minimal_turn_messages(text, final),
@@ -750,3 +759,8 @@ def _accepts_confirm(func: Any) -> bool:
         param.kind is inspect.Parameter.VAR_KEYWORD
         for param in params.values()
     )
+
+
+def _event_detail_id(category: str, detail: str) -> str:
+    digest = hashlib.sha1(f"{category}:{detail}".encode("utf-8", errors="replace")).hexdigest()
+    return f"err_{digest[:12]}"

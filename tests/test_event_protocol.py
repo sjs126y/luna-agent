@@ -54,6 +54,29 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert decision_fields["risk_summary"]["type"] == "string"
     assert decision_fields["affected_paths"]["type"] == "list[string]"
 
+    retry_fields = {
+        field["name"]: field
+        for field in schema["events"]["retry"]["fields"]
+    }
+    assert retry_fields["category"]["required"] is True
+    assert retry_fields["max_attempts"]["type"] == "integer"
+    assert retry_fields["recoverable"]["type"] == "boolean"
+
+    stop_fields = {
+        field["name"]: field
+        for field in schema["events"]["stop"]["fields"]
+    }
+    assert stop_fields["reason"]["type"] == "string"
+    assert stop_fields["stopped_tools"]["type"] == "integer"
+
+    error_fields = {
+        field["name"]: field
+        for field in schema["events"]["error"]["fields"]
+    }
+    assert error_fields["error"]["required"] is True
+    assert error_fields["category"]["type"] == "string"
+    assert error_fields["detail_id"]["type"] == "string"
+
 
 def test_frontend_protocol_schema_aliases_event_protocol_schema():
     assert frontend_protocol_schema() == event_protocol_schema()

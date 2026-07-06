@@ -217,13 +217,22 @@ schema = frontend_protocol_schema()
 常见字段：
 
 - `attempt: integer`
+- `max_attempts: integer`
 - `error: string`
 - `tool_name: string`
 - `tool_names: string`
+- `recoverable: boolean`
 
 ### `stop`
 
 当前 turn 被停止或中断。
+
+常见字段：
+
+- `reason: string`，如 `user` / `interrupt` / `timeout` / `shutdown`
+- `message: string`
+- `stopped_tools: integer`
+- `stopped_agents: integer`
 
 ### `error`
 
@@ -232,6 +241,12 @@ schema = frontend_protocol_schema()
 必需字段：
 
 - `error: string`
+
+常见字段：
+
+- `category: string`，如 `llm` / `runtime` / `tool`
+- `recoverable: boolean`
+- `detail_id: string`
 
 ### `turn_end`
 

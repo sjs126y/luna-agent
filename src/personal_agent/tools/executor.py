@@ -391,7 +391,9 @@ async def execute_tool_call_result(
                     f"工具 {name} 失败，准备重试",
                     tool_name=name,
                     attempt=attempt + 1,
+                    max_attempts=max_attempts,
                     error=f"{type(exc).__name__}: {exc}",
+                    recoverable=True,
                 )
                 logger.warning("Tool '%s' failed (attempt %d/2): %s", name, attempt + 1, exc)
                 await asyncio.sleep(0.5 * (attempt + 1))  # brief backoff
