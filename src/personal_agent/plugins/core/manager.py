@@ -19,6 +19,7 @@ from typing import Any
 import yaml
 
 from personal_agent.persistence.json_store import read_json_object, write_json_atomic
+from personal_agent.commands.registry import CORE_COMMAND_NAMES
 from personal_agent.plugins.core.context import PluginContext
 from personal_agent.plugins.core.models import (
     CommandEntry,
@@ -30,13 +31,7 @@ from personal_agent.plugins.core.models import (
 
 logger = logging.getLogger(__name__)
 
-CORE_SLASH_COMMANDS = {
-    "stop",
-    "allow",
-    "new",
-    "session",
-    "usage",
-}
+CORE_SLASH_COMMANDS = set(CORE_COMMAND_NAMES)
 
 _BUILTIN_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "builtin"
 

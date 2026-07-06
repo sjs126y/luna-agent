@@ -1,0 +1,223 @@
+"""Slash command metadata registry."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+SLASH_COMMAND_REGISTRY_VERSION = 1
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    name: str
+    summary: str
+    usage: str
+    category: str = "general"
+    aliases: tuple[str, ...] = ()
+    children: tuple["CommandSpec", ...] = field(default_factory=tuple)
+    available_in: tuple[str, ...] = ("chat", "gateway")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "summary": self.summary,
+            "usage": self.usage,
+            "category": self.category,
+            "aliases": list(self.aliases),
+            "available_in": list(self.available_in),
+            "children": [child.as_dict() for child in self.children],
+        }
+
+
+CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
+    CommandSpec("new", "重置当前会话", "/new", category="session"),
+    CommandSpec(
+        "session",
+        "管理会话",
+        "/session [current|list|switch <name>|rename <name>|delete [name]]",
+        category="session",
+        children=(
+            CommandSpec("current", "显示当前会话", "/session current", category="session"),
+            CommandSpec("list", "列出会话", "/session list", category="session"),
+            CommandSpec("switch", "切换会话", "/session switch <name>", category="session"),
+            CommandSpec("rename", "重命名会话", "/session rename <name>", category="session"),
+            CommandSpec("delete", "删除会话", "/session delete [name]", category="session"),
+        ),
+    ),
+    CommandSpec("usage", "查看当前会话上下文预算", "/usage", category="runtime"),
+    CommandSpec("export", "导出当前会话 JSONL", "/export", category="session"),
+    CommandSpec("allow", "授权本轮工具权限", "/allow [write|bash|background|network|destructive|all]", category="execution"),
+    CommandSpec(
+        "mode",
+        "查看或切换执行模式",
+        "/mode [Read Only|Ask First|Edit Freely|Full Auto]",
+        category="execution",
+        children=(
+            CommandSpec("list", "列出执行模式", "/mode list", category="execution"),
+            CommandSpec("show", "显示当前执行模式", "/mode show", category="execution"),
+            CommandSpec("set", "切换执行模式", "/mode set <mode>", category="execution"),
+        ),
+    ),
+    CommandSpec(
+        "permissions",
+        "查看当前权限策略和 grants",
+        "/permissions [list|grants]",
+        category="execution",
+        children=(
+            CommandSpec("list", "列出权限策略", "/permissions list", category="execution"),
+            CommandSpec("grants", "列出当前 grants", "/permissions grants", category="execution"),
+        ),
+    ),
+    CommandSpec("stop", "停止当前处理", "/stop", category="runtime"),
+    CommandSpec(
+        "agents",
+        "查看子 agent 运行记录",
+        "/agents [list [limit]|show <run_id>|clear]",
+        category="agents",
+        aliases=("agent-runs",),
+        children=(
+            CommandSpec("list", "列出子 agent 运行记录", "/agents list [limit]", category="agents"),
+            CommandSpec("show", "查看子 agent 运行详情", "/agents show <run_id>", category="agents"),
+            CommandSpec("clear", "清理子 agent 运行记录", "/agents clear", category="agents"),
+        ),
+    ),
+    CommandSpec(
+        "memory",
+        "查看和管理记忆",
+        "/memory [list|search <query>|show <id>|delete <id>|doctor]",
+        category="memory",
+        children=(
+            CommandSpec("doctor", "查看 memory 诊断", "/memory doctor", category="memory"),
+            CommandSpec("list", "列出记忆", "/memory list", category="memory"),
+            CommandSpec("search", "搜索记忆", "/memory search <query>", category="memory"),
+            CommandSpec("show", "查看记忆详情", "/memory show <id>", category="memory"),
+            CommandSpec("delete", "删除记忆", "/memory delete <id>", category="memory"),
+        ),
+    ),
+    CommandSpec(
+        "tools",
+        "查看可用工具",
+        "/tools [list|show <name>]",
+        category="tools",
+        children=(
+            CommandSpec("list", "列出工具总览", "/tools list", category="tools"),
+            CommandSpec("show", "查看工具详情", "/tools show <name>", category="tools"),
+        ),
+    ),
+    CommandSpec(
+        "protocol",
+        "查看前端事件协议摘要",
+        "/protocol [schema]",
+        category="runtime",
+        children=(CommandSpec("schema", "查看协议 schema 摘要", "/protocol schema", category="runtime"),),
+    ),
+    CommandSpec("commands", "列出 slash commands", "/commands [json|<name>]", category="help"),
+    CommandSpec("help", "显示帮助", "/help", category="help"),
+)
+
+CORE_COMMAND_NAMES: frozenset[str] = frozenset(
+    name
+    for spec in CORE_COMMAND_SPECS
+    for name in (spec.name, *spec.aliases)
+)
+
+
+def list_command_specs(runtime: Any | None = None) -> list[CommandSpec]:
+    return list(CORE_COMMAND_SPECS)
+
+
+def command_specs_as_dict(runtime: Any | None = None) -> dict[str, Any]:
+    return {
+        "version": SLASH_COMMAND_REGISTRY_VERSION,
+        "commands": [spec.as_dict() for spec in list_command_specs(runtime)],
+        "plugin_commands": _plugin_commands_as_dict(runtime),
+    }
+
+
+def format_commands(runtime: Any | None = None) -> str:
+    lines = ["可用命令:"]
+    for spec in sorted(list_command_specs(runtime), key=lambda item: (item.category, item.name)):
+        lines.append(f"/{spec.name} - {spec.summary}")
+    if runtime is not None and "cli" in _plugin_command_scopes(runtime):
+        lines.append('""" - 进入多行输入，再输入 """ 提交，/cancel 取消')
+    lines.append("/<skill-name> [message] - 加载技能后发送消息")
+    lines.append("exit / quit / 空行 - 退出 CLI")
+    plugin_lines = plugin_command_help_lines(runtime)
+    if plugin_lines:
+        lines.extend(["", "插件命令:", *plugin_lines])
+    return "\n".join(lines)
+
+
+def find_command_spec(name: str) -> CommandSpec | None:
+    key = str(name or "").lstrip("/").strip()
+    for spec in CORE_COMMAND_SPECS:
+        if key == spec.name or key in spec.aliases:
+            return spec
+    return None
+
+
+def format_command_detail(name: str, runtime: Any | None = None) -> str:
+    spec = find_command_spec(name)
+    if spec is None:
+        return f"未找到命令: {name}"
+    lines = [
+        f"/{spec.name}",
+        spec.summary,
+        f"用法: {spec.usage}",
+        f"类别: {spec.category}",
+    ]
+    if spec.aliases:
+        lines.append("别名: " + ", ".join(f"/{alias}" for alias in spec.aliases))
+    if spec.children:
+        lines.append("子命令:")
+        lines.extend(f"- {child.usage} - {child.summary}" for child in spec.children)
+    return "\n".join(lines)
+
+
+def plugin_command_help_lines(runtime: Any | None) -> list[str]:
+    if runtime is None or getattr(runtime, "plugin_manager", None) is None:
+        return []
+    commands = getattr(runtime.plugin_manager, "commands", {})
+    if not isinstance(commands, dict):
+        return []
+    scopes = set(_plugin_command_scopes(runtime))
+    lines = []
+    for name, entry in sorted(commands.items()):
+        entry_scope = getattr(entry, "scope", "slash")
+        if entry_scope != "both" and entry_scope not in scopes:
+            continue
+        description = getattr(entry, "description", "") or "插件命令"
+        plugin_key = getattr(entry, "plugin_key", "")
+        suffix = f" ({plugin_key})" if plugin_key else ""
+        lines.append(f"/{name} - {description}{suffix}")
+    return lines
+
+
+def _plugin_commands_as_dict(runtime: Any | None) -> list[dict[str, Any]]:
+    if runtime is None or getattr(runtime, "plugin_manager", None) is None:
+        return []
+    commands = getattr(runtime.plugin_manager, "commands", {})
+    if not isinstance(commands, dict):
+        return []
+    scopes = set(_plugin_command_scopes(runtime))
+    result = []
+    for name, entry in sorted(commands.items()):
+        entry_scope = getattr(entry, "scope", "slash")
+        if entry_scope != "both" and entry_scope not in scopes:
+            continue
+        result.append({
+            "name": name,
+            "summary": getattr(entry, "description", "") or "插件命令",
+            "scope": entry_scope,
+            "plugin_key": getattr(entry, "plugin_key", ""),
+        })
+    return result
+
+
+def _plugin_command_scopes(runtime: Any) -> tuple[str, ...]:
+    scopes = getattr(runtime, "plugin_command_scopes", ("slash",))
+    if isinstance(scopes, str):
+        scopes = (scopes,)
+    cleaned = tuple(scope for scope in scopes if scope in {"slash", "cli", "both"})
+    return cleaned or ("slash",)

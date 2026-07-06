@@ -30,6 +30,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from personal_agent.cli_chat import CliChatRuntime, create_cli_runtime
+from personal_agent.commands.registry import list_command_specs
 from personal_agent.conversation.events import ConversationEvent, ConversationEventSink
 from personal_agent.tui.renderer_base import Renderer
 
@@ -40,17 +41,8 @@ _EXPAND_SENTINEL = "\x00__expand__"
 
 # Core slash commands offered by the input completer, with one-line hints
 # shown in the completion menu. Skills are added dynamically at runtime.
-SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("/help", "显示帮助"),
-    ("/new", "重置当前会话"),
-    ("/session", "管理会话 (list/switch/rename/delete)"),
-    ("/usage", "查看上下文预算"),
-    ("/allow", "授权危险操作 (write/bash/all)"),
-    ("/mode", "切换执行模式 (Read Only/Ask First/Edit Freely/Full Auto)"),
-    ("/stop", "停止当前处理"),
-    ("/export", "导出会话 JSONL"),
-    ("/agents", "查看子 agent 运行记录"),
-    ("/memory", "查看和管理记忆"),
+SLASH_COMMANDS: tuple[tuple[str, str], ...] = tuple(
+    (f"/{spec.name}", spec.summary) for spec in list_command_specs()
 )
 
 

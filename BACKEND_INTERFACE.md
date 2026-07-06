@@ -311,10 +311,13 @@ async def confirm_callback(decision) -> str:
 
 ## 4. Execution Mode
 
-当前唯一用户入口是：
+当前用户入口是：
 
 ```text
-/mode <mode>
+/mode
+/mode list
+/mode show
+/mode set <mode>
 ```
 
 用户可见四档：
@@ -339,7 +342,47 @@ async def confirm_callback(decision) -> str:
 
 切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-## 5. Tool Runs / Tool Truth
+## 5. Chat Slash Commands
+
+CLI chat、inline TUI 和 Gateway 共享 slash command runtime。Typer CLI (`personal-agent ...`) 仍是独立入口，不和 slash command registry 合并。
+
+当前 registry 版本：
+
+```text
+SLASH_COMMAND_REGISTRY_VERSION = 1
+```
+
+可发现入口：
+
+- `/commands`
+- `/commands json`
+- `/commands <name>`
+- `/help`
+
+核心命令：
+
+- `/new`
+- `/session [current|list|switch <name>|rename <name>|delete [name]]`
+- `/usage`
+- `/export`
+- `/allow [write|bash|background|network|destructive|all]`
+- `/mode [list|show|set <mode>]`
+- `/permissions [list|grants]`
+- `/stop`
+- `/agents [list [limit]|show <run_id>|clear]`
+- `/memory [list|search <query>|show <id>|delete <id>|doctor]`
+- `/tools [list|show <name>]`
+- `/protocol [schema]`
+
+插件命令仍使用插件系统自己的 command registry，并按 scope 暴露：
+
+- `slash`
+- `cli`
+- `both`
+
+`/commands` 和 `/help` 会按当前 runtime scope 合并展示可见插件命令。
+
+## 6. Tool Runs / Tool Truth
 
 后端已持久化工具运行结果，供后续前端/desktop 查询使用。
 
@@ -360,7 +403,7 @@ async def confirm_callback(decision) -> str:
 - 是否需要 `full_output`。
 - 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-## 6. Compatibility Notes
+## 7. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

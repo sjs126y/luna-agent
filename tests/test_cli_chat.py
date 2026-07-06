@@ -299,6 +299,28 @@ async def test_cli_help_lists_visible_plugin_commands(runtime):
 
 
 @pytest.mark.asyncio
+async def test_cli_commands_lists_core_and_cli_plugin_commands(runtime):
+    async def plugin_handler(args="", **kwargs):
+        return "ok"
+
+    runtime.plugin_manager.commands["local"] = CommandEntry(
+        name="local",
+        description="local only",
+        handler=plugin_handler,
+        scope="cli",
+        plugin_key="user/local",
+    )
+
+    text = await runtime.handle_command("/commands")
+    data = await runtime.handle_command("/commands json")
+
+    assert "/tools - 查看可用工具" in text
+    assert "/local - local only (user/local)" in text
+    assert '"name": "tools"' in data
+    assert '"name": "local"' in data
+
+
+@pytest.mark.asyncio
 async def test_cli_repl_exits_on_blank(runtime):
     outputs = []
     inputs = iter(["hello", ""])

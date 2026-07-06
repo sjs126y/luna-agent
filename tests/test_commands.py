@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from personal_agent.commands.registry import command_specs_as_dict
 from personal_agent.commands.runtime import current_mode_from_policy, handle_slash_command
 from personal_agent.config import Settings
 from personal_agent.models.messages import SessionSource
@@ -223,6 +224,14 @@ async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
     result = await handle_slash_command(runtime, "/mode")
     assert "当前模式: Ask First" in result.response
 
+    result = await handle_slash_command(runtime, "/mode list")
+    assert "Read Only" in result.response
+    assert "Full Auto" in result.response
+
+    result = await handle_slash_command(runtime, "/mode set Edit Freely")
+    assert "Edit Freely" in result.response
+    assert runtime.agent._execution_policy.mode == "trusted"
+
     result = await handle_slash_command(runtime, "/mode acceptEdits")
     assert "Edit Freely" in result.response
     assert runtime.agent._execution_policy.mode == "trusted"
@@ -287,8 +296,27 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     assert result.response == "plugin:only:cli:default:local"
 
     result = await handle_slash_command(runtime, "/help")
+    assert "/commands - 列出 slash commands" in result.response
+    assert "/tools - 查看可用工具" in result.response
+    assert "/permissions - 查看当前权限策略和 grants" in result.response
     assert "/local - local command" in result.response
     assert "/demo - demo" in result.response
+
+    result = await handle_slash_command(runtime, "/commands")
+    assert "/mode - 查看或切换执行模式" in result.response
+    assert "/protocol - 查看前端事件协议摘要" in result.response
+
+    result = await handle_slash_command(runtime, "/commands mode")
+    assert "子命令:" in result.response
+    assert "/mode set <mode>" in result.response
+
+    result = await handle_slash_command(runtime, "/commands missing")
+    assert result.response == "未找到命令: missing"
+
+    result = await handle_slash_command(runtime, "/commands json")
+    assert '"version": 1' in result.response
+    assert '"name": "mode"' in result.response
+    assert '"name": "local"' in result.response
 
     from personal_agent.skills.registry import skill_registry
 
@@ -304,6 +332,54 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     monkeypatch.setattr(skill_registry, "load", lambda name: "")
     result = await handle_slash_command(runtime, "/unknown")
     assert not result.handled
+
+
+@pytest.mark.asyncio
+async def test_shared_command_tools_permissions_and_protocol(tmp_path):
+    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+
+    runtime = Runtime(tmp_path)
+    runtime.agent._destructive_allowed.add("write")
+
+    result = await handle_slash_command(runtime, "/tools")
+    assert "工具总览" in result.response
+    assert "by permission:" in result.response
+
+    result = await handle_slash_command(runtime, "/tools show read")
+    assert "工具: read" in result.response
+    assert "permission:" in result.response
+    assert "risk:" in result.response
+
+    result = await handle_slash_command(runtime, "/tools show missing_tool")
+    assert result.response == "未找到工具: missing_tool"
+
+    result = await handle_slash_command(runtime, "/permissions")
+    assert "权限策略: Ask First" in result.response
+    assert "permissions:" in result.response
+    assert "当前 grants: write" in result.response
+
+    result = await handle_slash_command(runtime, "/permissions grants")
+    assert result.response == "当前 grants: write"
+
+    result = await handle_slash_command(runtime, "/protocol")
+    assert "事件协议" in result.response
+    assert "version: 1" in result.response
+    assert "完整 schema: personal-agent protocol schema --json" in result.response
+
+    result = await handle_slash_command(runtime, "/protocol schema")
+    assert "event names:" in result.response
+    assert "tool_decision" in result.response
+
+
+def test_command_registry_exports_structured_metadata(tmp_path):
+    runtime = Runtime(tmp_path)
+    data = command_specs_as_dict(runtime)
+
+    assert data["version"] == 1
+    names = {item["name"] for item in data["commands"]}
+    assert {"commands", "tools", "permissions", "protocol"} <= names
+    mode = next(item for item in data["commands"] if item["name"] == "mode")
+    assert {child["name"] for child in mode["children"]} >= {"list", "show", "set"}
 
 
 @pytest.mark.asyncio

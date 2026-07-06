@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import inspect
+import json
 from typing import Protocol
+
+from personal_agent.commands.registry import (
+    command_specs_as_dict,
+    format_command_detail,
+    format_commands,
+)
 
 
 @dataclass
@@ -135,6 +142,9 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
     if command_name == "mode":
         return CommandResult.reply(await _mode(runtime, args))
 
+    if command_name == "permissions":
+        return CommandResult.reply(await _permissions(runtime, args))
+
     if command_name == "stop":
         return CommandResult.reply(await _stop(runtime))
 
@@ -143,6 +153,15 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
 
     if command_name == "memory":
         return CommandResult.reply(await _memory(runtime, args))
+
+    if command_name == "tools":
+        return CommandResult.reply(await _tools(runtime, args))
+
+    if command_name == "protocol":
+        return CommandResult.reply(_protocol(args))
+
+    if command_name == "commands":
+        return CommandResult.reply(_commands(runtime, args))
 
     if command_name == "help":
         return CommandResult.reply(help_text(runtime))
@@ -301,8 +320,12 @@ def current_mode_from_policy(policy) -> str:
 async def _mode(runtime: CommandRuntime, args: str) -> str:
     agent = await runtime.get_agent()
     requested = args.strip()
-    if not requested:
+    if not requested or requested == "show":
         return f"当前模式: {current_mode(agent)}。用法: {_MODE_USAGE}"
+    if requested == "list":
+        return "执行模式:\n" + "\n".join(f"- {choice.label} ({choice.profile})" for choice in MODE_CHOICES)
+    if requested.startswith("set "):
+        requested = requested.split(None, 1)[1].strip()
     choice = _choice_for_input(requested)
     if choice is None:
         return f"用法: {_MODE_USAGE}"
@@ -408,6 +431,111 @@ async def _memory(runtime: CommandRuntime, args: str) -> str:
         return f"已删除记忆: {identifier}"
 
     return "用法: /memory [list|search <query>|show <id>|delete <id>|doctor]"
+
+
+def _commands(runtime: CommandRuntime, args: str) -> str:
+    value = args.strip()
+    if value == "json":
+        return json.dumps(command_specs_as_dict(runtime), indent=2, ensure_ascii=False)
+    if value:
+        return format_command_detail(value, runtime)
+    return format_commands(runtime)
+
+
+async def _tools(runtime: CommandRuntime, args: str) -> str:
+    parts = args.split()
+    action = parts[0] if parts else "list"
+    if action == "list":
+        return _tools_list(runtime)
+    if action == "show":
+        if len(parts) < 2:
+            return "用法: /tools show <name>"
+        return _tools_show(runtime, parts[1])
+    # Convenience: /tools bash behaves like /tools show bash.
+    return _tools_show(runtime, action)
+
+
+def _tools_list(runtime: CommandRuntime) -> str:
+    from personal_agent.tools.registry import tool_registry
+
+    summary = tool_registry.catalog_summary(_enabled_toolsets(runtime))
+    lines = [
+        "工具总览",
+        f"total: {summary['total']} available: {summary['available']} unavailable: {summary['unavailable']}",
+        f"by toolset: {_format_counts(summary.get('by_toolset'))}",
+        f"by permission: {_format_counts(summary.get('by_permission'))}",
+        f"by risk: {_format_counts(summary.get('by_risk'))}",
+    ]
+    high_risk = summary.get("high_risk") or []
+    if high_risk:
+        lines.append("high risk: " + ", ".join(str(item) for item in high_risk[:20]))
+    lines.append("用法: /tools show <name>")
+    return "\n".join(lines)
+
+
+def _tools_show(runtime: CommandRuntime, name: str) -> str:
+    from personal_agent.tools.registry import tool_registry
+
+    target = str(name or "").strip()
+    for item in tool_registry.catalog(_enabled_toolsets(runtime)):
+        if item.get("name") != target:
+            continue
+        return "\n".join([
+            f"工具: {item.get('name')}",
+            f"description: {item.get('description') or '-'}",
+            f"toolset: {item.get('toolset') or '-'}",
+            f"permission: {item.get('permission_category') or '-'}",
+            f"risk: {item.get('risk_level') or '-'}",
+            f"available: {_yes(bool(item.get('available')))}",
+            f"destructive: {_yes(bool(item.get('is_destructive')))}",
+            f"parallel safe: {_yes(bool(item.get('is_parallel_safe')))}",
+            f"usage: {item.get('usage_hint') or '-'}",
+            f"inputs: {', '.join(item.get('input_properties') or []) or '-'}",
+        ])
+    return f"未找到工具: {target}"
+
+
+async def _permissions(runtime: CommandRuntime, args: str) -> str:
+    parts = args.split()
+    action = parts[0] if parts else "list"
+    if action == "grants":
+        agent = await runtime.get_agent()
+        grants = sorted(str(item) for item in getattr(agent, "_destructive_allowed", set()) or [])
+        return "当前 grants: " + (", ".join(grants) if grants else "无")
+    if action not in {"list", "show"}:
+        return "用法: /permissions [list|grants]"
+    agent = await runtime.get_agent()
+    policy = getattr(agent, "_execution_policy", None)
+    mode = str(getattr(policy, "mode", "") or "")
+    permissions = getattr(policy, "permissions", {}) if policy is not None else {}
+    lines = [
+        f"权限策略: {current_mode(agent)} ({mode or 'standard'})",
+        "permissions:",
+    ]
+    keys = ["default", "read", "search", "write", "bash", "background", "network", "destructive"]
+    if isinstance(permissions, dict):
+        for key in keys:
+            if key in permissions:
+                lines.append(f"- {key}: {permissions[key]}")
+    lines.append(await _permissions(runtime, "grants"))
+    return "\n".join(lines)
+
+
+def _protocol(args: str) -> str:
+    from personal_agent.conversation import frontend_protocol_schema
+
+    schema = frontend_protocol_schema()
+    events = schema.get("events") or {}
+    lines = [
+        "事件协议",
+        f"version: {schema.get('protocol_version')}",
+        f"events: {len(events)}",
+        "delta events: " + ", ".join(schema.get("delta_event_types") or []),
+        "完整 schema: personal-agent protocol schema --json",
+    ]
+    if args.strip() == "schema":
+        lines.append("event names: " + ", ".join(sorted(events)))
+    return "\n".join(lines)
 
 
 def _split_target_args(tokens: list[str]) -> tuple[list[str], str]:
@@ -516,43 +644,20 @@ async def _prepare_skill(runtime: CommandRuntime, text: str) -> str | None:
 
 
 def help_text(runtime: CommandRuntime | None = None) -> str:
-    lines = [
-        "可用命令:",
-        "/new - 重置当前会话",
-        "/session [current|list|switch <name>|rename <name>|delete [name]] - 管理会话",
-        "/usage - 查看当前会话上下文预算",
-        "/allow [write|bash|all] - 授权危险操作",
-        "/mode [Read Only|Ask First|Edit Freely|Full Auto] - 切换执行模式",
-        "/stop - 停止当前处理",
-        "/export - 导出当前会话 JSONL",
-        "/agents [list|show|clear] - 查看子 agent 运行记录",
-        "/memory [list|search|show|delete|doctor] - 查看和管理记忆",
-        "/help - 显示此帮助",
-        "/<skill-name> [message] - 加载技能后发送消息",
-        "exit / quit / 空行 - 退出 CLI",
-    ]
-    if runtime is not None and "cli" in _plugin_command_scopes(runtime):
-        lines.insert(-1, '""" - 进入多行输入，再输入 """ 提交，/cancel 取消')
-    plugin_lines = _plugin_command_help_lines(runtime)
-    if plugin_lines:
-        lines.extend(["", "插件命令:", *plugin_lines])
-    return "\n".join(lines)
+    return format_commands(runtime)
 
 
-def _plugin_command_help_lines(runtime: CommandRuntime | None) -> list[str]:
-    if runtime is None or runtime.plugin_manager is None:
-        return []
-    commands = getattr(runtime.plugin_manager, "commands", {})
-    if not isinstance(commands, dict):
-        return []
-    scopes = set(_plugin_command_scopes(runtime))
-    lines = []
-    for name, entry in sorted(commands.items()):
-        entry_scope = getattr(entry, "scope", "slash")
-        if entry_scope != "both" and entry_scope not in scopes:
-            continue
-        description = getattr(entry, "description", "") or "插件命令"
-        plugin_key = getattr(entry, "plugin_key", "")
-        suffix = f" ({plugin_key})" if plugin_key else ""
-        lines.append(f"/{name} - {description}{suffix}")
-    return lines
+def _enabled_toolsets(runtime: CommandRuntime) -> list[str] | None:
+    settings = getattr(runtime, "settings", None)
+    value = getattr(settings, "enabled_toolsets", None)
+    return list(value) if value else None
+
+
+def _format_counts(counts) -> str:
+    if not isinstance(counts, dict) or not counts:
+        return "无"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+
+
+def _yes(value: bool) -> str:
+    return "是" if value else "否"
