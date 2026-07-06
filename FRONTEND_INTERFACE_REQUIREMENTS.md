@@ -1,6 +1,6 @@
 # Frontend Interface Requirements
 
-更新时间：2026-07-06 22:58 CST
+更新时间：2026-07-06 23:02 CST
 
 本文给后端线使用，只记录 inline TUI / future desktop-web 前端仍需要后端配合或需要继续固化的接口事项。已经完成并被前端消费的需求不再保留在待办区，避免重复实现或误判优先级。
 
@@ -21,23 +21,33 @@
 
 ## 当前活跃需求
 
-### P1：Activity Summary / Detail 结构化接口
+### P1：Activity 稳定结构化接口
 
-目标：inline TUI / future desktop-web 需要一个统一入口展示“当前系统是否有活跃工作”，并能按类型查看具体对象。这个需求覆盖三个层级不同的运行对象：
+目标：inline TUI / future desktop-web 需要一个长期稳定的 Activity 接口，覆盖宏观总览和具体对象详情。这个接口不应只是临时 doctor 字段，而应成为后续一段时间内前端展示“系统正在做什么”的稳定数据契约。
+
+Activity 覆盖三个层级不同的运行对象：
 
 - `sub_agent`：主 agent 内部委派出去的子任务。
 - `background_process`：工具层启动的后台进程。
 - `gateway_agent`：平台 gateway 收到消息后启动的一次主 agent 处理流程；它不是子 agent。
 
-前端第一版 UI 计划：
+前端长期展示模型：
 
-- 状态栏只显示轻量 badge，例如 `activity 3` 或 `activity 3 !`。
+- 状态栏显示轻量 badge，例如 `activity 3` 或 `activity 3 !`。
 - `/activity` 打印 summary + 三类列表到 scrollback。
-- `/activity agents <id>`、`/activity processes <id>`、`/activity gateway <id>` 后续打印详情到 scrollback。
+- `/activity agents <id>`、`/activity processes <id>`、`/activity gateway <id>` 打印详情到 scrollback。
+- future desktop/web 可用同一 payload 做 activity drawer / detail panel。
 
-建议后端提供 `CommandResult.kind="activity"` 的 slash command payload，或等价 runtime API；前端可先消费 slash command payload。
+后端应提供：
+
+- slash command：`/activity [agents|processes|gateway] [id]`
+- `CommandResult.kind="activity"` 的结构化 payload
+- 等价 runtime/query API，供 future desktop/web 直接调用
+- slash registry metadata 和动态候选，供 inline TUI 连续选择
 
 #### `/activity` summary payload
+
+`/activity` 返回完整 overview。列表应轻量，但足够让前端直接渲染，不再额外调用详情接口。
 
 ```json
 {
@@ -80,7 +90,7 @@
 
 #### 列表 item 最小公共字段
 
-每个列表 item 建议尽量包含：
+每个列表 item 必须尽量保持同一公共外形，方便前端做统一 activity list：
 
 - `id: string`
 - `kind: "sub_agent" | "background_process" | "gateway_agent"`
@@ -88,8 +98,9 @@
 - `duration_seconds: number`
 - `stop_requested: boolean`
 - `error: string`
+- `attention_required: boolean`
 
-`status` 建议稳定在：
+`status` 应稳定在：
 
 - `running`
 - `completed`
@@ -97,9 +108,9 @@
 - `stopped`
 - `stopping`
 
-时间字段建议统一：
+时间字段应统一：
 
-- `started_at` / `finished_at`：ISO string 或 unix seconds 二选一，建议后端统一。
+- `started_at` / `finished_at`：ISO string 或 unix seconds 二选一，由后端统一。
 - `duration_seconds`：必须提供，前端主要显示它。
 
 #### sub agent 列表字段
@@ -117,6 +128,7 @@
   "finished_at": "",
   "duration_seconds": 18.4,
   "stop_requested": false,
+  "attention_required": false,
   "usage": {
     "input_tokens": 1000,
     "output_tokens": 200
@@ -136,6 +148,15 @@
 }
 ```
 
+前端列表会优先展示：
+
+- role
+- status / duration
+- task_preview
+- usage / quota
+- tool_counts
+- result_preview / error
+
 #### background process 列表字段
 
 ```json
@@ -152,6 +173,7 @@
   "duration_seconds": 23.1,
   "returncode": null,
   "stop_requested": false,
+  "attention_required": false,
   "has_stdout": true,
   "has_stderr": false,
   "stdout_truncated": false,
@@ -164,6 +186,14 @@
 ```
 
 列表里只需要 preview / bytes / truncated；完整 stdout/stderr 放详情 payload，避免 summary 太重。
+
+前端列表会优先展示：
+
+- command_preview
+- cwd
+- status / duration / returncode
+- output_preview
+- stdout/stderr bytes and truncated flags
 
 #### gateway agent 列表字段
 
@@ -180,13 +210,22 @@
   "finished_at": "",
   "duration_seconds": 34.6,
   "stop_requested": false,
+  "attention_required": false,
   "error": ""
 }
 ```
 
+前端列表会优先展示：
+
+- platform
+- session_key
+- status / duration
+- stop_requested
+- error
+
 #### Detail payload
 
-后续详情接口可按以下形态返回：
+详情接口是稳定能力，不是临时补充。列表用于 overview，详情用于完整内容、日志、工具明细或错误排查。
 
 ```json
 {
@@ -196,6 +235,22 @@
 }
 ```
 
+Sub agent detail 的 `run` 建议包含：
+
+- `run_id`
+- `status`
+- `role`
+- `task`
+- `result`
+- `tool_calls`
+- `executed_tool_calls`
+- `denied_tool_calls`
+- `tool_results`
+- `usage`
+- `quota`
+- `error_type`
+- `error_message`
+
 ```json
 {
   "kind": "background_process",
@@ -203,6 +258,19 @@
   "process": {}
 }
 ```
+
+Background process detail 的 `process` 建议包含：
+
+- `pid`
+- `status`
+- `command`
+- `cwd`
+- `stdout`
+- `stderr`
+- `stdout_truncated`
+- `stderr_truncated`
+- `returncode`
+- `error`
 
 ```json
 {
@@ -212,7 +280,38 @@
 }
 ```
 
-前端第一版可先只接 `/activity` summary + lists；详情可以随后补。
+Gateway detail 可以和列表基本一致，但应保留稳定 detail 入口，方便后续扩展平台消息 metadata。
+
+#### Slash command / dynamic candidates
+
+建议 registry 暴露：
+
+```text
+/activity
+/activity agents
+/activity agents <id>
+/activity processes
+/activity processes <id>
+/activity gateway
+/activity gateway <id>
+```
+
+建议动态 provider：
+
+- `activity_agents`：返回 active + recent sub agent ids。
+- `activity_processes`：返回 running + recent process ids。
+- `activity_gateway`：返回 running gateway session ids。
+
+候选项仍使用现有 slash argument choice 外形：
+
+```json
+{
+  "value": "abc123",
+  "label": "abc123",
+  "description": "reviewer · running · 18s",
+  "append_space": false
+}
+```
 
 #### 前端展示假设
 
@@ -220,6 +319,8 @@
 - `summary.active_total` 是状态栏 badge 的主要数字。
 - `summary.has_active_work=false` 时，前端显示 `activity idle`。
 - `kind` 字段用于前端做统一 activity list 和 detail 路由。
+- `summary.counts` 用于 overview，具体列表数据以各类 lists 为准。
+- `attention_required=true` 时前端会显示 `!` 或更高亮的状态，但不自行推断原因。
 
 ## 已提供：Slash command 参数候选 metadata
 

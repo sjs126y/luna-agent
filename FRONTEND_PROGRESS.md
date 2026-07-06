@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 22:58 CST
+更新时间：2026-07-06 23:02 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -137,7 +137,11 @@
 ### 2026-07-06 22:58 CST
 
 - 在 `FRONTEND_INTERFACE_REQUIREMENTS.md` 记录 Activity Summary / Detail 结构化接口需求，供后端 Codex 跨 worktree 读取。
-- 前端预期第一版消费 `/activity` 的 `CommandResult.kind="activity"` payload，用于状态栏 `activity N` badge 和 `/activity` scrollback 列表。
+- 前端预期消费 `/activity` 的 `CommandResult.kind="activity"` payload，用于状态栏 `activity N` badge、`/activity` scrollback 列表和各类详情展示。
+
+### 2026-07-06 23:02 CST
+
+- 将 Activity 需求改为长期稳定接口契约：明确 `/activity [agents|processes|gateway] [id]`、summary/list/detail payload、公共 item 字段、动态候选 provider 和前端展示假设。
 
 已验证：
 
