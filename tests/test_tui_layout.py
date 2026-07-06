@@ -178,11 +178,11 @@ def test_active_region_shows_pending_confirm():
     text = _active_text(state)
     assert "confirm" in text
     assert "write_file" in text
-    assert "write" in text
     assert "Risk 将写入文件" in text
-    assert "Enter allow once" in text
-    assert "Shift+A always" in text
-    assert "Esc deny" in text
+    assert "[ Enter Allow once * ]" in text
+    assert "[ Deny ]" in text
+    assert "[ Always ]" in text
+    assert "←/→ select" in text
 
 
 def test_active_region_confirm_none_default_requires_explicit_allow():
@@ -193,8 +193,8 @@ def test_active_region_confirm_none_default_requires_explicit_allow():
         default_action="none",
     )
     text = _active_text(state)
-    assert "A allow once" in text
-    assert "Enter allow once" not in text
+    assert "[ Enter Allow once ]" in text
+    assert "*" not in text
 
 
 def test_active_region_confirm_hides_unavailable_actions():
@@ -206,9 +206,9 @@ def test_active_region_confirm_hides_unavailable_actions():
         available_actions=("deny",),
     )
     text = _active_text(state)
-    assert "Enter deny" in text
+    assert "[ Enter Deny * ]" in text
     assert "always" not in text
-    assert "A allow once" not in text
+    assert "Allow once" not in text
 
 
 def test_active_region_confirm_shows_structured_details():

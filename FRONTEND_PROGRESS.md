@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 20:55 CST
+更新时间：2026-07-06 22:32 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -73,13 +73,12 @@
 
 - 前端已实现 `confirm_tool(decision)` 回调。
 - 已消费后端确认字段：`display_name`、`execution_mode_label`、`risk_level`、`risk_summary`、`default_action`、`available_actions`、`input_preview`、`affected_paths`、`command_preview`、`url_preview` 等。
-- 键位：
-  - `Enter` 根据 `default_action` 执行默认动作。
-  - `Esc` / `n` 拒绝。
-  - `a` allow once。
-  - `Shift+A` allow always。
+- Confirm 面板现在是可选择 action row：
+  - `Left/Right` 在动作间移动。
+  - `Enter` 执行当前选中动作。
+  - 快捷键保留为辅助：`a` / `y` allow once，`Esc` / `n` deny，`Shift+A` always。
 - 面板已压缩成短标签风格：`Risk`、`Cmd`、`Path`、`URL`、`Process`、`Input`。
-- 仅展示 `available_actions` 允许的动作；`default_action` 会明确显示为 `Enter allow once` 或 `Enter deny`，`none` 时不把 Enter 标成 allow。
+- 仅展示 `available_actions` 允许的动作；`default_action` 只影响初始选中项和默认标记，`none` 时不标默认动作。
 
 ## 已接后端能力
 
@@ -118,6 +117,12 @@
 - 明确 parent command 层级行为：第一层显示 `/session ›`、`/mode ›`，按 `Enter` 后进入子命令菜单；不会把 `/session list` 等全部摊到第一层。
 - 增加回归测试覆盖 `/session` 进入子菜单、`/mode set` 完整文本保留，避免 `/mode` 被改成 `/mde` 这类问题回归。
 
+### 2026-07-06 22:32 CST
+
+- 将 confirm 面板从“快捷键提示”升级为可左右选择的 action row，更接近 CC/Codex 的决策控件。
+- `Enter` 现在执行当前选中的 confirm action；`Left/Right` 移动选择；快捷键继续作为辅助操作。
+- Confirm action 根据后端 `available_actions` 和 `default_action` 构建，只显示可用动作，并对默认项加轻量标记。
+
 已验证：
 
 ```bash
@@ -127,7 +132,7 @@ git diff --check
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 ```
 
-结果：TUI tests `73 passed`，command/gateway tests `55 passed`。
+结果：TUI tests `77 passed`，command/gateway tests `55 passed`。
 
 ## 不建议现在做
 

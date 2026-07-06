@@ -50,6 +50,17 @@ class ToolTrace:
 
 
 @dataclass
+class ConfirmAction:
+    """One selectable action in the pending confirm panel."""
+
+    id: str
+    label: str
+    result: str
+    shortcut: str = ""
+    is_default: bool = False
+
+
+@dataclass
 class ConfirmPrompt:
     """Human-facing state for one pending tool confirmation."""
 
@@ -67,6 +78,32 @@ class ConfirmPrompt:
     affected_paths: tuple[str, ...] = ()
     default_action: str = "allow"  # allow | deny | none
     available_actions: tuple[str, ...] = ("allow_once", "allow_always", "deny")
+    actions: tuple[ConfirmAction, ...] = ()
+    selected_action: int = 0
+
+    def __post_init__(self) -> None:
+        if self.actions:
+            return
+        specs = {
+            "allow_once": ("Allow once", "allow", "A"),
+            "deny": ("Deny", "deny", "Esc"),
+            "allow_always": ("Always", "always", "Shift+A"),
+        }
+        actions: list[ConfirmAction] = []
+        for action_id in ("allow_once", "deny", "allow_always"):
+            if action_id not in self.available_actions:
+                continue
+            label, result, shortcut = specs[action_id]
+            is_default = (
+                (self.default_action == "allow" and action_id == "allow_once")
+                or (self.default_action == "deny" and action_id == "deny")
+            )
+            actions.append(ConfirmAction(action_id, label, result, shortcut, is_default))
+        self.actions = tuple(actions)
+        for index, action in enumerate(self.actions):
+            if action.is_default:
+                self.selected_action = index
+                break
 
 
 @dataclass(frozen=True)

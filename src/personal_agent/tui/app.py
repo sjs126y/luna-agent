@@ -31,7 +31,7 @@ from personal_agent.tui.renderer import (
     format_expand_block,
     tool_summary_from_mapping,
 )
-from personal_agent.tui.state import ConfirmPrompt, SlashMenuItem, UIState
+from personal_agent.tui.state import ConfirmAction, ConfirmPrompt, SlashMenuItem, UIState
 from personal_agent.tui import theme
 
 
@@ -85,6 +85,40 @@ def _decision_list(decision, name: str) -> list[str]:
     if value:
         return [str(value)]
     return []
+
+
+def _confirm_actions(available: tuple[str, ...], default_action: str) -> tuple[ConfirmAction, ...]:
+    specs = {
+        "allow_once": ("Allow once", "allow", "A"),
+        "deny": ("Deny", "deny", "Esc"),
+        "allow_always": ("Always", "always", "Shift+A"),
+    }
+    actions: list[ConfirmAction] = []
+    for action_id in ("allow_once", "deny", "allow_always"):
+        if action_id not in available:
+            continue
+        label, result, shortcut = specs[action_id]
+        is_default = (
+            (default_action == "allow" and action_id == "allow_once")
+            or (default_action == "deny" and action_id == "deny")
+        )
+        actions.append(ConfirmAction(
+            id=action_id,
+            label=label,
+            result=result,
+            shortcut=shortcut,
+            is_default=is_default,
+        ))
+    if not actions:
+        actions.append(ConfirmAction(id="deny", label="Deny", result="deny", shortcut="Esc"))
+    return tuple(actions)
+
+
+def _default_confirm_action_index(actions: tuple[ConfirmAction, ...]) -> int:
+    for index, action in enumerate(actions):
+        if action.is_default:
+            return index
+    return 0
 
 
 def _command_continue_text(result) -> str | None:
@@ -953,6 +987,14 @@ class InlineTuiApp:
         def _(event) -> None:
             self._resolve_confirm("deny")
 
+        @kb.add("left", filter=Condition(lambda: self._confirm_future is not None), eager=True)
+        def _(event) -> None:
+            self._move_confirm_action(-1)
+
+        @kb.add("right", filter=Condition(lambda: self._confirm_future is not None), eager=True)
+        def _(event) -> None:
+            self._move_confirm_action(1)
+
         @kb.add("escape", filter=Condition(lambda: self._confirm_future is None), eager=True)
         def _(event) -> None:
             if self.state.slash_mode:
@@ -963,16 +1005,9 @@ class InlineTuiApp:
         @kb.add("enter", eager=True)
         def _(event) -> None:
             # While a tool confirmation is pending, Enter uses the visible
-            # default action. Today that defaults to allow for compatibility;
-            # newer backends can send default_action=deny/none.
+            # selected action. Shortcuts remain as accelerators.
             if self._confirm_future is not None:
-                default = "allow"
-                if self.state.pending_confirm is not None:
-                    default = self.state.pending_confirm.default_action
-                if default == "deny":
-                    self._resolve_confirm("deny")
-                elif default == "allow":
-                    self._resolve_confirm_action("allow_once")
+                self._resolve_selected_confirm_action()
                 return
             if self._apply_selected_slash_item():
                 return
@@ -1076,6 +1111,8 @@ class InlineTuiApp:
         if paths and not (command_preview or url_preview):
             preview = (preview + " · " if preview else "") + ", ".join(paths[:3])
 
+        actions = _confirm_actions(actions, default_action)
+
         return ConfirmPrompt(
             title="需要确认",
             display_name=name,
@@ -1090,16 +1127,33 @@ class InlineTuiApp:
             process_label=process_label,
             affected_paths=tuple(paths),
             default_action=default_action,
-            available_actions=actions,
+            available_actions=tuple(action.id for action in actions),
+            actions=actions,
+            selected_action=_default_confirm_action_index(actions),
         )
 
     def _resolve_confirm_action(self, action: str) -> None:
         prompt = self.state.pending_confirm
-        available = set(prompt.available_actions if prompt is not None else ())
-        if action == "allow_once" and (not available or "allow_once" in available):
-            self._resolve_confirm("allow")
-        elif action == "allow_always" and (not available or "allow_always" in available):
-            self._resolve_confirm("always")
+        if prompt is None:
+            return
+        for item in prompt.actions:
+            if item.id == action:
+                self._resolve_confirm(item.result)
+                return
+
+    def _resolve_selected_confirm_action(self) -> None:
+        prompt = self.state.pending_confirm
+        if prompt is None or not prompt.actions:
+            return
+        index = max(0, min(prompt.selected_action, len(prompt.actions) - 1))
+        self._resolve_confirm(prompt.actions[index].result)
+
+    def _move_confirm_action(self, delta: int) -> None:
+        prompt = self.state.pending_confirm
+        if prompt is None or not prompt.actions:
+            return
+        prompt.selected_action = (prompt.selected_action + delta) % len(prompt.actions)
+        self._invalidate()
 
     def _resolve_confirm(self, answer: str) -> None:
         self.input_area.text = ""

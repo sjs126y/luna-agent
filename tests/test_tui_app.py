@@ -429,6 +429,9 @@ def test_confirm_prompt_uses_future_display_fields():
     assert prompt.execution_mode == "Ask First"
     assert prompt.default_action == "deny"
     assert prompt.available_actions == ("deny",)
+    assert [action.id for action in prompt.actions] == ["deny"]
+    assert prompt.actions[0].is_default is True
+    assert prompt.selected_action == 0
     assert "rm -rf build" in prompt.input_preview
     assert prompt.command_preview == "rm -rf build"
     assert prompt.affected_paths == ("build",)
@@ -460,6 +463,61 @@ async def test_confirm_action_respects_available_actions():
     app._resolve_confirm_action("allow_once")
     assert fut.done() is False
     app._resolve_confirm("deny")
+
+
+def test_confirm_prompt_default_allow_selects_allow_once():
+    app = _app()
+    prompt = app._build_confirm_prompt({
+        "tool_name": "bash",
+        "default_action": "allow",
+        "available_actions": ["allow_once", "deny", "allow_always"],
+    })
+    assert [action.id for action in prompt.actions] == ["allow_once", "deny", "allow_always"]
+    assert prompt.selected_action == 0
+    assert prompt.actions[0].is_default is True
+
+
+def test_confirm_prompt_default_none_selects_first_without_default_mark():
+    app = _app()
+    prompt = app._build_confirm_prompt({
+        "tool_name": "bash",
+        "default_action": "none",
+        "available_actions": ["allow_once", "deny"],
+    })
+    assert [action.id for action in prompt.actions] == ["allow_once", "deny"]
+    assert prompt.selected_action == 0
+    assert all(action.is_default is False for action in prompt.actions)
+
+
+def test_confirm_action_navigation_wraps():
+    app = _app()
+    app.state.pending_confirm = app._build_confirm_prompt({
+        "tool_name": "bash",
+        "available_actions": ["allow_once", "deny", "allow_always"],
+    })
+    assert app.state.pending_confirm.selected_action == 0
+    app._move_confirm_action(1)
+    assert app.state.pending_confirm.selected_action == 1
+    app._move_confirm_action(1)
+    assert app.state.pending_confirm.selected_action == 2
+    app._move_confirm_action(1)
+    assert app.state.pending_confirm.selected_action == 0
+    app._move_confirm_action(-1)
+    assert app.state.pending_confirm.selected_action == 2
+
+
+@pytest.mark.asyncio
+async def test_confirm_enter_resolves_selected_action():
+    app = _app()
+    fut = asyncio.get_running_loop().create_future()
+    app._confirm_future = fut
+    app.state.pending_confirm = app._build_confirm_prompt({
+        "tool_name": "bash",
+        "available_actions": ["allow_once", "deny", "allow_always"],
+    })
+    app._move_confirm_action(1)
+    app._resolve_selected_confirm_action()
+    assert await fut == "deny"
 
 
 def test_runtime_accepts_confirm_detection():
