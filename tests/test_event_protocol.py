@@ -39,6 +39,19 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert fields["tool_name"]["required"] is True
     assert fields["tool_use_id"]["required"] is True
     assert fields["full_output"]["type"] == "string"
+    assert fields["display_name"]["type"] == "string"
+    assert fields["available_actions"]["type"] == "list[string]"
+    assert fields["input_preview"]["type"] == "string"
+
+    decision_fields = {
+        field["name"]: field
+        for field in schema["events"]["tool_decision"]["fields"]
+    }
+    assert decision_fields["tool_name"]["required"] is True
+    assert decision_fields["display_name"]["type"] == "string"
+    assert decision_fields["execution_mode_label"]["type"] == "string"
+    assert decision_fields["risk_summary"]["type"] == "string"
+    assert decision_fields["affected_paths"]["type"] == "list[string]"
 
 
 def test_conversation_event_as_dict_includes_protocol_version():

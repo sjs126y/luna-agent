@@ -608,6 +608,96 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
     assert event.data["permission_decision"] == "ask"
     assert event.data["required_allow"] == "background"
     assert event.data["execution_mode"] == "standard"
+    assert event.data["display_name"] == "Start background process"
+    assert event.data["execution_mode_label"] == "Ask First"
+    assert event.data["risk_level"] == "medium"
+    assert event.data["default_action"] == "none"
+    assert event.data["available_actions"] == ["allow_once", "allow_always", "deny"]
+    assert event.data["command_preview"] == 'python -c "print(1)"'
+    assert event.data["input_preview"] == 'python -c "print(1)"'
+
+
+@pytest.mark.asyncio
+async def test_tool_decision_event_includes_confirmation_display_metadata(tmp_path: Path):
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+
+    async def handler(**kwargs):
+        return "ok"
+
+    entry = ToolEntry(
+        name="custom_write_preview",
+        description="Custom write",
+        schema={},
+        handler=handler,
+        toolset="test",
+        is_destructive=True,
+        permission_category="write",
+    )
+    previous = tool_registry.get("custom_write_preview")
+    tool_registry.register(entry)
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="standard",
+        permissions={"default": "allow", "write": "ask"},
+    )
+    recorder = EventRecorder()
+    seen_decisions = []
+
+    async def deny_confirm(decision):
+        seen_decisions.append(decision)
+        return "deny"
+
+    try:
+        result = await execute_tool_call_result(
+            {
+                "id": "w1",
+                "name": "custom_write_preview",
+                "input": {"path": "demo.txt", "content": "secret token sk-proj-abcdefghijklmnopqrstuvwxyz"},
+            },
+            agent=agent,
+            event_sink=recorder,
+            confirm=deny_confirm,
+        )
+    finally:
+        if previous is not None:
+            tool_registry.register(previous)
+        else:
+            tool_registry.unregister("custom_write_preview")
+
+    assert result.status == "denied"
+    assert len(seen_decisions) == 1
+    decision = seen_decisions[0]
+    assert decision.tool_use_id == "w1"
+    assert decision.display_name == "Custom Write Preview"
+    assert decision.execution_mode_label == "Ask First"
+    assert decision.risk_level == "medium"
+    assert decision.default_action == "allow"
+    assert decision.available_actions == ("allow_once", "allow_always", "deny")
+    assert decision.affected_paths == ("demo.txt",)
+    assert decision.input_preview == "demo.txt"
+    assert "abcdefghijklmnopqrstuvwxyz" not in decision.input_summary
+
+    decision_event = next(event for event in recorder.events if event.type == "tool_decision")
+    end_event = recorder.events[-1]
+    assert decision_event.data["display_name"] == "Custom Write Preview"
+    assert decision_event.data["execution_mode_label"] == "Ask First"
+    assert decision_event.data["default_action"] == "allow"
+    assert decision_event.data["available_actions"] == ["allow_once", "allow_always", "deny"]
+    assert decision_event.data["affected_paths"] == ["demo.txt"]
+    assert decision_event.data["input_preview"] == "demo.txt"
+    assert "abcdefghijklmnopqrstuvwxyz" not in decision_event.data["input_summary"]
+    assert end_event.type == "tool_end"
+    assert end_event.data["status"] == "denied"
+    assert end_event.data["category"] == "authorization"
+    assert end_event.data["display_name"] == "Custom Write Preview"
+    assert end_event.data["affected_paths"] == ["demo.txt"]
 
 
 @pytest.mark.asyncio

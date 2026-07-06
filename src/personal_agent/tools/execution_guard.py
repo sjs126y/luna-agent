@@ -9,11 +9,22 @@ The executor is still the only tool entrypoint. This module only answers:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
 from typing import Any, Literal
+
+from personal_agent.tools.redact import redact
 
 GuardStage = Literal["precheck", "permission", "runtime_guard"]
 DecisionStage = Literal["lookup", "precheck", "permission", "runtime_guard", "execution"]
+EXECUTION_MODE_LABELS = {
+    "guarded": "Read Only",
+    "standard": "Ask First",
+    "trusted": "Edit Freely",
+    "sovereign": "Full Auto",
+}
+MAX_PREVIEW_CHARS = 500
 
 
 @dataclass(frozen=True)
@@ -43,6 +54,18 @@ class ToolDecision:
     required_allow: str = ""
     message: str = ""
     grant_matched: str = ""
+    display_name: str = ""
+    execution_mode_label: str = ""
+    risk_level: str = "low"
+    risk_summary: str = ""
+    default_action: str = "none"
+    available_actions: tuple[str, ...] = field(default_factory=tuple)
+    input_summary: str = ""
+    input_preview: str = ""
+    affected_paths: tuple[str, ...] = field(default_factory=tuple)
+    command_preview: str = ""
+    url_preview: str = ""
+    host: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -58,6 +81,18 @@ class ToolDecision:
             "required_allow": self.required_allow,
             "decision_message": self.message,
             "grant_matched": self.grant_matched,
+            "display_name": self.display_name,
+            "execution_mode_label": self.execution_mode_label,
+            "risk_level": self.risk_level,
+            "risk_summary": self.risk_summary,
+            "default_action": self.default_action,
+            "available_actions": list(self.available_actions),
+            "input_summary": self.input_summary,
+            "input_preview": self.input_preview,
+            "affected_paths": list(self.affected_paths),
+            "command_preview": self.command_preview,
+            "url_preview": self.url_preview,
+            "host": self.host,
         }
 
 
@@ -87,6 +122,7 @@ def evaluate_execution_guards(tc: dict, entry: Any, agent: Any) -> GuardDecision
 
 
 def tool_decision_from_guard(tc: dict, guard: GuardDecision) -> ToolDecision:
+    display = build_tool_decision_display(tc, guard)
     return ToolDecision(
         tool_name=str(tc.get("name", "")),
         tool_use_id=str(tc.get("id") or tc.get("tool_use_id") or tc.get("name") or "tool"),
@@ -100,10 +136,15 @@ def tool_decision_from_guard(tc: dict, guard: GuardDecision) -> ToolDecision:
         required_allow=guard.required_allow,
         message=guard.message,
         grant_matched=guard.grant_matched,
+        **display,
     )
 
 
 def tool_decision_for_unknown_tool(tc: dict) -> ToolDecision:
+    display = build_tool_decision_display(
+        tc,
+        GuardDecision(stage="precheck", allowed=False, reason_code="unknown_tool"),
+    )
     return ToolDecision(
         tool_name=str(tc.get("name", "")),
         tool_use_id=str(tc.get("id") or tc.get("tool_use_id") or tc.get("name") or "tool"),
@@ -112,6 +153,7 @@ def tool_decision_for_unknown_tool(tc: dict) -> ToolDecision:
         status="error",
         reason_code="unknown_tool",
         message=f"unknown tool '{tc.get('name', '')}'",
+        **display,
     )
 
 
@@ -153,6 +195,33 @@ def classify_guard_denial(decision: GuardDecision) -> str:
     if decision.reason_code == "dependency_unavailable":
         return "dependency"
     return decision.stage
+
+
+def build_tool_decision_display(tc: dict, guard: GuardDecision) -> dict[str, Any]:
+    name = str(tc.get("name", "") or "tool")
+    inp = _tool_input(tc)
+    category = guard.category or fallback_tool_category(name)
+    risk_level = _risk_level(category, guard)
+    command_preview = _first_text(inp, "command", "cmd", "shell_command")
+    url_preview = _first_text(inp, "url", "uri")
+    host = _url_host(url_preview)
+    affected_paths = _affected_paths(name, inp)
+    input_summary = _input_summary(inp)
+    input_preview = _input_preview(name, inp, command_preview=command_preview, url_preview=url_preview)
+    return {
+        "display_name": _display_name(name),
+        "execution_mode_label": EXECUTION_MODE_LABELS.get(guard.mode, guard.mode),
+        "risk_level": risk_level,
+        "risk_summary": _risk_summary(category, guard, command_preview=command_preview, url_preview=url_preview),
+        "default_action": _default_action(category, guard, risk_level),
+        "available_actions": _available_actions(guard),
+        "input_summary": input_summary,
+        "input_preview": input_preview,
+        "affected_paths": tuple(affected_paths),
+        "command_preview": command_preview,
+        "url_preview": url_preview,
+        "host": host,
+    }
 
 
 def check_hard_safety(tc: dict, entry: Any, category: str) -> GuardDecision:
@@ -345,3 +414,142 @@ def _looks_destructive(name: str) -> bool:
         "task",
         "todo",
     }
+
+
+def _tool_input(tc: dict) -> dict[str, Any]:
+    raw = tc.get("input", {})
+    return raw if isinstance(raw, dict) else {"value": raw}
+
+
+def _display_name(name: str) -> str:
+    labels = {
+        "write": "Write file",
+        "edit": "Edit file",
+        "bash": "Shell command",
+        "process_start": "Start background process",
+        "process_kill": "Stop background process",
+        "web_fetch": "Fetch URL",
+        "web_search": "Web search",
+    }
+    return labels.get(name, name.replace("_", " ").strip().title() or "Tool")
+
+
+def _risk_level(category: str, guard: GuardDecision) -> str:
+    if guard.reason_code in {"hard_blacklist", "sandbox_blocked", "permission_denied"}:
+        return "high"
+    if category in {"bash", "background", "network", "destructive"}:
+        return "high" if guard.policy_decision == "deny" else "medium"
+    if category == "write":
+        return "medium"
+    return "low"
+
+
+def _risk_summary(
+    category: str,
+    guard: GuardDecision,
+    *,
+    command_preview: str = "",
+    url_preview: str = "",
+) -> str:
+    if guard.reason_code == "permission_denied":
+        return "Execution mode denies this tool."
+    if guard.reason_code == "permission_required":
+        return f"Execution mode requires confirmation for {category} tools."
+    if guard.stage == "precheck" and guard.message:
+        return _shorten(redact(guard.message), 160)
+    if category == "write":
+        return "May modify files in the workspace."
+    if category == "bash":
+        return "Will execute a shell command."
+    if category == "background":
+        return "Will start or manage a background process."
+    if category == "network":
+        return "May access the network." + (f" Target: {url_preview}" if url_preview else "")
+    if command_preview:
+        return "Will execute a command."
+    return "Low-risk tool action."
+
+
+def _default_action(category: str, guard: GuardDecision, risk_level: str) -> str:
+    if guard.policy_decision == "deny" or guard.reason_code not in {"", "permission_required"}:
+        return "deny"
+    if guard.reason_code == "permission_required":
+        if category in {"bash", "background", "network", "destructive"} or risk_level == "high":
+            return "none"
+        return "allow"
+    return "none"
+
+
+def _available_actions(guard: GuardDecision) -> tuple[str, ...]:
+    if guard.reason_code == "permission_required":
+        return ("allow_once", "allow_always", "deny")
+    if guard.allowed:
+        return ()
+    return ("deny",)
+
+
+def _affected_paths(name: str, inp: dict[str, Any]) -> list[str]:
+    keys = ("path", "file", "filepath", "target", "old_path", "new_path")
+    paths: list[str] = []
+    if name in {"write", "edit", "read"} or any(key in inp for key in keys):
+        for key in keys:
+            value = inp.get(key)
+            if isinstance(value, str) and value and value not in paths:
+                paths.append(_shorten(redact(value), 240))
+    return paths
+
+
+def _first_text(inp: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = inp.get(key)
+        if isinstance(value, str) and value.strip():
+            return _shorten(redact(value.strip()), 300)
+    return ""
+
+
+def _url_host(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return ""
+    return parsed.netloc or ""
+
+
+def _input_summary(inp: dict[str, Any]) -> str:
+    if not inp:
+        return "{}"
+    return _shorten(_json_preview(inp), 180)
+
+
+def _input_preview(
+    name: str,
+    inp: dict[str, Any],
+    *,
+    command_preview: str = "",
+    url_preview: str = "",
+) -> str:
+    if command_preview:
+        return command_preview
+    if url_preview:
+        return url_preview
+    paths = _affected_paths(name, inp)
+    if paths:
+        return ", ".join(paths)
+    return _shorten(_json_preview(inp), MAX_PREVIEW_CHARS)
+
+
+def _json_preview(value: Any) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        text = str(value)
+    return redact(text)
+
+
+def _shorten(text: str, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."

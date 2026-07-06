@@ -131,6 +131,28 @@
 - `required_allow: string`
 - `decision_message: string`
 - `grant_matched: string`
+- `display_name: string`，给 UI 直接展示的工具名
+- `execution_mode_label: string`，给 UI 直接展示的模式名，如 `Ask First`
+- `risk_level: string`，`low` / `medium` / `high`
+- `risk_summary: string`，给确认框展示的风险说明
+- `default_action: string`，`allow` / `deny` / `none`
+- `available_actions: list[string]`，如 `allow_once` / `allow_always` / `deny`
+- `input_summary: string`，脱敏后的紧凑输入摘要
+- `input_preview: string`，确认框优先展示的脱敏预览
+- `affected_paths: list[string]`
+- `command_preview: string`
+- `url_preview: string`
+- `host: string`
+
+确认 UI 建议优先读：
+
+- `display_name`
+- `risk_level`
+- `risk_summary`
+- `default_action`
+- `available_actions`
+- `input_preview`
+- `affected_paths`
 
 ### `tool_end`
 
@@ -158,6 +180,17 @@
 - `required_allow: string`
 - `execution_mode: string`
 - `grant_matched: string`
+- `display_name: string`
+- `execution_mode_label: string`
+- `risk_level: string`
+- `risk_summary: string`
+- `default_action: string`
+- `available_actions: list[string]`
+- `input_preview: string`
+- `affected_paths: list[string]`
+- `command_preview: string`
+- `url_preview: string`
+- `host: string`
 
 ### `retry`
 
@@ -222,19 +255,22 @@ async def confirm_callback(decision) -> str:
 - `"allow"`：本次临时放行，执行后撤销临时 grant。
 - `"deny"`：不执行工具，返回 denied 工具结果。
 - `"always"`：放行，并加入当前 agent 的 `_destructive_allowed`，本轮后续同类工具不再询问。
-- `/stop` 中断 pending confirm 时，后端会取消等待并按 denied 结果收口。
+- `/stop` 中断 pending confirm 时，后端会取消等待并按固定 denied 结果收口：
+  - `tool_end.status="denied"`
+  - `tool_end.category="authorization"`
+  - `tool_end.error="tool confirmation interrupted"`
 - 需要 confirm 的工具不会并发确认；后端会串行化这些工具，避免前端单一确认框被覆盖。
 
 前端确认框最少需要读：
 
 - `decision.tool_name`
+- `decision.display_name`
 - `decision.permission_category`
-
-可选展示：
-
-- `decision.required_allow`
-- `decision.reason_code`
-- `decision.decision_message`
+- `decision.execution_mode_label`
+- `decision.risk_summary`
+- `decision.default_action`
+- `decision.available_actions`
+- `decision.input_preview`
 
 ## 4. Execution Mode
 

@@ -236,6 +236,17 @@ async def execute_tool_call_result(
             required_allow=tool_decision.required_allow if tool_decision else "",
             execution_mode=tool_decision.execution_mode if tool_decision else "",
             grant_matched=tool_decision.grant_matched if tool_decision else "",
+            display_name=tool_decision.display_name if tool_decision else "",
+            execution_mode_label=tool_decision.execution_mode_label if tool_decision else "",
+            risk_level=tool_decision.risk_level if tool_decision else "",
+            risk_summary=tool_decision.risk_summary if tool_decision else "",
+            default_action=tool_decision.default_action if tool_decision else "",
+            available_actions=list(tool_decision.available_actions) if tool_decision else [],
+            input_preview=tool_decision.input_preview if tool_decision else "",
+            affected_paths=list(tool_decision.affected_paths) if tool_decision else [],
+            command_preview=tool_decision.command_preview if tool_decision else "",
+            url_preview=tool_decision.url_preview if tool_decision else "",
+            host=tool_decision.host if tool_decision else "",
         )
         return result
 
