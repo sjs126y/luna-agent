@@ -26,11 +26,13 @@ plugins_app = typer.Typer(help="Manage plugins")
 tokens_app = typer.Typer(help="Estimate token/context usage")
 agents_app = typer.Typer(help="Run controlled agent helpers")
 memory_app = typer.Typer(help="Inspect and manage memory")
+protocol_app = typer.Typer(help="Inspect frontend/backend protocol contracts")
 
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(tokens_app, name="tokens")
 app.add_typer(agents_app, name="agents")
 app.add_typer(memory_app, name="memory")
+app.add_typer(protocol_app, name="protocol")
 
 
 _CONFIG_TEMPLATE_LOCAL = """# Personal Agent minimal configuration
@@ -778,6 +780,18 @@ def memory_search(
             typer.echo(format_memory_entries(entries, title="记忆搜索结果"))
 
     asyncio.run(_run())
+
+
+@protocol_app.command("schema")
+def protocol_schema(
+    json_output: bool = typer.Option(True, "--json/--no-json", help="输出 JSON。当前协议契约以 JSON 为准。"),
+) -> None:
+    """Print the frontend-facing event protocol schema."""
+    if not json_output:
+        _exit_error("protocol schema 当前只支持 JSON 输出，请使用 --json。")
+    from personal_agent.conversation.events import frontend_protocol_schema
+
+    typer.echo(_json_dumps(frontend_protocol_schema()))
 
 
 @memory_app.command("show")

@@ -10,6 +10,7 @@ from personal_agent.conversation.events import (
     EVENT_SCHEMAS,
     ConversationEvent,
     event_protocol_schema,
+    frontend_protocol_schema,
     validate_event_contract,
 )
 
@@ -52,6 +53,10 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert decision_fields["execution_mode_label"]["type"] == "string"
     assert decision_fields["risk_summary"]["type"] == "string"
     assert decision_fields["affected_paths"]["type"] == "list[string]"
+
+
+def test_frontend_protocol_schema_aliases_event_protocol_schema():
+    assert frontend_protocol_schema() == event_protocol_schema()
 
 
 def test_conversation_event_as_dict_includes_protocol_version():

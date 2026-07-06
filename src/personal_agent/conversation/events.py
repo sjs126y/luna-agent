@@ -318,6 +318,11 @@ def event_protocol_schema() -> dict[str, Any]:
     }
 
 
+def frontend_protocol_schema() -> dict[str, Any]:
+    """Return the stable protocol contract consumed by TUI/desktop/web frontends."""
+    return event_protocol_schema()
+
+
 def validate_event_contract(event: ConversationEvent) -> list[str]:
     """Lightweight contract validation for tests and future debug tooling."""
     errors: list[str] = []

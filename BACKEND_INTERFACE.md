@@ -23,6 +23,20 @@
 - `data`：结构化字段，前端逻辑应主要依赖这里。
 - `assistant_delta` / `thinking_delta` 是高频事件，只有 sink 设置 `wants_deltas=True` 才会收到。
 
+前端/桌面端可以通过稳定入口读取协议 schema：
+
+```bash
+personal-agent protocol schema --json
+```
+
+Python 层入口：
+
+```python
+from personal_agent.conversation import frontend_protocol_schema
+
+schema = frontend_protocol_schema()
+```
+
 后端源码契约在：
 
 - `src/personal_agent/conversation/events.py`

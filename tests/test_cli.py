@@ -30,6 +30,23 @@ def test_tokens_estimate_command_outputs_number():
     assert result.output.strip().isdigit()
 
 
+def test_protocol_schema_command_outputs_frontend_contract():
+    result = runner.invoke(app, ["protocol", "schema", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["protocol_version"] == 1
+    assert "assistant_delta" in data["delta_event_types"]
+    assert data["events"]["tool_decision"]["type"] == "tool_decision"
+    fields = {
+        field["name"]: field
+        for field in data["events"]["tool_decision"]["fields"]
+    }
+    assert fields["tool_name"]["required"] is True
+    assert fields["display_name"]["type"] == "string"
+    assert fields["available_actions"]["type"] == "list[string]"
+
+
 def test_doctor_report_includes_execution_policy():
     from personal_agent.config import Settings
 
