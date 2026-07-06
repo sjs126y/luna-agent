@@ -20,6 +20,9 @@ from personal_agent.tui.state import ToolTrace, UIState
 from personal_agent.tui.renderer_base import Renderer
 from personal_agent.tui import theme
 
+_EXPAND_HINT_MIN_CHARS = 160
+_EXPAND_HINT_MIN_LINES = 4
+
 
 def _noop() -> None: ...
 async def _noop_print(_text: str) -> None: ...
@@ -267,6 +270,8 @@ class InlineRenderer(Renderer):
         summary = f" {theme.dim(summary_text)}" if summary_text else ""
         if item.risk_summary and item.status in {"denied", "error"}:
             summary += f" {theme.dim(item.risk_summary)}"
+        if _should_hint_expand(item):
+            summary += f" {theme.sgr('Ctrl+O 展开', theme.TOOL_HINT)}"
         return f"  ⚙ {item.display_name}{summary}  {mark}{dur}"
 
 
@@ -282,6 +287,13 @@ def _optional_int(value) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _should_hint_expand(item: ToolTrace) -> bool:
+    text = item.full_output or item.output_summary
+    if not text:
+        return False
+    return len(text) >= _EXPAND_HINT_MIN_CHARS or len(text.splitlines()) >= _EXPAND_HINT_MIN_LINES
 
 
 def _optional_float(value) -> float | None:

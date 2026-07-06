@@ -78,6 +78,25 @@ async def test_tool_lifecycle_and_expandable():
     assert "t1" not in r.state.active_tools
     assert r.state.last_expandable == ("read", "DATA")
     assert any("read" in line for line in printed)
+    assert "Ctrl+O 展开" not in "\n".join(printed)
+
+
+@pytest.mark.asyncio
+async def test_tool_end_hints_expand_for_long_output():
+    r, printed, _ = _make()
+    await r.emit(ConversationEvent("tool_end", data={
+        "tool_use_id": "t1",
+        "tool_name": "read",
+        "display_name": "Read file",
+        "status": "success",
+        "input_preview": "large.log",
+        "full_output": "line1\nline2\nline3\nline4",
+    }))
+    text = "\n".join(printed)
+    assert "Read file" in text
+    assert "large.log" in text
+    assert "Ctrl+O 展开" in text
+    assert r.state.last_expandable == ("Read file", "line1\nline2\nline3\nline4")
 
 
 @pytest.mark.asyncio

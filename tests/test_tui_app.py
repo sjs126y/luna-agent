@@ -63,7 +63,7 @@ def test_expand_last_prints_when_present():
     app.state.last_expandable = ("read", "line1\nline2")
     app._expand_last()
     assert len(printed) == 1
-    assert "read" in printed[0]
+    assert "展开 read" in printed[0]
     assert "line1" in printed[0] and "line2" in printed[0]
 
 

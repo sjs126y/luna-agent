@@ -397,7 +397,7 @@ class InlineTuiApp:
             return  # already expanded this content; don't restack
         self._last_expanded = self.state.last_expandable
         name, full = self.state.last_expandable
-        header = theme.sgr(f"$ {name}", theme.EXPAND_HEADER)
+        header = theme.sgr(f"展开 {name}", theme.EXPAND_HEADER)
         body = "\n".join(f"  {line}" for line in (full.splitlines() or [full]))
         self._print_above_nowait(f"{header}\n{body}")
 
