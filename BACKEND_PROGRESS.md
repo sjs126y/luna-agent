@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-06 14:45 CST
+更新时间：2026-07-06 23:25 CST
 
 ## 交接定位
 
@@ -25,6 +25,7 @@
 - Tool truth / turn report：`AgentTurnReport` 能记录工具真实调用、retry、错误、口头声称工具调用但实际未调用等信息。
 - Tool runs：工具执行结果已持久化，并提供 `/tool-runs` 与 `ConversationQueryService` 查询。
 - Turn reports：每轮 `AgentTurnReport` 已进入持久化审计链路，可和 tool runs 通过 `turn_id/session_key` 关联。
+- Activity runtime：已提供统一结构化接口，覆盖子 agent、后台进程和 gateway agent，并支持 `/activity`、结构化 `CommandResult.kind="activity"`、runtime/query API、slash metadata 和动态候选。
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
@@ -63,7 +64,7 @@ uv run pytest -q
 
 结果：`68 passed`，全量 `667 passed`。
 
-## 当前推进方向：Turn Report 持久化
+## 已完成方向：Turn Report 持久化
 
 目标：把内存态 `AgentTurnReport` 升级为可长期查询的后端审计链路，并和已落库的 `tool_runs` 通过 `turn_id/session_key` 关联。
 
@@ -98,6 +99,33 @@ uv run pytest -q
 下一步：
 
 - 如前端需要历史详情 UI，可基于 `ConversationService.recent_persisted_turn_reports(...)` 和 `tool_runs_for_turn_report(...)` 接入。
+
+## 当前推进方向：Activity 稳定结构化接口
+
+状态：v1/v2/v3 已完成并提交。
+
+目标：给 inline TUI / future desktop-web 提供稳定 Activity 接口，用于查看当前系统正在运行的子 agent、后台进程和 gateway agent。
+
+已完成：
+
+- v1：新增 `personal_agent.activity` 聚合层，统一 summary/list/detail 结构；后台进程工具增加 `process_snapshot(...)`、`process_detail(...)`、`process_choices(...)`；runtime health 增加 `activity`。
+- v2：新增 `/activity [agents|processes|gateway] [id]`；`CommandResult` 增加可选 `kind` / `payload`；`ConversationCommandRuntime` 提供 `activity_snapshot(...)`、`activity_detail(...)`、`activity_choices(...)`。
+- v3：补齐前端便捷字段 `task_preview`、`command_preview`、`has_stdout`、`has_stderr`、`stdout_bytes`、`stderr_bytes`、`output_preview`；新增 `slash_command_metadata(...)` 和 `slash_argument_choices(...)`；activity 动态 provider 为 `activity_agents`、`activity_processes`、`activity_gateway`。
+- `BACKEND_INTERFACE.md` 已同步 Activity payload、detail payload、slash metadata 和动态候选契约。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_activity.py tests/test_commands.py tests/test_conversation_command_runtime.py tests/test_cli_shell.py -q
+```
+
+结果：`49 passed`。
+
+下一步：
+
+- 跑全量回归，确认没有影响旧命令和 CLI/TUI。
+- 前端接入后如果需要 activity 历史分页或 gateway 已完成记录，再扩展持久化层；当前 gateway detail 只覆盖运行中的 gateway agent。
 
 ## 后续可评估方向
 

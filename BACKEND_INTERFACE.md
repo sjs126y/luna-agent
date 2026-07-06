@@ -435,7 +435,92 @@ async def confirm_callback(decision) -> str:
 - `last_cache_write_tokens: integer`
 - `last_cache_read_tokens: integer`
 
-## 8. Compatibility Notes
+## 8. Activity Runtime Interface
+
+后端已提供稳定 Activity 接口，用于前端展示“系统正在做什么”。Activity 覆盖：
+
+- `sub_agent`：主 agent 委派的子任务。
+- `background_process`：`process_start` 启动的后台进程。
+- `gateway_agent`：gateway 平台消息触发的一次主 agent 处理流程。
+
+入口：
+
+- Slash command：`/activity [agents|processes|gateway] [id]`
+- Command result：`CommandResult.kind == "activity"`，结构化数据在 `payload`。
+- Runtime/query API：
+  - `activity_snapshot(limit=20)`
+  - `activity_detail(kind, id_)`
+  - `activity_choices(provider, query="", limit=20)`
+  - `slash_command_metadata()`
+  - `slash_argument_choices(provider, command="", args=(), query="", limit=20)`
+
+`/activity` overview payload：
+
+```json
+{
+  "summary": {
+    "has_active_work": true,
+    "active_total": 3,
+    "attention_required": false,
+    "longest_running_seconds": 34.6,
+    "counts": {
+      "sub_agents": {"active": 1, "recent": 12, "failed_recent": 1, "stop_requested": 0},
+      "background_processes": {"total": 2, "running": 1, "done": 1, "killed": 0},
+      "gateway_agents": {"running": 1, "stop_requested": 0}
+    }
+  },
+  "sub_agents": {"active_runs": [], "recent_runs": []},
+  "background_processes": {"items": []},
+  "gateway_agents": {"running_agent_runs": []}
+}
+```
+
+列表 item 公共字段：
+
+- `id: string`
+- `kind: "sub_agent" | "background_process" | "gateway_agent"`
+- `status: "running" | "completed" | "failed" | "stopped" | "stopping"`
+- `started_at: string`
+- `finished_at: string`
+- `duration_seconds: number`
+- `stop_requested: boolean`
+- `error: string`
+- `attention_required: boolean`
+
+各类 item 还会提供前端常用字段：
+
+- `sub_agent`：`run_id`, `role`, `task`, `task_preview`, `usage`, `quota`, `tool_counts`, `result_preview`。
+- `background_process`：`pid`, `command`, `command_preview`, `cwd`, `returncode`, `has_stdout`, `has_stderr`, `stdout_bytes`, `stderr_bytes`, `output_preview`, `stdout_truncated`, `stderr_truncated`。
+- `gateway_agent`：`session_key`, `platform`, `chat_id`, `user_id`。
+
+详情 payload：
+
+```json
+{"kind": "sub_agent", "id": "abc123", "run": {}}
+{"kind": "background_process", "id": "3", "process": {}}
+{"kind": "gateway_agent", "id": "telegram:c1:u1", "gateway_run": {}}
+```
+
+Slash metadata：
+
+- `slash_command_metadata()` 中 `/activity` 声明 `result_kind="activity"`。
+- `/activity` 的 `scope` 参数是 choice：`agents`, `processes`, `gateway`。
+- `/activity agents [id]` 使用 dynamic provider `activity_agents`。
+- `/activity processes [id]` 使用 dynamic provider `activity_processes`。
+- `/activity gateway [id]` 使用 dynamic provider `activity_gateway`。
+
+动态候选外形：
+
+```json
+{
+  "value": "abc123",
+  "label": "abc123",
+  "description": "reviewer running",
+  "append_space": false
+}
+```
+
+## 9. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

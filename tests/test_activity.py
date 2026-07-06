@@ -103,8 +103,13 @@ def test_activity_snapshot_normalizes_all_activity_sources(monkeypatch):
         "stop_requested": 1,
     }
     assert snapshot["sub_agents"]["active_runs"][0]["status"] == "stopping"
+    assert snapshot["sub_agents"]["active_runs"][0]["task_preview"] == "check current work"
     assert snapshot["sub_agents"]["recent_runs"][0]["status"] == "failed"
     assert snapshot["background_processes"]["items"][0]["kind"] == "background_process"
+    assert snapshot["background_processes"]["items"][0]["command_preview"] == "bad command"
+    assert snapshot["background_processes"]["items"][0]["has_stderr"] is True
+    assert snapshot["background_processes"]["items"][0]["stderr_bytes"] == len("failed")
+    assert snapshot["background_processes"]["items"][0]["output_preview"] == "failed"
     assert snapshot["gateway_agents"]["running_agent_runs"][0]["status"] == "stopping"
 
 

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.commands.runtime import current_mode_from_policy, handle_slash_command
+from personal_agent.commands.runtime import (
+    current_mode_from_policy,
+    handle_slash_command,
+    slash_argument_choices,
+    slash_command_metadata,
+)
 from personal_agent.config import Settings
 from personal_agent.models.messages import SessionSource
 from personal_agent.plugins.models import CommandEntry
@@ -229,6 +234,16 @@ class Runtime:
             }
         return None
 
+    async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20):
+        if provider == "activity_agents":
+            return [{
+                "value": "agent-1",
+                "label": "agent-1",
+                "description": "reviewer running",
+                "append_space": False,
+            }]
+        return []
+
     async def clear_agent(self):
         self.clear_called = True
 
@@ -445,6 +460,33 @@ async def test_shared_command_activity_lists_and_shows_detail(tmp_path):
     assert "Activity detail" in shown.response
     assert missing.payload["not_found"] is True
     assert "未找到 activity" in missing.response
+
+
+@pytest.mark.asyncio
+async def test_slash_metadata_and_activity_argument_choices(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    metadata = slash_command_metadata(runtime)
+    activity = next(item for item in metadata if item["name"] == "activity")
+    choices = await slash_argument_choices(
+        runtime,
+        "activity_agents",
+        command="activity",
+        args=("agents",),
+        query="agent",
+    )
+
+    assert activity["result_kind"] == "activity"
+    assert activity["usage"] == "/activity [agents|processes|gateway] [id]"
+    assert activity["arguments"][0]["kind"] == "choice"
+    assert activity["arguments"][1]["provider_by_scope"]["agents"] == "activity_agents"
+    assert activity["children"][1]["arguments"][0]["provider"] == "activity_processes"
+    assert choices == [{
+        "value": "agent-1",
+        "label": "agent-1",
+        "description": "reviewer running",
+        "append_space": False,
+    }]
 
 
 @pytest.mark.asyncio

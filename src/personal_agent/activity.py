@@ -277,6 +277,7 @@ def _sub_agent_item(data: dict[str, Any], *, active: bool) -> dict[str, Any]:
         "raw_status": raw_status,
         "role": str(data.get("role") or ""),
         "task": str(data.get("task") or ""),
+        "task_preview": _trim(str(data.get("task") or ""), 160),
         "model": str(data.get("model") or ""),
         "tool_policy": data.get("tool_policy") or "",
         "active": bool(data.get("active", active)),

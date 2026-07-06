@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import inspect
 from typing import Any, Protocol
@@ -117,6 +118,21 @@ _MODE_ALIASES = {
     "sovereign": "full-auto",
 }
 
+_ALLOW_CHOICES = (
+    ("write", "write", "Allow file writes"),
+    ("bash", "bash", "Allow shell commands"),
+    ("background", "background", "Allow background processes"),
+    ("network", "network", "Allow network actions"),
+    ("destructive", "destructive", "Allow destructive actions"),
+    ("all", "all", "Allow all categories"),
+)
+
+_ACTIVITY_SCOPE_CHOICES = (
+    ("agents", "agents", "Sub-agent runs"),
+    ("processes", "processes", "Background processes"),
+    ("gateway", "gateway", "Gateway agent runs"),
+)
+
 
 async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandResult:
     text = text.strip()
@@ -185,6 +201,261 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         return CommandResult.continue_with(skill_text)
 
     return CommandResult.unhandled()
+
+
+def slash_command_metadata(runtime: CommandRuntime | None = None) -> list[dict[str, Any]]:
+    """Return frontend-consumable slash command registry metadata."""
+    entries = _core_slash_command_metadata()
+    plugin_lines = _plugin_command_metadata(runtime)
+    if plugin_lines:
+        entries.extend(plugin_lines)
+    return entries
+
+
+async def slash_argument_choices(
+    runtime: CommandRuntime | None,
+    provider: str,
+    *,
+    command: str = "",
+    args: tuple[str, ...] = (),
+    query: str = "",
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return dynamic slash argument candidates for registry metadata providers."""
+    del command, args
+    provider = str(provider or "").strip()
+    limit = max(1, int(limit or 20))
+    if provider in {"activity_agents", "activity_processes", "activity_gateway"}:
+        if runtime is not None:
+            custom = await _call_optional(
+                runtime,
+                "activity_choices",
+                provider,
+                query=query,
+                limit=limit,
+            )
+            if custom is not None:
+                return _normalize_choice_items(custom, limit=limit)
+        from personal_agent.activity import activity_choices
+
+        return _normalize_choice_items(
+            activity_choices(provider, query=query, limit=limit),
+            limit=limit,
+        )
+    return []
+
+
+def _core_slash_command_metadata() -> list[dict[str, Any]]:
+    mode_choices = [
+        {
+            "value": choice.label,
+            "label": choice.label,
+            "description": choice.profile,
+            "append_space": False,
+        }
+        for choice in MODE_CHOICES
+    ]
+    allow_choices = [
+        {
+            "value": value,
+            "label": label,
+            "description": description,
+            "append_space": False,
+        }
+        for value, label, description in _ALLOW_CHOICES
+    ]
+    activity_scope_choices = [
+        {
+            "value": value,
+            "label": label,
+            "description": description,
+            "append_space": True,
+        }
+        for value, label, description in _ACTIVITY_SCOPE_CHOICES
+    ]
+    return deepcopy([
+        {
+            "name": "new",
+            "command": "/new",
+            "summary": "重置当前会话",
+            "usage": "/new",
+            "arguments": [],
+        },
+        {
+            "name": "session",
+            "command": "/session",
+            "summary": "管理会话",
+            "usage": "/session [current|list|switch <name>|rename <name>|delete [name]]",
+            "arguments": [],
+        },
+        {
+            "name": "usage",
+            "command": "/usage",
+            "summary": "查看当前会话上下文预算",
+            "usage": "/usage",
+            "arguments": [],
+        },
+        {
+            "name": "allow",
+            "command": "/allow",
+            "summary": "授权危险操作",
+            "usage": "/allow <category>",
+            "arguments": [{
+                "name": "category",
+                "kind": "choice",
+                "required": False,
+                "choices": allow_choices,
+            }],
+        },
+        {
+            "name": "mode",
+            "command": "/mode",
+            "summary": "切换执行模式",
+            "usage": "/mode <mode>",
+            "arguments": [{
+                "name": "mode",
+                "kind": "choice",
+                "required": False,
+                "choices": mode_choices,
+            }],
+        },
+        {
+            "name": "stop",
+            "command": "/stop",
+            "summary": "停止当前处理",
+            "usage": "/stop",
+            "arguments": [],
+        },
+        {
+            "name": "export",
+            "command": "/export",
+            "summary": "导出当前会话 JSONL",
+            "usage": "/export",
+            "arguments": [],
+        },
+        {
+            "name": "agents",
+            "command": "/agents",
+            "summary": "查看子 agent 运行记录",
+            "usage": "/agents [list [limit]|show <run_id>|clear]",
+            "arguments": [],
+        },
+        {
+            "name": "activity",
+            "command": "/activity",
+            "summary": "查看子 agent、后台任务和 Gateway agent 活动",
+            "usage": "/activity [agents|processes|gateway] [id]",
+            "result_kind": "activity",
+            "arguments": [
+                {
+                    "name": "scope",
+                    "kind": "choice",
+                    "required": False,
+                    "choices": activity_scope_choices,
+                },
+                {
+                    "name": "id",
+                    "kind": "dynamic",
+                    "required": False,
+                    "provider_by_scope": {
+                        "agents": "activity_agents",
+                        "processes": "activity_processes",
+                        "gateway": "activity_gateway",
+                    },
+                },
+            ],
+            "children": [
+                {
+                    "name": "agents",
+                    "usage": "/activity agents [id]",
+                    "summary": "查看子 agent 活动",
+                    "arguments": [{
+                        "name": "id",
+                        "kind": "dynamic",
+                        "provider": "activity_agents",
+                        "required": False,
+                    }],
+                },
+                {
+                    "name": "processes",
+                    "usage": "/activity processes [id]",
+                    "summary": "查看后台任务活动",
+                    "arguments": [{
+                        "name": "id",
+                        "kind": "dynamic",
+                        "provider": "activity_processes",
+                        "required": False,
+                    }],
+                },
+                {
+                    "name": "gateway",
+                    "usage": "/activity gateway [id]",
+                    "summary": "查看 Gateway agent 活动",
+                    "arguments": [{
+                        "name": "id",
+                        "kind": "dynamic",
+                        "provider": "activity_gateway",
+                        "required": False,
+                    }],
+                },
+            ],
+        },
+        {
+            "name": "memory",
+            "command": "/memory",
+            "summary": "查看和管理记忆",
+            "usage": "/memory [list|search <query>|show <id>|delete <id>|doctor]",
+            "arguments": [],
+        },
+        {
+            "name": "help",
+            "command": "/help",
+            "summary": "显示帮助",
+            "usage": "/help",
+            "arguments": [],
+        },
+    ])
+
+
+def _plugin_command_metadata(runtime: CommandRuntime | None) -> list[dict[str, Any]]:
+    if runtime is None or runtime.plugin_manager is None:
+        return []
+    commands = getattr(runtime.plugin_manager, "commands", {})
+    if not isinstance(commands, dict):
+        return []
+    scopes = set(_plugin_command_scopes(runtime))
+    entries = []
+    for name, entry in sorted(commands.items()):
+        entry_scope = getattr(entry, "scope", "slash")
+        if entry_scope != "both" and entry_scope not in scopes:
+            continue
+        description = getattr(entry, "description", "") or "插件命令"
+        entries.append({
+            "name": name,
+            "command": f"/{name}",
+            "summary": description,
+            "usage": f"/{name}",
+            "plugin": getattr(entry, "plugin_key", "") or "",
+            "arguments": [],
+        })
+    return entries
+
+
+def _normalize_choice_items(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    choices = []
+    for item in items:
+        value = str(item.get("value") or "")
+        if not value:
+            continue
+        choices.append({
+            "value": value,
+            "label": str(item.get("label") or value),
+            "description": str(item.get("description") or ""),
+            "append_space": bool(item.get("append_space", False)),
+        })
+        if len(choices) >= limit:
+            break
+    return choices
 
 
 def _parse_command(text: str) -> tuple[str, str] | None:

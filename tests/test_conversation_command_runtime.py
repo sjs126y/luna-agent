@@ -118,9 +118,18 @@ async def test_conversation_command_runtime_activity_uses_gateway_snapshot():
 
     snapshot = await runtime.activity_snapshot()
     detail = await runtime.activity_detail("gateway_agent", "telegram:c1:u1")
+    choices = await runtime.slash_argument_choices(
+        "activity_gateway",
+        command="activity",
+        args=("gateway",),
+        query="telegram",
+    )
+    metadata = runtime.slash_command_metadata()
 
     assert snapshot["gateway_agents"]["running_agent_runs"][0]["id"] == "telegram:c1:u1"
     assert detail["gateway_run"]["platform"] == "telegram"
+    assert choices[0]["value"] == "telegram:c1:u1"
+    assert any(item["name"] == "activity" for item in metadata)
 
 
 @pytest.mark.asyncio

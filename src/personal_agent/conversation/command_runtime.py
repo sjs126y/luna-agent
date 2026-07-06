@@ -80,6 +80,31 @@ class ConversationCommandRuntime:
             gateway_snapshot=self._gateway_snapshot(),
         )
 
+    def slash_command_metadata(self) -> list[dict]:
+        from personal_agent.commands.runtime import slash_command_metadata
+
+        return slash_command_metadata(self)
+
+    async def slash_argument_choices(
+        self,
+        provider: str,
+        *,
+        command: str = "",
+        args: tuple[str, ...] = (),
+        query: str = "",
+        limit: int = 20,
+    ) -> list[dict]:
+        from personal_agent.commands.runtime import slash_argument_choices
+
+        return await slash_argument_choices(
+            self,
+            provider,
+            command=command,
+            args=args,
+            query=query,
+            limit=limit,
+        )
+
     async def usage(self, *, current_user_message: str = "") -> str:
         return await self.conversation_service.usage_summary(
             self.session_key,
