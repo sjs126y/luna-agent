@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 00:45 CST
+更新时间：2026-07-07 00:58 CST
 
 ## 交接定位
 
@@ -27,6 +27,7 @@
 - Turn reports：每轮 `AgentTurnReport` 已进入持久化审计链路，可和 tool runs 通过 `turn_id/session_key` 关联。
 - Activity runtime：已提供统一结构化接口，覆盖子 agent、后台进程和 gateway agent，并支持 `/activity`、结构化 `CommandResult.kind="activity"`、runtime/query API、slash metadata 和动态候选。
 - Usage / context：`llm_start` / `llm_end` 已区分“最近一次 API token 消耗”和“当前上下文占用估算”；`/usage` 已修正工具计数文案，避免把活跃 turn 内部计数显示成会话统计。
+- Tool protocol prompt：系统提示已加入稳定工具调用规则，要求需要工具时必须发出 tool call，避免只用文字声称已调用工具；未加入正则 retry 或额外控制流。
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
@@ -158,4 +159,14 @@ uv run pytest -q
 
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。
 - 上下文压缩质量：优化长对话压缩后的任务状态、路径、工具结果保留。
-- 工具失败恢复策略：改进工具错误、权限拒绝、格式错误后的模型恢复提示。
+- 工具失败恢复策略：改进工具错误、权限拒绝、格式错误后的模型恢复提示；暂不做“声称调用工具但无 tool_call”的正则触发 retry。
+
+最近一次验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_agent_factory.py tests/test_agent_loop.py tests/test_transport_cache.py tests/test_context_budget.py -q
+uv run pytest -q
+```
+
+结果：聚焦 `29 passed`，全量 `685 passed`。
