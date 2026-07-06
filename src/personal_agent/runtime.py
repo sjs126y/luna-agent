@@ -233,6 +233,7 @@ class AppRuntime:
         )
         boot = self.boot_report.as_dict()
         turns = self.conversation_service.turn_report_summary()
+        turns["persisted"] = self.conversation_service.turn_report_persistence_summary()
         return {
             "data_dir": str(self.data_dir),
             "db_open": getattr(self.db, "_conn", None) is not None,

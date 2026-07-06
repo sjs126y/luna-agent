@@ -337,6 +337,8 @@ async def confirm_callback(decision) -> str:
 - `ConversationService` 从 `tool_end` 事件自动记录 tool runs。
 - runtime health / doctor 会显示 tool run 摘要。
 
+`recent_tool_runs(...)` 当前支持按 `session_key` 和 `turn_id` 过滤，用于和持久化 turn report 关联。
+
 后续如果前端需要 UI 查询接口，请先明确：
 
 - 查询范围：当前 session / 最近全局 / 指定 turn。
@@ -344,7 +346,52 @@ async def confirm_callback(decision) -> str:
 - 是否需要 `full_output`。
 - 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-## 6. Runtime / Doctor Cache Diagnostics
+## 6. Turn Reports
+
+后端会把每轮 `AgentTurnReport` 持久化到 SQLite，作为 turn 级审计记录。它记录一轮对话的整体状态、LLM/cache usage、工具调用汇总、retry、错误、tool truth 等信息。
+
+当前能力：
+
+- `Database.save_turn_report(...)`
+- `Database.recent_turn_reports(limit=20, session_key=None, status=None)`
+- `Database.get_turn_report(report_id)`
+- `Database.turn_report_summary()`
+- `SessionStore` 有对应代理。
+- `ConversationService.recent_persisted_turn_reports(...)`
+- `ConversationService.get_persisted_turn_report(...)`
+- `ConversationService.tool_runs_for_turn_report(report_id)`
+- `ConversationService.persisted_turn_report_summary()`
+
+常见字段：
+
+- `id: integer`
+- `session_id: string`
+- `session_key: string`
+- `turn_id: string`
+- `status: string`，`completed` / `failed` / `stopped` / `context_overflow`
+- `completed: boolean`
+- `duration: number`
+- `error: string`
+- `user_message_summary: string`
+- `final_response_summary: string`
+- `llm_calls: integer`
+- `tool_calls: integer`
+- `cache_hit_tokens: integer`
+- `cache_miss_tokens: integer`
+- `cache_write_tokens: integer`
+- `cache_read_tokens: integer`
+- `source: object`
+- `report: object`，完整 `AgentTurnReport`
+- `created_at: number`
+
+关联语义：
+
+- `turn_reports.turn_id` 与 `tool_runs.turn_id` 对齐。
+- `session_key` 用于查询同一逻辑会话，包括发生压缩后的会话链。
+- `session_id` 用于精确归属当前物理 session。
+- `tool_runs_for_turn_report(report_id)` 会按 `session_key + turn_id` 返回该轮工具明细。
+
+## 7. Runtime / Doctor Cache Diagnostics
 
 `personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
 
@@ -370,7 +417,25 @@ async def confirm_callback(decision) -> str:
 
 `last_diagnostics` 与 `llm_end.cache_diagnostics` 字段一致。
 
-## 7. Compatibility Notes
+`personal-agent doctor --section runtime --json` 的 `runtime.turns.persisted` 会暴露持久化 turn report 摘要。
+
+常见字段：
+
+- `stored: integer`
+- `last_id: integer`
+- `last_turn_id: string`
+- `last_session_key: string`
+- `last_status: string`
+- `last_error: string`
+- `last_duration: number`
+- `last_llm_calls: integer`
+- `last_tool_calls: integer`
+- `last_cache_hit_tokens: integer`
+- `last_cache_miss_tokens: integer`
+- `last_cache_write_tokens: integer`
+- `last_cache_read_tokens: integer`
+
+## 8. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

@@ -1056,6 +1056,9 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
     try:
         runtime = await create_app_runtime(settings)
         runtime_data = runtime.health_snapshot()
+        runtime_data.setdefault("turns", {})["persisted"] = (
+            await runtime.conversation_service.persisted_turn_report_summary()
+        )
         runtime_data.update({
             "initialized": True,
             "error": "",
@@ -1373,6 +1376,13 @@ def _format_boot_step_lines(boot: dict[str, Any]) -> list[str]:
 def _format_turn_summary(turns: dict[str, Any]) -> str:
     if not isinstance(turns, dict) or not turns:
         return "-"
+    persisted = turns.get("persisted") if isinstance(turns.get("persisted"), dict) else {}
+    persisted_suffix = ""
+    if persisted:
+        persisted_suffix = (
+            f" persisted={persisted.get('stored', 0)}"
+            f" persisted_last={persisted.get('last_status') or '-'}"
+        )
     return (
         f"stored={turns.get('stored', 0)} "
         f"last={turns.get('last_status') or '-'} "
@@ -1380,6 +1390,7 @@ def _format_turn_summary(turns: dict[str, Any]) -> str:
         f"llm={turns.get('last_llm_calls', 0)} "
         f"tools={turns.get('last_tool_calls', 0)} "
         f"retries={turns.get('last_retries', 0)}"
+        f"{persisted_suffix}"
     )
 
 
@@ -1421,7 +1432,7 @@ def _format_llm_cache_summary(cache: dict[str, Any]) -> str:
 def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
     if not isinstance(turns, dict) or not turns:
         return ["  stored: 0"]
-    return [
+    lines = [
         f"  stored: {turns.get('stored', 0)}",
         f"  last status: {turns.get('last_status') or '-'}",
         f"  last duration: {float(turns.get('last_duration') or 0.0):.3f}s",
@@ -1431,6 +1442,24 @@ def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
         f"  last retries: {turns.get('last_retries', 0)}",
         f"  last error: {turns.get('last_error') or '-'}",
     ]
+    persisted = turns.get("persisted") if isinstance(turns.get("persisted"), dict) else {}
+    if persisted:
+        lines.extend([
+            f"  persisted stored: {persisted.get('stored', 0)}",
+            f"  persisted last id: {persisted.get('last_id', 0)}",
+            f"  persisted last status: {persisted.get('last_status') or '-'}",
+            f"  persisted last session: {persisted.get('last_session_key') or '-'}",
+            f"  persisted last turn: {persisted.get('last_turn_id') or '-'}",
+            f"  persisted last error: {persisted.get('last_error') or '-'}",
+            (
+                "  persisted last cache: "
+                f"hit={persisted.get('last_cache_hit_tokens', 0)} "
+                f"miss={persisted.get('last_cache_miss_tokens', 0)} "
+                f"write={persisted.get('last_cache_write_tokens', 0)} "
+                f"read={persisted.get('last_cache_read_tokens', 0)}"
+            ),
+        ])
+    return lines
 
 
 def _format_tool_truth_detail_lines(tool_truth: dict[str, Any]) -> list[str]:

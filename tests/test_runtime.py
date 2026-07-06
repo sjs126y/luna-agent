@@ -121,6 +121,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["boot_ok"] is True
         assert health["boot_failed_step"] == ""
         assert health["turns"]["stored"] == 0
+        assert health["turns"]["persisted"]["stored"] == 0
         assert health["tool_truth"]["inspected"] == 0
         assert health["tool_runs"]["inspected"] == 0
         assert health["llm_cache"]["provider"] == settings.llm_provider
@@ -172,6 +173,38 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert turn_health["last_cache_hit_rate"] == 0.4
         assert turn_health["last_cache_diagnostics"]["stable_prefix_hash"] == "abc123"
         assert turn_health["last_retries"] == 1
+        session_source = type(
+            "Source",
+            (),
+            {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"},
+        )()
+        session = await runtime.session_store.get_or_create("cli:default:local", session_source)
+        await runtime.session_store.save_turn_report({
+            "session_id": session.session_id,
+            "session_key": "cli:default:local",
+            "source": {"platform": "cli", "user_id": "local"},
+            "report": {
+                "turn_id": "turn-runtime",
+                "status": "completed",
+                "completed": True,
+                "duration": 0.75,
+                "llm": {
+                    "calls": 1,
+                    "cache_hit_tokens": 4,
+                    "cache_miss_tokens": 6,
+                    "cache_write_tokens": 0,
+                    "cache_read_tokens": 4,
+                },
+                "tools": {"total": 2},
+            },
+        })
+        persisted_summary = await runtime.conversation_service.persisted_turn_report_summary()
+        assert persisted_summary["stored"] == 1
+        persisted_health = runtime.health_snapshot()["turns"]["persisted"]
+        assert persisted_health["stored"] == 1
+        assert persisted_health["last_turn_id"] == "turn-runtime"
+        assert persisted_health["last_status"] == "completed"
+        assert persisted_health["last_cache_hit_tokens"] == 4
         cache_health = updated_health["llm_cache"]
         assert cache_health["last_usage"]["cache_hit_tokens"] == 4
         assert cache_health["last_diagnostics"]["stable_prefix_hash"] == "abc123"
