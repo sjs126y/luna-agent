@@ -124,6 +124,10 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["turns"]["persisted"]["stored"] == 0
         assert health["tool_truth"]["inspected"] == 0
         assert health["tool_runs"]["inspected"] == 0
+        assert health["activity"]["summary"]["active_total"] >= 0
+        assert "sub_agents" in health["activity"]
+        assert "background_processes" in health["activity"]
+        assert "gateway_agents" in health["activity"]
         assert health["llm_cache"]["provider"] == settings.llm_provider
         assert health["llm_cache"]["strategy"] in {"none", "prefix", "explicit"}
         assert health["llm_cache"]["last_usage"]["cache_hit_tokens"] == 0

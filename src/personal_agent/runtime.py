@@ -226,6 +226,8 @@ class AppRuntime:
         await self.db.close()
 
     def health_snapshot(self) -> dict[str, Any]:
+        from personal_agent.activity import activity_snapshot
+
         mcp_health = _mcp_health_snapshot(
             self.mcp_manager,
             enabled=bool(self.settings.mcp_enabled),
@@ -234,6 +236,7 @@ class AppRuntime:
         boot = self.boot_report.as_dict()
         turns = self.conversation_service.turn_report_summary()
         turns["persisted"] = self.conversation_service.turn_report_persistence_summary()
+        gateway = self.gateway.health_snapshot() if self.gateway is not None else {}
         return {
             "data_dir": str(self.data_dir),
             "db_open": getattr(self.db, "_conn", None) is not None,
@@ -245,7 +248,8 @@ class AppRuntime:
             "boot_failed_step": str(boot["failed_step"]),
             "gateway_created": self.gateway is not None,
             "gateway_running": bool(self.gateway is not None and self.gateway_started),
-            "gateway": self.gateway.health_snapshot() if self.gateway is not None else {},
+            "gateway": gateway,
+            "activity": activity_snapshot(gateway_snapshot=gateway),
             "turns": turns,
             "llm_cache": _llm_cache_health_snapshot(self.settings, turns),
             "tool_truth": self.conversation_service.tool_truth_summary(),
