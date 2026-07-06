@@ -2,191 +2,29 @@
 
 更新时间：2026-07-06
 
-本文给后端线使用，描述 inline TUI / future desktop-web 前端为了做更完整体验还需要的接口能力。当前后端已提供能力见 `BACKEND_INTERFACE.md`；本文只列前端希望补齐或固化的部分。
+本文给后端线使用，只记录 inline TUI / future desktop-web 前端仍需要后端配合或需要继续固化的接口事项。已经完成并被前端消费的需求不再保留在待办区，避免重复实现或误判优先级。
 
-## 当前对接状态
+## 当前状态
 
-截至 2026-07-06：
+截至 2026-07-06，前端已接入并消费以下后端能力：
 
-- `tool_decision` / `tool_end` 的确认展示字段已由后端提供，并已被 inline TUI 消费。
-- `confirm(decision)` 的 allow / deny / always 语义已由后端提供，并已被 inline TUI 接入。
-- `/stop` 打断 pending confirm 的 `tool_end.status/category/error` 已在 `BACKEND_INTERFACE.md` 固化。
-- `frontend_protocol_schema()` 与 `personal-agent protocol schema --json` 已由后端提供。
+- `tool_decision` / `tool_end` 的确认展示字段：`display_name`, `execution_mode_label`, `risk_level`, `risk_summary`, `default_action`, `available_actions`, `input_summary`, `input_preview`, `affected_paths`, `command_preview`, `url_preview`, `host`。
+- `confirm(decision)` 的 allow / deny / always 语义，以及由 `available_actions` 限定可用确认动作。
+- `/stop` 打断 pending confirm 后的固定 `tool_end.status/category/error` 收口。
+- `retry` / `stop` / `error` 的增强状态字段：`max_attempts`, `recoverable`, `reason`, `stopped_tools`, `stopped_agents`, `category`, `detail_id`。
+- 协议 schema 入口：`frontend_protocol_schema()` 和 `personal-agent protocol schema --json`。
 
-本文后续条目中，已满足的部分保留为历史需求和前端消费依据；未满足或待细化部分集中在 tool runs 查询 UI、retry/error/stop 细粒度字段、以及更专门的 diff/network 展示。
+## 当前活跃需求
 
-## 0. 前端目标
+暂无 P0 阻塞项。
 
-短期目标不是增加花哨 UI，而是让用户在 inline TUI 里清楚知道：
+## P1：Tool Runs 查询入口（暂缓）
 
-- 当前 turn 处于 thinking / tool / retry / stopped / failed 哪个状态。
-- 工具为什么需要确认、风险是什么、默认动作是什么。
-- 确认后是本次允许、始终允许、还是拒绝。
-- 长输出、工具结果、后端审计之间可以稳定关联。
+当前 inline TUI 已能消费事件流里的工具结果摘要和确认结果。短期内如果后端不做工具结果持久化，前端可以先不开发历史工具结果面板。
 
-## 1. Tool Confirmation 展示字段
+后续如果要做 Ctrl+O 展开最近工具完整输出、future desktop 工具运行历史、或从 denied/error 跳转到完整审计详情，前端仍需要一个 runtime 层查询入口，不直接访问 Database。
 
-当前前端最少能从 `confirm(decision)` 读到：
-
-- `tool_name`
-- `permission_category`
-- `required_allow`
-- `reason_code`
-- `decision_message`
-
-这足够做 `[y/n/a]`，但不足以做更好的确认面板。后端现已在 `confirm` decision 对象，以及相关 `tool_decision` / `tool_end` 事件里稳定提供以下字段；前端应继续兼容字段缺失的旧后端。
-
-### 1.1 必需字段
-
-- `tool_use_id: string`
-- `tool_name: string`
-- `display_name: string`
-- `permission_category: string`
-- `permission_decision: "allow" | "ask" | "deny"`
-- `execution_mode: string`
-- `execution_mode_label: string`
-- `required_allow: string`
-- `decision_message: string`
-- `reason_code: string`
-
-说明：
-
-- `execution_mode` 保留内部 profile，例如 `standard` / `trusted`。
-- `execution_mode_label` 给前端直接显示，例如 `Ask First` / `Edit Freely`。
-- 如果后端暂时不想新增 `execution_mode_label`，前端可以本地映射，但长期建议后端提供，避免多前端重复维护映射。
-
-### 1.2 风险与默认动作
-
-用于把确认 UI 从裸 `y/n/a` 升级成明确的确认面板：
-
-- `risk_level: "low" | "medium" | "high"`
-- `risk_summary: string`
-- `default_action: "allow" | "deny" | "none"`
-- `available_actions: list[string]`
-
-建议含义：
-
-- `default_action` 决定 Enter 的行为。用户倾向是默认操作更方便，但前端必须明确展示默认项。
-- `available_actions` 至少支持 `allow_once` / `allow_always` / `deny`。
-- 如果后端策略认为某类工具不应 Enter 默认允许，则返回 `default_action="none"` 或 `"deny"`。
-
-前端期望展示形态：
-
-```text
-需要确认
-bash · shell command
-风险: 将执行 shell 命令
-
-Enter 允许本次   A 始终允许 bash   Esc 拒绝
-```
-
-### 1.3 输入预览
-
-用于展示“到底要做什么”，避免用户只看到工具名。
-
-通用字段：
-
-- `input_summary: string`
-- `input_preview: string`
-- `affected_paths: list[string]`
-
-按类别建议：
-
-- `write` / `edit`: `affected_paths`, `diff_summary`, `diff_preview`
-- `bash`: `command_preview`, `cwd`, `timeout_seconds`
-- `network`: `url_preview`, `host`, `method`
-- `background`: `process_label`, `command_preview`
-
-字段都应允许为空；前端会按存在字段渐进展示。
-
-## 2. Confirmation 交互语义
-
-当前后端 confirm 返回值是：
-
-- `"allow"`
-- `"deny"`
-- `"always"`
-
-这个可以继续保留。为了 UI 文案更清晰，前端建议在文档层固定别名语义：
-
-- `"allow"` = allow once / 本次允许。
-- `"always"` = allow always for current agent/session grant scope。
-- `"deny"` = deny this tool call。
-
-后端现已明确：
-
-- `"always"` 的有效范围：当前 agent、当前 session、当前 turn，还是直到模式切换。
-- `/mode` 切换后会清空哪些 grants。
-- `/stop` 打断 pending confirm 后，最终 `tool_end.status/category/error` 的固定取值。
-
-## 3. Event Stream UI 需求
-
-inline TUI 会消费 `BACKEND_INTERFACE.md` 里的事件，但希望后端保证以下字段稳定，方便前端显示。
-
-### 3.1 `retry`
-
-用于显示轻量提示，避免用户误以为卡住。
-
-希望字段：
-
-- `category: string`
-- `attempt: integer`
-- `max_attempts: integer`
-- `error: string`
-- `tool_name: string`
-- `tool_names: string`
-- `recoverable: boolean`
-
-前端展示：
-
-```text
-↻ 模型空回复，准备重试 · 1/2
-```
-
-### 3.2 `error`
-
-用于进入 scrollback 的明确错误行。
-
-希望字段：
-
-- `error: string`
-- `category: string`
-- `recoverable: boolean`
-- `detail_id: string`
-
-`detail_id` 可用于后续从日志/doctor/tool run 查询完整详情。
-
-### 3.3 `stop`
-
-用于用户按 Ctrl+C 或 `/stop` 后的可见反馈。
-
-希望字段：
-
-- `reason: "user" | "interrupt" | "timeout" | "shutdown"`
-- `message: string`
-- `stopped_tools: integer`
-- `stopped_agents: integer`
-
-### 3.4 `compression`
-
-用于显示上下文被压缩。
-
-当前字段已够用：
-
-- `pre_message_count`
-- `post_message_count`
-
-可选增强：
-
-- `token_before`
-- `token_after`
-- `reason`
-
-## 4. Tool Runs 查询接口
-
-后端已经持久化 tool runs。前端后续需要一个 runtime 层查询接口，不直接碰 Database。
-
-建议接口：
+建议接口形态：
 
 ```python
 async def recent_tool_runs(
@@ -207,59 +45,27 @@ async def get_tool_run(
 ) -> dict | None: ...
 ```
 
-前端用途：
+## P2：更专门的预览字段
 
-- Ctrl+O 展开最近工具完整输出。
-- future desktop 的工具运行历史面板。
-- 从 denied/error 工具跳到完整审计详情。
+当前前端已经消费通用预览字段，并能按 bash / network / path 做基础展示。后续如果要把写文件、补丁、网络请求做得更细，可以继续补以下可选字段：
 
-## 5. Schema / Versioning
+- `write` / `edit`: `diff_summary`, `diff_preview`
+- `bash`: `cwd`, `timeout_seconds`
+- `network`: `method`
+- `background`: `process_label`
 
-后端已提供 `protocol_version`、`EVENT_SCHEMAS`、`event_protocol_schema()`，并补了稳定的前端入口，方便 desktop/web 启动时校验协议。
+这些字段都应允许为空；前端会按存在字段渐进展示。
 
-Python 入口：
+## 前端自行待办
 
-```python
-from personal_agent.conversation import frontend_protocol_schema
+以下不需要后端接口先行：
 
-schema = frontend_protocol_schema()
-```
+- 在当前 turn 内做更完整的多工具结果列表和展开 UI。
+- 优化长工具输出的折叠、复制和滚动体验。
+- 继续调整确认面板的视觉密度和键盘提示。
 
-CLI 入口：
+## 维护规则
 
-```bash
-personal-agent protocol schema --json
-```
-
-前端用途：
-
-- UI 启动时确认协议版本。
-- desktop/web 自动生成类型。
-- 测试里对事件字段做契约校验。
-
-## 6. 前端兼容策略
-
-前端会按以下方式兼容旧后端：
-
-- 缺失 `execution_mode_label` 时，本地从 profile 映射。
-- 缺失风险字段时，只显示 tool name + permission category。
-- 缺失 preview 字段时，退回 `input_summary`。
-- 缺失 `default_action` 时，前端不把 Enter 绑定为 allow，除非产品明确决定默认 allow。
-- 未知事件字段忽略，未知事件类型只记录不渲染。
-
-## 7. 优先级
-
-P0：
-
-- 已完成：confirm decision 增加 `tool_use_id`, `display_name`, `execution_mode_label`, `default_action`, `available_actions`, `risk_summary`, `input_preview`。
-- 已完成：固化 `/stop` 打断 confirm 后的 `tool_end` 字段。
-
-P1：
-
-- `retry/error/stop` 增加用于 UI 展示的稳定字段。
-- runtime 层 tool runs 查询接口。
-
-P2：
-
-- 已完成：协议 schema CLI/API。
-- diff preview / affected paths / network host 等按工具类别细化字段。
+- 需求被后端提供且前端已经消费后，从“当前活跃需求”移除。
+- 已完成项只在“当前状态”里做简短归档，不保留字段级实现清单。
+- 如果一个需求被明确暂缓，标注“暂缓”，避免被当作当前阻塞项。
