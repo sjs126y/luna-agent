@@ -186,8 +186,7 @@ def _confirm_lines(confirm) -> list[str]:
         lines.append(theme.dim(f"  {meta}"))
     if confirm.risk_summary:
         lines.append(f"  风险: {confirm.risk_summary}")
-    if confirm.input_preview:
-        lines.append(theme.dim(f"  {confirm.input_preview}"))
+    lines.extend(_confirm_detail_lines(confirm))
     actions = set(confirm.available_actions)
     if confirm.default_action == "allow" and "allow_once" in actions:
         default = "Enter 允许本次"
@@ -206,4 +205,23 @@ def _confirm_lines(confirm) -> list[str]:
         action_parts.append(theme.sgr("Esc/Ctrl+C", theme.KEY) + theme.sgr(" 拒绝", theme.HINT_LABEL))
     if action_parts:
         lines.append("  " + "   ".join(action_parts))
+    return lines
+
+
+def _confirm_detail_lines(confirm) -> list[str]:
+    lines: list[str] = []
+    if confirm.command_preview:
+        lines.append(theme.dim(f"  命令: {confirm.command_preview}"))
+    if confirm.url_preview:
+        target = confirm.url_preview
+        if confirm.host and confirm.host not in target:
+            target = f"{target} ({confirm.host})"
+        lines.append(theme.dim(f"  网络: {target}"))
+    if confirm.affected_paths:
+        paths = ", ".join(confirm.affected_paths[:3])
+        if len(confirm.affected_paths) > 3:
+            paths += f" 等 {len(confirm.affected_paths)} 个路径"
+        lines.append(theme.dim(f"  路径: {paths}"))
+    if confirm.input_preview and not lines:
+        lines.append(theme.dim(f"  {confirm.input_preview}"))
     return lines

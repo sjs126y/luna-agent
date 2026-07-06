@@ -425,7 +425,10 @@ class InlineTuiApp:
             or _decision_field(decision, "input_summary")
         )
         paths = _decision_list(decision, "affected_paths")
-        if paths:
+        command_preview = _decision_field(decision, "command_preview")
+        url_preview = _decision_field(decision, "url_preview")
+        host = _decision_field(decision, "host")
+        if paths and not (command_preview or url_preview):
             preview = (preview + " · " if preview else "") + ", ".join(paths[:3])
 
         return ConfirmPrompt(
@@ -436,6 +439,10 @@ class InlineTuiApp:
             risk_level=risk_level,
             risk_summary=risk,
             input_preview=preview,
+            command_preview=command_preview,
+            url_preview=url_preview,
+            host=host,
+            affected_paths=tuple(paths),
             default_action=default_action,
             available_actions=actions,
         )

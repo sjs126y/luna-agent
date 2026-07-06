@@ -52,6 +52,10 @@ class ConfirmPrompt:
     risk_level: str = ""
     risk_summary: str = ""
     input_preview: str = ""
+    command_preview: str = ""
+    url_preview: str = ""
+    host: str = ""
+    affected_paths: tuple[str, ...] = ()
     default_action: str = "allow"  # allow | deny | none
     available_actions: tuple[str, ...] = ("allow_once", "allow_always", "deny")
 

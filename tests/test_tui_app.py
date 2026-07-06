@@ -263,7 +263,22 @@ def test_confirm_prompt_uses_future_display_fields():
     assert prompt.default_action == "deny"
     assert prompt.available_actions == ("deny",)
     assert "rm -rf build" in prompt.input_preview
+    assert prompt.command_preview == "rm -rf build"
+    assert prompt.affected_paths == ("build",)
     assert "build" in prompt.input_preview
+
+
+def test_confirm_prompt_preserves_network_display_fields():
+    app = _app()
+    prompt = app._build_confirm_prompt({
+        "display_name": "Fetch URL",
+        "tool_name": "web_fetch",
+        "url_preview": "https://example.test/a",
+        "host": "example.test",
+        "input_preview": "https://example.test/a",
+    })
+    assert prompt.url_preview == "https://example.test/a"
+    assert prompt.host == "example.test"
 
 
 @pytest.mark.asyncio

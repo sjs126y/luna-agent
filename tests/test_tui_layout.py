@@ -127,6 +127,31 @@ def test_active_region_confirm_hides_unavailable_actions():
     assert "A 允许本次" not in text
 
 
+def test_active_region_confirm_shows_structured_details():
+    state = UIState()
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="Fetch URL",
+        url_preview="https://example.test/a",
+        host="example.test",
+        affected_paths=("src/a.py", "src/b.py"),
+    )
+    text = _active_text(state)
+    assert "网络: https://example.test/a" in text
+    assert "路径: src/a.py, src/b.py" in text
+
+
+def test_active_region_confirm_shows_command_detail():
+    state = UIState()
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="Shell command",
+        command_preview="uv run pytest -q",
+    )
+    text = _active_text(state)
+    assert "命令: uv run pytest -q" in text
+
+
 def test_hint_bar_shows_expand_key():
     from personal_agent.tui.layout import _hint_bar
 
