@@ -2,7 +2,7 @@
 
 更新时间：2026-07-06
 
-本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
+本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；历史需求文档已归档到 `docs/archive/`。
 
 ## 1. Conversation Event Stream
 

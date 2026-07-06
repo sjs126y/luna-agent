@@ -1,6 +1,6 @@
 # Inline TUI (CC/Codex-style)
 
-CC/Codex 风格的行内滚动渲染器。设计与分阶段计划见仓库根目录 `TUI_PLAN.md`。
+CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `docs/archive/TUI_PLAN.md`。
 
 ## 当前状态
 

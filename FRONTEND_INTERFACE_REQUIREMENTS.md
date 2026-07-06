@@ -8,7 +8,7 @@
 
 截至 2026-07-06，前端已接入并消费以下后端能力：
 
-- `tool_decision` / `tool_end` 的确认展示字段：`display_name`, `execution_mode_label`, `risk_level`, `risk_summary`, `default_action`, `available_actions`, `input_summary`, `input_preview`, `affected_paths`, `command_preview`, `url_preview`, `host`。
+- `tool_decision` / `tool_end` 的确认展示字段：`display_name`, `execution_mode_label`, `risk_level`, `risk_summary`, `default_action`, `available_actions`, `input_summary`, `input_preview`, `affected_paths`, `command_preview`, `url_preview`, `host`, `cwd`, `timeout_seconds`, `method`, `process_label`。
 - `confirm(decision)` 的 allow / deny / always 语义，以及由 `available_actions` 限定可用确认动作。
 - `/stop` 打断 pending confirm 后的固定 `tool_end.status/category/error` 收口。
 - `retry` / `stop` / `error` 的增强状态字段：`max_attempts`, `recoverable`, `reason`, `stopped_tools`, `stopped_agents`, `category`, `detail_id`。
@@ -50,9 +50,9 @@ async def get_tool_run(
 当前前端已经消费通用预览字段，并能按 bash / network / path 做基础展示。后续如果要把写文件、补丁、网络请求做得更细，可以继续补以下可选字段：
 
 - `write` / `edit`: `diff_summary`, `diff_preview`
-- `bash`: `cwd`, `timeout_seconds`
-- `network`: `method`
-- `background`: `process_label`
+- `bash`: future shell-specific safety summary if needed
+- `network`: request body/header preview if future tools expose it
+- `background`: process lifecycle action summary if needed
 
 这些字段都应允许为空；前端会按存在字段渐进展示。
 

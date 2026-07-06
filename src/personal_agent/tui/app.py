@@ -235,7 +235,7 @@ class InlineTuiApp:
     async def _run_turn(self, text: str):
         """Drive one message turn, offering the inline confirm callback if the
         runtime accepts one. Falls back cleanly on runtimes that don't (yet)
-        take a ``confirm`` kwarg — see BACKEND_REQUIREMENTS.md."""
+        take a ``confirm`` kwarg — see BACKEND_INTERFACE.md."""
         if self._runtime_accepts_confirm():
             return await self.runtime.run_message_events(
                 text, event_sink=self.renderer, confirm=self.confirm_tool
