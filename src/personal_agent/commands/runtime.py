@@ -9,8 +9,10 @@ from typing import Protocol
 
 from personal_agent.commands.registry import (
     command_specs_as_dict,
+    find_command_spec,
     format_command_detail,
     format_commands,
+    suggest_command_names,
 )
 
 
@@ -19,18 +21,46 @@ class CommandResult:
     handled: bool
     response: str | None = None
     continue_text: str | None = None
+    payload: dict | None = None
+    kind: str = "text"
+    error: str | None = None
+    suggestions: list[str] | None = None
 
     @classmethod
     def unhandled(cls) -> "CommandResult":
         return cls(handled=False)
 
     @classmethod
-    def reply(cls, response: str) -> "CommandResult":
-        return cls(handled=True, response=response)
+    def reply(
+        cls,
+        response: str,
+        *,
+        payload: dict | None = None,
+        kind: str = "text",
+    ) -> "CommandResult":
+        return cls(handled=True, response=response, payload=payload, kind=kind)
+
+    @classmethod
+    def error_reply(
+        cls,
+        response: str,
+        *,
+        payload: dict | None = None,
+        suggestions: list[str] | None = None,
+        kind: str = "error",
+    ) -> "CommandResult":
+        return cls(
+            handled=True,
+            response=response,
+            payload=payload,
+            kind=kind,
+            error=response,
+            suggestions=list(suggestions or []),
+        )
 
     @classmethod
     def continue_with(cls, text: str) -> "CommandResult":
-        return cls(handled=True, continue_text=text)
+        return cls(handled=True, continue_text=text, kind="continue")
 
 
 class CommandRuntime(Protocol):
@@ -140,10 +170,16 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         return CommandResult.reply(await _allow(runtime, parts[0] if parts else "write"))
 
     if command_name == "mode":
-        return CommandResult.reply(await _mode(runtime, args))
+        text, payload = await _mode(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="mode")
 
     if command_name == "permissions":
-        return CommandResult.reply(await _permissions(runtime, args))
+        text, payload = await _permissions(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="permissions")
 
     if command_name == "stop":
         return CommandResult.reply(await _stop(runtime))
@@ -155,13 +191,20 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         return CommandResult.reply(await _memory(runtime, args))
 
     if command_name == "tools":
-        return CommandResult.reply(await _tools(runtime, args))
+        text, payload = await _tools(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="tools")
 
     if command_name == "protocol":
-        return CommandResult.reply(_protocol(args))
+        text, payload = _protocol(args)
+        return CommandResult.reply(text, payload=payload, kind="protocol")
 
     if command_name == "commands":
-        return CommandResult.reply(_commands(runtime, args))
+        text, payload = _commands(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="commands")
 
     if command_name == "help":
         return CommandResult.reply(help_text(runtime))
@@ -186,6 +229,19 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
     skill_text = await _prepare_skill(runtime, text)
     if skill_text is not None:
         return CommandResult.continue_with(skill_text)
+
+    suggestions = suggest_command_names(runtime, command_name)
+    if suggestions:
+        response = f"未找到命令: /{command_name}\n你是不是想用: {', '.join(suggestions)}"
+        return CommandResult.error_reply(
+            response,
+            payload={
+                "command": command_name,
+                "suggestions": suggestions,
+            },
+            suggestions=suggestions,
+            kind="command_error",
+        )
 
     return CommandResult.unhandled()
 
@@ -317,21 +373,43 @@ def current_mode_from_policy(policy) -> str:
     return choice.label
 
 
-async def _mode(runtime: CommandRuntime, args: str) -> str:
+async def _mode(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     agent = await runtime.get_agent()
     requested = args.strip()
+    current = _mode_payload(current_mode(agent), getattr(getattr(agent, "_execution_policy", None), "mode", "") or "standard")
     if not requested or requested == "show":
-        return f"当前模式: {current_mode(agent)}。用法: {_MODE_USAGE}"
+        return f"当前模式: {current['current']['label']}。用法: {_MODE_USAGE}", {
+            "action": "show",
+            **current,
+        }
     if requested == "list":
-        return "执行模式:\n" + "\n".join(f"- {choice.label} ({choice.profile})" for choice in MODE_CHOICES)
+        return "执行模式:\n" + "\n".join(f"- {choice.label} ({choice.profile})" for choice in MODE_CHOICES), {
+            "action": "list",
+            **current,
+        }
     if requested.startswith("set "):
         requested = requested.split(None, 1)[1].strip()
     choice = _choice_for_input(requested)
     if choice is None:
-        return f"用法: {_MODE_USAGE}"
+        suggestions = _mode_suggestions(requested)
+        text = f"用法: {_MODE_USAGE}"
+        if suggestions:
+            text += "\n你是不是想用: " + ", ".join(f"/mode set {item}" for item in suggestions)
+        return text, {
+            "action": "set",
+            "requested": requested,
+            "error": "unknown_mode",
+            "suggestions": [f"/mode set {item}" for item in suggestions],
+            **current,
+        }
     custom = await _call_optional(runtime, "set_mode", choice.slug)
     if custom is not None:
-        return str(custom)
+        return str(custom), {
+            "action": "set",
+            "selected": _choice_payload(choice),
+            "custom": True,
+            **_mode_payload(choice.label, choice.profile),
+        }
     from personal_agent.execution import resolve_execution_policy_for_mode
 
     agent._execution_policy = resolve_execution_policy_for_mode(runtime.settings, choice.profile)
@@ -340,7 +418,12 @@ async def _mode(runtime: CommandRuntime, args: str) -> str:
         agent._destructive_allowed = set()
     else:
         grants.clear()
-    return f"执行模式已切换: {choice.label}（{choice.profile}）。"
+    return f"执行模式已切换: {choice.label}（{choice.profile}）。", {
+        "action": "set",
+        "selected": _choice_payload(choice),
+        "cleared_grants": True,
+        **_mode_payload(choice.label, choice.profile),
+    }
 
 
 def _choice_for_input(value: str) -> ModeChoice | None:
@@ -357,6 +440,41 @@ def _choice_for_profile(profile: str) -> ModeChoice:
 
 def _mode_key(value: str) -> str:
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _mode_payload(label: str, profile: str) -> dict:
+    return {
+        "current": {
+            "label": label,
+            "profile": profile,
+            "slug": _choice_for_profile(profile).slug,
+        },
+        "modes": [_choice_payload(choice) for choice in MODE_CHOICES],
+    }
+
+
+def _choice_payload(choice: ModeChoice) -> dict:
+    return {
+        "slug": choice.slug,
+        "label": choice.label,
+        "profile": choice.profile,
+    }
+
+
+def _mode_suggestions(value: str) -> list[str]:
+    from difflib import get_close_matches
+
+    candidates = [choice.label for choice in MODE_CHOICES]
+    aliases = sorted(_MODE_ALIASES)
+    key = _mode_key(value)
+    alias_matches = get_close_matches(key, aliases, n=2, cutoff=0.72)
+    labels = [choice.label for alias in alias_matches for choice in [_MODE_BY_SLUG[_MODE_ALIASES[alias]]]]
+    label_matches = get_close_matches(str(value or ""), candidates, n=2, cutoff=0.55)
+    result: list[str] = []
+    for item in [*labels, *label_matches]:
+        if item not in result:
+            result.append(item)
+    return result[:3]
 
 
 async def _agents(args: str) -> str:
@@ -433,29 +551,59 @@ async def _memory(runtime: CommandRuntime, args: str) -> str:
     return "用法: /memory [list|search <query>|show <id>|delete <id>|doctor]"
 
 
-def _commands(runtime: CommandRuntime, args: str) -> str:
+def _commands(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     value = args.strip()
     if value == "json":
-        return json.dumps(command_specs_as_dict(runtime), indent=2, ensure_ascii=False)
+        payload = command_specs_as_dict(runtime)
+        return json.dumps(payload, indent=2, ensure_ascii=False), payload
     if value:
-        return format_command_detail(value, runtime)
-    return format_commands(runtime)
+        spec = find_command_spec(value)
+        if spec is None:
+            suggestions = suggest_command_names(runtime, value)
+            text = f"未找到命令: {value}"
+            if suggestions:
+                text += "\n你是不是想用: " + ", ".join(suggestions)
+            return text, {
+                "query": value,
+                "error": "unknown_command",
+                "suggestions": suggestions,
+            }
+        return format_command_detail(value, runtime), {
+            "command": spec.as_dict(),
+        }
+    payload = command_specs_as_dict(runtime)
+    return format_commands(runtime), payload
 
 
-async def _tools(runtime: CommandRuntime, args: str) -> str:
+async def _tools(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     parts = args.split()
     action = parts[0] if parts else "list"
     if action == "list":
         return _tools_list(runtime)
     if action == "show":
         if len(parts) < 2:
-            return "用法: /tools show <name>"
+            return "用法: /tools show <name>", {
+                "action": "show",
+                "error": "missing_tool_name",
+            }
         return _tools_show(runtime, parts[1])
+    if action not in {"list", "show"}:
+        suggestions = _tool_command_suggestions(action)
+        if suggestions:
+            return (
+                f"未知 tools 子命令: {action}\n你是不是想用: "
+                + ", ".join(f"/tools {item}" for item in suggestions),
+                {
+                    "action": action,
+                    "error": "unknown_tools_action",
+                    "suggestions": [f"/tools {item}" for item in suggestions],
+                },
+            )
     # Convenience: /tools bash behaves like /tools show bash.
     return _tools_show(runtime, action)
 
 
-def _tools_list(runtime: CommandRuntime) -> str:
+def _tools_list(runtime: CommandRuntime) -> tuple[str, dict]:
     from personal_agent.tools.registry import tool_registry
 
     summary = tool_registry.catalog_summary(_enabled_toolsets(runtime))
@@ -470,14 +618,18 @@ def _tools_list(runtime: CommandRuntime) -> str:
     if high_risk:
         lines.append("high risk: " + ", ".join(str(item) for item in high_risk[:20]))
     lines.append("用法: /tools show <name>")
-    return "\n".join(lines)
+    return "\n".join(lines), {
+        "action": "list",
+        "summary": summary,
+    }
 
 
-def _tools_show(runtime: CommandRuntime, name: str) -> str:
+def _tools_show(runtime: CommandRuntime, name: str) -> tuple[str, dict]:
     from personal_agent.tools.registry import tool_registry
 
     target = str(name or "").strip()
-    for item in tool_registry.catalog(_enabled_toolsets(runtime)):
+    items = tool_registry.catalog(_enabled_toolsets(runtime))
+    for item in items:
         if item.get("name") != target:
             continue
         return "\n".join([
@@ -491,20 +643,42 @@ def _tools_show(runtime: CommandRuntime, name: str) -> str:
             f"parallel safe: {_yes(bool(item.get('is_parallel_safe')))}",
             f"usage: {item.get('usage_hint') or '-'}",
             f"inputs: {', '.join(item.get('input_properties') or []) or '-'}",
-        ])
-    return f"未找到工具: {target}"
+        ]), {
+            "action": "show",
+            "tool": item,
+        }
+    suggestions = _tool_name_suggestions(target, items)
+    text = f"未找到工具: {target}"
+    if suggestions:
+        text += "\n你是不是想用: " + ", ".join(f"/tools show {item}" for item in suggestions)
+    return text, {
+        "action": "show",
+        "query": target,
+        "error": "unknown_tool",
+        "suggestions": [f"/tools show {item}" for item in suggestions],
+    }
 
 
-async def _permissions(runtime: CommandRuntime, args: str) -> str:
+async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     parts = args.split()
     action = parts[0] if parts else "list"
-    if action == "grants":
-        agent = await runtime.get_agent()
-        grants = sorted(str(item) for item in getattr(agent, "_destructive_allowed", set()) or [])
-        return "当前 grants: " + (", ".join(grants) if grants else "无")
-    if action not in {"list", "show"}:
-        return "用法: /permissions [list|grants]"
     agent = await runtime.get_agent()
+    grants = sorted(str(item) for item in getattr(agent, "_destructive_allowed", set()) or [])
+    if action == "grants":
+        return "当前 grants: " + (", ".join(grants) if grants else "无"), {
+            "action": "grants",
+            "grants": grants,
+        }
+    if action not in {"list", "show"}:
+        suggestions = _subcommand_suggestions(action, ["list", "show", "grants"])
+        text = "用法: /permissions [list|grants]"
+        if suggestions:
+            text += "\n你是不是想用: " + ", ".join(f"/permissions {item}" for item in suggestions)
+        return text, {
+            "action": action,
+            "error": "unknown_permissions_action",
+            "suggestions": [f"/permissions {item}" for item in suggestions],
+        }
     policy = getattr(agent, "_execution_policy", None)
     mode = str(getattr(policy, "mode", "") or "")
     permissions = getattr(policy, "permissions", {}) if policy is not None else {}
@@ -517,11 +691,17 @@ async def _permissions(runtime: CommandRuntime, args: str) -> str:
         for key in keys:
             if key in permissions:
                 lines.append(f"- {key}: {permissions[key]}")
-    lines.append(await _permissions(runtime, "grants"))
-    return "\n".join(lines)
+    lines.append("当前 grants: " + (", ".join(grants) if grants else "无"))
+    return "\n".join(lines), {
+        "action": "list",
+        "execution_mode": current_mode(agent),
+        "policy_mode": mode or "standard",
+        "permissions": dict(permissions) if isinstance(permissions, dict) else {},
+        "grants": grants,
+    }
 
 
-def _protocol(args: str) -> str:
+def _protocol(args: str) -> tuple[str, dict]:
     from personal_agent.conversation import frontend_protocol_schema
 
     schema = frontend_protocol_schema()
@@ -533,9 +713,16 @@ def _protocol(args: str) -> str:
         "delta events: " + ", ".join(schema.get("delta_event_types") or []),
         "完整 schema: personal-agent protocol schema --json",
     ]
+    payload = {
+        "action": "schema" if args.strip() == "schema" else "summary",
+        "protocol_version": schema.get("protocol_version"),
+        "event_count": len(events),
+        "delta_event_types": list(schema.get("delta_event_types") or []),
+        "events": events if args.strip() == "schema" else {},
+    }
     if args.strip() == "schema":
         lines.append("event names: " + ", ".join(sorted(events)))
-    return "\n".join(lines)
+    return "\n".join(lines), payload
 
 
 def _split_target_args(tokens: list[str]) -> tuple[list[str], str]:
@@ -661,3 +848,20 @@ def _format_counts(counts) -> str:
 
 def _yes(value: bool) -> str:
     return "是" if value else "否"
+
+
+def _subcommand_suggestions(value: str, candidates: list[str]) -> list[str]:
+    from difflib import get_close_matches
+
+    return get_close_matches(str(value or ""), candidates, n=3, cutoff=0.65)
+
+
+def _tool_command_suggestions(value: str) -> list[str]:
+    return _subcommand_suggestions(value, ["list", "show"])
+
+
+def _tool_name_suggestions(value: str, items: list[dict]) -> list[str]:
+    from difflib import get_close_matches
+
+    names = sorted(str(item.get("name") or "") for item in items)
+    return get_close_matches(str(value or ""), names, n=3, cutoff=0.65)

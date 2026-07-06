@@ -318,6 +318,8 @@ async def test_cli_commands_lists_core_and_cli_plugin_commands(runtime):
     assert "/local - local only (user/local)" in text
     assert '"name": "tools"' in data
     assert '"name": "local"' in data
+    assert '"available_in": [' in data
+    assert '"mutates_state":' in data
 
 
 @pytest.mark.asyncio

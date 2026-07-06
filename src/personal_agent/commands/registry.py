@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from difflib import get_close_matches
 from typing import Any
 
 SLASH_COMMAND_REGISTRY_VERSION = 1
@@ -17,6 +18,8 @@ class CommandSpec:
     aliases: tuple[str, ...] = ()
     children: tuple["CommandSpec", ...] = field(default_factory=tuple)
     available_in: tuple[str, ...] = ("chat", "gateway")
+    mutates_state: bool = False
+    requires_agent: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -26,12 +29,14 @@ class CommandSpec:
             "category": self.category,
             "aliases": list(self.aliases),
             "available_in": list(self.available_in),
+            "mutates_state": self.mutates_state,
+            "requires_agent": self.requires_agent,
             "children": [child.as_dict() for child in self.children],
         }
 
 
 CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
-    CommandSpec("new", "重置当前会话", "/new", category="session"),
+    CommandSpec("new", "重置当前会话", "/new", category="session", mutates_state=True),
     CommandSpec(
         "session",
         "管理会话",
@@ -47,16 +52,25 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec("usage", "查看当前会话上下文预算", "/usage", category="runtime"),
     CommandSpec("export", "导出当前会话 JSONL", "/export", category="session"),
-    CommandSpec("allow", "授权本轮工具权限", "/allow [write|bash|background|network|destructive|all]", category="execution"),
+    CommandSpec(
+        "allow",
+        "授权本轮工具权限",
+        "/allow [write|bash|background|network|destructive|all]",
+        category="execution",
+        mutates_state=True,
+        requires_agent=True,
+    ),
     CommandSpec(
         "mode",
         "查看或切换执行模式",
         "/mode [Read Only|Ask First|Edit Freely|Full Auto]",
         category="execution",
+        mutates_state=True,
+        requires_agent=True,
         children=(
             CommandSpec("list", "列出执行模式", "/mode list", category="execution"),
             CommandSpec("show", "显示当前执行模式", "/mode show", category="execution"),
-            CommandSpec("set", "切换执行模式", "/mode set <mode>", category="execution"),
+            CommandSpec("set", "切换执行模式", "/mode set <mode>", category="execution", mutates_state=True),
         ),
     ),
     CommandSpec(
@@ -64,12 +78,13 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         "查看当前权限策略和 grants",
         "/permissions [list|grants]",
         category="execution",
+        requires_agent=True,
         children=(
             CommandSpec("list", "列出权限策略", "/permissions list", category="execution"),
             CommandSpec("grants", "列出当前 grants", "/permissions grants", category="execution"),
         ),
     ),
-    CommandSpec("stop", "停止当前处理", "/stop", category="runtime"),
+    CommandSpec("stop", "停止当前处理", "/stop", category="runtime", mutates_state=True, requires_agent=True),
     CommandSpec(
         "agents",
         "查看子 agent 运行记录",
@@ -79,7 +94,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         children=(
             CommandSpec("list", "列出子 agent 运行记录", "/agents list [limit]", category="agents"),
             CommandSpec("show", "查看子 agent 运行详情", "/agents show <run_id>", category="agents"),
-            CommandSpec("clear", "清理子 agent 运行记录", "/agents clear", category="agents"),
+            CommandSpec("clear", "清理子 agent 运行记录", "/agents clear", category="agents", mutates_state=True),
         ),
     ),
     CommandSpec(
@@ -92,7 +107,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
             CommandSpec("list", "列出记忆", "/memory list", category="memory"),
             CommandSpec("search", "搜索记忆", "/memory search <query>", category="memory"),
             CommandSpec("show", "查看记忆详情", "/memory show <id>", category="memory"),
-            CommandSpec("delete", "删除记忆", "/memory delete <id>", category="memory"),
+            CommandSpec("delete", "删除记忆", "/memory delete <id>", category="memory", mutates_state=True),
         ),
     ),
     CommandSpec(
@@ -124,7 +139,12 @@ CORE_COMMAND_NAMES: frozenset[str] = frozenset(
 
 
 def list_command_specs(runtime: Any | None = None) -> list[CommandSpec]:
-    return list(CORE_COMMAND_SPECS)
+    environment = _runtime_environment(runtime)
+    return [
+        spec
+        for spec in CORE_COMMAND_SPECS
+        if environment is None or environment in spec.available_in
+    ]
 
 
 def command_specs_as_dict(runtime: Any | None = None) -> dict[str, Any]:
@@ -159,6 +179,8 @@ def find_command_spec(name: str) -> CommandSpec | None:
 
 def format_command_detail(name: str, runtime: Any | None = None) -> str:
     spec = find_command_spec(name)
+    if spec is not None and spec not in list_command_specs(runtime):
+        spec = None
     if spec is None:
         return f"未找到命令: {name}"
     lines = [
@@ -209,10 +231,29 @@ def _plugin_commands_as_dict(runtime: Any | None) -> list[dict[str, Any]]:
         result.append({
             "name": name,
             "summary": getattr(entry, "description", "") or "插件命令",
+            "usage": f"/{name}",
+            "category": "plugin",
             "scope": entry_scope,
             "plugin_key": getattr(entry, "plugin_key", ""),
+            "available_in": _plugin_available_in(entry_scope),
+            "mutates_state": False,
+            "requires_agent": False,
         })
     return result
+
+
+def suggest_command_names(runtime: Any | None, name: str, *, limit: int = 3) -> list[str]:
+    key = str(name or "").lstrip("/").strip()
+    if not key:
+        return []
+    candidates: set[str] = set()
+    for spec in list_command_specs(runtime):
+        candidates.add(spec.name)
+        candidates.update(spec.aliases)
+    for item in _plugin_commands_as_dict(runtime):
+        candidates.add(str(item.get("name") or ""))
+    matches = get_close_matches(key, sorted(candidates), n=limit, cutoff=0.72)
+    return [f"/{item}" for item in matches]
 
 
 def _plugin_command_scopes(runtime: Any) -> tuple[str, ...]:
@@ -221,3 +262,21 @@ def _plugin_command_scopes(runtime: Any) -> tuple[str, ...]:
         scopes = (scopes,)
     cleaned = tuple(scope for scope in scopes if scope in {"slash", "cli", "both"})
     return cleaned or ("slash",)
+
+
+def _runtime_environment(runtime: Any | None) -> str | None:
+    if runtime is None:
+        return None
+    source = getattr(runtime, "source", None)
+    platform = str(getattr(source, "platform", "") or "")
+    if platform == "cli":
+        return "chat"
+    return "gateway"
+
+
+def _plugin_available_in(scope: str) -> list[str]:
+    if scope == "cli":
+        return ["chat"]
+    if scope == "both":
+        return ["chat", "gateway"]
+    return ["chat", "gateway"]

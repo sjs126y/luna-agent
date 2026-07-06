@@ -382,6 +382,40 @@ SLASH_COMMAND_REGISTRY_VERSION = 1
 
 `/commands` 和 `/help` 会按当前 runtime scope 合并展示可见插件命令。
 
+### CommandResult v2
+
+`handle_slash_command(...)` 现在返回兼容文本和结构化结果：
+
+- `handled: bool`
+- `response: str | None`：CLI/Gateway 的兼容展示文本。
+- `continue_text: str | None`：技能命令继续进入普通 agent 消息。
+- `payload: dict | None`：前端/TUI 可消费的结构化数据。
+- `kind: str`：例如 `text`, `commands`, `tools`, `permissions`, `protocol`, `mode`, `command_error`。
+- `error: str | None`
+- `suggestions: list[str] | None`
+
+已提供结构化 payload 的命令：
+
+- `/commands`、`/commands json`、`/commands <name>`
+- `/tools list`、`/tools show <name>`
+- `/permissions list`、`/permissions grants`
+- `/protocol`、`/protocol schema`
+- `/mode list`、`/mode show`、`/mode set <mode>`
+
+`/commands json` 的 command metadata 包含：
+
+- `name`
+- `summary`
+- `usage`
+- `category`
+- `aliases`
+- `available_in`
+- `mutates_state`
+- `requires_agent`
+- `children`
+
+未知命令或子命令会尽量返回 `suggestions`。完全未知且可能是技能命令的输入仍保持原有 fallback，不强行拦截。
+
 ## 6. Tool Runs / Tool Truth
 
 后端已持久化工具运行结果，供后续前端/desktop 查询使用。

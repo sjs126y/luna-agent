@@ -268,10 +268,14 @@ async def test_gateway_commands_lists_slash_plugin_commands_only(gateway):
     )
 
     text = await gateway._handle_command(_event("/commands"), "telegram:c1:u1")
+    data = await gateway._handle_command(_event("/commands json"), "telegram:c1:u1")
 
     assert "/commands - 列出 slash commands" in text
     assert "/demo - gateway command (user/demo)" in text
     assert "/local" not in text
+    assert '"name": "demo"' in data
+    assert '"name": "local"' not in data
+    assert '"available_in": [' in data
 
 
 @pytest.mark.asyncio

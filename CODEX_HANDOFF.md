@@ -72,7 +72,7 @@
 - `tool_runs` 已持久化，runtime / doctor 可看到摘要。
 - 用户当前不急着推进 Tool Runs 查询 API，暂缓。
 
-### Chat Slash Commands v1
+### Chat Slash Commands v1/v2
 
 - CLI chat、inline TUI 和 Gateway 共享 `handle_slash_command(...)`。
 - Slash commands 与 Typer CLI 保持分离。
@@ -87,6 +87,14 @@
   - `/permissions [list|grants]`
   - `/protocol [schema]`
 - 插件命令继续按 `slash` / `cli` / `both` scope 暴露。
+- `CommandResult` v2 保持 `response` 文本兼容，同时新增：
+  - `payload`
+  - `kind`
+  - `error`
+  - `suggestions`
+- `/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 已有结构化 payload。
+- command metadata 新增 `available_in`、`mutates_state`、`requires_agent`。
+- 未知命令/子命令会尽量返回建议，但不破坏技能命令 fallback。
 
 ## 当前约定
 
@@ -103,12 +111,11 @@
 ```bash
 python -m compileall -q src/personal_agent
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
+uv run pytest -q
 ```
 
 最近一次后端相关结果：`53 passed`。
-
-全量 `uv run pytest -q` 当前被 TUI 线的 `tests/test_tui_layout.py::test_slash_command_slot_lists_command_hints` 阻塞：
-测试仍按旧结构读取 `slash_slot.content.children[0]`，但当前布局对象已不是这个形态。
+最近一次全量结果：`684 passed`。
 
 ## 注意事项
 
