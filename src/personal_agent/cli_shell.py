@@ -50,6 +50,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/stop", "停止当前处理"),
     ("/export", "导出会话 JSONL"),
     ("/agents", "查看子 agent 运行记录"),
+    ("/activity", "查看子 agent、后台任务和 Gateway agent 活动"),
     ("/memory", "查看和管理记忆"),
 )
 
