@@ -915,6 +915,27 @@ def test_format_doctor_report_includes_summary_and_issues():
                 "last_output_tokens": 5,
                 "last_retries": 1,
             },
+            "llm_cache": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "strategy": "prefix",
+                "supports_usage": True,
+                "usage_fields": {"cache_hit_tokens": "prompt_cache_hit_tokens"},
+                "cacheable_blocks": ["system", "tools", "message_prefix"],
+                "last_usage": {
+                    "cache_hit_tokens": 4,
+                    "cache_miss_tokens": 6,
+                    "cache_write_tokens": 0,
+                    "cache_read_tokens": 4,
+                    "cache_hit_rate": 0.4,
+                },
+                "last_diagnostics": {
+                    "system_hash": "sys",
+                    "tools_hash": "tools",
+                    "stable_prefix_hash": "stable",
+                },
+                "error": "",
+            },
             "tool_truth": {
                 "stored": 2,
                 "inspected": 2,
@@ -995,6 +1016,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "Agents:" in text
     assert "Tools:" in text
     assert "Turns: stored=2 last=failed duration=1.234s llm=1 tools=3 retries=1" in text
+    assert "LLM Cache: strategy=prefix usage=是 hit=4 miss=6 rate=0.40" in text
     assert "Tool Truth: inspected=2 with_tools=1 mismatches=1 denied=1" in text
     assert "Tool Runs: stored=3 denied=1 failed=0 truncated=1" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
@@ -1015,6 +1037,10 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "  last status: failed" in runtime_text
     assert "  last tokens: in=10 out=5" in runtime_text
     assert "  last error: RuntimeError: boom" in runtime_text
+    assert "LLM Cache:" in runtime_text
+    assert "  strategy: prefix" in runtime_text
+    assert "  last usage: hit=4 miss=6 write=0 read=4 rate=0.40" in runtime_text
+    assert "  stable prefix hash: stable" in runtime_text
     assert "Tool Truth:" in runtime_text
     assert "  inspected: 2" in runtime_text
     assert "  claim mismatches: 1" in runtime_text

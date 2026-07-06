@@ -91,6 +91,8 @@ async def test_simple_response(provider):
     assert report["llm"]["calls"] == 1
     assert report["llm"]["input_tokens"] == 5
     assert report["llm"]["output_tokens"] == 3
+    assert report["llm"]["cache_hit_tokens"] == 0
+    assert report["llm"]["cache_hit_rate"] == 0.0
     assert report["tools"]["total"] == 0
     assert report["tool_truth"]["calls_total"] == 0
     assert report["tool_truth"]["results_total"] == 0
@@ -106,6 +108,7 @@ async def test_simple_response(provider):
         "turn_end",
     ]
     assert recorder.events[2].data["input_tokens"] == 5
+    assert recorder.events[2].data["cache_hit_tokens"] == 0
     assert recorder.events[3].message == "Hello!"
 
 

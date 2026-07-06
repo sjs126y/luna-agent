@@ -1405,6 +1405,19 @@ def _format_tool_runs_summary(tool_runs: dict[str, Any]) -> str:
     )
 
 
+def _format_llm_cache_summary(cache: dict[str, Any]) -> str:
+    if not isinstance(cache, dict) or not cache:
+        return "-"
+    usage = cache.get("last_usage") or {}
+    return (
+        f"strategy={cache.get('strategy') or '-'} "
+        f"usage={_yes(cache.get('supports_usage', False))} "
+        f"hit={usage.get('cache_hit_tokens', 0)} "
+        f"miss={usage.get('cache_miss_tokens', 0)} "
+        f"rate={float(usage.get('cache_hit_rate') or 0.0):.2f}"
+    )
+
+
 def _format_turn_detail_lines(turns: dict[str, Any]) -> list[str]:
     if not isinstance(turns, dict) or not turns:
         return ["  stored: 0"]
@@ -1452,6 +1465,33 @@ def _format_tool_runs_detail_lines(tool_runs: dict[str, Any]) -> list[str]:
     ]
 
 
+def _format_llm_cache_detail_lines(cache: dict[str, Any]) -> list[str]:
+    if not isinstance(cache, dict) or not cache:
+        return ["  strategy: -"]
+    usage = cache.get("last_usage") or {}
+    diagnostics = cache.get("last_diagnostics") or {}
+    return [
+        f"  provider: {cache.get('provider') or '-'}",
+        f"  model: {cache.get('model') or '-'}",
+        f"  strategy: {cache.get('strategy') or '-'}",
+        f"  supports usage: {_yes(cache.get('supports_usage', False))}",
+        f"  cacheable blocks: {_list_or_none(cache.get('cacheable_blocks', []))}",
+        f"  usage fields: {_format_counts(cache.get('usage_fields', {}))}",
+        (
+            "  last usage: "
+            f"hit={usage.get('cache_hit_tokens', 0)} "
+            f"miss={usage.get('cache_miss_tokens', 0)} "
+            f"write={usage.get('cache_write_tokens', 0)} "
+            f"read={usage.get('cache_read_tokens', 0)} "
+            f"rate={float(usage.get('cache_hit_rate') or 0.0):.2f}"
+        ),
+        f"  system hash: {diagnostics.get('system_hash') or '-'}",
+        f"  tools hash: {diagnostics.get('tools_hash') or '-'}",
+        f"  stable prefix hash: {diagnostics.get('stable_prefix_hash') or '-'}",
+        f"  error: {cache.get('error') or '-'}",
+    ]
+
+
 def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
@@ -1466,6 +1506,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
     config = report.get("config", {})
     tool_truth = runtime.get("tool_truth", {})
     tool_runs = runtime.get("tool_runs", {})
+    llm_cache = runtime.get("llm_cache", {})
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
         "Personal Agent 诊断",
@@ -1487,6 +1528,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  初始化: {_yes(runtime.get('initialized', False))}",
         f"  Boot: {_format_boot_summary(runtime.get('boot', {}))}",
         f"  Turns: {_format_turn_summary(runtime.get('turns', {}))}",
+        f"  LLM Cache: {_format_llm_cache_summary(llm_cache)}",
         f"  Tool Truth: {_format_tool_truth_summary(tool_truth)}",
         f"  Tool Runs: {_format_tool_runs_summary(tool_runs)}",
         f"  DB 打开: {_yes(runtime.get('db_open', False))}",
@@ -1769,6 +1811,8 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         lines.extend(_format_boot_step_lines(runtime.get("boot", {})))
         lines.extend(["", "Turns:"])
         lines.extend(_format_turn_detail_lines(runtime.get("turns", {})))
+        lines.extend(["", "LLM Cache:"])
+        lines.extend(_format_llm_cache_detail_lines(runtime.get("llm_cache", {})))
         lines.extend(["", "Tool Truth:"])
         lines.extend(_format_tool_truth_detail_lines(runtime.get("tool_truth", {})))
         lines.extend(["", "Tool Runs:"])

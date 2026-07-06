@@ -170,12 +170,23 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
         agent.session_prompt_tokens += response.usage.get("input_tokens", 0)
         agent.session_completion_tokens += response.usage.get("output_tokens", 0)
         agent.session_api_calls += 1
+        cache_diagnostics = (
+            agent._transport.last_cache_diagnostics()
+            if hasattr(agent._transport, "last_cache_diagnostics")
+            else {}
+        )
         await emit_event(
             report_recorder,
             "llm_end",
             "模型返回",
             input_tokens=response.usage.get("input_tokens", 0),
             output_tokens=response.usage.get("output_tokens", 0),
+            cache_hit_tokens=response.usage.get("cache_hit_tokens", 0),
+            cache_miss_tokens=response.usage.get("cache_miss_tokens", 0),
+            cache_write_tokens=response.usage.get("cache_write_tokens", 0),
+            cache_read_tokens=response.usage.get("cache_read_tokens", 0),
+            cache_hit_rate=response.usage.get("cache_hit_rate", 0.0),
+            cache_diagnostics=cache_diagnostics,
             tool_call_count=len(response.tool_calls or []),
             finish_reason=response.finish_reason,
             model=response.model or getattr(agent._provider, "model", ""),

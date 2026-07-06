@@ -53,6 +53,17 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert decision_fields["risk_summary"]["type"] == "string"
     assert decision_fields["affected_paths"]["type"] == "list[string]"
 
+    llm_fields = {
+        field["name"]: field
+        for field in schema["events"]["llm_end"]["fields"]
+    }
+    assert llm_fields["cache_hit_tokens"]["type"] == "integer"
+    assert llm_fields["cache_miss_tokens"]["type"] == "integer"
+    assert llm_fields["cache_write_tokens"]["type"] == "integer"
+    assert llm_fields["cache_read_tokens"]["type"] == "integer"
+    assert llm_fields["cache_hit_rate"]["type"] == "number"
+    assert llm_fields["cache_diagnostics"]["type"] == "object"
+
 
 def test_conversation_event_as_dict_includes_protocol_version():
     event = ConversationEvent(

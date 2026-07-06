@@ -123,6 +123,9 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["turns"]["stored"] == 0
         assert health["tool_truth"]["inspected"] == 0
         assert health["tool_runs"]["inspected"] == 0
+        assert health["llm_cache"]["provider"] == settings.llm_provider
+        assert health["llm_cache"]["strategy"] in {"none", "prefix", "explicit"}
+        assert health["llm_cache"]["last_usage"]["cache_hit_tokens"] == 0
         runtime.conversation_service.record_turn_report(
             "cli:default:local",
             type("Source", (), {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"})(),
@@ -130,7 +133,17 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
                 "status": "completed",
                 "duration": 1.5,
                 "error": "",
-                "llm": {"calls": 1, "input_tokens": 10, "output_tokens": 5},
+                "llm": {
+                    "calls": 1,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_hit_tokens": 4,
+                    "cache_miss_tokens": 6,
+                    "cache_write_tokens": 0,
+                    "cache_read_tokens": 4,
+                    "cache_hit_rate": 0.4,
+                    "cache_diagnostics": {"stable_prefix_hash": "abc123"},
+                },
                 "tools": {"total": 2, "items": []},
                 "tool_truth": {
                     "calls_total": 2,
@@ -155,7 +168,13 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert turn_health["last_duration"] == 1.5
         assert turn_health["last_llm_calls"] == 1
         assert turn_health["last_tool_calls"] == 2
+        assert turn_health["last_cache_hit_tokens"] == 4
+        assert turn_health["last_cache_hit_rate"] == 0.4
+        assert turn_health["last_cache_diagnostics"]["stable_prefix_hash"] == "abc123"
         assert turn_health["last_retries"] == 1
+        cache_health = updated_health["llm_cache"]
+        assert cache_health["last_usage"]["cache_hit_tokens"] == 4
+        assert cache_health["last_diagnostics"]["stable_prefix_hash"] == "abc123"
         truth_health = updated_health["tool_truth"]
         assert truth_health["inspected"] == 1
         assert truth_health["turns_with_tools"] == 1

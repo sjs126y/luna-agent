@@ -76,7 +76,7 @@ class AnthropicMessagesTransport(BaseTransport):
         text_parts: list[str] = []
         thinking_parts: list[str] = []
         tool_use_blocks: dict[int, dict] = {}
-        usage = {"input_tokens": 0, "output_tokens": 0}
+        raw_usage: dict = {}
         stop_reason = ""
         model = self._provider.model
         seen_message = False  # tracks if we got the full message event (non-streaming)
@@ -93,9 +93,7 @@ class AnthropicMessagesTransport(BaseTransport):
                 seen_message = True
                 model = event.get("model", model)
                 stop_reason = event.get("stop_reason", "")
-                usage_in = event.get("usage", {})
-                usage["input_tokens"] = usage_in.get("input_tokens", 0)
-                usage["output_tokens"] = usage_in.get("output_tokens", 0)
+                raw_usage.update(event.get("usage", {}) or {})
 
                 for block in event.get("content", []):
                     btype = block.get("type")
@@ -116,7 +114,7 @@ class AnthropicMessagesTransport(BaseTransport):
             # Streaming SSE events
             if etype == "message_start":
                 msg = event.get("message", {})
-                usage["input_tokens"] = msg.get("usage", {}).get("input_tokens", 0)
+                raw_usage.update(msg.get("usage", {}) or {})
                 model = msg.get("model", model)
 
             elif etype == "content_block_start":
@@ -146,7 +144,7 @@ class AnthropicMessagesTransport(BaseTransport):
                         tool_use_blocks[idx]["input_json"] += delta.get("partial_json", "")
 
             elif etype == "message_delta":
-                usage["output_tokens"] = event.get("usage", {}).get("output_tokens", 0)
+                raw_usage.update(event.get("usage", {}) or {})
                 stop_reason = event.get("delta", {}).get("stop_reason", "") or stop_reason
 
             elif etype == "message_stop":
@@ -176,7 +174,7 @@ class AnthropicMessagesTransport(BaseTransport):
             text="".join(text_parts),
             thinking="".join(thinking_parts),
             tool_calls=tool_calls,
-            usage=usage,
+            usage=self.normalize_usage(raw_usage),
             finish_reason=finish_reason,
             stop_reason=stop_reason,
             model=model,
@@ -225,6 +223,7 @@ class AnthropicMessagesTransport(BaseTransport):
         body = self.build_request(
             messages, system_prompt, tools or [], max_tokens
         )
+        self.remember_cache_diagnostics(body)
         event_stream = call_anthropic(
             base_url=self._provider.base_url,
             api_key=self._provider.api_key,

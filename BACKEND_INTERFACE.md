@@ -88,10 +88,26 @@
 
 - `input_tokens: integer`
 - `output_tokens: integer`
+- `cache_hit_tokens: integer`
+- `cache_miss_tokens: integer`
+- `cache_write_tokens: integer`
+- `cache_read_tokens: integer`
+- `cache_hit_rate: number`
+- `cache_diagnostics: object`
 - `tool_call_count: integer`
 - `finish_reason: string`
 - `model: string`
 - `context_window: integer`
+
+`cache_diagnostics` 用于排查 provider prompt cache 命中率，当前常见字段：
+
+- `cache_strategy: string`，`none` / `prefix` / `explicit`
+- `system_hash: string`
+- `tools_hash: string`
+- `message_prefix_hash: string`
+- `stable_prefix_hash: string`
+- `message_count: integer`
+- `tool_count: integer`
 
 ### `assistant_message`
 
@@ -323,7 +339,33 @@ async def confirm_callback(decision) -> str:
 - 是否需要 `full_output`。
 - 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-## 6. Compatibility Notes
+## 6. Runtime / Doctor Cache Diagnostics
+
+`personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
+
+常见字段：
+
+- `provider: string`
+- `model: string`
+- `strategy: string`，`none` / `prefix` / `explicit`
+- `supports_usage: boolean`
+- `usage_fields: object`
+- `cacheable_blocks: list[string]`
+- `last_usage: object`
+- `last_diagnostics: object`
+- `error: string`
+
+`last_usage` 当前包含：
+
+- `cache_hit_tokens`
+- `cache_miss_tokens`
+- `cache_write_tokens`
+- `cache_read_tokens`
+- `cache_hit_rate`
+
+`last_diagnostics` 与 `llm_end.cache_diagnostics` 字段一致。
+
+## 7. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

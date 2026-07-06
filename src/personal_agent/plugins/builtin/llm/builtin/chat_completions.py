@@ -60,17 +60,15 @@ class ChatCompletionsTransport(BaseTransport):
         """
         text_parts: list[str] = []
         tool_call_deltas: dict[int, dict] = {}
-        usage = {"input_tokens": 0, "output_tokens": 0}
+        raw_usage: dict = {}
         finish_reason = ""
         model = self._provider.model
 
         async for event in stream:
+            if event.get("usage"):
+                raw_usage.update(event.get("usage") or {})
             choices = event.get("choices", [])
             if not choices:
-                u = event.get("usage")
-                if u:
-                    usage["input_tokens"] = u.get("prompt_tokens", 0)
-                    usage["output_tokens"] = u.get("completion_tokens", 0)
                 continue
 
             choice = choices[0]
@@ -116,7 +114,7 @@ class ChatCompletionsTransport(BaseTransport):
         normalized = NormalizedResponse(
             text="".join(text_parts),
             tool_calls=tool_calls,
-            usage=usage,
+            usage=self.normalize_usage(raw_usage),
             finish_reason=finish_reason or ("tool_calls" if has_tool_calls else "stop"),
             stop_reason=finish_reason,
             model=model,
@@ -205,6 +203,7 @@ class ChatCompletionsTransport(BaseTransport):
         stream: bool = False,
     ) -> NormalizedResponse:
         body = self.build_request(messages, system_prompt, tools or [], max_tokens)
+        self.remember_cache_diagnostics(body)
         event_stream = call_chat_completions(
             base_url=self._provider.base_url,
             api_key=self._provider.api_key,

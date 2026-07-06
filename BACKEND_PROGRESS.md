@@ -49,6 +49,37 @@
 
 问题不是这条链路错了，而是 provider / transport 目前缺少“缓存能力表达”和“缓存诊断”。
 
+### 2026-07-06 v1 实施进度
+
+状态：已完成实现，待全量回归。
+
+已完成：
+
+- `ProviderProfile` 增加 cache capability：`cache_strategy`, `supports_cache_usage`, `cache_usage_fields`, `cacheable_blocks`。
+- `BaseTransport` 增加 cache diagnostics 与 usage normalization 基础方法。
+- Anthropic / ChatCompletions parse 阶段归一化 provider cache usage。
+- transport `call(...)` 记录最近一次 request cache diagnostics。
+- `llm_end` 事件增加 cache usage 与 `cache_diagnostics` 可选字段。
+- `AgentTurnReport` / `ConversationService` / runtime health 聚合最近 cache usage。
+- `doctor --section runtime --json` 暴露 `runtime.llm_cache`。
+- doctor 文本输出增加 LLM Cache 摘要和 runtime detail。
+- `BACKEND_INTERFACE.md` 已同步新增事件字段和 runtime doctor 字段。
+- 新增 `tests/test_transport_cache.py`，扩展 event/runtime/CLI/agent loop 测试。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_transport_cache.py tests/test_transport_streaming.py tests/test_event_protocol.py tests/test_agent_loop.py tests/test_runtime.py tests/test_cli.py -q
+```
+
+结果：`75 passed`。
+
+下一步：
+
+- 跑 `uv run pytest -q` 全量回归。
+- 如果全量通过，进入 v2：调整 provider-aware transport cache 策略，尤其 Anthropic 最后一条动态 message 的 `cache_control`。
+
 ### 当前代码事实
 
 - `ProviderProfile` 目前主要是连接参数：`name`、`base_url`、`api_key`、`model`、`max_tokens`、`context_window`、`request_hook`、`response_hook`、`extra_headers`。
