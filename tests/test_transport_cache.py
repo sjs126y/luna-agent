@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from personal_agent.llm.base import LLMRequestPlan
 from personal_agent.llm.provider import ProviderProfile, provider_registry
 from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
 from personal_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
@@ -162,3 +163,58 @@ def test_chat_completions_tools_are_sorted_without_cache_fields():
     assert [item["function"]["name"] for item in body["tools"]] == ["alpha", "zeta"]
     assert "cache_control" not in body
     assert all("cache_control" not in item for item in body["tools"])
+
+
+def test_request_plan_orders_dynamic_history_and_current_user():
+    plan = LLMRequestPlan(
+        stable_system="system",
+        stable_tools=[{"name": "read"}],
+        stable_context=[{"role": "user", "content": "stable"}],
+        dynamic_context=[{"role": "user", "content": "dynamic"}],
+        history=[{"role": "assistant", "content": "old"}],
+        current_user={"role": "user", "content": "now"},
+    )
+
+    assert plan.to_messages() == [
+        {"role": "user", "content": "stable"},
+        {"role": "user", "content": "dynamic"},
+        {"role": "assistant", "content": "old"},
+        {"role": "user", "content": "now"},
+    ]
+    diagnostics = plan.diagnostics()
+    assert diagnostics["stable_block_count"] == 3
+    assert diagnostics["dynamic_block_count"] == 1
+    assert diagnostics["current_user_present"] is True
+
+
+def test_build_request_from_plan_matches_legacy_request_for_simple_input():
+    provider = provider_registry.get("deepseek", _settings("deepseek", "deepseek-chat"))
+    transport = ChatCompletionsTransport(provider)
+    messages = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    tools = [{"name": "read", "description": "", "input_schema": {}}]
+    plan = LLMRequestPlan.from_legacy(messages, "system", tools)
+
+    assert transport.build_request_from_plan(plan, 100) == transport.build_request(
+        messages,
+        "system",
+        tools,
+        100,
+    )
+
+
+def test_request_plan_stable_hash_ignores_current_user_changes():
+    base = LLMRequestPlan(
+        stable_system="system",
+        stable_tools=[{"name": "read"}],
+        dynamic_context=[{"role": "user", "content": "memory"}],
+        current_user={"role": "user", "content": "first"},
+    )
+    changed = LLMRequestPlan(
+        stable_system="system",
+        stable_tools=[{"name": "read"}],
+        dynamic_context=[{"role": "user", "content": "memory"}],
+        current_user={"role": "user", "content": "second"},
+    )
+
+    assert base.diagnostics()["stable_prefix_hash"] == changed.diagnostics()["stable_prefix_hash"]
+    assert base.diagnostics()["dynamic_context_hash"] == changed.diagnostics()["dynamic_context_hash"]

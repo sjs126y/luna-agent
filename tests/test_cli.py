@@ -933,6 +933,10 @@ def test_format_doctor_report_includes_summary_and_issues():
                     "system_hash": "sys",
                     "tools_hash": "tools",
                     "stable_prefix_hash": "stable",
+                    "dynamic_context_hash": "dynamic",
+                    "stable_block_count": 2,
+                    "dynamic_block_count": 1,
+                    "current_user_present": True,
                 },
                 "error": "",
             },
@@ -1041,6 +1045,10 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "  strategy: prefix" in runtime_text
     assert "  last usage: hit=4 miss=6 write=0 read=4 rate=0.40" in runtime_text
     assert "  stable prefix hash: stable" in runtime_text
+    assert "  dynamic context hash: dynamic" in runtime_text
+    assert "  stable blocks: 2" in runtime_text
+    assert "  dynamic blocks: 1" in runtime_text
+    assert "  current user present: 是" in runtime_text
     assert "Tool Truth:" in runtime_text
     assert "  inspected: 2" in runtime_text
     assert "  claim mismatches: 1" in runtime_text

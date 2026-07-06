@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from personal_agent.llm.base import BaseTransport, DeltaCallback
+from personal_agent.llm.base import BaseTransport, DeltaCallback, LLMRequestPlan
 from personal_agent.llm.client import call_anthropic
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.models.messages import NormalizedResponse
@@ -203,6 +203,7 @@ class AnthropicMessagesTransport(BaseTransport):
         max_tokens: int = 4096,
         stream: bool = True,
         on_delta: DeltaCallback | None = None,
+        request_plan: LLMRequestPlan | None = None,
     ) -> NormalizedResponse:
         """Build request, stream, parse — all in one call.
 
@@ -210,10 +211,13 @@ class AnthropicMessagesTransport(BaseTransport):
         including ``thinking`` deltas, so streaming is on by default. Pass
         ``on_delta`` to receive incremental text/thinking as it arrives.
         """
-        body = self.build_request(
-            messages, system_prompt, tools or [], max_tokens
-        )
-        self.remember_cache_diagnostics(body)
+        if request_plan is not None:
+            body = self.build_request_from_plan(request_plan, max_tokens)
+        else:
+            body = self.build_request(
+                messages, system_prompt, tools or [], max_tokens
+            )
+        self.remember_cache_diagnostics(body, request_plan=request_plan)
         event_stream = call_anthropic(
             base_url=self._provider.base_url,
             api_key=self._provider.api_key,

@@ -106,6 +106,11 @@
 - `tools_hash: string`
 - `message_prefix_hash: string`
 - `stable_prefix_hash: string`
+- `dynamic_context_hash: string`
+- `stable_block_count: integer`
+- `dynamic_block_count: integer`
+- `current_user_present: boolean`
+- `source: string`
 - `message_count: integer`
 - `tool_count: integer`
 

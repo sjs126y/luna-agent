@@ -16,6 +16,7 @@ import logging
 
 from personal_agent.agent.report import TurnReportRecorder
 from personal_agent.conversation.events import emit_delta, emit_event
+from personal_agent.llm.base import LLMRequestPlan
 from personal_agent.tools.executor import execute_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
             break
 
         # ── build api_messages (injections, NOT persisted) ──
+        skill_injection_for_plan = getattr(ctx, "skill_injection", None)
         api_messages = await _build_api_messages(agent, ctx)
 
         # ── refresh system prompt if tools changed ──
@@ -66,9 +68,21 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
             "on_before_llm_call",
             api_messages, system_prompt, agent.tools,
         )
+        hook_changed_messages = False
         if isinstance(hook_result, dict):
+            hook_changed_messages = "messages" in hook_result
             api_messages = hook_result.get("messages", api_messages)
             system_prompt = hook_result.get("system_prompt", system_prompt)
+        request_plan = (
+            LLMRequestPlan.from_legacy(
+                api_messages,
+                system_prompt,
+                agent.tools,
+                metadata={"source": "hook" if hook_changed_messages else "legacy"},
+            )
+            if hook_changed_messages
+            else _build_request_plan(agent, ctx, system_prompt, skill_injection_for_plan)
+        )
 
         # ── LLM call (interruptible — polls _interrupt_requested every 5s) ──
         try:
@@ -94,6 +108,8 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 "tools": agent.tools,
                 "max_tokens": agent._provider.max_tokens,
             }
+            if hasattr(agent._transport, "build_request_from_plan"):
+                call_kwargs["request_plan"] = request_plan
             if getattr(report_recorder, "wants_deltas", False):
                 async def on_delta(kind: str, chunk: str) -> None:
                     if kind == "thinking":
@@ -382,3 +398,36 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
         msgs.insert(0, message)
 
     return msgs
+
+
+def _build_request_plan(agent, ctx, system_prompt: str, skill_injection: str | None) -> LLMRequestPlan:
+    dynamic_context: list[dict] = []
+    dynamic_context.extend(list(getattr(ctx, "memory_prefetch_messages", []) or []))
+    if skill_injection:
+        dynamic_context.append({
+            "role": "user",
+            "content": [{"type": "text", "text": skill_injection}],
+        })
+    if getattr(ctx, "skill_summaries", ""):
+        dynamic_context.append({
+            "role": "user",
+            "content": [{"type": "text", "text": ctx.skill_summaries}],
+        })
+
+    messages = list(getattr(ctx, "messages", []) or [])
+    current_idx = int(getattr(ctx, "current_turn_user_idx", max(0, len(messages) - 1)) or 0)
+    current_user = messages[current_idx] if 0 <= current_idx < len(messages) else None
+    history = [
+        message
+        for index, message in enumerate(messages)
+        if index != current_idx
+    ]
+    return LLMRequestPlan(
+        stable_system=system_prompt,
+        stable_tools=list(agent.tools or []),
+        stable_context=[],
+        dynamic_context=dynamic_context,
+        history=history,
+        current_user=current_user,
+        metadata={"source": "agent_context"},
+    )

@@ -96,6 +96,36 @@ uv run pytest tests/test_transport_cache.py tests/test_transport_streaming.py te
 
 - 无新增前端/doctor 字段；`BACKEND_INTERFACE.md` 无需为 v2 追加新接口。
 
+### 2026-07-06 v3 实施进度
+
+状态：已完成实现，待回归。
+
+已完成：
+
+- 新增 `LLMRequestPlan`，显式区分 stable system/tools/context、dynamic context、history、current user。
+- `BaseTransport` 增加 `build_request_from_plan(...)`，旧 `build_request(...)` 保持兼容。
+- Anthropic / ChatCompletions `call(...)` 支持可选 `request_plan`。
+- agent loop 在 transport 支持时传入 request plan；不支持时保持旧调用方式。
+- request plan diagnostics 合入 `cache_diagnostics`，包含 stable/dynamic block count、dynamic context hash、current user 是否存在。
+- doctor runtime detail 显示 request plan 摘要。
+- `BACKEND_INTERFACE.md` 已同步新增 diagnostics 字段说明。
+- 新增 request plan 单测和 agent loop handoff 测试。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_transport_cache.py tests/test_agent_loop.py tests/test_cli.py tests/test_runtime.py -q
+uv run pytest -q
+```
+
+结果：
+
+```text
+68 passed
+667 passed
+```
+
 ### 当前代码事实
 
 - `ProviderProfile` 目前主要是连接参数：`name`、`base_url`、`api_key`、`model`、`max_tokens`、`context_window`、`request_hook`、`response_hook`、`extra_headers`。

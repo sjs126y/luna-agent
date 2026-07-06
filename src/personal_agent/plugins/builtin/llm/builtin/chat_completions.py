@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from personal_agent.llm.base import BaseTransport, DeltaCallback
+from personal_agent.llm.base import BaseTransport, DeltaCallback, LLMRequestPlan
 from personal_agent.llm.client import call_chat_completions
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.models.messages import NormalizedResponse
@@ -201,9 +201,13 @@ class ChatCompletionsTransport(BaseTransport):
         tools: list[dict] | None = None,
         max_tokens: int = 4096,
         stream: bool = False,
+        request_plan: LLMRequestPlan | None = None,
     ) -> NormalizedResponse:
-        body = self.build_request(messages, system_prompt, tools or [], max_tokens)
-        self.remember_cache_diagnostics(body)
+        if request_plan is not None:
+            body = self.build_request_from_plan(request_plan, max_tokens)
+        else:
+            body = self.build_request(messages, system_prompt, tools or [], max_tokens)
+        self.remember_cache_diagnostics(body, request_plan=request_plan)
         event_stream = call_chat_completions(
             base_url=self._provider.base_url,
             api_key=self._provider.api_key,

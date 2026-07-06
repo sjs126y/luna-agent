@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 import hashlib
 import json
 from typing import Any
@@ -12,6 +13,62 @@ from personal_agent.models.messages import NormalizedResponse
 # Transports await it while parsing a stream so callers can render token-by-token.
 # Optional everywhere — when omitted, parsing collects the full response as before.
 DeltaCallback = Callable[[str, str], Awaitable[None]]
+
+
+@dataclass
+class LLMRequestPlan:
+    """Stable/dynamic request parts before transport-specific serialization."""
+
+    stable_system: str = ""
+    stable_tools: list[dict] = field(default_factory=list)
+    stable_context: list[dict] = field(default_factory=list)
+    dynamic_context: list[dict] = field(default_factory=list)
+    history: list[dict] = field(default_factory=list)
+    current_user: dict | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_legacy(
+        cls,
+        messages: list[dict],
+        system_prompt: str,
+        tools: list[dict],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> "LLMRequestPlan":
+        return cls(
+            stable_system=system_prompt,
+            stable_tools=list(tools or []),
+            history=list(messages or []),
+            metadata=dict(metadata or {"source": "legacy"}),
+        )
+
+    def to_messages(self) -> list[dict]:
+        messages: list[dict] = []
+        messages.extend(self.stable_context)
+        messages.extend(self.dynamic_context)
+        messages.extend(self.history)
+        if self.current_user is not None:
+            messages.append(self.current_user)
+        return messages
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "stable_block_count": _count_blocks(
+                bool(self.stable_system),
+                self.stable_tools,
+                self.stable_context,
+            ),
+            "dynamic_block_count": len(self.dynamic_context),
+            "stable_prefix_hash": stable_request_hash({
+                "system": self.stable_system,
+                "tools": self.stable_tools,
+                "stable_context": self.stable_context,
+            }),
+            "dynamic_context_hash": stable_request_hash(self.dynamic_context),
+            "current_user_present": self.current_user is not None,
+            "source": str(self.metadata.get("source") or ""),
+        }
 
 
 class BaseTransport(ABC):
@@ -60,6 +117,14 @@ class BaseTransport(ABC):
     def cache_strategy(self) -> str:
         provider = getattr(self, "_provider", None)
         return str(getattr(provider, "cache_strategy", "none") or "none")
+
+    def build_request_from_plan(self, plan: LLMRequestPlan, max_tokens: int) -> dict:
+        return self.build_request(
+            plan.to_messages(),
+            plan.stable_system,
+            plan.stable_tools,
+            max_tokens,
+        )
 
     def normalize_usage(self, raw_usage: dict[str, Any] | None) -> dict[str, Any]:
         """Normalize provider usage fields, including prompt-cache counters."""
@@ -140,8 +205,14 @@ class BaseTransport(ABC):
             "tool_count": len(tools),
         }
 
-    def remember_cache_diagnostics(self, body: dict[str, Any]) -> dict[str, Any]:
+    def remember_cache_diagnostics(
+        self,
+        body: dict[str, Any],
+        request_plan: LLMRequestPlan | None = None,
+    ) -> dict[str, Any]:
         diagnostics = self.cache_diagnostics(body)
+        if request_plan is not None:
+            diagnostics.update(request_plan.diagnostics())
         self._last_cache_diagnostics = diagnostics
         return diagnostics
 
@@ -178,3 +249,11 @@ def _as_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _count_blocks(system_present: bool, tools: list[dict], context: list[dict]) -> int:
+    count = 1 if system_present else 0
+    if tools:
+        count += 1
+    count += len(context)
+    return count

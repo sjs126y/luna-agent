@@ -1488,6 +1488,10 @@ def _format_llm_cache_detail_lines(cache: dict[str, Any]) -> list[str]:
         f"  system hash: {diagnostics.get('system_hash') or '-'}",
         f"  tools hash: {diagnostics.get('tools_hash') or '-'}",
         f"  stable prefix hash: {diagnostics.get('stable_prefix_hash') or '-'}",
+        f"  dynamic context hash: {diagnostics.get('dynamic_context_hash') or '-'}",
+        f"  stable blocks: {diagnostics.get('stable_block_count', 0)}",
+        f"  dynamic blocks: {diagnostics.get('dynamic_block_count', 0)}",
+        f"  current user present: {_yes(diagnostics.get('current_user_present', False))}",
         f"  error: {cache.get('error') or '-'}",
     ]
 
