@@ -137,6 +137,11 @@ class UIState:
     output_tokens: int = 0
     api_calls: int = 0
     context_window: int = 0
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_hit_rate: float | None = None
     exec_mode: str = "Ask First"
 
     # last expandable (display_name, full_text) for Ctrl+O

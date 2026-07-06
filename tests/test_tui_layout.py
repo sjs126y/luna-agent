@@ -267,6 +267,35 @@ def test_meter_bar_shows_model_and_usage():
     assert "0%" in bar
 
 
+def test_meter_bar_shows_cache_summary():
+    from personal_agent.tui.layout import _meter_bar
+
+    state = UIState()
+    state.model = "deepseek-v4-flash"
+    state.context_window = 1_000_000
+    state.input_tokens = 100_000
+    state.output_tokens = 20_000
+    state.cache_hit_rate = 0.42
+    state.cache_read_tokens = 12_300
+    state.cache_write_tokens = 800
+    bar = _meter_bar(state)
+    assert "cache 42%" in bar
+    assert "r12.3k" in bar
+    assert "w800" in bar
+
+
+def test_meter_bar_computes_cache_rate_from_hit_and_miss():
+    from personal_agent.tui.layout import _meter_bar
+
+    state = UIState()
+    state.model = "deepseek-v4-flash"
+    state.cache_hit_tokens = 3
+    state.cache_miss_tokens = 1
+    bar = _meter_bar(state)
+    assert "deepseek-v4-flash" in bar
+    assert "cache 75%" in bar
+
+
 def test_hint_bar_uses_distinct_mode_colors():
     from personal_agent.tui import theme
     from personal_agent.tui.layout import _hint_bar

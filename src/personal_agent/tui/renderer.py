@@ -93,6 +93,11 @@ class InlineRenderer(Renderer):
         ctx = int(data.get("context_window", 0) or 0)
         if ctx:
             self.state.context_window = ctx
+        self.state.cache_hit_tokens = _optional_int(data.get("cache_hit_tokens"))
+        self.state.cache_miss_tokens = _optional_int(data.get("cache_miss_tokens"))
+        self.state.cache_write_tokens = _optional_int(data.get("cache_write_tokens"))
+        self.state.cache_read_tokens = _optional_int(data.get("cache_read_tokens"))
+        self.state.cache_hit_rate = _optional_rate(data.get("cache_hit_rate"))
         self._invalidate()
 
     # ── tools ────────────────────────────────────────────
@@ -287,6 +292,18 @@ def _optional_int(value) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_rate(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        rate = float(value)
+    except (TypeError, ValueError):
+        return None
+    if rate > 1:
+        rate = rate / 100
+    return max(0.0, min(1.0, rate))
 
 
 def _should_hint_expand(item: ToolTrace) -> bool:

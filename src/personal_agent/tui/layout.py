@@ -152,8 +152,9 @@ def build_layout(
 def _meter_bar(state: UIState) -> str:
     # Line ABOVE the input box: model name + a colored context-usage meter.
     model = theme.sgr(state.model or "-", theme.METER_MODEL)
+    cache = _cache_summary(state)
     if not state.context_window:
-        return "  " + model
+        return "  " + model + (f"  {cache}" if cache else "")
     used = state.input_tokens + state.output_tokens
     frac = used / state.context_window if state.context_window else 0.0
     pct = int(frac * 100)
@@ -161,7 +162,32 @@ def _meter_bar(state: UIState) -> str:
     meter = theme.sgr(theme.bar_meter(frac), color)
     usage = theme.dim(f"{theme.humanize(used)}/{theme.humanize(state.context_window)}")
     pct_s = theme.sgr(f"{pct}%", color)
-    return f"  {model}  {meter}  {usage} {pct_s}"
+    parts = [model, meter, f"{usage} {pct_s}"]
+    if cache:
+        parts.append(cache)
+    return "  " + "  ".join(parts)
+
+
+def _cache_summary(state: UIState) -> str:
+    has_cache = any((
+        state.cache_hit_tokens,
+        state.cache_miss_tokens,
+        state.cache_write_tokens,
+        state.cache_read_tokens,
+        state.cache_hit_rate is not None,
+    ))
+    if not has_cache:
+        return ""
+    rate = state.cache_hit_rate
+    if rate is None:
+        total = state.cache_hit_tokens + state.cache_miss_tokens
+        rate = (state.cache_hit_tokens / total) if total else 0.0
+    parts = [f"cache {int(rate * 100)}%"]
+    if state.cache_read_tokens:
+        parts.append(f"r{theme.humanize(state.cache_read_tokens)}")
+    if state.cache_write_tokens:
+        parts.append(f"w{theme.humanize(state.cache_write_tokens)}")
+    return theme.dim(" ".join(parts))
 
 
 def _hint_bar(state: UIState) -> str:

@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 22:32 CST
+更新时间：2026-07-06 22:41 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -19,7 +19,7 @@
 - 已有 inline TUI 输入区、状态行、上下文 meter、流式回复预览、工具运行活跃区。
 - 用户消息已增加底色/左侧强调，提高和助手输出的对比度。
 - 输入框已有低调背景和左侧提示符；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
-- 状态栏显示当前执行模式、模型和 context usage。
+- 状态栏显示当前执行模式、模型、context usage 和后端 `llm_end` cache usage 摘要。
 
 ### Slash Command UI
 
@@ -91,6 +91,7 @@
 - 当前动态 provider：`tools`、`sessions`
 - Tool Runs 查询：`/tool-runs ...` + `kind="tool_runs"` payload
 - Tool confirmation fields
+- LLM cache usage fields：`cache_hit_tokens`、`cache_miss_tokens`、`cache_write_tokens`、`cache_read_tokens`、`cache_hit_rate`
 - `retry` / `stop` / `error` 增强字段
 - Doctor diagnostics 目前仅用于联调判断，TUI 未做 UI 消费；不是当前必做项。
 
@@ -123,6 +124,12 @@
 - `Enter` 现在执行当前选中的 confirm action；`Left/Right` 移动选择；快捷键继续作为辅助操作。
 - Confirm action 根据后端 `available_actions` 和 `default_action` 构建，只显示可用动作，并对默认项加轻量标记。
 
+### 2026-07-06 22:41 CST
+
+- 读取后端 worktree 的 `BACKEND_INTERFACE.md`，接入新增 `llm_end` cache usage 字段。
+- 状态栏 context meter 后会低调显示 cache 摘要，例如 `cache 42% r12.3k w800`；没有 cache 字段时不显示。
+- 暂不把 turn reports / doctor cache diagnostics 做成普通 TUI UI，它们更适合后续明确查询入口后再接。
+
 已验证：
 
 ```bash
@@ -132,7 +139,7 @@ git diff --check
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 ```
 
-结果：TUI tests `77 passed`，command/gateway tests `55 passed`。
+结果：TUI tests `79 passed`，command/gateway tests `55 passed`。
 
 ## 不建议现在做
 
