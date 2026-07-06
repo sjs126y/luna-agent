@@ -190,7 +190,7 @@ async def _run_agent(prompt, system_prompt="", schema="", max_tokens=2048,
     """Run a single-turn sub-agent.
 
     allowed_tools: explicit tool names to grant as an allowlist candidate.
-                   Destructive tools are still blocked unless the runtime is
+                   Write-capable tools are still blocked unless the runtime is
                    explicitly authorized by trusted code.
     allowed_categories: shortcut — "all" grants everything grantable,
                         "readonly" (default) gives only safe tools.
@@ -530,7 +530,7 @@ tool_registry.register(ToolEntry(
         "task": {"type": "string", "description": "The exact task to delegate."},
         "role": {"type": "string", "description": "Short role name for the sub-agent."},
         "system_prompt": {"type": "string", "description": "Optional system prompt override."},
-        "tool_policy": {"type": "string", "description": "readonly, none, allowlist, or all. Destructive tools remain blocked unless trusted runtime code explicitly authorizes them."},
+        "tool_policy": {"type": "string", "description": "readonly, none, allowlist, or all. Write-capable tools remain blocked unless trusted runtime code explicitly authorizes them."},
         "allowed_tools": {"type": "string", "description": "JSON array or comma-separated names used when tool_policy=allowlist."},
         "max_tokens": {"type": "integer", "description": "Max output tokens."},
     }, "required": ["task"]},
@@ -581,7 +581,7 @@ tool_registry.register(ToolEntry(
     description=(
         "Spawn a focused sub-agent. Call MULTIPLE TIMES in one turn to run in PARALLEL. "
         "By default sub-agents are READ-ONLY (read, grep, glob, web_search, etc.). "
-        "allowed_tools narrows or extends the requested allowlist, but destructive tools "
+        "allowed_tools narrows or extends the requested allowlist, but write-capable tools "
         "remain blocked unless trusted runtime code explicitly authorizes them."
     ),
     schema={"type": "object", "properties": {
@@ -589,8 +589,8 @@ tool_registry.register(ToolEntry(
         "system_prompt": {"type": "string", "description": "Optional role/persona."},
         "schema": {"type": "string", "description": "Optional JSON schema for structured output."},
         "max_tokens": {"type": "integer", "description": "Max output tokens (default 2048)."},
-        "allowed_tools": {"type": "string", "description": "JSON array or comma-separated tool names. Destructive names are still blocked by default."},
-        "allowed_categories": {"type": "string", "description": "Shorthand: 'all' requests all tools; destructive tools are still blocked by default."},
+        "allowed_tools": {"type": "string", "description": "JSON array or comma-separated tool names. Write-capable names are still blocked by default."},
+        "allowed_categories": {"type": "string", "description": "Shorthand: 'all' requests all tools; write-capable tools are still blocked by default."},
     }, "required": ["prompt"]},
     handler=_sub_agent, toolset="builtin", is_parallel_safe=True))
 

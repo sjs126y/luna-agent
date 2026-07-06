@@ -424,7 +424,23 @@ async def test_file_edit_replace_reports_occurrences(tmp_path: Path):
     assert "old_text cannot be empty" in empty_old
     assert "occurrences=0" in missing
     assert "Replaced 1 of 2 occurrences" in replaced
+    assert "replace_all" in replaced
     assert path.read_text(encoding="utf-8") == "alpha BETA beta"
+
+
+@pytest.mark.asyncio
+async def test_file_edit_replace_all_updates_every_occurrence(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+    from personal_agent.tools.sandbox import init_sandbox
+
+    path = tmp_path / "notes.md"
+    path.write_text("alpha beta beta", encoding="utf-8")
+    init_sandbox([tmp_path], [])
+
+    replaced = await _file_edit("replace_all", str(path), old_text="beta", new_text="BETA")
+
+    assert "Replaced all 2 occurrences" in replaced
+    assert path.read_text(encoding="utf-8") == "alpha BETA BETA"
 
 
 @pytest.mark.asyncio
@@ -442,6 +458,43 @@ async def test_file_edit_size_limit_and_sandbox_block(tmp_path: Path, monkeypatc
 
     assert "exceed max size" in too_large.lower()
     assert "path blocked" in blocked.lower()
+
+
+@pytest.mark.asyncio
+async def test_grep_literal_treats_pattern_as_plain_text(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+    from personal_agent.tools.sandbox import init_sandbox
+
+    path = tmp_path / "app.py"
+    path.write_text("foo.bar()\nfooXbar()\n", encoding="utf-8")
+    init_sandbox([tmp_path], [])
+
+    regex_result = await _grep("foo.bar()", str(tmp_path))
+    literal_result = await _grep("foo.bar()", str(tmp_path), literal=True)
+
+    assert "fooXbar()" in regex_result
+    assert "foo.bar()" in literal_result
+    assert "fooXbar()" not in literal_result
+
+
+@pytest.mark.asyncio
+async def test_task_list_search_filters_title_and_description(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import task as task_tool
+
+    monkeypatch.setattr(task_tool, "_db_path", tmp_path / "tasks.db")
+
+    await task_tool._task("add", title="Fix provider cache", description="cache hit rate")
+    await task_tool._task("add", title="Polish frontend", description="activity drawer")
+
+    title_result = await task_tool._task("list", search="provider")
+    desc_result = await task_tool._task("list", search="drawer")
+    empty_result = await task_tool._task("list", search="missing")
+
+    assert "Fix provider cache" in title_result
+    assert "Polish frontend" not in title_result
+    assert "Polish frontend" in desc_result
+    assert "Fix provider cache" not in desc_result
+    assert "No tasks match" in empty_result
 
 
 @pytest.mark.asyncio

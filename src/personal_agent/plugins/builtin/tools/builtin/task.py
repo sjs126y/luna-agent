@@ -71,6 +71,11 @@ async def _task_list(status: str = "", priority: str = "", search: str = "") -> 
         if priority and priority != "all":
             where.append("priority = ?")
             params.append(priority)
+        search = search.strip()
+        if search:
+            where.append("(LOWER(title) LIKE ? OR LOWER(description) LIKE ?)")
+            needle = f"%{search.lower()}%"
+            params.extend([needle, needle])
 
         sql = "SELECT id, title, status, priority, due_date FROM tasks"
         if where:

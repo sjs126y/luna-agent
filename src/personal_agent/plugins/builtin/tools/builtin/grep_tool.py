@@ -14,11 +14,18 @@ _MAX_MATCHES = 50
 _MAX_FILE_SIZE = 500_000  # skip files > 500KB
 
 
-async def _grep(pattern: str, path: str = ".", glob: str = "",
-                output_mode: str = "content", head_limit: int = 40) -> str:
+async def _grep(
+    pattern: str,
+    path: str = ".",
+    glob: str = "",
+    output_mode: str = "content",
+    head_limit: int = 40,
+    literal: bool = False,
+) -> str:
     """Search file contents with regex."""
+    search_pattern = re.escape(pattern) if literal else pattern
     try:
-        regex = re.compile(pattern)
+        regex = re.compile(search_pattern)
     except re.error as e:
         return f"Error: invalid regex pattern: {e}"
 
@@ -97,6 +104,7 @@ tool_registry.register(ToolEntry(
             "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"],
                            "description": "content: matching lines, files_with_matches: file paths, count: match counts"},
             "head_limit": {"type": "integer", "description": "Max output lines (default 40)"},
+            "literal": {"type": "boolean", "description": "Treat pattern as plain text instead of regex"},
         },
         "required": ["pattern"],
     },
