@@ -78,7 +78,7 @@ def test_slash_command_slot_shows_command_header():
     header_window = slash_slot.content.children[0]
     text = to_plain_text(header_window.content.text())
     assert "commands" in text
-    assert "继续输入过滤" in text
+    assert "type to filter" in text
 
 
 def test_active_region_truncates_many_tools():
@@ -124,13 +124,13 @@ def test_active_region_shows_pending_confirm():
     )
     assert state.has_active_region() is True
     text = _active_text(state)
-    assert "需要确认" in text
+    assert "confirm" in text
     assert "write_file" in text
-    assert "权限 write" in text
-    assert "风险: 将写入文件" in text
-    assert "Enter 允许本次" in text
-    assert "Shift+A 始终允许" in text
-    assert "Esc/Ctrl+C 拒绝" in text
+    assert "write" in text
+    assert "Risk 将写入文件" in text
+    assert "Enter allow once" in text
+    assert "Shift+A always" in text
+    assert "Esc deny" in text
 
 
 def test_active_region_confirm_none_default_requires_explicit_allow():
@@ -141,8 +141,8 @@ def test_active_region_confirm_none_default_requires_explicit_allow():
         default_action="none",
     )
     text = _active_text(state)
-    assert "A 允许本次" in text
-    assert "Enter 允许本次" not in text
+    assert "A allow once" in text
+    assert "Enter allow once" not in text
 
 
 def test_active_region_confirm_hides_unavailable_actions():
@@ -154,9 +154,9 @@ def test_active_region_confirm_hides_unavailable_actions():
         available_actions=("deny",),
     )
     text = _active_text(state)
-    assert "Enter 拒绝" in text
-    assert "始终允许" not in text
-    assert "A 允许本次" not in text
+    assert "Enter deny" in text
+    assert "always" not in text
+    assert "A allow once" not in text
 
 
 def test_active_region_confirm_shows_structured_details():
@@ -169,8 +169,8 @@ def test_active_region_confirm_shows_structured_details():
         affected_paths=("src/a.py", "src/b.py"),
     )
     text = _active_text(state)
-    assert "网络: https://example.test/a" in text
-    assert "路径: src/a.py, src/b.py" in text
+    assert "URL https://example.test/a" in text
+    assert "Path src/a.py, src/b.py" in text
 
 
 def test_active_region_confirm_shows_command_detail():
@@ -181,7 +181,7 @@ def test_active_region_confirm_shows_command_detail():
         command_preview="uv run pytest -q",
     )
     text = _active_text(state)
-    assert "命令: uv run pytest -q" in text
+    assert "Cmd uv run pytest -q" in text
 
 
 def test_active_region_confirm_shows_process_label():
@@ -192,7 +192,7 @@ def test_active_region_confirm_shows_process_label():
         process_label="vite dev server",
     )
     text = _active_text(state)
-    assert "进程: vite dev server" in text
+    assert "Process vite dev server" in text
 
 
 def test_hint_bar_shows_expand_key():

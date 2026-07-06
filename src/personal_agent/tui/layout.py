@@ -192,64 +192,74 @@ def _slash_menu_header() -> str:
     return (
         "  "
         + theme.sgr("commands", theme.SLASH_BORDER)
-        + theme.dim("  继续输入过滤，Enter 选择")
+        + theme.dim("  type to filter · Enter selects")
     )
 
 
 def _confirm_lines(confirm) -> list[str]:
     accent = theme.risk_style(confirm.risk_level)
     lines = [
-        theme.sgr(f"⚠ {confirm.title}", accent),
-        f"  {theme.sgr(confirm.display_name, accent)}",
+        theme.sgr("╭─ confirm ─────────────────────────────────────────", theme.CONFIRM_BORDER),
+        f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr(confirm.display_name, accent)}",
     ]
     meta = " · ".join(
         part for part in (
-            f"权限 {confirm.permission_category}" if confirm.permission_category else "",
-            f"模式 {confirm.execution_mode}" if confirm.execution_mode else "",
+            confirm.permission_category,
+            confirm.execution_mode,
+            confirm.risk_level,
         ) if part
     )
     if meta:
-        lines.append(theme.dim(f"  {meta}"))
+        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr(meta, theme.CONFIRM_DIM)}")
     if confirm.risk_summary:
-        lines.append(f"  风险: {confirm.risk_summary}")
+        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr('Risk ', accent)}{theme.sgr(confirm.risk_summary, theme.CONFIRM_TEXT)}")
     lines.extend(_confirm_detail_lines(confirm))
     actions = set(confirm.available_actions)
     if confirm.default_action == "allow" and "allow_once" in actions:
-        default = "Enter 允许本次"
+        default = "Enter allow once"
     elif confirm.default_action == "deny" and "deny" in actions:
-        default = "Enter 拒绝"
+        default = "Enter deny"
     elif "allow_once" in actions:
-        default = "A 允许本次"
+        default = "A allow once"
     else:
         default = ""
     action_parts: list[str] = []
     if default:
         action_parts.append(theme.sgr(default, theme.KEY))
     if "allow_always" in actions:
-        action_parts.append(theme.sgr("Shift+A", theme.KEY) + theme.sgr(" 始终允许", theme.HINT_LABEL))
+        action_parts.append(theme.sgr("Shift+A", theme.KEY) + theme.sgr(" always", theme.HINT_LABEL))
     if "deny" in actions:
-        action_parts.append(theme.sgr("Esc/Ctrl+C", theme.KEY) + theme.sgr(" 拒绝", theme.HINT_LABEL))
+        action_parts.append(theme.sgr("Esc", theme.KEY) + theme.sgr(" deny", theme.HINT_LABEL))
     if action_parts:
-        lines.append("  " + "   ".join(action_parts))
+        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}" + "   ".join(action_parts))
+    lines.append(theme.sgr("╰───────────────────────────────────────────────────", theme.CONFIRM_BORDER))
     return lines
 
 
 def _confirm_detail_lines(confirm) -> list[str]:
     lines: list[str] = []
     if confirm.command_preview:
-        lines.append(theme.dim(f"  命令: {confirm.command_preview}"))
+        lines.append(_confirm_detail("Cmd", confirm.command_preview))
     if confirm.url_preview:
         target = confirm.url_preview
         if confirm.host and confirm.host not in target:
             target = f"{target} ({confirm.host})"
-        lines.append(theme.dim(f"  网络: {target}"))
+        lines.append(_confirm_detail("URL", target))
     if confirm.process_label:
-        lines.append(theme.dim(f"  进程: {confirm.process_label}"))
+        lines.append(_confirm_detail("Process", confirm.process_label))
     if confirm.affected_paths:
         paths = ", ".join(confirm.affected_paths[:3])
         if len(confirm.affected_paths) > 3:
-            paths += f" 等 {len(confirm.affected_paths)} 个路径"
-        lines.append(theme.dim(f"  路径: {paths}"))
+            paths += f" +{len(confirm.affected_paths) - 3}"
+        lines.append(_confirm_detail("Path", paths))
     if confirm.input_preview and not lines:
-        lines.append(theme.dim(f"  {confirm.input_preview}"))
+        lines.append(_confirm_detail("Input", confirm.input_preview))
     return lines
+
+
+def _confirm_detail(label: str, value: str) -> str:
+    return (
+        theme.sgr("│ ", theme.CONFIRM_BORDER)
+        + theme.sgr(f"{label} ", theme.CONFIRM_DIM)
+        + theme.sgr(value, theme.CONFIRM_TEXT)
+    )
