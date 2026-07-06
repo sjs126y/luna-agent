@@ -81,6 +81,43 @@ async def test_tool_lifecycle_and_expandable():
 
 
 @pytest.mark.asyncio
+async def test_tool_decision_updates_mode_label():
+    r, _, _ = _make()
+    await r.emit(ConversationEvent("tool_decision", data={
+        "tool_name": "write",
+        "tool_use_id": "t1",
+        "execution_mode_label": "Edit Freely",
+    }))
+    assert r.state.exec_mode == "Edit Freely"
+
+
+@pytest.mark.asyncio
+async def test_retry_compression_stop_and_error_are_printed():
+    r, printed, _ = _make()
+    await r.emit(ConversationEvent("retry", "模型空回复，准备重试", data={
+        "category": "empty_response",
+        "attempt": 1,
+        "max_attempts": 2,
+    }))
+    await r.emit(ConversationEvent("compression", "历史消息已压缩", data={
+        "pre_message_count": 12,
+        "post_message_count": 5,
+    }))
+    await r.emit(ConversationEvent("stop", "已停止"))
+    await r.emit(ConversationEvent("error", "模型调用失败", data={"error": "Timeout"}))
+
+    text = "\n".join(printed)
+    assert "模型空回复" in text
+    assert "1/2" in text
+    assert "历史消息已压缩" in text
+    assert "12 -> 5" in text
+    assert "已停止" in text
+    assert "模型调用失败" in text
+    assert "Timeout" in text
+    assert r.state.status_message == "error"
+
+
+@pytest.mark.asyncio
 async def test_turn_end_resets_status():
     r, _, _ = _make()
     await r.emit(ConversationEvent("turn_start"))

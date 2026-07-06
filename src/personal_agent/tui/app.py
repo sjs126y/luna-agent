@@ -4,8 +4,8 @@ Owns the prompt_toolkit Application, wires an InlineRenderer to a UIState, and
 runs each turn as a background task so the input box stays responsive. Finalized
 content is pushed to scrollback via run_in_terminal (print above the prompt).
 
-Phase 1 scope: one-turn-at-a-time read-only render + basic keys (Enter / Ctrl+C /
-Ctrl+D). History, slash-completion and Ctrl+O expand come in Phase 2.
+Current scope: selectable inline UI with prompt history/completion, slash
+commands, Ctrl+O expansion, mode cycling, and inline tool-confirmation wiring.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from prompt_toolkit.layout import Layout
 
 from personal_agent.tui.layout import build_layout
 from personal_agent.tui.renderer import InlineRenderer
-from personal_agent.tui.state import UIState
+from personal_agent.tui.state import ConfirmPrompt, UIState
 from personal_agent.tui import theme
 
 
@@ -41,6 +41,15 @@ def _decision_field(decision, name: str) -> str:
     if isinstance(decision, dict):
         return str(decision.get(name) or "")
     return str(getattr(decision, name, "") or "")
+
+
+def _decision_list(decision, name: str) -> list[str]:
+    value = decision.get(name) if isinstance(decision, dict) else getattr(decision, name, None)
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if item]
+    if value:
+        return [str(value)]
+    return []
 
 
 class InlineTuiApp:
@@ -191,12 +200,12 @@ class InlineTuiApp:
             return 80
 
     # ── turn handling ──
-    async def _submit(self, text: str) -> None:
-        text = text.strip()
-        if not text:
+    async def _submit(self, text: str):
+        command_text = text.strip()
+        if not command_text:
             return
         # Slash / builtin commands go through the runtime, result printed above.
-        command_result = await self.runtime.handle_command(text)
+        command_result = await self.runtime.handle_command(command_text)
         if command_result is not None:
             await self._print_above(str(command_result))
             await self._refresh_mode()
@@ -258,13 +267,15 @@ class InlineTuiApp:
 
     def _on_enter(self) -> None:
         text = self.input_area.text
-        self.input_area.text = ""
-        if text.strip() in ("exit", "quit", "/exit", "/quit"):
+        command_text = text.strip()
+        if command_text in ("exit", "quit", "/exit", "/quit"):
+            self.input_area.text = ""
             if self.app is not None:
                 self.app.exit()
             return
         if self._turn_task and not self._turn_task.done():
-            return  # a turn is already running
+            return  # keep the draft intact while a turn is already running
+        self.input_area.text = ""
         self._turn_task = asyncio.ensure_future(self._submit(text))
 
     async def _stop(self) -> None:
@@ -292,13 +303,29 @@ class InlineTuiApp:
 
         @kb.add("a", filter=Condition(lambda: self._confirm_future is not None))
         def _(event) -> None:
+            self._resolve_confirm("allow")
+
+        @kb.add("A", filter=Condition(lambda: self._confirm_future is not None))
+        def _(event) -> None:
             self._resolve_confirm("always")
+
+        @kb.add("escape", filter=Condition(lambda: self._confirm_future is not None))
+        def _(event) -> None:
+            self._resolve_confirm("deny")
 
         @kb.add("enter")
         def _(event) -> None:
-            # While a tool confirmation is pending, Enter defaults to allow.
+            # While a tool confirmation is pending, Enter uses the visible
+            # default action. Today that defaults to allow for compatibility;
+            # newer backends can send default_action=deny/none.
             if self._confirm_future is not None:
-                self._resolve_confirm("allow")
+                default = "allow"
+                if self.state.pending_confirm is not None:
+                    default = self.state.pending_confirm.default_action
+                if default == "deny":
+                    self._resolve_confirm("deny")
+                elif default == "allow":
+                    self._resolve_confirm("allow")
                 return
             # If the completion menu is open, accept it instead of submitting,
             # so a bare '/' + Enter picks the top command (matches classic shell).
@@ -358,22 +385,18 @@ class InlineTuiApp:
         body = "\n".join(f"  {line}" for line in (full.splitlines() or [full]))
         self._print_above_nowait(f"{header}\n{body}")
 
-    # ── inline tool confirmation (Phase 4 frontend; backend seam pending) ──
     async def confirm_tool(self, decision) -> str:
         """Prompt the user to allow/deny a tool, resolving to 'allow'|'deny'|'always'.
 
-        Passed to the backend as the ``confirm`` callback once
-        ``run_turn_events`` / ``execute_tool_calls`` thread one through (see
-        BACKEND_REQUIREMENTS.md). ``decision`` is a ToolDecision-like object;
-        we only read a couple of display fields, tolerating dicts or attrs.
+        Passed to the backend as the ``confirm`` callback. ``decision`` is a
+        ToolDecision-like object; tolerate current minimal fields and future
+        richer display fields from FRONTEND_INTERFACE_REQUIREMENTS.md.
         """
-        name = _decision_field(decision, "tool_name") or "tool"
-        category = _decision_field(decision, "permission_category") or ""
-        label = f"允许执行 {name}" + (f"（{category}）" if category else "") + "?"
+        prompt = self._build_confirm_prompt(decision)
 
         loop = asyncio.get_running_loop()
         self._confirm_future = loop.create_future()
-        self.state.pending_confirm = label
+        self.state.pending_confirm = prompt
         self._invalidate()
         try:
             answer = await self._confirm_future
@@ -383,7 +406,36 @@ class InlineTuiApp:
             self._invalidate()
         return answer
 
+    def _build_confirm_prompt(self, decision) -> ConfirmPrompt:
+        name = _decision_field(decision, "display_name") or _decision_field(decision, "tool_name") or "tool"
+        category = _decision_field(decision, "permission_category") or ""
+        mode = _decision_field(decision, "execution_mode_label") or _decision_field(decision, "execution_mode")
+        risk = _decision_field(decision, "risk_summary") or _decision_field(decision, "decision_message")
+        default_action = (_decision_field(decision, "default_action") or "allow").lower()
+        if default_action not in {"allow", "deny", "none"}:
+            default_action = "allow"
+        preview = (
+            _decision_field(decision, "input_preview")
+            or _decision_field(decision, "command_preview")
+            or _decision_field(decision, "diff_summary")
+            or _decision_field(decision, "input_summary")
+        )
+        paths = _decision_list(decision, "affected_paths")
+        if paths:
+            preview = (preview + " · " if preview else "") + ", ".join(paths[:3])
+
+        return ConfirmPrompt(
+            title="需要确认",
+            display_name=name,
+            permission_category=category,
+            execution_mode=mode,
+            risk_summary=risk,
+            input_preview=preview,
+            default_action=default_action,
+        )
+
     def _resolve_confirm(self, answer: str) -> None:
+        self.input_area.text = ""
         fut = self._confirm_future
         if fut is not None and not fut.done():
             fut.set_result(answer)

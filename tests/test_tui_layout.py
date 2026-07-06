@@ -14,7 +14,7 @@ from personal_agent.tui.layout import (
     _STREAM_TAIL_CHARS,
     build_layout,
 )
-from personal_agent.tui.state import ToolTrace, UIState
+from personal_agent.tui.state import ConfirmPrompt, ToolTrace, UIState
 
 
 def _active_text(state: UIState) -> str:
@@ -82,11 +82,34 @@ def test_active_region_short_stream_not_truncated():
 
 def test_active_region_shows_pending_confirm():
     state = UIState()
-    state.pending_confirm = "允许执行 write_file?"
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="write_file",
+        permission_category="write",
+        risk_summary="将写入文件",
+        input_preview="src/app.py",
+    )
     assert state.has_active_region() is True
     text = _active_text(state)
-    assert "允许执行 write_file?" in text
-    assert "[y/n/a]" in text
+    assert "需要确认" in text
+    assert "write_file" in text
+    assert "权限 write" in text
+    assert "风险: 将写入文件" in text
+    assert "Enter 允许本次" in text
+    assert "Shift+A 始终允许" in text
+    assert "Esc/Ctrl+C 拒绝" in text
+
+
+def test_active_region_confirm_none_default_requires_explicit_allow():
+    state = UIState()
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="bash",
+        default_action="none",
+    )
+    text = _active_text(state)
+    assert "A 允许本次" in text
+    assert "Enter 允许本次" not in text
 
 
 def test_hint_bar_shows_expand_key():

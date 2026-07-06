@@ -92,15 +92,21 @@ class InlineRenderer(Renderer):
         self._invalidate()
 
     # ── tools ────────────────────────────────────────────
+    async def on_tool_decision(self, event: ConversationEvent) -> None:
+        mode = str(event.data.get("execution_mode_label") or "")
+        if mode:
+            self.state.exec_mode = mode
+        self._invalidate()
+
     async def on_tool_start(self, event: ConversationEvent) -> None:
         data = event.data
-        name = str(data.get("tool_name") or "tool")
+        name = str(data.get("display_name") or data.get("tool_name") or "tool")
         tool_use_id = str(data.get("tool_use_id") or f"tool-{self.state.tool_seq + 1}")
         self.state.tool_seq += 1
         self.state.active_tools[tool_use_id] = ToolTrace(
             index=self.state.tool_seq,
             tool_use_id=tool_use_id,
-            name=name,
+            name=str(data.get("tool_name") or name),
             display_name=name,
             input_summary=str(data.get("input_summary") or ""),
             started_at=time.monotonic(),
@@ -118,7 +124,7 @@ class InlineRenderer(Renderer):
                 index=self.state.tool_seq,
                 tool_use_id=tool_use_id or f"tool-{self.state.tool_seq}",
                 name=str(data.get("tool_name") or "tool"),
-                display_name=str(data.get("tool_name") or "tool"),
+                display_name=str(data.get("display_name") or data.get("tool_name") or "tool"),
                 input_summary=str(data.get("input_summary") or ""),
                 started_at=time.monotonic(),
             )
@@ -134,6 +140,45 @@ class InlineRenderer(Renderer):
             self.state.last_expandable = (item.display_name, full)
         # Print the completed tool trace line into scrollback.
         await self._print_above(render_plain(self._tool_line(item), width=self.width))
+        self._invalidate()
+
+    async def on_retry(self, event: ConversationEvent) -> None:
+        data = event.data
+        text = event.message or "准备重试"
+        attempt = data.get("attempt")
+        max_attempts = data.get("max_attempts")
+        suffix = ""
+        if attempt and max_attempts:
+            suffix = f" · {attempt}/{max_attempts}"
+        elif attempt:
+            suffix = f" · attempt {attempt}"
+        names = data.get("tool_names") or data.get("tool_name") or ""
+        if names:
+            suffix += f" · {names}"
+        await self._print_above(render_plain(theme.sgr(f"  ↻ {text}{suffix}", theme.NOTICE), width=self.width))
+
+    async def on_compression(self, event: ConversationEvent) -> None:
+        data = event.data
+        text = event.message or "历史消息已压缩"
+        pre = data.get("pre_message_count")
+        post = data.get("post_message_count")
+        suffix = f" · {pre} -> {post}" if pre is not None and post is not None else ""
+        await self._print_above(render_plain(theme.sgr(f"  ◇ {text}{suffix}", theme.NOTICE), width=self.width))
+
+    async def on_stop(self, event: ConversationEvent) -> None:
+        text = event.message or str(event.data.get("message") or "已停止")
+        self.state.streaming = False
+        self.state.status_message = "stopped"
+        await self._print_above(render_plain(theme.sgr(f"  ■ {text}", theme.NOTICE), width=self.width))
+        self._invalidate()
+
+    async def on_error(self, event: ConversationEvent) -> None:
+        text = event.message or "运行错误"
+        detail = str(event.data.get("error") or "")
+        suffix = f": {detail}" if detail and detail not in text else ""
+        self.state.streaming = False
+        self.state.status_message = "error"
+        await self._print_above(render_plain(theme.sgr(f"  ✗ {text}{suffix}", theme.ERROR), width=self.width))
         self._invalidate()
 
     async def on_turn_end(self, event: ConversationEvent) -> None:

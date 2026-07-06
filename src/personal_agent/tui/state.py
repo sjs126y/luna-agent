@@ -39,6 +39,19 @@ class ToolTrace:
 
 
 @dataclass
+class ConfirmPrompt:
+    """Human-facing state for one pending tool confirmation."""
+
+    title: str
+    display_name: str
+    permission_category: str = ""
+    execution_mode: str = ""
+    risk_summary: str = ""
+    input_preview: str = ""
+    default_action: str = "allow"  # allow | deny | none
+
+
+@dataclass
 class UIState:
     """Everything the bottom active region needs to draw the current turn."""
 
@@ -65,10 +78,9 @@ class UIState:
     # last expandable (display_name, full_text) for Ctrl+O
     last_expandable: tuple[str, str] | None = None
 
-    # pending inline tool confirmation (Phase 4). When set, the active region
-    # shows a "⚠ 允许执行 X? [y/n/a]" prompt and keys y/n/a resolve it. Holds the
-    # human-facing prompt text; the app owns the Future that the answer resolves.
-    pending_confirm: str | None = None
+    # pending inline tool confirmation. Holds display state; the app owns the
+    # Future that resolves to allow / deny / always.
+    pending_confirm: ConfirmPrompt | None = None
 
     def reset_turn(self) -> None:
         self.stream_text = ""

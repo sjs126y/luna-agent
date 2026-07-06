@@ -142,6 +142,19 @@ async def test_submit_routes_message_to_runtime():
 
 
 @pytest.mark.asyncio
+async def test_submit_preserves_message_body_whitespace():
+    app = _app()
+
+    async def print_above(text):
+        pass
+
+    app._print_above = print_above  # type: ignore[method-assign]
+    await app._submit("  keep\n  indentation  ")
+    assert app.runtime.sent == ["  keep\n  indentation  "]
+    assert app.runtime.commands == ["keep\n  indentation"]
+
+
+@pytest.mark.asyncio
 async def test_submit_ignores_blank():
     app = _app()
     await app._submit("   ")
@@ -198,15 +211,24 @@ async def test_cycle_mode_advances_and_wraps():
 @pytest.mark.asyncio
 async def test_confirm_tool_resolves_allow():
     app = _app()
-    task = asyncio.ensure_future(app.confirm_tool({"tool_name": "write_file"}))
+    task = asyncio.ensure_future(app.confirm_tool({
+        "tool_name": "write_file",
+        "permission_category": "write",
+        "risk_summary": "将写入文件",
+        "input_preview": "src/app.py",
+    }))
     await asyncio.sleep(0)  # let confirm_tool set pending + create the future
     assert app.state.pending_confirm is not None
-    assert "write_file" in app.state.pending_confirm
+    assert app.state.pending_confirm.display_name == "write_file"
+    assert app.state.pending_confirm.risk_summary == "将写入文件"
+    assert app.state.pending_confirm.input_preview == "src/app.py"
+    app.input_area.text = "y"
     app._resolve_confirm("allow")
     assert await task == "allow"
     # cleaned up after resolution
     assert app.state.pending_confirm is None
     assert app._confirm_future is None
+    assert app.input_area.text == ""
 
 
 @pytest.mark.asyncio
@@ -221,6 +243,25 @@ async def test_confirm_tool_resolves_deny_and_always():
     await asyncio.sleep(0)
     app._resolve_confirm("always")
     assert await task == "always"
+
+
+def test_confirm_prompt_uses_future_display_fields():
+    app = _app()
+    prompt = app._build_confirm_prompt({
+        "display_name": "Run shell command",
+        "tool_name": "bash",
+        "permission_category": "bash",
+        "execution_mode_label": "Ask First",
+        "default_action": "deny",
+        "command_preview": "rm -rf build",
+        "affected_paths": ["build"],
+    })
+    assert prompt.display_name == "Run shell command"
+    assert prompt.permission_category == "bash"
+    assert prompt.execution_mode == "Ask First"
+    assert prompt.default_action == "deny"
+    assert "rm -rf build" in prompt.input_preview
+    assert "build" in prompt.input_preview
 
 
 def test_runtime_accepts_confirm_detection():
@@ -239,6 +280,18 @@ def test_runtime_accepts_confirm_detection():
 
     app.runtime.run_message_events = with_kwargs  # type: ignore[method-assign]
     assert app._runtime_accepts_confirm() is True
+
+
+def test_enter_keeps_draft_while_turn_running():
+    app = _app()
+    class _RunningTask:
+        def done(self) -> bool:
+            return False
+
+    app._turn_task = _RunningTask()  # type: ignore[assignment]
+    app.input_area.text = "next question"
+    app._on_enter()
+    assert app.input_area.text == "next question"
 
 
 @pytest.mark.asyncio

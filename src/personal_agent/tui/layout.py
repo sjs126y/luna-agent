@@ -68,7 +68,7 @@ def build_layout(
             bar = theme.sgr(theme.BAR, theme.AGENT_BAR)
             lines.append(f"{bar} {preview}{cursor}")
         if state.pending_confirm:
-            lines.append(theme.sgr(f"⚠ {state.pending_confirm}  [y/n/a]", theme.CONFIRM))
+            lines.extend(_confirm_lines(state.pending_confirm))
         return ANSI("\n".join(lines))
 
     def meter_content() -> ANSI:
@@ -168,3 +168,37 @@ def _hint_bar(state: UIState) -> str:
         key("/", "命令"),
     ])
     return f"  {mode}   {hints}"
+
+
+def _confirm_lines(confirm) -> list[str]:
+    lines = [
+        theme.sgr(f"⚠ {confirm.title}", theme.CONFIRM),
+        f"  {theme.sgr(confirm.display_name, theme.CONFIRM)}",
+    ]
+    meta = " · ".join(
+        part for part in (
+            f"权限 {confirm.permission_category}" if confirm.permission_category else "",
+            f"模式 {confirm.execution_mode}" if confirm.execution_mode else "",
+        ) if part
+    )
+    if meta:
+        lines.append(theme.dim(f"  {meta}"))
+    if confirm.risk_summary:
+        lines.append(f"  风险: {confirm.risk_summary}")
+    if confirm.input_preview:
+        lines.append(theme.dim(f"  {confirm.input_preview}"))
+    if confirm.default_action == "allow":
+        default = "Enter 允许本次"
+    elif confirm.default_action == "deny":
+        default = "Enter 拒绝"
+    else:
+        default = "A 允许本次"
+    lines.append(
+        "  "
+        + theme.sgr(default, theme.KEY)
+        + theme.sgr("   Shift+A", theme.KEY)
+        + theme.sgr(" 始终允许", theme.HINT_LABEL)
+        + theme.sgr("   Esc/Ctrl+C", theme.KEY)
+        + theme.sgr(" 拒绝", theme.HINT_LABEL)
+    )
+    return lines
