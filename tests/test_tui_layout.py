@@ -56,6 +56,15 @@ def test_layout_keeps_input_panel_compact_without_spacer():
     assert "bg:#242837" in input_area.window.style
 
 
+def test_input_continuation_lines_keep_left_rail():
+    _, input_area, _ = _layout_children(UIState())
+    prefix = input_area.window.get_line_prefix(1, 0)
+    assert prefix == [
+        ("bg:#242837 #8ab4ff bold", " ▌ "),
+        ("bg:#242837 #9cdcfe bold", "  "),
+    ]
+
+
 def test_slash_command_slot_is_conditional_and_bounded_height():
     from prompt_toolkit.layout.containers import ConditionalContainer
 

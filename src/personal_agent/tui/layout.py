@@ -105,7 +105,12 @@ def build_layout(
     # multiline=True so Ctrl+J can add real newlines; height grows with content
     # (1 line idle, up to 6). Enter is bound by the app to submit, not newline.
     def _line_prefix(line_number: int, wrap_count: int):
-        return "    " if (line_number > 0 or wrap_count > 0) else ""
+        if line_number > 0 or wrap_count > 0:
+            return [
+                ("bg:#242837 #8ab4ff bold", " ▌ "),
+                ("bg:#242837 #9cdcfe bold", "  "),
+            ]
+        return ""
 
     input_area = TextArea(
         height=Dimension(min=1, max=6),

@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 22:41 CST
+更新时间：2026-07-06 22:51 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -17,8 +17,8 @@
 ### Inline TUI 主体
 
 - 已有 inline TUI 输入区、状态行、上下文 meter、流式回复预览、工具运行活跃区。
-- 用户消息已增加底色/左侧强调，提高和助手输出的对比度。
-- 输入框已有低调背景和左侧提示符；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
+- 用户消息已增加底色/左侧强调，提高和助手输出的对比度；多行历史消息每行都会保持左侧蓝色强调条。
+- 输入框已有低调背景和左侧提示符；多行输入/折行会保持同一左侧蓝色强调条；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
 - 状态栏显示当前执行模式、模型、context usage 和后端 `llm_end` cache usage 摘要。
 
 ### Slash Command UI
@@ -130,6 +130,10 @@
 - 状态栏 context meter 后会低调显示 cache 摘要，例如 `cache 42% r12.3k w800`；没有 cache 字段时不显示。
 - 暂不把 turn reports / doctor cache diagnostics 做成普通 TUI UI，它们更适合后续明确查询入口后再接。
 
+### 2026-07-06 22:51 CST
+
+- 修复多行用户消息和多行输入的左侧强调条：历史消息每行都保持蓝色左条，当前输入的续行/折行也保持同一左条。
+
 已验证：
 
 ```bash
@@ -139,7 +143,7 @@ git diff --check
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 ```
 
-结果：TUI tests `79 passed`，command/gateway tests `55 passed`。
+结果：TUI tests `81 passed`，command/gateway tests `55 passed`。
 
 ## 不建议现在做
 

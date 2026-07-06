@@ -308,6 +308,14 @@ async def test_submit_echoes_user_message_with_background():
     assert "\x1b[1;37;48;5;236m" in text
 
 
+def test_user_message_block_repeats_left_rail_for_each_line():
+    app = _app()
+    text = app._user_message_block("嗯\n嗯")
+    assert text.count("▌") == 2
+    for line in text.splitlines()[1:]:
+        assert line.startswith("\x1b[1;38;5;111;48;5;236m▌")
+
+
 @pytest.mark.asyncio
 async def test_submit_preserves_message_body_whitespace():
     app = _app()

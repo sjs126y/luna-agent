@@ -878,15 +878,10 @@ class InlineTuiApp:
         width = max(20, self._term_width())
         prefix = f"{theme.USER_BARCH} "
         rows: list[str] = [""]
-        for index, line in enumerate(text.splitlines() or [text]):
-            raw_prefix = prefix if index == 0 else "  "
-            visible = f"{raw_prefix}{line}"
+        for line in (text.splitlines() or [text]):
+            visible = f"{prefix}{line}"
             pad = " " * max(0, width - _display_width(visible))
-            styled_prefix = (
-                theme.sgr(theme.USER_BARCH, theme.USER_BAR) + theme.sgr(" ", theme.USER_MSG)
-                if index == 0
-                else theme.sgr(raw_prefix, theme.USER_MSG)
-            )
+            styled_prefix = theme.sgr(theme.USER_BARCH, theme.USER_BAR) + theme.sgr(" ", theme.USER_MSG)
             rows.append(styled_prefix + theme.sgr(line + pad, theme.USER_MSG))
         return "\n".join(rows)
 
