@@ -249,6 +249,9 @@ async def test_build_turn_context_detects_same_length_compression(provider):
 @pytest.mark.asyncio
 async def test_empty_response_retry(provider):
     """Empty response triggers retry nudge."""
+    from personal_agent.conversation.events import EventRecorder
+
+    recorder = EventRecorder()
     transport = MockTransport([
         NormalizedResponse(text="", finish_reason="end_turn"),  # empty → retry
         NormalizedResponse(text="OK!", finish_reason="end_turn",
@@ -256,13 +259,20 @@ async def test_empty_response_retry(provider):
     ])
     agent = init_agent(transport, provider)
     ctx = await build_turn_context(agent,"Hi")
-    result = await run_conversation(agent, ctx)
+    result = await run_conversation(agent, ctx, event_sink=recorder)
 
     assert result["completed"]
     assert transport.calls == 2
     assert "OK" in result["final_response"]
     assert result["turn_report"]["retries"][0]["category"] == "empty_response"
+    assert result["turn_report"]["retries"][0]["max_attempts"] == agent._retry.MAX_EMPTY_CONTENT
+    assert result["turn_report"]["retries"][0]["recoverable"] is True
     assert result["turn_report"]["llm"]["calls"] == 2
+    retry_event = next(event for event in recorder.events if event.type == "retry")
+    assert retry_event.data["category"] == "empty_response"
+    assert retry_event.data["attempt"] == 1
+    assert retry_event.data["max_attempts"] == agent._retry.MAX_EMPTY_CONTENT
+    assert retry_event.data["recoverable"] is True
 
 
 @pytest.mark.asyncio
@@ -391,10 +401,13 @@ async def test_turn_report_flags_claimed_tool_use_without_tool_call(provider):
 
 @pytest.mark.asyncio
 async def test_llm_failure_returns_failed_status(provider):
+    from personal_agent.conversation.events import EventRecorder
+
+    recorder = EventRecorder()
     agent = init_agent(FailingTransport([]), provider)
     ctx = await build_turn_context(agent, "Hi")
 
-    result = await run_conversation(agent, ctx)
+    result = await run_conversation(agent, ctx, event_sink=recorder)
 
     assert result["completed"] is False
     assert result["status"] == "failed"
@@ -402,6 +415,31 @@ async def test_llm_failure_returns_failed_status(provider):
     assert "模型调用出错" in result["final_response"]
     assert result["turn_report"]["status"] == "failed"
     assert result["turn_report"]["error"] == "RuntimeError: transport boom"
+    error_event = next(event for event in recorder.events if event.type == "error")
+    assert error_event.data["category"] == "llm"
+    assert error_event.data["recoverable"] is False
+    assert error_event.data["detail_id"].startswith("err_")
+
+
+@pytest.mark.asyncio
+async def test_interrupt_emits_structured_stop_event(provider):
+    from personal_agent.conversation.events import EventRecorder
+
+    recorder = EventRecorder()
+    agent = init_agent(MockTransport([]), provider)
+    ctx = await build_turn_context(agent, "Hi")
+    agent._interrupt_requested = True
+
+    result = await run_conversation(agent, ctx, event_sink=recorder)
+
+    assert result["turn_report"]["status"] == "stopped"
+    stop_event = next(event for event in recorder.events if event.type == "stop")
+    assert stop_event.data == {
+        "reason": "user",
+        "message": "已停止",
+        "stopped_tools": 0,
+        "stopped_agents": 0,
+    }
 
 
 @pytest.mark.asyncio

@@ -73,9 +73,11 @@ class TurnToolReport:
 class TurnRetryReport:
     category: str = ""
     attempt: int = 0
+    max_attempts: int = 0
     tool_name: str = ""
     error: str = ""
     message: str = ""
+    recoverable: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,9 +157,11 @@ class AgentTurnReport:
             self.retries.append(TurnRetryReport(
                 category=str(data.get("category") or ""),
                 attempt=_as_int(data.get("attempt")),
+                max_attempts=_as_int(data.get("max_attempts")),
                 tool_name=str(data.get("tool_name") or ""),
                 error=str(data.get("error") or ""),
                 message=event.message,
+                recoverable=bool(data.get("recoverable", False)),
             ))
         elif event.type == "assistant_message":
             self._record_assistant_claim(event.message)

@@ -11,6 +11,7 @@ Both default to no-ops so the renderer can be unit-tested without a terminal.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import json
 import time
 
 from personal_agent.conversation.events import ConversationEvent
@@ -18,6 +19,9 @@ from personal_agent.tui.markdown import render_markdown, render_plain
 from personal_agent.tui.state import ToolTrace, UIState
 from personal_agent.tui.renderer_base import Renderer
 from personal_agent.tui import theme
+
+_EXPAND_HINT_MIN_CHARS = 160
+_EXPAND_HINT_MIN_LINES = 4
 
 
 def _noop() -> None: ...
@@ -92,23 +96,68 @@ class InlineRenderer(Renderer):
         context_used = int(data.get("context_used_tokens", 0) or 0)
         if context_used:
             self.state.context_used_tokens = context_used
+        context_remaining = int(data.get("context_remaining_tokens", 0) or 0)
+        if context_remaining:
+            self.state.context_remaining_tokens = context_remaining
         context_percent = float(data.get("context_percent", 0.0) or 0.0)
         if context_percent:
             self.state.context_percent = context_percent
+        context_budget = data.get("context_budget")
+        if isinstance(context_budget, dict):
+            self.state.context_budget = dict(context_budget)
+        self.state.cache_hit_tokens = _optional_int(data.get("cache_hit_tokens"))
+        self.state.cache_miss_tokens = _optional_int(data.get("cache_miss_tokens"))
+        self.state.cache_write_tokens = _optional_int(data.get("cache_write_tokens"))
+        self.state.cache_read_tokens = _optional_int(data.get("cache_read_tokens"))
+        self.state.cache_hit_rate = _optional_rate(data.get("cache_hit_rate"))
         self._invalidate()
 
     # ── tools ────────────────────────────────────────────
+    async def on_tool_decision(self, event: ConversationEvent) -> None:
+        data = event.data
+        mode = str(data.get("execution_mode_label") or "")
+        if mode:
+            self.state.exec_mode = mode
+        tool_use_id = str(data.get("tool_use_id") or "")
+        item = self.state.active_tools.get(tool_use_id)
+        if item is not None:
+            display_name = str(data.get("display_name") or "")
+            if display_name:
+                item.display_name = display_name
+            preview = str(data.get("input_preview") or data.get("input_summary") or "")
+            if preview:
+                item.input_preview = preview
+            risk_level = str(data.get("risk_level") or "")
+            if risk_level:
+                item.risk_level = risk_level
+            risk_summary = str(data.get("risk_summary") or "")
+            if risk_summary:
+                item.risk_summary = risk_summary
+            _apply_tool_display_metadata(item, data)
+        self._invalidate()
+
     async def on_tool_start(self, event: ConversationEvent) -> None:
         data = event.data
-        name = str(data.get("tool_name") or "tool")
+        name = str(data.get("display_name") or data.get("tool_name") or "tool")
         tool_use_id = str(data.get("tool_use_id") or f"tool-{self.state.tool_seq + 1}")
         self.state.tool_seq += 1
         self.state.active_tools[tool_use_id] = ToolTrace(
             index=self.state.tool_seq,
             tool_use_id=tool_use_id,
-            name=name,
+            name=str(data.get("tool_name") or name),
             display_name=name,
             input_summary=str(data.get("input_summary") or ""),
+            input_preview=str(data.get("input_preview") or data.get("input_summary") or ""),
+            affected_paths=tuple(_string_list(data.get("affected_paths"))),
+            command_preview=str(data.get("command_preview") or ""),
+            url_preview=str(data.get("url_preview") or ""),
+            host=str(data.get("host") or ""),
+            cwd=str(data.get("cwd") or ""),
+            timeout_seconds=_optional_float(data.get("timeout_seconds")),
+            method=str(data.get("method") or ""),
+            process_label=str(data.get("process_label") or ""),
+            risk_level=str(data.get("risk_level") or ""),
+            risk_summary=str(data.get("risk_summary") or ""),
             started_at=time.monotonic(),
         )
         self.state.status_message = f"calling {name}…"
@@ -124,10 +173,34 @@ class InlineRenderer(Renderer):
                 index=self.state.tool_seq,
                 tool_use_id=tool_use_id or f"tool-{self.state.tool_seq}",
                 name=str(data.get("tool_name") or "tool"),
-                display_name=str(data.get("tool_name") or "tool"),
+                display_name=str(data.get("display_name") or data.get("tool_name") or "tool"),
                 input_summary=str(data.get("input_summary") or ""),
+                input_preview=str(data.get("input_preview") or data.get("input_summary") or ""),
+                affected_paths=tuple(_string_list(data.get("affected_paths"))),
+                command_preview=str(data.get("command_preview") or ""),
+                url_preview=str(data.get("url_preview") or ""),
+                host=str(data.get("host") or ""),
+                cwd=str(data.get("cwd") or ""),
+                timeout_seconds=_optional_float(data.get("timeout_seconds")),
+                method=str(data.get("method") or ""),
+                process_label=str(data.get("process_label") or ""),
+                risk_level=str(data.get("risk_level") or ""),
+                risk_summary=str(data.get("risk_summary") or ""),
                 started_at=time.monotonic(),
             )
+        display_name = str(data.get("display_name") or "")
+        if display_name:
+            item.display_name = display_name
+        preview = str(data.get("input_preview") or data.get("input_summary") or "")
+        if preview:
+            item.input_preview = preview
+        risk_level = str(data.get("risk_level") or "")
+        if risk_level:
+            item.risk_level = risk_level
+        risk_summary = str(data.get("risk_summary") or "")
+        if risk_summary:
+            item.risk_summary = risk_summary
+        _apply_tool_display_metadata(item, data)
         item.finish(
             status=str(data.get("status") or ""),
             output_summary=str(data.get("output_summary") or ""),
@@ -137,9 +210,67 @@ class InlineRenderer(Renderer):
         )
         full = item.error or item.full_output or item.output_summary
         if full:
-            self.state.last_expandable = (item.display_name, full)
+            self.state.last_expandable = (compact_tool_title(item.display_name, item.index), full)
         # Print the completed tool trace line into scrollback.
         await self._print_above(render_plain(self._tool_line(item), width=self.width))
+        self._invalidate()
+
+    async def on_retry(self, event: ConversationEvent) -> None:
+        data = event.data
+        text = event.message or "准备重试"
+        attempt = data.get("attempt")
+        max_attempts = data.get("max_attempts")
+        parts: list[str] = []
+        if attempt and max_attempts:
+            parts.append(f"{attempt}/{max_attempts}")
+        elif attempt:
+            parts.append(f"attempt {attempt}")
+        names = data.get("tool_names") or data.get("tool_name") or ""
+        if names:
+            parts.append(str(names))
+        if data.get("recoverable") is False:
+            parts.append("不可恢复")
+        await self._print_above(render_plain(theme.sgr(f"  ↻ {_join_notice(text, parts)}", theme.NOTICE), width=self.width))
+
+    async def on_compression(self, event: ConversationEvent) -> None:
+        data = event.data
+        text = event.message or "历史消息已压缩"
+        pre = data.get("pre_message_count")
+        post = data.get("post_message_count")
+        suffix = f" · {pre} -> {post}" if pre is not None and post is not None else ""
+        await self._print_above(render_plain(theme.sgr(f"  ◇ {text}{suffix}", theme.NOTICE), width=self.width))
+
+    async def on_stop(self, event: ConversationEvent) -> None:
+        data = event.data
+        text = event.message or str(data.get("message") or "已停止")
+        parts = [str(data.get("reason") or "")] if data.get("reason") else []
+        stopped_tools = _optional_int(data.get("stopped_tools"))
+        stopped_agents = _optional_int(data.get("stopped_agents"))
+        if stopped_tools:
+            parts.append(f"tools {stopped_tools}")
+        if stopped_agents:
+            parts.append(f"agents {stopped_agents}")
+        self.state.streaming = False
+        self.state.status_message = "stopped"
+        await self._print_above(render_plain(theme.sgr(f"  ■ {_join_notice(text, parts)}", theme.NOTICE), width=self.width))
+        self._invalidate()
+
+    async def on_error(self, event: ConversationEvent) -> None:
+        data = event.data
+        text = event.message or "运行错误"
+        detail = str(data.get("error") or "")
+        suffix = f": {detail}" if detail and detail not in text else ""
+        parts = [str(data.get("category") or "")] if data.get("category") else []
+        if data.get("recoverable") is True:
+            parts.append("可恢复")
+        elif data.get("recoverable") is False:
+            parts.append("不可恢复")
+        detail_id = str(data.get("detail_id") or "")
+        if detail_id:
+            parts.append(f"id {detail_id}")
+        self.state.streaming = False
+        self.state.status_message = "error"
+        await self._print_above(render_plain(theme.sgr(f"  ✗ {_join_notice(text + suffix, parts)}", theme.ERROR), width=self.width))
         self._invalidate()
 
     async def on_turn_end(self, event: ConversationEvent) -> None:
@@ -152,5 +283,182 @@ class InlineRenderer(Renderer):
         ok = item.status in ("success", "ok", "")
         mark = theme.sgr("✓", theme.TOOL_OK) if ok else theme.sgr("✗", theme.TOOL_ERR)
         dur = f" {item.duration:.1f}s" if item.duration else ""
-        summary = f" {item.input_summary}" if item.input_summary else ""
+        summary_text = _tool_summary(item)
+        summary = f" {theme.dim(summary_text)}" if summary_text else ""
+        if item.risk_summary and item.status in {"denied", "error"}:
+            summary += f" {theme.dim(item.risk_summary)}"
+        if _should_hint_expand(item):
+            summary += f" {theme.sgr('Ctrl+O expand', theme.TOOL_HINT)}"
         return f"  ⚙ {item.display_name}{summary}  {mark}{dur}"
+
+
+def _join_notice(text: str, parts: list[str]) -> str:
+    details = [part for part in parts if part]
+    if not details:
+        return text
+    return f"{text} · {' · '.join(details)}"
+
+
+def _optional_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _optional_rate(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        rate = float(value)
+    except (TypeError, ValueError):
+        return None
+    if rate > 1:
+        rate = rate / 100
+    return max(0.0, min(1.0, rate))
+
+
+def _should_hint_expand(item: ToolTrace) -> bool:
+    text = item.full_output or item.output_summary
+    if not text:
+        return False
+    return len(text) >= _EXPAND_HINT_MIN_CHARS or len(text.splitlines()) >= _EXPAND_HINT_MIN_LINES
+
+
+def _optional_float(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _string_list(value) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if item]
+    if value:
+        return [str(value)]
+    return []
+
+
+def _apply_tool_display_metadata(item: ToolTrace, data: dict) -> None:
+    paths = _string_list(data.get("affected_paths"))
+    if paths:
+        item.affected_paths = tuple(paths)
+    for field in ("command_preview", "url_preview", "host", "cwd", "method", "process_label"):
+        value = str(data.get(field) or "")
+        if value:
+            setattr(item, field, value)
+    timeout_seconds = _optional_float(data.get("timeout_seconds"))
+    if timeout_seconds is not None:
+        item.timeout_seconds = timeout_seconds
+
+
+def _tool_summary(item: ToolTrace) -> str:
+    if item.command_preview:
+        parts = [f"Cmd {item.command_preview}"]
+        if item.process_label and item.process_label != item.command_preview:
+            parts.append(item.process_label)
+        if item.cwd:
+            parts.append(f"cwd {item.cwd}")
+        if item.timeout_seconds is not None:
+            parts.append(f"{item.timeout_seconds:g}s")
+        return " · ".join(parts)
+    if item.url_preview:
+        prefix = f"{item.method.upper()} " if item.method else "URL "
+        target = item.url_preview
+        if item.host and item.host not in target:
+            target = f"{target} ({item.host})"
+        return prefix + target
+    if item.affected_paths:
+        paths = ", ".join(item.affected_paths[:3])
+        if len(item.affected_paths) > 3:
+            paths += f" +{len(item.affected_paths) - 3}"
+        return f"Path {paths}"
+    if item.process_label:
+        return f"Process {item.process_label}"
+    args = _parse_json_object(item.input_preview) or _parse_json_object(item.input_summary)
+    if args is not None:
+        summary = _known_tool_args_summary(item.name, args)
+        if summary:
+            return summary
+        return _generic_args_summary(args)
+    return item.input_preview or item.input_summary
+
+
+def compact_tool_title(name: str, index: object) -> str:
+    label = " ".join(str(name or "tool").split()) or "tool"
+    return f"{label} #{index}"
+
+
+def format_expand_block(title: str, body: str) -> str:
+    header = theme.sgr(title, theme.EXPAND_HEADER)
+    border = theme.sgr("─" * min(48, max(12, len(title) + 4)), theme.EXPAND_BORDER)
+    content = "\n".join(f"  {line}" for line in (body.splitlines() or [body]))
+    return f"{header}\n{border}\n{content}\n{border}"
+
+
+def tool_summary_from_mapping(item: dict) -> str:
+    trace = ToolTrace(
+        index=_optional_int(item.get("id")),
+        tool_use_id=str(item.get("tool_use_id") or item.get("id") or ""),
+        name=str(item.get("tool_name") or "tool"),
+        display_name=str(item.get("display_name") or item.get("tool_name") or "tool"),
+        input_summary=str(item.get("input_summary") or ""),
+        input_preview=str(item.get("input_preview") or item.get("input_summary") or ""),
+        affected_paths=tuple(_string_list(item.get("affected_paths"))),
+        command_preview=str(item.get("command_preview") or ""),
+        url_preview=str(item.get("url_preview") or ""),
+        host=str(item.get("host") or ""),
+        cwd=str(item.get("cwd") or ""),
+        timeout_seconds=_optional_float(item.get("timeout_seconds")),
+        method=str(item.get("method") or ""),
+        process_label=str(item.get("process_label") or ""),
+    )
+    return _tool_summary(trace)
+
+
+def _parse_json_object(text: str) -> dict | None:
+    value = text.strip()
+    if not (value.startswith("{") and value.endswith("}")):
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _known_tool_args_summary(tool_name: str, args: dict) -> str:
+    name = tool_name.lower()
+    if name.endswith("web_search") or name == "web_search":
+        query = str(args.get("query") or "").strip()
+        max_results = args.get("max_results")
+        parts = [f"Query {query}" if query else "Query"]
+        if max_results not in (None, ""):
+            parts.append(f"{max_results} results")
+        return " · ".join(parts)
+    if name.endswith("web_fetch") or name == "web_fetch":
+        url = str(args.get("url") or args.get("uri") or "").strip()
+        return f"URL {url}" if url else ""
+    return ""
+
+
+def _generic_args_summary(args: dict) -> str:
+    for key in ("query", "url", "path", "file_path", "command", "cmd"):
+        value = args.get(key)
+        if value not in (None, ""):
+            return f"{_arg_label(key)} {value}"
+    return ""
+
+
+def _arg_label(key: str) -> str:
+    return {
+        "query": "Query",
+        "url": "URL",
+        "path": "Path",
+        "file_path": "Path",
+        "command": "Cmd",
+        "cmd": "Cmd",
+    }.get(key, key)

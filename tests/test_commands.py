@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from personal_agent.commands.registry import command_specs_as_dict
 from personal_agent.commands.runtime import (
     current_mode_from_policy,
     handle_slash_command,
     slash_argument_choices,
-    slash_command_metadata,
 )
 from personal_agent.config import Settings
 from personal_agent.models.messages import SessionSource
@@ -61,10 +61,30 @@ class PluginManager:
         return value
 
 
+class QueryService:
+    async def list_sessions(self, *, platform: str, user_id: str, current_key: str, limit: int = 10):
+        return {
+            "platform": platform,
+            "user_id": user_id,
+            "current_key": current_key,
+            "limit": limit,
+            "total": 2,
+            "items": [
+                {"session_key": f"{platform}:default:{user_id}", "message_count": 3},
+                {"session_key": f"{platform}:work:{user_id}", "message_count": 8},
+            ][:limit],
+        }
+
+
+class ConversationService:
+    queries = QueryService()
+
+
 class Runtime:
     def __init__(self, tmp_path):
         self.settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
         self.plugin_manager = PluginManager()
+        self.conversation_service = ConversationService()
         self._session_key = "cli:default:local"
         self.source = SessionSource(platform="cli", user_id="local", chat_id="default")
         self.agent = Agent()
@@ -75,70 +95,48 @@ class Runtime:
         self.deleted = None
         self.exported = False
         self.memory_deleted = None
-        self.activity = {
-            "summary": {
-                "has_active_work": True,
-                "active_total": 2,
-                "attention_required": False,
-                "longest_running_seconds": 12.5,
-                "counts": {
-                    "sub_agents": {
-                        "active": 1,
-                        "recent": 1,
-                        "failed_recent": 0,
-                        "stop_requested": 0,
-                    },
-                    "background_processes": {
-                        "total": 1,
-                        "running": 1,
-                        "done": 0,
-                        "killed": 0,
-                    },
-                    "gateway_agents": {
-                        "running": 0,
-                        "stop_requested": 0,
-                    },
-                },
+        self.tool_runs = [
+            {
+                "id": 1,
+                "session_id": "session-a",
+                "session_key": "cli:default:local",
+                "turn_id": "turn-1",
+                "tool_use_id": "call-1",
+                "tool_name": "read",
+                "status": "success",
+                "category": "read",
+                "duration": 0.1,
+                "input_summary": '{"path": "README.md"}',
+                "output_summary": "README",
+                "full_output": "README contents",
+                "output_truncated": False,
+                "error": "",
+                "permission_category": "read",
+                "permission_decision": "allow",
+                "execution_mode": "standard",
+                "created_at": 1.0,
             },
-            "sub_agents": {
-                "counts": {
-                    "active": 1,
-                    "recent": 1,
-                    "failed_recent": 0,
-                    "stop_requested": 0,
-                },
-                "active_runs": [{
-                    "id": "agent-1",
-                    "kind": "sub_agent",
-                    "status": "running",
-                    "duration_seconds": 12.5,
-                    "task": "inspect",
-                }],
-                "recent_runs": [],
+            {
+                "id": 2,
+                "session_id": "session-b",
+                "session_key": "cli:other:local",
+                "turn_id": "turn-2",
+                "tool_use_id": "call-2",
+                "tool_name": "bash",
+                "status": "denied",
+                "category": "authorization",
+                "duration": 0.0,
+                "input_summary": '{"cmd": "rm"}',
+                "output_summary": "",
+                "full_output": "",
+                "output_truncated": False,
+                "error": "blocked",
+                "permission_category": "bash",
+                "permission_decision": "deny",
+                "execution_mode": "standard",
+                "created_at": 2.0,
             },
-            "background_processes": {
-                "counts": {
-                    "total": 1,
-                    "running": 1,
-                    "done": 0,
-                    "killed": 0,
-                },
-                "items": [{
-                    "id": "3",
-                    "kind": "background_process",
-                    "status": "running",
-                    "duration_seconds": 3.0,
-                    "command": "uv run pytest",
-                }],
-            },
-            "gateway_agents": {
-                "counts": {
-                    "running": 0,
-                    "stop_requested": 0,
-                },
-                "running_agent_runs": [],
-            },
-        }
+        ]
 
     @property
     def session_key(self):
@@ -204,45 +202,48 @@ class Runtime:
         self.memory_deleted = (identifier, target)
         return identifier == "memory:1"
 
-    async def activity_snapshot(self, *, limit: int = 20):
-        return self.activity
+    async def tool_runs_recent(self, *, limit: int = 10, all_sessions: bool = False):
+        items = self.tool_runs if all_sessions else [
+            item for item in self.tool_runs if item["session_key"] == self.session_key
+        ]
+        return {
+            "scope": "all" if all_sessions else "session",
+            "session_key": "" if all_sessions else self.session_key,
+            "limit": limit,
+            "items": items[:limit],
+        }
 
-    async def activity_detail(self, kind: str, id_: str):
-        if kind == "sub_agent" and id_ == "agent-1":
-            return {
-                "kind": "sub_agent",
-                "id": id_,
-                "run": {
-                    "id": id_,
-                    "kind": "sub_agent",
-                    "status": "running",
-                    "duration_seconds": 12.5,
-                    "task": "inspect",
-                },
-            }
-        if kind == "background_process" and id_ == "3":
-            return {
-                "kind": "background_process",
-                "id": id_,
-                "process": {
-                    "id": id_,
-                    "kind": "background_process",
-                    "status": "running",
-                    "duration_seconds": 3.0,
-                    "command": "uv run pytest",
-                },
-            }
+    async def tool_run_detail(self, run_id: int):
+        for item in self.tool_runs:
+            if item["id"] == run_id:
+                return item
         return None
 
-    async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20):
-        if provider == "activity_agents":
-            return [{
-                "value": "agent-1",
-                "label": "agent-1",
-                "description": "reviewer running",
-                "append_space": False,
-            }]
-        return []
+    async def tool_runs_summary(self, *, limit: int = 50, all_sessions: bool = False):
+        items = self.tool_runs if all_sessions else [
+            item for item in self.tool_runs if item["session_key"] == self.session_key
+        ]
+        items = items[:limit]
+        tool_counts = {}
+        status_counts = {}
+        category_counts = {}
+        for item in items:
+            tool_counts[item["tool_name"]] = tool_counts.get(item["tool_name"], 0) + 1
+            status_counts[item["status"]] = status_counts.get(item["status"], 0) + 1
+            category_counts[item["category"]] = category_counts.get(item["category"], 0) + 1
+        return {
+            "scope": "all" if all_sessions else "session",
+            "session_key": "" if all_sessions else self.session_key,
+            "limit": limit,
+            "inspected": len(items),
+            "tool_counts": dict(sorted(tool_counts.items())),
+            "status_counts": dict(sorted(status_counts.items())),
+            "category_counts": dict(sorted(category_counts.items())),
+            "denied": status_counts.get("denied", 0),
+            "failed": status_counts.get("error", 0),
+            "timeouts": status_counts.get("timeout", 0),
+            "truncated": sum(1 for item in items if item.get("output_truncated")),
+        }
 
     async def clear_agent(self):
         self.clear_called = True
@@ -334,6 +335,18 @@ async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
     # default execution mode is the standard profile.
     result = await handle_slash_command(runtime, "/mode")
     assert "当前模式: Ask First" in result.response
+    assert result.kind == "mode"
+    assert result.payload["current"]["label"] == "Ask First"
+
+    result = await handle_slash_command(runtime, "/mode list")
+    assert "Read Only" in result.response
+    assert "Full Auto" in result.response
+    assert {item["slug"] for item in result.payload["modes"]} >= {"read-only", "full-auto"}
+
+    result = await handle_slash_command(runtime, "/mode set Edit Freely")
+    assert "Edit Freely" in result.response
+    assert runtime.agent._execution_policy.mode == "trusted"
+    assert result.payload["selected"]["profile"] == "trusted"
 
     result = await handle_slash_command(runtime, "/mode acceptEdits")
     assert "Edit Freely" in result.response
@@ -361,6 +374,8 @@ async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
 
     result = await handle_slash_command(runtime, "/mode bogus")
     assert "用法" in result.response
+    assert result.error
+    assert result.payload["error"] == "unknown_mode"
 
 
 def test_current_mode_from_policy_uses_execution_profile(tmp_path):
@@ -399,8 +414,34 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     assert result.response == "plugin:only:cli:default:local"
 
     result = await handle_slash_command(runtime, "/help")
+    assert "/commands - 列出 slash commands" in result.response
+    assert "/tools - 查看可用工具" in result.response
+    assert "/permissions - 查看当前权限策略和 grants" in result.response
     assert "/local - local command" in result.response
     assert "/demo - demo" in result.response
+
+    result = await handle_slash_command(runtime, "/commands")
+    assert "/mode - 查看或切换执行模式" in result.response
+    assert "/protocol - 查看前端事件协议摘要" in result.response
+    assert result.kind == "commands"
+    assert result.payload["version"] == 1
+
+    result = await handle_slash_command(runtime, "/commands mode")
+    assert "子命令:" in result.response
+    assert "/mode set <mode>" in result.response
+    assert result.payload["command"]["name"] == "mode"
+    assert result.payload["command"]["mutates_state"] is True
+
+    result = await handle_slash_command(runtime, "/commands missing")
+    assert result.error
+    assert result.payload["error"] == "unknown_command"
+
+    result = await handle_slash_command(runtime, "/commands json")
+    assert '"version": 1' in result.response
+    assert '"name": "mode"' in result.response
+    assert '"name": "local"' in result.response
+    assert result.payload["version"] == 1
+    assert any(item["name"] == "local" for item in result.payload["plugin_commands"])
 
     from personal_agent.skills.registry import skill_registry
 
@@ -417,6 +458,175 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     result = await handle_slash_command(runtime, "/unknown")
     assert not result.handled
 
+    result = await handle_slash_command(runtime, "/permission")
+    assert result.handled
+    assert result.error
+    assert "/permissions" in result.suggestions
+
+
+@pytest.mark.asyncio
+async def test_shared_command_tools_permissions_and_protocol(tmp_path):
+    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+
+    runtime = Runtime(tmp_path)
+    runtime.agent._destructive_allowed.add("write")
+
+    result = await handle_slash_command(runtime, "/tools")
+    assert "工具总览" in result.response
+    assert "by permission:" in result.response
+    assert result.kind == "tools"
+    assert result.payload["summary"]["total"] >= 1
+
+    result = await handle_slash_command(runtime, "/tools show read")
+    assert "工具: read" in result.response
+    assert "permission:" in result.response
+    assert "risk:" in result.response
+    assert result.payload["tool"]["name"] == "read"
+    assert "input_properties" in result.payload["tool"]
+
+    result = await handle_slash_command(runtime, "/tools show missing_tool")
+    assert "未找到工具: missing_tool" in result.response
+    assert result.payload["error"] == "unknown_tool"
+
+    result = await handle_slash_command(runtime, "/tools shwo")
+    assert result.payload["error"] == "unknown_tools_action"
+    assert "/tools show" in result.suggestions
+
+    result = await handle_slash_command(runtime, "/permissions")
+    assert "权限策略: Ask First" in result.response
+    assert "permissions:" in result.response
+    assert "当前 grants: write" in result.response
+    assert result.kind == "permissions"
+    assert result.payload["execution_mode"] == "Ask First"
+    assert result.payload["grants"] == ["write"]
+
+    result = await handle_slash_command(runtime, "/permissions grants")
+    assert result.response == "当前 grants: write"
+    assert result.payload["grants"] == ["write"]
+
+    result = await handle_slash_command(runtime, "/protocol")
+    assert "事件协议" in result.response
+    assert "version: 1" in result.response
+    assert "完整 schema: personal-agent protocol schema --json" in result.response
+    assert result.kind == "protocol"
+    assert result.payload["protocol_version"] == 1
+    assert result.payload["event_count"] >= 1
+
+    result = await handle_slash_command(runtime, "/protocol schema")
+    assert "event names:" in result.response
+    assert "tool_decision" in result.response
+    assert "tool_decision" in result.payload["events"]
+
+
+@pytest.mark.asyncio
+async def test_shared_command_tool_runs_queries(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/tool-runs")
+    assert result.kind == "tool_runs"
+    assert "工具运行记录: 1 条" in result.response
+    assert result.payload["action"] == "recent"
+    assert result.payload["scope"] == "session"
+    assert result.payload["items"][0]["tool_name"] == "read"
+
+    result = await handle_slash_command(runtime, "/tool-runs recent --all --limit 20")
+    assert result.payload["scope"] == "all"
+    assert [item["tool_name"] for item in result.payload["items"]] == ["read", "bash"]
+
+    result = await handle_slash_command(runtime, "/tool-runs summary")
+    assert "工具运行摘要" in result.response
+    assert result.payload["inspected"] == 1
+    assert result.payload["tool_counts"] == {"read": 1}
+
+    result = await handle_slash_command(runtime, "/tool-runs summary --all")
+    assert result.payload["inspected"] == 2
+    assert result.payload["status_counts"] == {"denied": 1, "success": 1}
+
+    result = await handle_slash_command(runtime, "/tool-runs show 1")
+    assert "Tool Run #1" in result.response
+    assert result.payload["tool_run"]["full_output"] == "README contents"
+
+    result = await handle_slash_command(runtime, "/tool-runs show missing")
+    assert result.error
+    assert result.payload["error"] == "invalid_tool_run_id"
+
+    result = await handle_slash_command(runtime, "/tool-runs recnt")
+    assert result.error
+    assert result.payload["error"] == "unknown_tool_runs_action"
+    assert "/tool-runs recent" in result.suggestions
+
+
+def test_command_registry_exports_structured_metadata(tmp_path):
+    runtime = Runtime(tmp_path)
+    data = command_specs_as_dict(runtime)
+
+    assert data["version"] == 1
+    names = {item["name"] for item in data["commands"]}
+    assert {"commands", "tools", "tool-runs", "permissions", "protocol"} <= names
+    mode = next(item for item in data["commands"] if item["name"] == "mode")
+    assert {child["name"] for child in mode["children"]} >= {"list", "show", "set"}
+    assert mode["mutates_state"] is True
+    assert mode["requires_agent"] is True
+    mode_set = next(child for child in mode["children"] if child["name"] == "set")
+    mode_argument = mode_set["arguments"][0]
+    assert mode_argument["name"] == "mode"
+    assert mode_argument["kind"] == "choice"
+    assert [choice["value"] for choice in mode_argument["choices"]] == [
+        "Read Only",
+        "Ask First",
+        "Edit Freely",
+        "Full Auto",
+    ]
+    allow = next(item for item in data["commands"] if item["name"] == "allow")
+    assert [choice["value"] for choice in allow["arguments"][0]["choices"]] == [
+        "write",
+        "bash",
+        "background",
+        "network",
+        "destructive",
+        "all",
+    ]
+    tools = next(item for item in data["commands"] if item["name"] == "tools")
+    tools_show = next(child for child in tools["children"] if child["name"] == "show")
+    assert tools_show["arguments"][0]["kind"] == "dynamic"
+    assert tools_show["arguments"][0]["provider"] == "tools"
+    session = next(item for item in data["commands"] if item["name"] == "session")
+    session_switch = next(child for child in session["children"] if child["name"] == "switch")
+    assert session_switch["arguments"][0]["provider"] == "sessions"
+
+
+@pytest.mark.asyncio
+async def test_slash_argument_choices_return_dynamic_candidates(tmp_path):
+    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+
+    runtime = Runtime(tmp_path)
+
+    tool_choices = await slash_argument_choices(
+        runtime,
+        "tools",
+        command="tools",
+        args=("show",),
+        query="rea",
+    )
+    assert any(choice["value"] == "read" for choice in tool_choices)
+    assert all("append_space" in choice for choice in tool_choices)
+
+    session_choices = await slash_argument_choices(
+        runtime,
+        "sessions",
+        command="session",
+        args=("switch",),
+        query="wor",
+    )
+    assert session_choices == [{
+        "value": "work",
+        "label": "work",
+        "description": "8 messages",
+        "append_space": False,
+    }]
+
+    assert await slash_argument_choices(runtime, "missing", command="tools") == []
+
 
 @pytest.mark.asyncio
 async def test_shared_command_stop_reports_delegate_agent_count(tmp_path, monkeypatch):
@@ -430,66 +640,6 @@ async def test_shared_command_stop_reports_delegate_agent_count(tmp_path, monkey
 
     assert result.response == "已停止。已请求停止 2 个子 agent。"
     assert runtime.agent._interrupt_requested
-
-
-@pytest.mark.asyncio
-async def test_shared_command_activity_returns_structured_payload(tmp_path):
-    runtime = Runtime(tmp_path)
-
-    result = await handle_slash_command(runtime, "/activity")
-
-    assert result.handled
-    assert result.kind == "activity"
-    assert result.payload["summary"]["active_total"] == 2
-    assert "运行活动" in result.response
-    assert "子 agent" in result.response
-    assert "后台任务" in result.response
-
-
-@pytest.mark.asyncio
-async def test_shared_command_activity_lists_and_shows_detail(tmp_path):
-    runtime = Runtime(tmp_path)
-
-    listed = await handle_slash_command(runtime, "/activity agents")
-    shown = await handle_slash_command(runtime, "/activity agents agent-1")
-    missing = await handle_slash_command(runtime, "/activity processes missing")
-
-    assert listed.kind == "activity"
-    assert listed.payload["scope"] == "agents"
-    assert listed.payload["sub_agents"]["active_runs"][0]["id"] == "agent-1"
-    assert shown.kind == "activity"
-    assert shown.payload["kind"] == "sub_agent"
-    assert shown.payload["run"]["task"] == "inspect"
-    assert "Activity detail" in shown.response
-    assert missing.payload["not_found"] is True
-    assert "未找到 activity" in missing.response
-
-
-@pytest.mark.asyncio
-async def test_slash_metadata_and_activity_argument_choices(tmp_path):
-    runtime = Runtime(tmp_path)
-
-    metadata = slash_command_metadata(runtime)
-    activity = next(item for item in metadata if item["name"] == "activity")
-    choices = await slash_argument_choices(
-        runtime,
-        "activity_agents",
-        command="activity",
-        args=("agents",),
-        query="agent",
-    )
-
-    assert activity["result_kind"] == "activity"
-    assert activity["usage"] == "/activity [agents|processes|gateway] [id]"
-    assert activity["arguments"][0]["kind"] == "choice"
-    assert activity["arguments"][1]["provider_by_scope"]["agents"] == "activity_agents"
-    assert activity["children"][1]["arguments"][0]["provider"] == "activity_processes"
-    assert choices == [{
-        "value": "agent-1",
-        "label": "agent-1",
-        "description": "reviewer running",
-        "append_space": False,
-    }]
 
 
 @pytest.mark.asyncio

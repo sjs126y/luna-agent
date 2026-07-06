@@ -1,6 +1,21 @@
 # Inline TUI (CC/Codex-style)
 
-CC/Codex 风格的行内滚动渲染器。设计与分阶段计划见仓库根目录 `TUI_PLAN.md`。
+CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `docs/archive/TUI_PLAN.md`。
+
+## 当前状态
+
+- 通过 `personal-agent chat --ui inline` 启用；默认仍是 classic UI。
+- `InlineTuiApp` 负责 prompt_toolkit 应用、输入框、快捷键、历史、命令补全和打印队列。
+- `InlineRenderer` 只消费事件并更新 `UIState`；定稿内容通过 app 的 `print_above` 回调进入 scrollback。
+- 快捷键：`Enter` 发送、`Ctrl+J` 换行、`Ctrl+O` 展开最近长输出、`Ctrl+C` 停止或清空、`Shift+Tab` 循环执行模式。
+- slash 命令仍走 runtime 后端命令入口；TUI 不重新实现命令逻辑。
+- inline tool confirmation 的前端等待/按键路径已存在；后端如果暴露 `confirm=` 回调，app 会自动传入。
+
+## 前端协作边界
+
+- 本包可独立打磨布局、颜色、输入行为、快捷键和真实终端体验。
+- 不在 TUI 层改变 conversation event 字段、权限语义、slash 命令语义或工具执行策略。
+- 需要后端新增能力时，先在交接文档写清命令/API、事件字段、错误/取消边界。
 
 ## Phase 0 结论 (已验证)
 

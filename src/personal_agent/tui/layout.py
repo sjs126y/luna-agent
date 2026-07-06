@@ -5,6 +5,7 @@ Structure (validated in scripts/spike_inline.py, Phase 0):
         ConditionalContainer(active_window),   # streaming reply + live tools
         meter_window,                          # model + context meter
         input_area,                            # active prompt
+        slash_window,                          # reserved slash command area
         hint_window,                           # mode + key hints
     ])
 The app is full_screen=False, so finalized content printed via run_in_terminal
@@ -19,14 +20,12 @@ from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.history import History
 from prompt_toolkit.layout.containers import (
     ConditionalContainer,
-    Float,
     FloatContainer,
     HSplit,
     Window,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.widgets import TextArea
 
 from personal_agent.tui.state import UIState
@@ -39,6 +38,8 @@ from personal_agent.tui import theme
 _MAX_ACTIVE_LINES = 12
 _MAX_ACTIVE_TOOLS = 6
 _STREAM_TAIL_CHARS = 2000
+_SLASH_MENU_LINES = 5
+SLASH_MENU_VISIBLE_ITEMS = _SLASH_MENU_LINES - 1
 
 
 def build_layout(
@@ -68,7 +69,7 @@ def build_layout(
             bar = theme.sgr(theme.BAR, theme.AGENT_BAR)
             lines.append(f"{bar} {preview}{cursor}")
         if state.pending_confirm:
-            lines.append(theme.sgr(f"⚠ {state.pending_confirm}  [y/n/a]", theme.CONFIRM))
+            lines.extend(_confirm_lines(state.pending_confirm))
         return ANSI("\n".join(lines))
 
     def meter_content() -> ANSI:
@@ -78,6 +79,9 @@ def build_layout(
     def hint_content() -> ANSI:
         # Line BELOW the input: current mode + key hints, hugging the input box.
         return ANSI(_hint_bar(state))
+
+    def slash_content() -> ANSI:
+        return ANSI(_slash_menu(state))
 
     active_window = Window(
         content=FormattedTextControl(active_content),
@@ -92,10 +96,21 @@ def build_layout(
         content=FormattedTextControl(hint_content),
         height=1,
     )
+    slash_menu = Window(
+        content=FormattedTextControl(slash_content),
+        height=Dimension(min=1, max=_SLASH_MENU_LINES),
+        style="bg:#202331",
+        wrap_lines=False,
+    )
     # multiline=True so Ctrl+J can add real newlines; height grows with content
     # (1 line idle, up to 6). Enter is bound by the app to submit, not newline.
     def _line_prefix(line_number: int, wrap_count: int):
-        return "    " if (line_number > 0 or wrap_count > 0) else ""
+        if line_number > 0 or wrap_count > 0:
+            return [
+                ("bg:#242837 #8ab4ff bold", " ▌ "),
+                ("bg:#242837 #9cdcfe bold", "  "),
+            ]
+        return ""
 
     input_area = TextArea(
         height=Dimension(min=1, max=6),
@@ -103,36 +118,38 @@ def build_layout(
         # object routes through a BeforeInput processor that fights the buffer's
         # own text/cursor rendering and made typed input vanish. A (style, text)
         # tuple is the supported way to color a TextArea prompt.
-        prompt=[("bold ansicyan", "  ❯ ")],
+        prompt=[
+            ("bg:#242837 #8ab4ff bold", " ▌ "),
+            ("bg:#242837 #9cdcfe bold", "❯ "),
+        ],
         multiline=True,
         wrap_lines=True,
         dont_extend_height=True,
+        style="bg:#242837 #e6e6e6",
         completer=completer,
-        complete_while_typing=True,  # slash menu pops as you type '/'
+        # The visible slash menu is drawn by this TUI, not prompt_toolkit's
+        # completion popup; keeping the popup closed prevents hidden completion
+        # state from stealing Up/Down/Enter.
+        complete_while_typing=False,
         history=history,
         get_line_prefix=_line_prefix,
     )
 
-    # Reading order top→bottom: live output → model/context → input → mode/key
-    # hints. There is deliberately no weighted spacer: in full_screen=False
+    # Reading order top→bottom: live output → model/context → input → slash menu
+    # slot → mode/key hints. There is deliberately no weighted spacer: in full_screen=False
     # mode it makes prompt_toolkit reserve a tall app region and visually splits
     # the input from its meter/hints.
     body = HSplit([
         ConditionalContainer(active_window, filter=Condition(state.has_active_region)),
         meter_window,
         input_area,
-        hint_window,
+        ConditionalContainer(slash_menu, filter=Condition(state.has_slash_menu)),
+        ConditionalContainer(hint_window, filter=Condition(lambda: not state.slash_mode)),
     ])
     # FloatContainer hosts the completion menu popup above the input line.
     root = FloatContainer(
         content=body,
-        floats=[
-            Float(
-                xcursor=True,
-                ycursor=True,
-                content=CompletionsMenu(max_height=8, scroll_offset=1),
-            ),
-        ],
+        floats=[],
     )
     return root, input_area
 
@@ -140,16 +157,38 @@ def build_layout(
 def _meter_bar(state: UIState) -> str:
     # Line ABOVE the input box: model name + a colored context-usage meter.
     model = theme.sgr(state.model or "-", theme.METER_MODEL)
-    if not state.context_window:
-        return "  " + model
-    used = state.context_used_tokens or (state.input_tokens + state.output_tokens)
-    frac = used / state.context_window if state.context_window else 0.0
-    pct = int(state.context_percent if state.context_used_tokens and state.context_percent else frac * 100)
+    context = _context_summary(state)
+    turn = _turn_token_summary(state)
+    parts = [model]
+    if context:
+        parts.extend(context)
+    if turn:
+        parts.append(turn)
+    return "  " + "  ".join(parts)
+
+
+def _context_summary(state: UIState) -> list[str]:
+    if not state.context_window or not state.context_used_tokens:
+        return []
+    frac = state.context_used_tokens / state.context_window
+    pct_value = state.context_percent if state.context_percent else frac * 100
+    pct = int(pct_value)
+    frac = max(0.0, min(1.0, frac))
     color = theme.meter_style(frac)
     meter = theme.sgr(theme.bar_meter(frac), color)
-    usage = theme.dim(f"{theme.humanize(used)}/{theme.humanize(state.context_window)}")
+    usage = theme.dim(
+        f"{theme.humanize(state.context_used_tokens)}/{theme.humanize(state.context_window)}"
+    )
     pct_s = theme.sgr(f"{pct}%", color)
-    return f"  {model}  {meter}  {usage} {pct_s}"
+    return [meter, f"{usage} {pct_s}"]
+
+
+def _turn_token_summary(state: UIState) -> str:
+    if not state.input_tokens and not state.output_tokens:
+        return ""
+    return theme.dim(
+        f"↓{theme.humanize(state.input_tokens)} | ↑{theme.humanize(state.output_tokens)}"
+    )
 
 
 def _hint_bar(state: UIState) -> str:
@@ -168,3 +207,103 @@ def _hint_bar(state: UIState) -> str:
         key("/", "命令"),
     ])
     return f"  {mode}   {hints}"
+
+
+def _slash_menu_header(state: UIState) -> str:
+    count = len(state.slash_items)
+    position = ""
+    if count > SLASH_MENU_VISIBLE_ITEMS:
+        selected = max(0, min(state.slash_selected, count - 1))
+        position = f" · {selected + 1}/{count}"
+    return (
+        "  "
+        + theme.sgr("commands", theme.SLASH_BORDER)
+        + theme.sgr(f"  type to filter · ↑/↓ selects · Enter applies{position}", theme.SLASH_META)
+    )
+
+
+def _slash_menu(state: UIState) -> str:
+    lines = [_slash_menu_header(state)]
+    max_items = SLASH_MENU_VISIBLE_ITEMS
+    count = len(state.slash_items)
+    if count <= 0:
+        if state.slash_empty_message:
+            lines.append("    " + theme.sgr(state.slash_empty_message, theme.SLASH_EMPTY))
+        return "\n".join(lines)
+    selected = max(0, min(state.slash_selected, count - 1))
+    offset = max(0, min(state.slash_scroll, max(0, count - max_items)))
+    if selected < offset:
+        offset = selected
+    elif selected >= offset + max_items:
+        offset = selected - max_items + 1
+
+    for row, item in enumerate(state.slash_items[offset:offset + max_items]):
+        index = offset + row
+        selected_row = index == selected
+        marker = theme.sgr("›", theme.SLASH_MARK) if selected_row else theme.sgr(" ", theme.SLASH_BORDER)
+        description = f"  {theme.sgr(item.description, theme.SLASH_META)}" if item.description else ""
+        label = item.display_text or item.text
+        item_style = theme.SLASH_SELECTED if selected_row else theme.SLASH_ITEM
+        lines.append(f"  {marker} {theme.sgr(label, item_style)}{description}")
+    return "\n".join(lines)
+
+
+def _confirm_lines(confirm) -> list[str]:
+    accent = theme.risk_style(confirm.risk_level)
+    lines = [
+        theme.sgr("╭ confirm", theme.CONFIRM_BORDER)
+        + "  "
+        + theme.sgr(confirm.display_name, accent),
+    ]
+    if confirm.risk_summary:
+        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr('Risk ', accent)}{theme.sgr(confirm.risk_summary, theme.CONFIRM_TEXT)}")
+    lines.extend(_confirm_detail_lines(confirm))
+    action_row = _confirm_action_row(confirm)
+    if action_row:
+        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{action_row}")
+    lines.append(theme.sgr("╰", theme.CONFIRM_BORDER))
+    return lines
+
+
+def _confirm_action_row(confirm) -> str:
+    if not confirm.actions:
+        return ""
+    parts: list[str] = []
+    selected = max(0, min(confirm.selected_action, len(confirm.actions) - 1))
+    for index, action in enumerate(confirm.actions):
+        prefix = "Enter " if index == selected else ""
+        suffix = " *" if action.is_default else ""
+        label = f" {prefix}{action.label}{suffix} "
+        style = theme.CONFIRM_ACTION_SELECTED if index == selected else theme.CONFIRM_ACTION
+        parts.append(theme.sgr(f"[{label}]", style))
+    hints = theme.sgr("  ←/→ select", theme.CONFIRM_DIM)
+    return "  ".join(parts) + hints
+
+
+def _confirm_detail_lines(confirm) -> list[str]:
+    lines: list[str] = []
+    if confirm.command_preview:
+        lines.append(_confirm_detail("Cmd", confirm.command_preview))
+    if confirm.url_preview:
+        target = confirm.url_preview
+        if confirm.host and confirm.host not in target:
+            target = f"{target} ({confirm.host})"
+        lines.append(_confirm_detail("URL", target))
+    if confirm.process_label:
+        lines.append(_confirm_detail("Process", confirm.process_label))
+    if confirm.affected_paths:
+        paths = ", ".join(confirm.affected_paths[:3])
+        if len(confirm.affected_paths) > 3:
+            paths += f" +{len(confirm.affected_paths) - 3}"
+        lines.append(_confirm_detail("Path", paths))
+    if confirm.input_preview and not lines:
+        lines.append(_confirm_detail("Input", confirm.input_preview))
+    return lines
+
+
+def _confirm_detail(label: str, value: str) -> str:
+    return (
+        theme.sgr("│ ", theme.CONFIRM_BORDER)
+        + theme.sgr(f"{label} ", theme.CONFIRM_DIM)
+        + theme.sgr(value, theme.CONFIRM_TEXT)
+    )

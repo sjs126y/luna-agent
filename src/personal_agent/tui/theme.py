@@ -17,12 +17,13 @@ RESET = "\x1b[0m"
 # Semantic SGR codes. Keep names intent-based (role) rather than color-based, so
 # the palette can be retuned without renaming call sites. Values stay within the
 # terminal's own 16-color palette so the UI follows the user's theme (CC/Codex
-# minimal look) instead of fighting it.
+# minimal look) instead of fighting it. User-message backgrounds use 256-color
+# SGR because they need a visible block contrast on common dark terminals.
 DIM = "2"
 BOLD = "1"
 PROMPT = "1;36"       # input prompt symbol ❯: bold cyan
-USER_BAR = "34"       # user message left bar ▌: blue (distinct from AI)
-USER_MSG = "39"       # user message text: default fg (full contrast, readable)
+USER_BAR = "1;38;5;111;48;5;236"    # user message left bar ▌ on row bg
+USER_MSG = "1;37;48;5;236"          # user message text on row bg
 METER_MODEL = "36"    # model name above the prompt: readable, not ghosted
 HINT_LABEL = "37"     # shortcut labels: quieter than keys, still legible
 AGENT_BAR = "35"      # agent streaming bar ▍: magenta
@@ -32,9 +33,26 @@ TOOL_OK = "32"        # completed tool ✓: green
 TOOL_ERR = "31"       # failed tool ✗: red
 TOOL_HINT = "2"       # "(Ctrl+O 展开)" hint: dim
 THINKING = "2"        # thinking hint: dim
+NOTICE = "33"         # retry/stop/compression notices: yellow
+ERROR = "1;31"        # turn-level errors: bold red
 EXPAND_HEADER = "34"  # Ctrl+O expand header: blue
+EXPAND_BORDER = "2;34"
 KEY = "36"            # keyboard-hint keys (⏎, Ctrl+J…): cyan
 CONFIRM = "1;33"      # inline tool confirmation prompt: bold yellow
+CONFIRM_BORDER = "38;5;67;48;5;235"
+CONFIRM_TEXT = "37;48;5;235"
+CONFIRM_DIM = "2;37;48;5;235"
+CONFIRM_ACTION = "37;48;5;236"
+CONFIRM_ACTION_SELECTED = "1;30;48;5;111"
+SLASH_BORDER = "38;5;67;48;5;235"
+SLASH_ITEM = "1;38;5;111;48;5;235"
+SLASH_SELECTED = "1;37;48;5;238"
+SLASH_MARK = "1;38;5;111;48;5;235"
+SLASH_META = "2;37;48;5;235"
+SLASH_EMPTY = "2;37;48;5;235"
+RISK_LOW = "32"
+RISK_MEDIUM = "33"
+RISK_HIGH = "1;31"
 
 # Per-mode accent colors so the current execution mode is instantly readable.
 MODE_STYLES = {
@@ -51,6 +69,14 @@ MODE_STYLES = {
 
 def mode_style(mode: str) -> str:
     return MODE_STYLES.get(mode, "36")
+
+
+def risk_style(level: str) -> str:
+    return {
+        "low": RISK_LOW,
+        "medium": RISK_MEDIUM,
+        "high": RISK_HIGH,
+    }.get(level, CONFIRM)
 
 
 def meter_style(fraction: float) -> str:

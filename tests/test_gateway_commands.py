@@ -248,6 +248,39 @@ async def test_gateway_help_lists_slash_plugin_commands_only(gateway):
 
 
 @pytest.mark.asyncio
+async def test_gateway_commands_lists_slash_plugin_commands_only(gateway):
+    async def handler(args="", **kwargs):
+        return "ok"
+
+    gateway.plugin_manager.commands["demo"] = CommandEntry(
+        name="demo",
+        description="gateway command",
+        handler=handler,
+        scope="slash",
+        plugin_key="user/demo",
+    )
+    gateway.plugin_manager.commands["local"] = CommandEntry(
+        name="local",
+        description="local only",
+        handler=handler,
+        scope="cli",
+        plugin_key="user/local",
+    )
+
+    text = await gateway._handle_command(_event("/commands"), "telegram:c1:u1")
+    data = await gateway._handle_command(_event("/commands json"), "telegram:c1:u1")
+
+    assert "/commands - 列出 slash commands" in text
+    assert "/demo - gateway command (user/demo)" in text
+    assert "/local" not in text
+    assert '"name": "demo"' in data
+    assert '"name": "local"' not in data
+    assert '"available_in": [' in data
+    assert '"arguments": [' in data
+    assert '"provider": "tools"' in data
+
+
+@pytest.mark.asyncio
 async def test_gateway_before_send_and_memory_review_use_conversation_result(gateway, monkeypatch):
     messages = [
         {"role": "user", "content": [{"type": "text", "text": "hello"}]},

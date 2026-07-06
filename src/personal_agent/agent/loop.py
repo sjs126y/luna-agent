@@ -12,11 +12,12 @@ Retry strategies (6 types, Hermes pattern):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 
 from personal_agent.agent.report import TurnReportRecorder
 from personal_agent.context_budget import compose_context_text, estimate_context_budget
-from personal_agent.conversation.events import emit_delta, emit_event
+from personal_agent.conversation.events import ConversationEvent, emit_delta, emit_event
 from personal_agent.llm.base import LLMRequestPlan
 from personal_agent.tools.executor import execute_tool_calls
 
@@ -54,8 +55,15 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
     while agent._iteration_budget > 0:
         if agent._interrupt_requested:
             logger.info("Agent interrupted by user")
-            await emit_event(report_recorder, "stop", "已停止")
-            break
+            await _emit_stop(report_recorder, reason="user")
+            return _with_turn_report({
+                "final_response": "已停止。",
+                "messages": ctx.messages,
+                "api_calls": agent.session_api_calls,
+                "completed": False,
+                "status": "stopped",
+                "error": "",
+            })
 
         # ── build api_messages (injections, NOT persisted) ──
         skill_injection_for_plan = getattr(ctx, "skill_injection", None)
@@ -138,7 +146,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 if agent._interrupt_requested:
                     llm_task.cancel()
                     logger.info("LLM call interrupted by /stop")
-                    await emit_event(report_recorder, "stop", "已停止")
+                    await _emit_stop(report_recorder, reason="user")
                     return _with_turn_report({
                         "final_response": "已停止。",
                         "messages": ctx.messages,
@@ -149,7 +157,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                     })
             response = await llm_task
         except asyncio.CancelledError:
-            await emit_event(report_recorder, "stop", "已停止")
+            await _emit_stop(report_recorder, reason="interrupt")
             return _with_turn_report({
                 "final_response": "已停止。",
                 "messages": ctx.messages,
@@ -169,7 +177,9 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                     "模型返回格式异常，准备重试",
                     category="invalid_json",
                     attempt=agent._retry.invalid_json_retries,
+                    max_attempts=agent._retry.MAX_INVALID_JSON,
                     error=f"{type(exc).__name__}: {exc}",
+                    recoverable=True,
                 )
                 ctx.messages.append({
                     "role": "user",
@@ -179,12 +189,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 logger.debug("Invalid JSON retry %d: %s", agent._retry.invalid_json_retries, exc)
                 continue
             logger.exception("LLM call failed (non-retryable)")
-            await emit_event(
-                report_recorder,
-                "error",
-                "模型调用失败",
-                error=f"{type(exc).__name__}: {exc}",
-            )
+            await _emit_error(report_recorder, "模型调用失败", exc, category="llm")
             return _with_turn_report({
                 "final_response": f"抱歉，模型调用出错了：{exc}",
                 "messages": ctx.messages,
@@ -242,6 +247,8 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                     "工具执行后模型空回复，准备重试",
                     category="post_tool_empty",
                     attempt=1,
+                    max_attempts=1,
+                    recoverable=True,
                 )
                 ctx.messages.append({
                     "role": "user",
@@ -261,6 +268,8 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                     "模型空回复，准备重试",
                     category="empty_response",
                     attempt=agent._retry.empty_content_retries,
+                    max_attempts=agent._retry.MAX_EMPTY_CONTENT,
+                    recoverable=True,
                 )
                 ctx.messages.append({
                     "role": "user",
@@ -293,7 +302,9 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                     "工具参数格式异常，准备重试",
                     category="invalid_tool",
                     attempt=agent._retry.invalid_tool_retries,
+                    max_attempts=agent._retry.MAX_INVALID_TOOL,
                     tool_names=bad_names,
+                    recoverable=True,
                 )
                 ctx.messages.append({
                     "role": "user",
@@ -347,7 +358,15 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 "role": "user",
                 "content": [{"type": "text", "text": "请总结一下已完成的操作。"}],
             })
-            await emit_event(report_recorder, "retry", "达到迭代上限，要求模型总结", category="iteration_budget")
+            await emit_event(
+                report_recorder,
+                "retry",
+                "达到迭代上限，要求模型总结",
+                category="iteration_budget",
+                attempt=1,
+                max_attempts=1,
+                recoverable=True,
+            )
             break
 
     # ── final response ──
@@ -385,6 +404,46 @@ def _looks_like_parse_error(exc: Exception) -> bool:
     keywords = ("json", "parse", "decode", "malformed", "unexpected token",
                 "invalid character", "expecting")
     return any(kw in msg for kw in keywords)
+
+
+async def _emit_stop(
+    sink,
+    *,
+    reason: str,
+    message: str = "已停止",
+    stopped_tools: int = 0,
+    stopped_agents: int = 0,
+) -> None:
+    if sink is None:
+        return
+    await sink.emit(ConversationEvent(
+        type="stop",
+        message=message,
+        data={
+            "reason": reason,
+            "message": message,
+            "stopped_tools": stopped_tools,
+            "stopped_agents": stopped_agents,
+        },
+    ))
+
+
+async def _emit_error(sink, message: str, exc: Exception, *, category: str) -> None:
+    error = f"{type(exc).__name__}: {exc}"
+    await emit_event(
+        sink,
+        "error",
+        message,
+        error=error,
+        category=category,
+        recoverable=False,
+        detail_id=_event_detail_id(category, error),
+    )
+
+
+def _event_detail_id(category: str, detail: str) -> str:
+    digest = hashlib.sha1(f"{category}:{detail}".encode("utf-8", errors="replace")).hexdigest()
+    return f"err_{digest[:12]}"
 
 
 async def _build_api_messages(agent, ctx) -> list[dict]:

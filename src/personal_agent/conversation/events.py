@@ -166,6 +166,10 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("command_preview", "string", "Command preview for shell/background tools."),
             EventFieldSpec("url_preview", "string", "URL preview for network tools."),
             EventFieldSpec("host", "string", "Parsed network host when available."),
+            EventFieldSpec("cwd", "string", "Working directory preview for command tools."),
+            EventFieldSpec("timeout_seconds", "number", "Configured timeout in seconds when available."),
+            EventFieldSpec("method", "string", "HTTP method preview for network tools."),
+            EventFieldSpec("process_label", "string", "User-facing label for background process tools."),
         ),
     ),
     "tool_end": EventSchema(
@@ -200,6 +204,10 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("command_preview", "string", "Command preview for shell/background tools."),
             EventFieldSpec("url_preview", "string", "URL preview for network tools."),
             EventFieldSpec("host", "string", "Parsed network host when available."),
+            EventFieldSpec("cwd", "string", "Working directory preview for command tools."),
+            EventFieldSpec("timeout_seconds", "number", "Configured timeout in seconds when available."),
+            EventFieldSpec("method", "string", "HTTP method preview for network tools."),
+            EventFieldSpec("process_label", "string", "User-facing label for background process tools."),
         ),
     ),
     "retry": EventSchema(
@@ -208,9 +216,11 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
         fields=(
             EventFieldSpec("category", "string", "Retry category.", required=True),
             EventFieldSpec("attempt", "integer", "Retry attempt number when available."),
+            EventFieldSpec("max_attempts", "integer", "Maximum attempts for this retry category when known."),
             EventFieldSpec("error", "string", "Error that caused retry when available."),
             EventFieldSpec("tool_name", "string", "Tool name for tool retry."),
             EventFieldSpec("tool_names", "string", "Comma-separated invalid tool names."),
+            EventFieldSpec("recoverable", "boolean", "Whether the runtime expects automatic recovery."),
         ),
     ),
     "compression": EventSchema(
@@ -221,11 +231,25 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("post_message_count", "integer", "Message count after compression."),
         ),
     ),
-    "stop": EventSchema("stop", "The current turn was stopped/interrupted."),
+    "stop": EventSchema(
+        "stop",
+        "The current turn was stopped/interrupted.",
+        fields=(
+            EventFieldSpec("reason", "string", "user/interrupt/timeout/shutdown when known."),
+            EventFieldSpec("message", "string", "User-facing stop summary."),
+            EventFieldSpec("stopped_tools", "integer", "Number of tool executions stopped when known."),
+            EventFieldSpec("stopped_agents", "integer", "Number of delegated agents stopped when known."),
+        ),
+    ),
     "error": EventSchema(
         "error",
         "A runtime error occurred.",
-        fields=(EventFieldSpec("error", "string", "Error text.", required=True),),
+        fields=(
+            EventFieldSpec("error", "string", "Error text.", required=True),
+            EventFieldSpec("category", "string", "Error category such as llm/runtime/tool."),
+            EventFieldSpec("recoverable", "boolean", "Whether the runtime can continue automatically."),
+            EventFieldSpec("detail_id", "string", "Stable detail/log id when available."),
+        ),
     ),
     "turn_end": EventSchema(
         "turn_end",
@@ -330,6 +354,11 @@ def event_protocol_schema() -> dict[str, Any]:
         "delta_event_types": sorted(DELTA_EVENT_TYPES),
         "events": {name: schema.as_dict() for name, schema in EVENT_SCHEMAS.items()},
     }
+
+
+def frontend_protocol_schema() -> dict[str, Any]:
+    """Return the stable protocol contract consumed by TUI/desktop/web frontends."""
+    return event_protocol_schema()
 
 
 def validate_event_contract(event: ConversationEvent) -> list[str]:

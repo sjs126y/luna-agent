@@ -1,6 +1,6 @@
 """Phase 0 spike: verify prompt_toolkit inline-scroll + bottom active region.
 
-Goal (per TUI_PLAN.md §5 Phase 0): prove this API combo works BEFORE writing
+Goal (per docs/archive/TUI_PLAN.md §5 Phase 0): prove this API combo works BEFORE writing
 the real tui/ package.
 
 Validates 4 things:

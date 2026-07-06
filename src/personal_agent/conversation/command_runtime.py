@@ -114,6 +114,31 @@ class ConversationCommandRuntime:
             empty_message=self.usage_empty_message,
         )
 
+    async def tool_runs_recent(
+        self,
+        *,
+        limit: int = 10,
+        all_sessions: bool = False,
+    ) -> dict:
+        return await self.conversation_service.queries.recent_tool_runs(
+            limit=limit,
+            session_key=None if all_sessions else self.session_key,
+        )
+
+    async def tool_run_detail(self, run_id: int) -> dict | None:
+        return await self.conversation_service.queries.tool_run_detail(run_id)
+
+    async def tool_runs_summary(
+        self,
+        *,
+        limit: int = 50,
+        all_sessions: bool = False,
+    ) -> dict:
+        return await self.conversation_service.queries.tool_run_summary(
+            limit=limit,
+            session_key=None if all_sessions else self.session_key,
+        )
+
     async def current_execution_mode(self) -> str:
         from personal_agent.commands.runtime import current_mode, current_mode_from_policy
 

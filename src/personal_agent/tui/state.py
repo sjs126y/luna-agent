@@ -20,6 +20,17 @@ class ToolTrace:
     name: str
     display_name: str
     input_summary: str = ""
+    input_preview: str = ""
+    affected_paths: tuple[str, ...] = ()
+    command_preview: str = ""
+    url_preview: str = ""
+    host: str = ""
+    cwd: str = ""
+    timeout_seconds: float | None = None
+    method: str = ""
+    process_label: str = ""
+    risk_level: str = ""
+    risk_summary: str = ""
     started_at: float = 0.0
     status: str = "running"       # running | success | error | denied | ...
     output_summary: str = ""
@@ -36,6 +47,72 @@ class ToolTrace:
         self.duration = duration if duration > 0 else (
             max(0.0, time.monotonic() - self.started_at) if self.started_at else 0.0
         )
+
+
+@dataclass
+class ConfirmAction:
+    """One selectable action in the pending confirm panel."""
+
+    id: str
+    label: str
+    result: str
+    shortcut: str = ""
+    is_default: bool = False
+
+
+@dataclass
+class ConfirmPrompt:
+    """Human-facing state for one pending tool confirmation."""
+
+    title: str
+    display_name: str
+    permission_category: str = ""
+    execution_mode: str = ""
+    risk_level: str = ""
+    risk_summary: str = ""
+    input_preview: str = ""
+    command_preview: str = ""
+    url_preview: str = ""
+    host: str = ""
+    process_label: str = ""
+    affected_paths: tuple[str, ...] = ()
+    default_action: str = "allow"  # allow | deny | none
+    available_actions: tuple[str, ...] = ("allow_once", "allow_always", "deny")
+    actions: tuple[ConfirmAction, ...] = ()
+    selected_action: int = 0
+
+    def __post_init__(self) -> None:
+        if self.actions:
+            return
+        specs = {
+            "allow_once": ("Allow once", "allow", "A"),
+            "deny": ("Deny", "deny", "Esc"),
+            "allow_always": ("Always", "always", "Shift+A"),
+        }
+        actions: list[ConfirmAction] = []
+        for action_id in ("allow_once", "deny", "allow_always"):
+            if action_id not in self.available_actions:
+                continue
+            label, result, shortcut = specs[action_id]
+            is_default = (
+                (self.default_action == "allow" and action_id == "allow_once")
+                or (self.default_action == "deny" and action_id == "deny")
+            )
+            actions.append(ConfirmAction(action_id, label, result, shortcut, is_default))
+        self.actions = tuple(actions)
+        for index, action in enumerate(self.actions):
+            if action.is_default:
+                self.selected_action = index
+                break
+
+
+@dataclass(frozen=True)
+class SlashMenuItem:
+    """One slash-command candidate drawn by the inline TUI."""
+
+    text: str
+    description: str = ""
+    display_text: str = ""
 
 
 @dataclass
@@ -61,16 +138,32 @@ class UIState:
     api_calls: int = 0
     context_window: int = 0
     context_used_tokens: int = 0
+    context_remaining_tokens: int = 0
     context_percent: float = 0.0
+    context_budget: dict = field(default_factory=dict)
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_hit_rate: float | None = None
+    activity_total: int = 0
+    activity_attention: bool = False
     exec_mode: str = "Ask First"
 
     # last expandable (display_name, full_text) for Ctrl+O
     last_expandable: tuple[str, str] | None = None
 
-    # pending inline tool confirmation (Phase 4). When set, the active region
-    # shows a "⚠ 允许执行 X? [y/n/a]" prompt and keys y/n/a resolve it. Holds the
-    # human-facing prompt text; the app owns the Future that the answer resolves.
-    pending_confirm: str | None = None
+    # pending inline tool confirmation. Holds display state; the app owns the
+    # Future that resolves to allow / deny / always.
+    pending_confirm: ConfirmPrompt | None = None
+
+    # True while the input buffer is in slash-command mode. slash_items controls
+    # whether a visible command menu is needed.
+    slash_mode: bool = False
+    slash_items: tuple[SlashMenuItem, ...] = ()
+    slash_selected: int = 0
+    slash_scroll: int = 0
+    slash_empty_message: str = ""
 
     def reset_turn(self) -> None:
         self.stream_text = ""
@@ -87,3 +180,6 @@ class UIState:
             or self.active_tools
             or self.pending_confirm
         )
+
+    def has_slash_menu(self) -> bool:
+        return self.slash_mode and (bool(self.slash_items) or bool(self.slash_empty_message))

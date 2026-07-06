@@ -26,11 +26,13 @@ plugins_app = typer.Typer(help="Manage plugins")
 tokens_app = typer.Typer(help="Estimate token/context usage")
 agents_app = typer.Typer(help="Run controlled agent helpers")
 memory_app = typer.Typer(help="Inspect and manage memory")
+protocol_app = typer.Typer(help="Inspect frontend/backend protocol contracts")
 
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(tokens_app, name="tokens")
 app.add_typer(agents_app, name="agents")
 app.add_typer(memory_app, name="memory")
+app.add_typer(protocol_app, name="protocol")
 
 
 _CONFIG_TEMPLATE_LOCAL = """# Personal Agent minimal configuration
@@ -780,6 +782,18 @@ def memory_search(
     asyncio.run(_run())
 
 
+@protocol_app.command("schema")
+def protocol_schema(
+    json_output: bool = typer.Option(True, "--json/--no-json", help="输出 JSON。当前协议契约以 JSON 为准。"),
+) -> None:
+    """Print the frontend-facing event protocol schema."""
+    if not json_output:
+        _exit_error("protocol schema 当前只支持 JSON 输出，请使用 --json。")
+    from personal_agent.conversation.events import frontend_protocol_schema
+
+    typer.echo(_json_dumps(frontend_protocol_schema()))
+
+
 @memory_app.command("show")
 def memory_show(
     identifier: str,
@@ -1056,9 +1070,6 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
     try:
         runtime = await create_app_runtime(settings)
         runtime_data = runtime.health_snapshot()
-        runtime_data.setdefault("turns", {})["persisted"] = (
-            await runtime.conversation_service.persisted_turn_report_summary()
-        )
         runtime_data.update({
             "initialized": True,
             "error": "",
@@ -1525,6 +1536,73 @@ def _format_llm_cache_detail_lines(cache: dict[str, Any]) -> list[str]:
     ]
 
 
+def _format_command_health_summary(commands: dict[str, Any]) -> str:
+    if not isinstance(commands, dict) or not commands:
+        return "-"
+    return (
+        f"registry=v{commands.get('registry_version', 0)} "
+        f"core={commands.get('core_commands', 0)} "
+        f"plugins={commands.get('plugin_commands', 0)} "
+        f"arguments={commands.get('argument_specs', 0)} "
+        f"providers={_list_or_none(commands.get('dynamic_providers', []))}"
+    )
+
+
+def _format_command_health_detail_lines(commands: dict[str, Any]) -> list[str]:
+    if not isinstance(commands, dict) or not commands:
+        return ["  registry: unavailable"]
+    return [
+        f"  registry version: {commands.get('registry_version', 0)}",
+        f"  core commands: {commands.get('core_commands', 0)}",
+        f"  plugin commands: {commands.get('plugin_commands', 0)}",
+        f"  argument specs: {commands.get('argument_specs', 0)}",
+        f"  dynamic providers: {_list_or_none(commands.get('dynamic_providers', []))}",
+        f"  /tool-runs: {_yes(commands.get('has_tool_runs', False))}",
+        f"  /mode set arguments: {_yes(commands.get('has_mode_arguments', False))}",
+        f"  /allow arguments: {_yes(commands.get('has_allow_arguments', False))}",
+    ]
+
+
+def _format_query_health_summary(query: dict[str, Any]) -> str:
+    if not isinstance(query, dict) or not query:
+        return "-"
+    return (
+        f"conversation={_yes(query.get('conversation_query_service', False))} "
+        f"tool_runs={_yes(query.get('tool_runs_query', False))}"
+    )
+
+
+def _format_query_health_detail_lines(query: dict[str, Any]) -> list[str]:
+    if not isinstance(query, dict) or not query:
+        return ["  conversation query service: 否"]
+    return [
+        f"  conversation query service: {_yes(query.get('conversation_query_service', False))}",
+        f"  tool runs query: {_yes(query.get('tool_runs_query', False))}",
+    ]
+
+
+def _format_runtime_execution_summary(execution: dict[str, Any]) -> str:
+    if not isinstance(execution, dict) or not execution:
+        return "-"
+    return (
+        f"mode={execution.get('mode') or '-'} "
+        f"label={execution.get('label') or '-'} "
+        f"isolation={execution.get('isolation') or '-'}"
+    )
+
+
+def _format_runtime_execution_detail_lines(execution: dict[str, Any]) -> list[str]:
+    if not isinstance(execution, dict) or not execution:
+        return ["  mode: -"]
+    return [
+        f"  mode: {execution.get('mode') or '-'}",
+        f"  label: {execution.get('label') or '-'}",
+        f"  isolation: {execution.get('isolation') or '-'}",
+        f"  network: {execution.get('network') or '-'}",
+        f"  permissions: {_format_permissions(execution.get('permissions', {}))}",
+    ]
+
+
 def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
@@ -1540,6 +1618,9 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
     tool_truth = runtime.get("tool_truth", {})
     tool_runs = runtime.get("tool_runs", {})
     llm_cache = runtime.get("llm_cache", {})
+    commands = runtime.get("commands", {})
+    query = runtime.get("query", {})
+    execution_runtime = runtime.get("execution", {})
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
         "Personal Agent 诊断",
@@ -1564,6 +1645,9 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
         f"  LLM Cache: {_format_llm_cache_summary(llm_cache)}",
         f"  Tool Truth: {_format_tool_truth_summary(tool_truth)}",
         f"  Tool Runs: {_format_tool_runs_summary(tool_runs)}",
+        f"  Commands: {_format_command_health_summary(commands)}",
+        f"  Query: {_format_query_health_summary(query)}",
+        f"  Execution: {_format_runtime_execution_summary(execution_runtime)}",
         f"  DB 打开: {_yes(runtime.get('db_open', False))}",
         f"  MCP 运行: {_yes(runtime.get('mcp_running', False))}",
         f"  Gateway 已创建: {_yes(runtime.get('gateway_created', False))}",
@@ -1850,6 +1934,12 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         lines.extend(_format_tool_truth_detail_lines(runtime.get("tool_truth", {})))
         lines.extend(["", "Tool Runs:"])
         lines.extend(_format_tool_runs_detail_lines(runtime.get("tool_runs", {})))
+        lines.extend(["", "Commands:"])
+        lines.extend(_format_command_health_detail_lines(runtime.get("commands", {})))
+        lines.extend(["", "Query:"])
+        lines.extend(_format_query_health_detail_lines(runtime.get("query", {})))
+        lines.extend(["", "Execution:"])
+        lines.extend(_format_runtime_execution_detail_lines(runtime.get("execution", {})))
     elif section == "platforms":
         platforms = report.get("platforms", [])
         if platforms:

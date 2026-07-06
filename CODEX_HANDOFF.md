@@ -1,168 +1,146 @@
 # Codex 交接记录
 
-更新时间：2026-07-06 11:35 CST
+更新时间：2026-07-06 13:30 CST
 
 ## 当前状态
 
-- 当前分支：`feature/backend-tool-truth`
-- 当前 HEAD：`b381ce9 [codex] serialize confirmed tool prompts`
+- 当前工作分支：`feature/frontend-tui-polish`
 - 当前协作分工：
-  - **后端线**：由本 Codex 继续负责，范围包括 agent loop、tool executor、permissions / execution mode、config、database、gateway、runtime diagnostics、后端测试与文档。
-  - **前端线**：另一个 Codex 负责，范围包括 inline TUI / classic CLI UI / desktop/web UI 的布局、交互、视觉和真实终端验收。
-- 当前结论：
-  - Tool truth / tool result / turn report / execution mode / inline confirm 后端链路已经阶段性完成。
-  - inline TUI 仍有真实终端体验问题，后续由前端线处理；后端线只在接口或事件契约需要时配合。
+  - **后端线**：负责 agent loop、tool executor、permissions / execution mode、conversation events、runtime / doctor、gateway / platform adapter、后端测试与接口文档。
+  - **前端线**：负责 `src/personal_agent/tui/`、classic CLI / future desktop-web 的布局、交互、视觉、真实终端验收。
+- 前后端接口权威文档：`BACKEND_INTERFACE.md`。
+- 前端对后端的小需求入口：`FRONTEND_INTERFACE_REQUIREMENTS.md`。
+- 历史计划/需求文档已归档到 `docs/archive/`。
 
-## 最近完成内容
+## 最近完成
 
-### Tool Truth / Tool Runs
+### Event Protocol / Frontend Contract
 
-- `AgentTurnReport` 与 tool truth 汇总已接入单轮执行结果。
-- `ConversationService` 记录最近 turn report 与 tool truth 摘要。
-- 新增 tool run 结果持久化：
-  - `tool_runs` 表。
-  - `Database.save_tool_runs()` / `recent_tool_runs()` / `get_tool_run()` / `tool_run_summary()`。
-  - `SessionStore` 代理查询。
-  - `ConversationService` 从 `tool_end` 事件落库。
-- runtime health / doctor 可看到 tool run 摘要。
-- 相关提交：
-  - `60f2663 [codex] add tool truth turn reporting`
-  - `28bb5a6 [codex] expose tool truth summaries`
-  - `303562f [codex] persist tool run results`
+- `ConversationEvent.as_dict()` 带 `protocol_version`。
+- `EVENT_SCHEMAS` 覆盖所有事件类型。
+- `frontend_protocol_schema()` 暴露 Python 层协议 schema。
+- `personal-agent protocol schema --json` 暴露 CLI 层协议 schema。
+- `retry` / `error` / `stop` 状态事件已结构化：
+  - `retry`: `max_attempts`, `recoverable`
+  - `error`: `category`, `recoverable`, `detail_id`
+  - `stop`: `reason`, `message`, `stopped_tools`, `stopped_agents`
 
-### Inline Tool Confirmation 后端链路
+### Tool Decision / Tool End Metadata
 
-- `confirm=None` 已从前端 runtime 一路透传到 executor：
-  - `CliChatRuntime.run_message_events`
-  - `ConversationService.run_turn_events`
-  - `agent.loop.run_conversation`
-  - `tools.executor.execute_tool_calls`
-  - `execute_tool_call_result`
+- `tool_decision` 和 `tool_end` 已提供确认 UI 所需展示字段：
+  - `display_name`
+  - `execution_mode_label`
+  - `risk_level`
+  - `risk_summary`
+  - `default_action`
+  - `available_actions`
+  - `input_summary`
+  - `input_preview`
+  - `affected_paths`
+  - `command_preview`
+  - `url_preview`
+  - `host`
+  - `cwd`
+  - `timeout_seconds`
+  - `method`
+  - `process_label`
+- `confirm(decision)` 对象与事件流字段保持一致。
+
+### Tool Confirmation / Execution Mode
+
+- `confirm=None` 已从 runtime 透传到 executor。
 - executor 只在 `permission_required + ask` 时调用 confirm。
 - confirm 返回语义：
-  - `"deny"`：拒绝工具。
-  - `"allow"`：临时授权当前工具，执行后撤销 grant。
-  - `"always"`：持久加入当前 agent 的 `_destructive_allowed`。
-- hard precheck、unknown tool、runtime guard deny、已有 grant、policy allow 不会触发 confirm。
-- 需求 4 已完成：pending confirm 被 `/stop` 中断时不会卡死，后端取消确认等待并返回 denied。
-- 需要确认的 parallel-safe 工具现在会退出并发 batch，按顺序弹确认，避免前端单一 `_confirm_future` 被覆盖。
-- 相关提交：
-  - `91db4a9 [codex] wire inline tool confirmations`
-  - `5957564 [codex] interrupt pending tool confirmations`
-  - `b381ce9 [codex] serialize confirmed tool prompts`
-
-### Execution Mode v3 + `/mode`
-
-- execution mode 已从旧的 `/allow` preset 切到真正的 `ExecutionPolicy` profile。
-- 用户可见模式：
+  - `"allow"`：本次放行。
+  - `"deny"`：拒绝本次工具。
+  - `"always"`：加入当前 agent grant，后续同类工具不再询问。
+- `/stop` 打断 pending confirm 时固定收口：
+  - `tool_end.status="denied"`
+  - `tool_end.category="authorization"`
+  - `tool_end.error="tool confirmation interrupted"`
+- 需要确认的工具会串行化，避免多个确认框并发覆盖。
+- Execution Mode 四档：
   - `Read Only` -> `guarded`
   - `Ask First` -> `standard`
   - `Edit Freely` -> `trusted`
   - `Full Auto` -> `sovereign`
-- `/mode` 支持短语、slug、旧别名：
-  - `normal` -> `Ask First`
-  - `acceptEdits` -> `Edit Freely`
-  - `auto` -> `Full Auto`
-- 切换 mode 时会清空 `_destructive_allowed`，避免高权限残留。
-- `ConversationCommandRuntime.current_execution_mode()` 返回前端可显示的模式标签。
-- 相关提交：
-  - `ca11bb9 [codex] wire mode command to execution policy`
 
-### Runtime / Diagnostics
+### Tool Truth / Tool Runs
 
-- BootReport 与 AgentTurnReport 已阶段性完成：
-  - 启动成功/失败路径结构化。
-  - `AppRuntime.health_snapshot()` 暴露 boot / turns / tool_runs 摘要。
-  - doctor runtime section 能显示 boot steps、turn summary、tool run summary。
-- 这部分来自上一阶段主线，当前仍可用。
-- 相关提交：
-  - `f496791 [codex] add runtime boot report`
-  - `f34bc25 [codex] report runtime boot failures`
-  - `c70ee9b [codex] add agent turn reports`
-  - `48d4777 [codex] expose recent turn reports`
+- `AgentTurnReport` 汇总每轮 LLM、工具、retry、tool truth。
+- `ConversationService` 记录最近 turn report 与 tool truth 摘要。
+- `tool_runs` 已持久化，runtime / doctor 可看到摘要。
+- `ConversationQueryService` 提供只读查询 facade。
+- `/tool-runs [recent|summary|show <id>] [--all] [--limit N]` 已提供查询入口。
+- `/tool-runs` 返回 `CommandResult.kind="tool_runs"`，兼容文本和结构化 payload。
 
-## 前后端边界
+### Chat Slash Commands v1/v2
 
-### 后端线继续负责
+- CLI chat、inline TUI 和 Gateway 共享 `handle_slash_command(...)`。
+- Slash commands 与 Typer CLI 保持分离。
+- 新增 slash command metadata registry：
+  - `SLASH_COMMAND_REGISTRY_VERSION = 1`
+  - `/commands`
+  - `/commands json`
+  - `/commands <name>`
+- `/help` 由 registry 生成。
+- 新增用户可用命令：
+  - `/tools [list|show <name>]`
+  - `/tool-runs [recent|summary|show <id>]`
+  - `/permissions [list|grants]`
+  - `/protocol [schema]`
+- 插件命令继续按 `slash` / `cli` / `both` scope 暴露。
+- `CommandResult` v2 保持 `response` 文本兼容，同时新增：
+  - `payload`
+  - `kind`
+  - `error`
+  - `suggestions`
+- `/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 已有结构化 payload。
+- command metadata 新增 `available_in`、`mutates_state`、`requires_agent`、`arguments`。
+- argument metadata 支持 `choice` 和 `dynamic`。
+- 静态候选：
+  - `/mode set <mode>`
+  - `/allow <category>`
+- 动态候选入口：`slash_argument_choices(...)`。
+- 当前动态 provider：
+  - `tools`
+  - `sessions`
+- 未知命令/子命令会尽量返回建议，但不破坏技能命令 fallback。
 
-- tool executor 行为、权限判定、sandbox / precheck、confirm 语义。
-- execution mode profile、`/mode` 命令、permission grants。
-- conversation events 的字段契约、tool result / turn report / tool runs 落库。
-- gateway / platform adapter 的后端接口。
-- config registry / runtime health / doctor。
-- 后端需求文档与测试维护。
+### Doctor Runtime Diagnostics
 
-### 前端线继续负责
+- `AppRuntime.health_snapshot()` 增加：
+  - `commands`
+  - `query`
+  - `execution`
+- `doctor` runtime 输出会展示：
+  - slash registry version / command counts / argument metadata / dynamic providers
+  - ConversationQueryService 和 tool-runs query 是否可用
+  - 当前 execution mode label / profile / isolation / permissions
 
-- `src/personal_agent/tui/` 的布局、颜色、输入框、快捷键、真实终端视觉验收。
-- inline TUI 的 prompt_toolkit 细节，包括 TextArea prompt、height、scrollback 体验。
-- classic CLI / future desktop/web 的渲染体验。
-- 前端 roadmap 与 UI 截图验收。
+## 当前约定
 
-### 联调规则
-
-- 前端需要新增后端能力时，先写清：
-  - 命令/API 名称。
-  - 输入输出字段。
-  - 事件类型与字段。
-  - 错误/取消/权限边界。
-- 后端实现后补测试并提交。
-- 前端视觉问题不再由后端线直接改，除非确认是后端事件/状态数据错误。
-
-## 当前已知前端问题
-
-- inline TUI 仍存在真实终端布局细节争议：
-  - 输入框与 hint/meter 是否足够贴近。
-  - prompt_toolkit TextArea 高度、prompt 渲染和真实输入显示需要前端线继续打磨。
-- 已知可用修复现状：
-  - prompt 使用 native formatted-text tuple，不要用 `ANSI(...)`。
-  - `dont_extend_height=True` 已用于避免输入区吞掉剩余高度。
-  - 需要确认的工具后端已串行化，前端不应再遇到多个 confirm 同时覆盖 `_confirm_future` 的卡死。
+- 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
+- 前端提出后端需求时，应尽量是字段/小接口级别，不直接要求重构后端流程。
+- 前端视觉和 prompt_toolkit 真实终端问题归前端线。
+- 后端线不主动编辑 TUI 文件，除非确认是事件/接口问题。
+- `CLAUDE.md` 保留，不在本轮文档清理中处理。
 
 ## 已验证
 
-最近一次全量验证：
+最近后端提交前运行过：
 
 ```bash
 python -m compileall -q src/personal_agent
+uv run pytest tests/test_runtime.py tests/test_cli.py -q
 uv run pytest -q
 ```
 
-结果：
-
-```text
-648 passed
-```
+最近一次 doctor 相关结果：`46 passed`。
+最近一次全量结果：`703 passed`。
 
 ## 注意事项
 
 - 测试会修改 `src/personal_agent/skills/builtin/.usage.json`，提交前必须恢复。
-- 当前分支混有 Claude 的前端 TUI 提交和 Codex 的后端提交；后续建议前后端分支拆开，减少互相覆盖。
-- 后端 confirm 不做自动 timeout；目前只处理用户 deny/allow/always 与 `/stop` 中断。
-- `tool_runs` 已持久化，但 turn report 仍主要是内存 ring buffer，不要默认当作长期审计存储。
-
-## 后续建议
-
-1. 后端线：
-   - 事件协议 schema / version 固化。
-   - tool decision / tool result / audit log 的统一关联。
-   - 按前端需求补 gateway/desktop 所需接口。
-2. 前端线：
-   - 专门修 inline TUI 输入面板与真实终端体验。
-   - 梳理 TUI 视觉规范，避免多模型反复改同一块布局。
-   - 后续 desktop/web 前先固化事件消费接口。
-
-## 最近提交
-
-```text
-b381ce9 [codex] serialize confirmed tool prompts
-5957564 [codex] interrupt pending tool confirmations
-546acd6 [claude code] fix vanishing TextArea input: native tuple prompt + revert weight=0 height
-483dd13 [codex] fix inline tui prompt rendering
-3589f1c [codex] compact inline tui input panel
-ca11bb9 [codex] wire mode command to execution policy
-91db4a9 [codex] wire inline tool confirmations
-303562f [codex] persist tool run results
-28bb5a6 [codex] expose tool truth summaries
-60f2663 [codex] add tool truth turn reporting
-```
+- 当前分支仍混有前后端提交，提交时要精确暂存文件，避免把另一条线的改动混入。
+- `PROVIDER_TRANSPORT_RETRY.md` 仍留在根目录，因为 `CLAUDE.md` 直接引用它，而本轮不处理 `CLAUDE.md`。
