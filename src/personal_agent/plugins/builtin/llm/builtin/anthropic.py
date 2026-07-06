@@ -33,16 +33,6 @@ class AnthropicMessagesTransport(BaseTransport):
     ) -> dict:
         converted = self.convert_messages(messages)
 
-        # Add cache_control to last message (Anthropic prefix caching)
-        if converted:
-            last_content = converted[-1].get("content")
-            if isinstance(last_content, list) and last_content:
-                last_content[-1]["cache_control"] = {"type": "ephemeral"}
-            elif isinstance(last_content, str) and last_content:
-                converted[-1]["content"] = [
-                    {"type": "text", "text": last_content, "cache_control": {"type": "ephemeral"}}
-                ]
-
         body: dict = {
             "model": self._provider.model,
             "max_tokens": max_tokens or self._provider.max_tokens,
@@ -54,7 +44,7 @@ class AnthropicMessagesTransport(BaseTransport):
                 {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
             ]
         if tools:
-            body["tools"] = self.convert_tool_definitions(tools)
+            body["tools"] = self.convert_tool_definitions(_sorted_tools(tools))
 
         if self._provider.request_hook:
             body = self._provider.request_hook(body)
@@ -248,3 +238,7 @@ def _map_stop_reason(stop_reason: str, has_tool_calls: bool) -> str:
     if has_tool_calls:
         return "tool_use"
     return "end_turn"
+
+
+def _sorted_tools(tools: list[dict]) -> list[dict]:
+    return sorted(tools, key=lambda item: str(item.get("name") or ""))

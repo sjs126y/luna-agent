@@ -80,6 +80,22 @@ uv run pytest tests/test_transport_cache.py tests/test_transport_streaming.py te
 - 跑 `uv run pytest -q` 全量回归。
 - 如果全量通过，进入 v2：调整 provider-aware transport cache 策略，尤其 Anthropic 最后一条动态 message 的 `cache_control`。
 
+### 2026-07-06 v2 实施进度
+
+状态：已完成实现，待回归。
+
+已完成：
+
+- Anthropic transport 保留 system prompt `cache_control`。
+- Anthropic transport 不再默认给最后一条动态 message 添加 `cache_control`。
+- Anthropic / ChatCompletions request body 中 tools 按 name 稳定排序。
+- ChatCompletions 仍不添加任何非标准 cache 请求字段。
+- 新增 v2 行为测试，覆盖 Anthropic marker 位置和 ChatCompletions 工具排序。
+
+接口影响：
+
+- 无新增前端/doctor 字段；`BACKEND_INTERFACE.md` 无需为 v2 追加新接口。
+
 ### 当前代码事实
 
 - `ProviderProfile` 目前主要是连接参数：`name`、`base_url`、`api_key`、`model`、`max_tokens`、`context_window`、`request_hook`、`response_hook`、`extra_headers`。

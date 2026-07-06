@@ -39,7 +39,7 @@ class ChatCompletionsTransport(BaseTransport):
             "messages": self.convert_messages(messages, system_prompt),
         }
         if tools:
-            body["tools"] = self.convert_tool_definitions(tools)
+            body["tools"] = self.convert_tool_definitions(_sorted_tools(tools))
 
         if self._provider.request_hook:
             body = self._provider.request_hook(body)
@@ -212,3 +212,7 @@ class ChatCompletionsTransport(BaseTransport):
             extra_headers=self._provider.extra_headers,
         )
         return await self.parse_stream(event_stream)
+
+
+def _sorted_tools(tools: list[dict]) -> list[dict]:
+    return sorted(tools, key=lambda item: str(item.get("name") or ""))

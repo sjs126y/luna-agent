@@ -129,3 +129,36 @@ def test_cache_diagnostics_hash_stability_for_system_and_tools():
     assert diag_a["message_count"] == 2
     assert diag_a["tool_count"] == 1
 
+
+def test_anthropic_build_request_only_marks_system_cache_by_default():
+    provider = provider_registry.get("anthropic", _settings("anthropic", "claude-3-5-sonnet"))
+    transport = AnthropicMessagesTransport(provider)
+
+    body = transport.build_request(
+        [{"role": "user", "content": [{"type": "text", "text": "dynamic"}]}],
+        "stable system",
+        [],
+        100,
+    )
+
+    assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in body["messages"][-1]["content"][-1]
+
+
+def test_chat_completions_tools_are_sorted_without_cache_fields():
+    provider = provider_registry.get("deepseek", _settings("deepseek", "deepseek-chat"))
+    transport = ChatCompletionsTransport(provider)
+
+    body = transport.build_request(
+        [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        "system",
+        [
+            {"name": "zeta", "description": "", "input_schema": {}},
+            {"name": "alpha", "description": "", "input_schema": {}},
+        ],
+        100,
+    )
+
+    assert [item["function"]["name"] for item in body["tools"]] == ["alpha", "zeta"]
+    assert "cache_control" not in body
+    assert all("cache_control" not in item for item in body["tools"])
