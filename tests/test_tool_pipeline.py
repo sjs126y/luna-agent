@@ -587,7 +587,16 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
     recorder = EventRecorder()
 
     result = await execute_tool_call_result(
-        {"id": "p1", "name": "process_start", "input": {"command": "python -c \"print(1)\""}},
+        {
+            "id": "p1",
+            "name": "process_start",
+            "input": {
+                "command": "python -c \"print(1)\"",
+                "cwd": str(tmp_path),
+                "timeout_seconds": 30,
+                "label": "unit test process",
+            },
+        },
         agent=agent,
         event_sink=recorder,
     )
@@ -615,6 +624,12 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
     assert event.data["available_actions"] == ["allow_once", "allow_always", "deny"]
     assert event.data["command_preview"] == 'python -c "print(1)"'
     assert event.data["input_preview"] == 'python -c "print(1)"'
+    assert event.data["cwd"] == str(tmp_path)
+    assert event.data["timeout_seconds"] == 30.0
+    assert event.data["process_label"] == "unit test process"
+    assert decision_event.data["cwd"] == str(tmp_path)
+    assert decision_event.data["timeout_seconds"] == 30.0
+    assert decision_event.data["process_label"] == "unit test process"
 
 
 @pytest.mark.asyncio
@@ -698,6 +713,33 @@ async def test_tool_decision_event_includes_confirmation_display_metadata(tmp_pa
     assert end_event.data["category"] == "authorization"
     assert end_event.data["display_name"] == "Custom Write Preview"
     assert end_event.data["affected_paths"] == ["demo.txt"]
+
+
+def test_tool_decision_display_includes_network_preview_metadata():
+    from personal_agent.tools.execution_guard import GuardDecision, tool_decision_from_guard
+
+    decision = tool_decision_from_guard(
+        {
+            "id": "net1",
+            "name": "web_fetch",
+            "input": {"url": "https://example.com/path", "method": "post", "timeout": "12.5"},
+        },
+        GuardDecision(
+            stage="permission",
+            allowed=False,
+            category="network",
+            reason_code="permission_required",
+            mode="standard",
+            policy_decision="ask",
+            required_allow="network",
+        ),
+    )
+
+    assert decision.url_preview == "https://example.com/path"
+    assert decision.host == "example.com"
+    assert decision.method == "POST"
+    assert decision.timeout_seconds == 12.5
+    assert decision.process_label == ""
 
 
 @pytest.mark.asyncio

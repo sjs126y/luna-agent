@@ -157,6 +157,10 @@ schema = frontend_protocol_schema()
 - `command_preview: string`
 - `url_preview: string`
 - `host: string`
+- `cwd: string`
+- `timeout_seconds: number`
+- `method: string`
+- `process_label: string`
 
 确认 UI 建议优先读：
 
@@ -205,6 +209,10 @@ schema = frontend_protocol_schema()
 - `command_preview: string`
 - `url_preview: string`
 - `host: string`
+- `cwd: string`
+- `timeout_seconds: number`
+- `method: string`
+- `process_label: string`
 
 ### `retry`
 

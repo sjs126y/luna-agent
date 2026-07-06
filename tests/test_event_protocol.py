@@ -53,6 +53,10 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert decision_fields["execution_mode_label"]["type"] == "string"
     assert decision_fields["risk_summary"]["type"] == "string"
     assert decision_fields["affected_paths"]["type"] == "list[string]"
+    assert decision_fields["cwd"]["type"] == "string"
+    assert decision_fields["timeout_seconds"]["type"] == "number"
+    assert decision_fields["method"]["type"] == "string"
+    assert decision_fields["process_label"]["type"] == "string"
 
     retry_fields = {
         field["name"]: field

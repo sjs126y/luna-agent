@@ -66,6 +66,10 @@ class ToolDecision:
     command_preview: str = ""
     url_preview: str = ""
     host: str = ""
+    cwd: str = ""
+    timeout_seconds: float | None = None
+    method: str = ""
+    process_label: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -93,6 +97,10 @@ class ToolDecision:
             "command_preview": self.command_preview,
             "url_preview": self.url_preview,
             "host": self.host,
+            "cwd": self.cwd,
+            "timeout_seconds": self.timeout_seconds,
+            "method": self.method,
+            "process_label": self.process_label,
         }
 
 
@@ -205,6 +213,10 @@ def build_tool_decision_display(tc: dict, guard: GuardDecision) -> dict[str, Any
     command_preview = _first_text(inp, "command", "cmd", "shell_command")
     url_preview = _first_text(inp, "url", "uri")
     host = _url_host(url_preview)
+    cwd = _first_text(inp, "cwd", "work_dir", "working_dir")
+    timeout_seconds = _timeout_seconds(inp)
+    method = _method(inp, url_preview)
+    process_label = _process_label(name, inp, command_preview=command_preview)
     affected_paths = _affected_paths(name, inp)
     input_summary = _input_summary(inp)
     input_preview = _input_preview(name, inp, command_preview=command_preview, url_preview=url_preview)
@@ -221,6 +233,10 @@ def build_tool_decision_display(tc: dict, guard: GuardDecision) -> dict[str, Any
         "command_preview": command_preview,
         "url_preview": url_preview,
         "host": host,
+        "cwd": cwd,
+        "timeout_seconds": timeout_seconds,
+        "method": method,
+        "process_label": process_label,
     }
 
 
@@ -515,6 +531,36 @@ def _url_host(url: str) -> str:
     except Exception:
         return ""
     return parsed.netloc or ""
+
+
+def _timeout_seconds(inp: dict[str, Any]) -> float | None:
+    for key in ("timeout_seconds", "timeout"):
+        value = inp.get(key)
+        if isinstance(value, bool) or value in (None, ""):
+            continue
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            continue
+        if seconds >= 0:
+            return seconds
+    return None
+
+
+def _method(inp: dict[str, Any], url_preview: str = "") -> str:
+    value = inp.get("method")
+    if isinstance(value, str) and value.strip():
+        return _shorten(redact(value.strip().upper()), 24)
+    return "GET" if url_preview else ""
+
+
+def _process_label(name: str, inp: dict[str, Any], *, command_preview: str = "") -> str:
+    label = _first_text(inp, "process_label", "label", "title", "name")
+    if label:
+        return label
+    if name.startswith("process_") and command_preview:
+        return command_preview
+    return ""
 
 
 def _input_summary(inp: dict[str, Any]) -> str:

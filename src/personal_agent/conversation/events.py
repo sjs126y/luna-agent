@@ -152,6 +152,10 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("command_preview", "string", "Command preview for shell/background tools."),
             EventFieldSpec("url_preview", "string", "URL preview for network tools."),
             EventFieldSpec("host", "string", "Parsed network host when available."),
+            EventFieldSpec("cwd", "string", "Working directory preview for command tools."),
+            EventFieldSpec("timeout_seconds", "number", "Configured timeout in seconds when available."),
+            EventFieldSpec("method", "string", "HTTP method preview for network tools."),
+            EventFieldSpec("process_label", "string", "User-facing label for background process tools."),
         ),
     ),
     "tool_end": EventSchema(
@@ -186,6 +190,10 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("command_preview", "string", "Command preview for shell/background tools."),
             EventFieldSpec("url_preview", "string", "URL preview for network tools."),
             EventFieldSpec("host", "string", "Parsed network host when available."),
+            EventFieldSpec("cwd", "string", "Working directory preview for command tools."),
+            EventFieldSpec("timeout_seconds", "number", "Configured timeout in seconds when available."),
+            EventFieldSpec("method", "string", "HTTP method preview for network tools."),
+            EventFieldSpec("process_label", "string", "User-facing label for background process tools."),
         ),
     ),
     "retry": EventSchema(

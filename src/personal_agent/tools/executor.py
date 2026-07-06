@@ -247,6 +247,10 @@ async def execute_tool_call_result(
             command_preview=tool_decision.command_preview if tool_decision else "",
             url_preview=tool_decision.url_preview if tool_decision else "",
             host=tool_decision.host if tool_decision else "",
+            cwd=tool_decision.cwd if tool_decision else "",
+            timeout_seconds=tool_decision.timeout_seconds if tool_decision else None,
+            method=tool_decision.method if tool_decision else "",
+            process_label=tool_decision.process_label if tool_decision else "",
         )
         return result
 
