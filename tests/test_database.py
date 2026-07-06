@@ -90,11 +90,83 @@ def test_full_conversation_roundtrip(db):
     assert history[3]["content"][0]["text"] == "1+1 = 2"
 
 
+def test_tool_runs_roundtrip_and_summary(db):
+    sid = str(uuid.uuid4())
+    _run(db.create_session_direct(sid, "cli:default:local"))
+    _run(db.save_tool_runs([
+        {
+            "session_id": sid,
+            "session_key": "cli:default:local",
+            "turn_id": "turn-1",
+            "tool_use_id": "call-1",
+            "tool_name": "bash",
+            "status": "success",
+            "category": "",
+            "duration": 0.25,
+            "input_summary": '{"cmd": "pwd"}',
+            "output_summary": "/tmp",
+            "full_output": "/tmp",
+            "output_truncated": False,
+            "created_at": 1000.0,
+        },
+        {
+            "session_id": sid,
+            "session_key": "cli:default:local",
+            "turn_id": "turn-1",
+            "tool_use_id": "call-2",
+            "tool_name": "write",
+            "status": "denied",
+            "category": "permission",
+            "duration": 0.1,
+            "input_summary": '{"path": "x"}',
+            "output_summary": "blocked",
+            "full_output": "blocked",
+            "output_truncated": True,
+            "error": "permission required",
+            "permission_category": "write",
+            "permission_decision": "ask",
+            "required_allow": "write",
+            "execution_mode": "sovereign",
+            "created_at": 1001.0,
+        },
+    ]))
+
+    recent = _run(db.recent_tool_runs(limit=10))
+    filtered = _run(db.recent_tool_runs(limit=10, session_key="cli:default:local"))
+    missing = _run(db.recent_tool_runs(limit=10, session_key="cli:missing:local"))
+    detail = _run(db.get_tool_run(recent[1]["id"]))
+    summary = _run(db.tool_run_summary(limit=10))
+
+    assert [item["tool_name"] for item in recent] == ["bash", "write"]
+    assert filtered == recent
+    assert missing == []
+    assert detail["tool_use_id"] == "call-2"
+    assert detail["status"] == "denied"
+    assert detail["output_truncated"] is True
+    assert detail["permission_category"] == "write"
+    assert summary["inspected"] == 2
+    assert summary["tool_counts"] == {"bash": 1, "write": 1}
+    assert summary["status_counts"] == {"denied": 1, "success": 1}
+    assert summary["category_counts"] == {"permission": 1}
+    assert summary["denied"] == 1
+    assert summary["failed"] == 0
+    assert summary["truncated"] == 1
+
+
 def test_delete_cleans_messages(db):
     sid = str(uuid.uuid4())
     _run(db.create_session_direct(sid, "test:1:1"))
     _run(db.save_message(sid, "user", content="hello"))
+    _run(db.save_tool_runs([{
+        "session_id": sid,
+        "session_key": "test:1:1",
+        "tool_use_id": "call-1",
+        "tool_name": "bash",
+        "status": "success",
+    }]))
     _run(db.delete_session(sid))
 
     history = _run(db.load_history(sid))
+    tool_runs = _run(db.recent_tool_runs(limit=10, session_key="test:1:1"))
     assert len(history) == 0
+    assert tool_runs == []

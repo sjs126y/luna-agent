@@ -21,7 +21,7 @@ from personal_agent.tools.executor import execute_tool_calls
 logger = logging.getLogger(__name__)
 
 
-async def run_conversation(agent, ctx, *, event_sink=None) -> dict:
+async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict:
     """Execute the agent while loop. Returns final result dict."""
     just_executed_tools = False
     report_recorder = TurnReportRecorder(event_sink)
@@ -297,6 +297,7 @@ async def run_conversation(agent, ctx, *, event_sink=None) -> dict:
             agent=agent,
             hooks=agent.hooks,
             event_sink=report_recorder,
+            confirm=confirm,
         )
         just_executed_tools = True
 

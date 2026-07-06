@@ -23,6 +23,7 @@ from personal_agent.tools.execution_guard import (
     run_precheck,
     tool_decision_for_unknown_tool,
     tool_decision_from_guard,
+    tool_permission_category,
 )
 from personal_agent.tools.registry import tool_registry
 
@@ -46,6 +47,7 @@ class ToolExecutionResult:
     input_summary: str = ""
     output_summary: str = ""
     attempts: int = 0
+    output_truncated: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -88,6 +90,7 @@ async def execute_tool_calls(
     agent: Any = None,
     hooks: Any = None,
     event_sink: Any = None,
+    confirm: Any = None,
 ) -> list[ToolExecutionResult]:
     """Execute all tool calls, append results to messages in original order.
 
@@ -101,12 +104,12 @@ async def execute_tool_calls(
         current = tool_calls[i]
         entry = tool_registry.get(str(current.get("name", "")))
 
-        if entry and entry.is_parallel_safe and not entry.is_destructive:
+        if _can_run_in_parallel(current, entry, agent, confirm=confirm):
             # Collect adjacent safe parallel tools into a batch.
             batch: list[tuple[int, dict]] = []
             while i < len(tool_calls):
                 e = tool_registry.get(str(tool_calls[i].get("name", "")))
-                if e and e.is_parallel_safe and not e.is_destructive:
+                if _can_run_in_parallel(tool_calls[i], e, agent, confirm=confirm):
                     batch.append((i, tool_calls[i]))
                     i += 1
                 else:
@@ -119,6 +122,7 @@ async def execute_tool_calls(
                         agent=agent,
                         hooks=hooks,
                         event_sink=event_sink,
+                        confirm=confirm,
                     )
                     for _, tc in batch
                 ],
@@ -144,6 +148,7 @@ async def execute_tool_calls(
                 agent=agent,
                 hooks=hooks,
                 event_sink=event_sink,
+                confirm=confirm,
             )
             i += 1
 
@@ -178,6 +183,7 @@ async def execute_tool_call_result(
     agent: Any = None,
     hooks: Any = None,
     event_sink: Any = None,
+    confirm: Any = None,
     timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
 ) -> ToolExecutionResult:
     """Execute a single tool call through the security pipeline.
@@ -222,6 +228,7 @@ async def execute_tool_call_result(
             input_summary=result.input_summary,
             output_summary=result.output_summary,
             full_output=result.content or result.error,
+            output_truncated=result.output_truncated,
             guard_stage=tool_decision.stage if tool_decision else "",
             guard_reason_code=tool_decision.reason_code if tool_decision else "",
             permission_category=tool_decision.permission_category if tool_decision else "",
@@ -265,6 +272,37 @@ async def execute_tool_call_result(
             started=started,
         ))
     tool_decision = tool_decision_from_guard(tc, guard_decision)
+    if _needs_tool_confirm(tool_decision) and confirm is not None:
+        answer = await _confirm_tool_decision(confirm, tool_decision, agent=agent)
+        if answer == "interrupted":
+            await _emit_tool_decision(event_sink, tool_decision)
+            return await _finish(_result(
+                tc,
+                status="denied",
+                category="authorization",
+                error="tool confirmation interrupted",
+                started=started,
+            ))
+        if answer in {"allow", "always"}:
+            added_grants = _add_confirm_grants(
+                agent,
+                tool_decision,
+                persist=answer == "always",
+            )
+            try:
+                guard_decision = evaluate_execution_guards(tc, entry, agent)
+            except Exception as exc:
+                return await _finish(_result(
+                    tc,
+                    status="error",
+                    category="execution_guard",
+                    error=f"{type(exc).__name__}: {exc}",
+                    started=started,
+                ))
+            finally:
+                if answer == "allow":
+                    _remove_confirm_grants(agent, added_grants)
+            tool_decision = tool_decision_from_guard(tc, guard_decision)
     await _emit_tool_decision(event_sink, tool_decision)
     if not guard_decision.allowed:
         return await _finish(_result(
@@ -360,8 +398,10 @@ async def execute_tool_call_result(
         ))
 
     # ── 3. post-process ──────────────────────────────
+    output_truncated = False
     if len(result) > MAX_RESULT_CHARS:
         result = result[:MAX_RESULT_CHARS] + f"\n\n...({len(result) - MAX_RESULT_CHARS} more chars truncated)"
+        output_truncated = True
 
     status: ToolExecutionStatus = "success"
     category = ""
@@ -371,6 +411,7 @@ async def execute_tool_call_result(
             modified = await hooks.fire("on_after_tool_exec", tc, result)
             if isinstance(modified, str):
                 result = modified
+                output_truncated = False
         except Exception as exc:
             status = "error"
             category = "hook"
@@ -385,6 +426,7 @@ async def execute_tool_call_result(
         error=error,
         attempts=attempts,
         started=started,
+        output_truncated=output_truncated,
     ))
 
 
@@ -394,6 +436,113 @@ def format_tool_result(result: ToolExecutionResult) -> str:
     if result.error:
         return result.error if result.error.lower().startswith("error:") else f"Error: {result.error}"
     return "Error: tool execution produced no result"
+
+
+def _needs_tool_confirm(decision: ToolDecision) -> bool:
+    return (
+        decision.stage == "permission"
+        and decision.reason_code == "permission_required"
+        and decision.permission_decision == "ask"
+        and not decision.allowed
+    )
+
+
+def _can_run_in_parallel(tc: dict, entry: Any, agent: Any = None, *, confirm: Any = None) -> bool:
+    if entry is None or not entry.is_parallel_safe or entry.is_destructive:
+        return False
+    if confirm is None:
+        return True
+    return not _would_need_permission_confirm(tc, entry, agent)
+
+
+def _would_need_permission_confirm(tc: dict, entry: Any, agent: Any = None) -> bool:
+    if agent is None:
+        return False
+    policy = getattr(agent, "_execution_policy", None)
+    category = tool_permission_category(str(tc.get("name", "")), entry)
+    decision = "ask" if entry.is_destructive else "allow"
+    if policy is not None:
+        decision = policy.permission_for(category)
+        if decision == "allow" and entry.is_destructive and category == "default":
+            decision = policy.permission_for("destructive")
+    if decision != "ask":
+        return False
+    grants = getattr(agent, "_destructive_allowed", set())
+    return "all" not in grants and category not in grants
+
+
+async def _confirm_tool_decision(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> str:
+    if _agent_interrupt_requested(agent) or is_interrupted():
+        return "interrupted"
+    try:
+        answer = await _await_confirm_interruptibly(confirm, decision, agent=agent)
+    except Exception:
+        logger.exception("Tool confirmation callback failed")
+        return "deny"
+    if answer == "interrupted":
+        return "interrupted"
+    answer_text = str(answer or "").strip().lower()
+    if answer_text in {"allow", "deny", "always"}:
+        return answer_text
+    return "deny"
+
+
+async def _await_confirm_interruptibly(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> Any:
+    global _active_tool_executions
+    _active_tool_executions += 1
+    task = asyncio.create_task(confirm(decision))
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=0.1)
+            if task in done:
+                return task.result()
+            if _agent_interrupt_requested(agent) or is_interrupted():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                return "interrupted"
+    finally:
+        _active_tool_executions = max(0, _active_tool_executions - 1)
+
+
+def _agent_interrupt_requested(agent: Any) -> bool:
+    return bool(getattr(agent, "_interrupt_requested", False)) if agent is not None else False
+
+
+def _add_confirm_grants(agent: Any, decision: ToolDecision, *, persist: bool) -> set[str]:
+    if agent is None:
+        return set()
+    grants = getattr(agent, "_destructive_allowed", None)
+    if grants is None:
+        grants = set()
+        try:
+            agent._destructive_allowed = grants
+        except Exception:
+            return set()
+    category = str(decision.permission_category or "")
+    required = str(decision.required_allow or "")
+    tokens = {item for item in (required, category) if item}
+    added: set[str] = set()
+    for token in tokens:
+        if token not in grants:
+            grants.add(token)
+            added.add(token)
+    return set() if persist else added
+
+
+def _remove_confirm_grants(agent: Any, added: set[str]) -> None:
+    if not added or agent is None:
+        return
+    grants = getattr(agent, "_destructive_allowed", None)
+    if grants is None:
+        return
+    for token in added:
+        try:
+            grants.discard(token)
+        except AttributeError:
+            return
 
 
 async def _emit_tool_decision(event_sink: Any, decision: ToolDecision) -> None:
@@ -435,13 +584,15 @@ def _result(
     error: str = "",
     attempts: int = 0,
     started: float | None = None,
+    output_truncated: bool = False,
 ) -> ToolExecutionResult:
     normalized = _normalize_tool_call(tc)
     result_text = _coerce_tool_output(content) if content else ""
     error_text = _coerce_tool_output(error) if error else ""
     visible = result_text or error_text
-    if len(visible) > MAX_RESULT_CHARS:
+    if len(visible) > MAX_RESULT_CHARS and not output_truncated:
         visible = visible[:MAX_RESULT_CHARS] + f"\n\n...({len(visible) - MAX_RESULT_CHARS} more chars truncated)"
+        output_truncated = True
         if result_text:
             result_text = visible
         else:
@@ -458,6 +609,7 @@ def _result(
         input_summary=_summarize_value(normalized["input"]),
         output_summary=_summarize_text(visible),
         attempts=attempts,
+        output_truncated=output_truncated,
     )
 
 

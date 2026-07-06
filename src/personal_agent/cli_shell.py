@@ -31,6 +31,7 @@ from rich.text import Text
 
 from personal_agent.cli_chat import CliChatRuntime, create_cli_runtime
 from personal_agent.conversation.events import ConversationEvent, ConversationEventSink
+from personal_agent.tui.renderer_base import Renderer
 
 # Sentinel returned by PromptSession when Ctrl+O is pressed with expandable content.
 # _read_line() detects this and launches the overlay Application instead of
@@ -45,6 +46,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/session", "管理会话 (list/switch/rename/delete)"),
     ("/usage", "查看上下文预算"),
     ("/allow", "授权危险操作 (write/bash/all)"),
+    ("/mode", "切换执行模式 (Read Only/Ask First/Edit Freely/Full Auto)"),
     ("/stop", "停止当前处理"),
     ("/export", "导出会话 JSONL"),
     ("/agents", "查看子 agent 运行记录"),
@@ -78,7 +80,7 @@ class ToolTraceItem:
     expandable: bool = False
 
 
-class TerminalRenderer(ConversationEventSink):
+class TerminalRenderer(Renderer):
     def __init__(
         self,
         *,
@@ -225,82 +227,102 @@ class TerminalRenderer(ConversationEventSink):
         self._stop_live()
         self._print_impl(value)
 
-    async def emit(self, event: ConversationEvent) -> None:
-        if event.type == "assistant_delta":
-            chunk = event.data.get("chunk") or ""
-            if chunk:
-                # Accumulate unconditionally; only the live preview is gated, so
-                # state survives even if the terminal can't host a Live render.
-                self._stream_text += chunk
-                if self._ensure_live():
-                    self._update_live()
+    def _events_muted(self) -> bool:
+        # Delta / assistant_message / turn_start / turn_end are NOT gated by this;
+        # llm_start / tool_* / retry / compression / stop / error are.
+        return self.options.quiet_events or not self.options.show_events
+
+    async def on_assistant_delta(self, event: ConversationEvent) -> None:
+        chunk = event.data.get("chunk") or ""
+        if chunk:
+            # Accumulate unconditionally; only the live preview is gated, so
+            # state survives even if the terminal can't host a Live render.
+            self._stream_text += chunk
+            if self._ensure_live():
+                self._update_live()
+
+    async def on_thinking_delta(self, event: ConversationEvent) -> None:
+        chunk = event.data.get("chunk") or ""
+        if chunk:
+            self._stream_thinking += chunk
+            if self._ensure_live():
+                self._update_live()
+
+    async def on_assistant_message(self, event: ConversationEvent) -> None:
+        text = event.message.strip()
+        # Stop the live text preview, then render the final reply once as
+        # markdown. Streaming showed plain text; this is the polished pass.
+        self._finalize_stream()
+        if text:
+            self.assistant_message(text)
+
+    async def on_turn_start(self, event: ConversationEvent) -> None:
+        self.begin_turn()
+
+    async def on_turn_end(self, event: ConversationEvent) -> None:
+        self._finalize_stream()
+        self._stop_spinner()
+
+    async def on_llm_start(self, event: ConversationEvent) -> None:
+        if self._events_muted():
             return
+        self._llm_started_at = time.monotonic()
+        if self.options.verbose:
+            self._event_line("模型", "请求中", style="dim cyan")
+        else:
+            self._start_spinner("思考中…")
 
-        if event.type == "thinking_delta":
-            chunk = event.data.get("chunk") or ""
-            if chunk:
-                self._stream_thinking += chunk
-                if self._ensure_live():
-                    self._update_live()
+    async def on_llm_end(self, event: ConversationEvent) -> None:
+        # State update happens unconditionally (status bar needs it even when
+        # events are muted); only the verbose render below is gated.
+        self._last_input_tokens = int(event.data.get("input_tokens", 0) or 0)
+        self._last_output_tokens = int(event.data.get("output_tokens", 0) or 0)
+        self._last_api_calls = int(event.data.get("api_calls", 0) or self._last_api_calls)
+        model = str(event.data.get("model") or "")
+        if model:
+            self._last_model = model
+        context_window = int(event.data.get("context_window", 0) or 0)
+        if context_window:
+            self._last_context_window = context_window
+        if self._llm_started_at is not None:
+            self._last_llm_duration = max(0.0, time.monotonic() - self._llm_started_at)
+
+        if self._events_muted():
             return
+        if self.options.verbose:
+            self._model_summary()
 
-        if event.type == "assistant_message":
-            text = event.message.strip()
-            # Stop the live text preview, then render the final reply once as
-            # markdown. Streaming showed plain text; this is the polished pass.
-            self._finalize_stream()
-            if text:
-                self.assistant_message(text)
+    async def on_tool_start(self, event: ConversationEvent) -> None:
+        if self._events_muted():
             return
+        self.tool_start(event)
+        name = self._tool_display_name(str(event.data.get("tool_name") or "tool"))
+        self._start_spinner(f"调用工具 {name}…")
 
-        if event.type == "turn_start":
-            self.begin_turn()
+    async def on_tool_end(self, event: ConversationEvent) -> None:
+        if self._events_muted():
             return
+        self.tool_end(event)
 
-        if event.type == "turn_end":
-            self._finalize_stream()
-            self._stop_spinner()
+    async def on_retry(self, event: ConversationEvent) -> None:
+        if self._events_muted():
             return
+        self._event_line("重试", event.message, style="yellow")
 
-        if event.type == "llm_end":
-            self._last_input_tokens = int(event.data.get("input_tokens", 0) or 0)
-            self._last_output_tokens = int(event.data.get("output_tokens", 0) or 0)
-            self._last_api_calls = int(event.data.get("api_calls", 0) or self._last_api_calls)
-            model = str(event.data.get("model") or "")
-            if model:
-                self._last_model = model
-            context_window = int(event.data.get("context_window", 0) or 0)
-            if context_window:
-                self._last_context_window = context_window
-            if self._llm_started_at is not None:
-                self._last_llm_duration = max(0.0, time.monotonic() - self._llm_started_at)
-
-        if self.options.quiet_events or not self.options.show_events:
+    async def on_compression(self, event: ConversationEvent) -> None:
+        if self._events_muted():
             return
+        self._event_line("压缩", event.message, style="magenta")
 
-        if event.type == "llm_start":
-            self._llm_started_at = time.monotonic()
-            if self.options.verbose:
-                self._event_line("模型", "请求中", style="dim cyan")
-            else:
-                self._start_spinner("思考中…")
-        elif event.type == "llm_end":
-            if self.options.verbose:
-                self._model_summary()
-        elif event.type == "tool_start":
-            self.tool_start(event)
-            name = self._tool_display_name(str(event.data.get("tool_name") or "tool"))
-            self._start_spinner(f"调用工具 {name}…")
-        elif event.type == "tool_end":
-            self.tool_end(event)
-        elif event.type == "retry":
-            self._event_line("重试", event.message, style="yellow")
-        elif event.type == "compression":
-            self._event_line("压缩", event.message, style="magenta")
-        elif event.type == "stop":
-            self._event_line("停止", event.message or "已停止", style="yellow")
-        elif event.type == "error":
-            self.error_text(event.data.get("error") or event.message)
+    async def on_stop(self, event: ConversationEvent) -> None:
+        if self._events_muted():
+            return
+        self._event_line("停止", event.message or "已停止", style="yellow")
+
+    async def on_error(self, event: ConversationEvent) -> None:
+        if self._events_muted():
+            return
+        self.error_text(event.data.get("error") or event.message)
 
     def banner(self, runtime: CliChatRuntime) -> None:
         provider = getattr(runtime.settings, "llm_provider", "")

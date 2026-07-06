@@ -130,6 +130,25 @@ async def test_cli_chat_persists_multi_turn_history(runtime):
 
 
 @pytest.mark.asyncio
+async def test_cli_chat_run_message_events_forwards_confirm(runtime, monkeypatch):
+    seen = []
+
+    async def confirm(decision):
+        return "allow"
+
+    async def run_turn_events(session_key, source, text, *, event_sink=None, confirm=None):
+        seen.append((session_key, source, text, event_sink, confirm))
+        return "ok"
+
+    monkeypatch.setattr(runtime.conversation_service, "run_turn_events", run_turn_events)
+
+    result = await runtime.run_message_events("hello", event_sink="sink", confirm=confirm)
+
+    assert result == "ok"
+    assert seen == [(runtime.session_key, runtime.source, "hello", "sink", confirm)]
+
+
+@pytest.mark.asyncio
 async def test_cli_new_resets_session_and_agent(runtime):
     await runtime.run_once("hello")
     old_agent = runtime.agent_cache[runtime.session_key]

@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+import time
+from typing import Any
 
 import aiosqlite
 
@@ -41,6 +43,36 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+
+CREATE TABLE IF NOT EXISTS tool_runs (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id          TEXT NOT NULL REFERENCES sessions(session_id),
+    session_key         TEXT NOT NULL,
+    turn_id             TEXT DEFAULT '',
+    tool_use_id         TEXT NOT NULL,
+    tool_name           TEXT NOT NULL,
+    status              TEXT NOT NULL,
+    category            TEXT DEFAULT '',
+    duration            REAL DEFAULT 0,
+    input_summary       TEXT DEFAULT '',
+    output_summary      TEXT DEFAULT '',
+    full_output         TEXT DEFAULT '',
+    output_truncated    INTEGER DEFAULT 0,
+    error               TEXT DEFAULT '',
+    guard_stage         TEXT DEFAULT '',
+    reason_code         TEXT DEFAULT '',
+    permission_category TEXT DEFAULT '',
+    permission_decision TEXT DEFAULT '',
+    required_allow      TEXT DEFAULT '',
+    execution_mode      TEXT DEFAULT '',
+    grant_matched       TEXT DEFAULT '',
+    created_at          REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_runs_session ON tool_runs(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_tool_runs_session_key ON tool_runs(session_key, id);
+CREATE INDEX IF NOT EXISTS idx_tool_runs_turn ON tool_runs(turn_id, id);
+CREATE INDEX IF NOT EXISTS idx_tool_runs_status ON tool_runs(status, id);
 """
 
 
@@ -67,7 +99,6 @@ class Database:
 
     async def create_session_direct(self, session_id: str, session_key: str) -> None:
         """Minimal session creation for tests. Skips the full SessionEntry object."""
-        import time
         async with self._write_lock:
             await self._conn.execute(
                 "INSERT INTO sessions (session_id, session_key, platform, user_id, created_at, last_active_at) "
@@ -89,7 +120,6 @@ class Database:
             await self._conn.commit()
 
     async def update_last_active(self, session_id: str, increment_message: bool = True) -> None:
-        import time
         async with self._write_lock:
             if increment_message:
                 await self._conn.execute(
@@ -105,6 +135,7 @@ class Database:
 
     async def delete_session(self, session_id: str) -> None:
         async with self._write_lock:
+            await self._conn.execute("DELETE FROM tool_runs WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
             await self._conn.commit()
@@ -134,7 +165,6 @@ class Database:
         tool_name: str | None = None,
         tool_call_id: str | None = None,
     ) -> None:
-        import time
         content = clean_text(content)
         tc_json = json.dumps(clean_payload(tool_calls)) if tool_calls else None
         async with self._write_lock:
@@ -235,3 +265,170 @@ class Database:
                 f.write(json.dumps({"role": role, "content": content}, ensure_ascii=False) + "\n")
                 count += 1
         return count
+
+    # ── tool runs ─────────────────────────────────────
+
+    async def save_tool_runs(self, runs: list[dict[str, Any]]) -> int:
+        if not runs:
+            return 0
+        rows = [
+            (
+                str(run.get("session_id") or ""),
+                str(run.get("session_key") or ""),
+                str(run.get("turn_id") or ""),
+                str(run.get("tool_use_id") or ""),
+                str(run.get("tool_name") or ""),
+                str(run.get("status") or ""),
+                str(run.get("category") or ""),
+                _as_float(run.get("duration")),
+                clean_text(str(run.get("input_summary") or "")),
+                clean_text(str(run.get("output_summary") or "")),
+                clean_text(str(run.get("full_output") or "")),
+                1 if run.get("output_truncated") else 0,
+                clean_text(str(run.get("error") or "")),
+                str(run.get("guard_stage") or ""),
+                str(run.get("reason_code") or ""),
+                str(run.get("permission_category") or ""),
+                str(run.get("permission_decision") or ""),
+                str(run.get("required_allow") or ""),
+                str(run.get("execution_mode") or ""),
+                str(run.get("grant_matched") or ""),
+                _as_float(run.get("created_at")) or time.time(),
+            )
+            for run in runs
+        ]
+        async with self._write_lock:
+            await self._conn.executemany(
+                """INSERT INTO tool_runs (
+                    session_id, session_key, turn_id, tool_use_id, tool_name,
+                    status, category, duration, input_summary, output_summary,
+                    full_output, output_truncated, error, guard_stage, reason_code,
+                    permission_category, permission_decision, required_allow,
+                    execution_mode, grant_matched, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+            await self._conn.commit()
+        return len(rows)
+
+    async def recent_tool_runs(
+        self,
+        *,
+        limit: int = 20,
+        session_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        params: list[Any] = []
+        where = ""
+        if session_key:
+            where = "WHERE session_key = ?"
+            params.append(session_key)
+        params.append(int(limit))
+        rows = await self._conn.execute(
+            f"""SELECT * FROM tool_runs
+                {where}
+                ORDER BY id DESC
+                LIMIT ?""",
+            params,
+        )
+        items: list[dict[str, Any]] = []
+        async for row in rows:
+            items.append(_tool_run_row(row))
+        items.reverse()
+        return items
+
+    async def get_tool_run(self, run_id: int) -> dict[str, Any] | None:
+        rows = await self._conn.execute(
+            "SELECT * FROM tool_runs WHERE id = ?",
+            (run_id,),
+        )
+        async for row in rows:
+            return _tool_run_row(row)
+        return None
+
+    async def tool_run_summary(self, *, limit: int = 50) -> dict[str, Any]:
+        if limit <= 0:
+            return _empty_tool_run_summary()
+        rows = await self._conn.execute(
+            """SELECT tool_name, status, category, output_truncated
+               FROM tool_runs
+               ORDER BY id DESC
+               LIMIT ?""",
+            (int(limit),),
+        )
+        inspected = 0
+        tool_counts: dict[str, int] = {}
+        status_counts: dict[str, int] = {}
+        category_counts: dict[str, int] = {}
+        truncated = 0
+        async for row in rows:
+            inspected += 1
+            tool_name = str(row["tool_name"] or "")
+            status = str(row["status"] or "")
+            category = str(row["category"] or "")
+            if tool_name:
+                tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+            if status:
+                status_counts[status] = status_counts.get(status, 0) + 1
+            if category:
+                category_counts[category] = category_counts.get(category, 0) + 1
+            if row["output_truncated"]:
+                truncated += 1
+        return {
+            "inspected": inspected,
+            "tool_counts": dict(sorted(tool_counts.items())),
+            "status_counts": dict(sorted(status_counts.items())),
+            "category_counts": dict(sorted(category_counts.items())),
+            "denied": int(status_counts.get("denied", 0)),
+            "failed": int(status_counts.get("error", 0)),
+            "timeouts": int(status_counts.get("timeout", 0)),
+            "truncated": truncated,
+        }
+
+
+def _tool_run_row(row) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "session_id": str(row["session_id"] or ""),
+        "session_key": str(row["session_key"] or ""),
+        "turn_id": str(row["turn_id"] or ""),
+        "tool_use_id": str(row["tool_use_id"] or ""),
+        "tool_name": str(row["tool_name"] or ""),
+        "status": str(row["status"] or ""),
+        "category": str(row["category"] or ""),
+        "duration": float(row["duration"] or 0.0),
+        "input_summary": str(row["input_summary"] or ""),
+        "output_summary": str(row["output_summary"] or ""),
+        "full_output": str(row["full_output"] or ""),
+        "output_truncated": bool(row["output_truncated"]),
+        "error": str(row["error"] or ""),
+        "guard_stage": str(row["guard_stage"] or ""),
+        "reason_code": str(row["reason_code"] or ""),
+        "permission_category": str(row["permission_category"] or ""),
+        "permission_decision": str(row["permission_decision"] or ""),
+        "required_allow": str(row["required_allow"] or ""),
+        "execution_mode": str(row["execution_mode"] or ""),
+        "grant_matched": str(row["grant_matched"] or ""),
+        "created_at": float(row["created_at"] or 0.0),
+    }
+
+
+def _empty_tool_run_summary() -> dict[str, Any]:
+    return {
+        "inspected": 0,
+        "tool_counts": {},
+        "status_counts": {},
+        "category_counts": {},
+        "denied": 0,
+        "failed": 0,
+        "timeouts": 0,
+        "truncated": 0,
+    }
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0

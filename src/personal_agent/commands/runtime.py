@@ -69,6 +69,43 @@ class CommandRuntime(Protocol):
     def plugin_command_kwargs(self, args: str) -> dict: ...
 
 
+@dataclass(frozen=True)
+class ModeChoice:
+    slug: str
+    label: str
+    profile: str
+
+
+MODE_CHOICES: tuple[ModeChoice, ...] = (
+    ModeChoice("read-only", "Read Only", "guarded"),
+    ModeChoice("ask-first", "Ask First", "standard"),
+    ModeChoice("edit-freely", "Edit Freely", "trusted"),
+    ModeChoice("full-auto", "Full Auto", "sovereign"),
+)
+
+_MODE_BY_SLUG = {choice.slug: choice for choice in MODE_CHOICES}
+_MODE_BY_PROFILE = {choice.profile: choice for choice in MODE_CHOICES}
+_MODE_USAGE = "/mode [Read Only|Ask First|Edit Freely|Full Auto]"
+_MODE_ALIASES = {
+    "readonly": "read-only",
+    "read": "read-only",
+    "guarded": "read-only",
+    "askfirst": "ask-first",
+    "ask": "ask-first",
+    "standard": "ask-first",
+    "normal": "ask-first",
+    "editfreely": "edit-freely",
+    "edit": "edit-freely",
+    "edits": "edit-freely",
+    "trusted": "edit-freely",
+    "acceptedits": "edit-freely",
+    "fullauto": "full-auto",
+    "full": "full-auto",
+    "auto": "full-auto",
+    "sovereign": "full-auto",
+}
+
+
 async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandResult:
     text = text.strip()
     parsed = _parse_command(text)
@@ -94,6 +131,9 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
     if command_name == "allow":
         parts = args.split()
         return CommandResult.reply(await _allow(runtime, parts[0] if parts else "write"))
+
+    if command_name == "mode":
+        return CommandResult.reply(await _mode(runtime, args))
 
     if command_name == "stop":
         return CommandResult.reply(await _stop(runtime))
@@ -245,6 +285,55 @@ async def _allow(runtime: CommandRuntime, category: str) -> str:
     agent = await runtime.get_agent()
     agent._destructive_allowed.add(category)
     return f"已授权 {category} 操作，本轮对话内有效。"
+
+
+def current_mode(agent) -> str:
+    """Return the user-facing execution mode label for an agent."""
+    return current_mode_from_policy(getattr(agent, "_execution_policy", None))
+
+
+def current_mode_from_policy(policy) -> str:
+    """Return the user-facing execution mode label for an execution policy."""
+    choice = _choice_for_profile(str(getattr(policy, "mode", "") or ""))
+    return choice.label
+
+
+async def _mode(runtime: CommandRuntime, args: str) -> str:
+    agent = await runtime.get_agent()
+    requested = args.strip()
+    if not requested:
+        return f"当前模式: {current_mode(agent)}。用法: {_MODE_USAGE}"
+    choice = _choice_for_input(requested)
+    if choice is None:
+        return f"用法: {_MODE_USAGE}"
+    custom = await _call_optional(runtime, "set_mode", choice.slug)
+    if custom is not None:
+        return str(custom)
+    from personal_agent.execution import resolve_execution_policy_for_mode
+
+    agent._execution_policy = resolve_execution_policy_for_mode(runtime.settings, choice.profile)
+    grants = getattr(agent, "_destructive_allowed", None)
+    if grants is None:
+        agent._destructive_allowed = set()
+    else:
+        grants.clear()
+    return f"执行模式已切换: {choice.label}（{choice.profile}）。"
+
+
+def _choice_for_input(value: str) -> ModeChoice | None:
+    key = _mode_key(value)
+    slug = _MODE_ALIASES.get(key)
+    if slug:
+        return _MODE_BY_SLUG[slug]
+    return None
+
+
+def _choice_for_profile(profile: str) -> ModeChoice:
+    return _MODE_BY_PROFILE.get(profile, _MODE_BY_PROFILE["standard"])
+
+
+def _mode_key(value: str) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
 
 async def _agents(args: str) -> str:
@@ -433,6 +522,7 @@ def help_text(runtime: CommandRuntime | None = None) -> str:
         "/session [current|list|switch <name>|rename <name>|delete [name]] - 管理会话",
         "/usage - 查看当前会话上下文预算",
         "/allow [write|bash|all] - 授权危险操作",
+        "/mode [Read Only|Ask First|Edit Freely|Full Auto] - 切换执行模式",
         "/stop - 停止当前处理",
         "/export - 导出当前会话 JSONL",
         "/agents [list|show|clear] - 查看子 agent 运行记录",

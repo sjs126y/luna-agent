@@ -99,6 +99,14 @@ def _turn_report(
     error="",
     llm_calls=1,
     tool_calls=2,
+    results_total=None,
+    llm_tool_call_count=None,
+    tool_names=None,
+    status_counts=None,
+    user_message_summary="hello",
+    final_response_summary="echo:hello",
+    claimed_but_no_tool_call=False,
+    tool_truth_warnings=None,
     input_tokens=10,
     output_tokens=5,
     retries=None,
@@ -107,12 +115,27 @@ def _turn_report(
         "status": status,
         "duration": duration,
         "error": error,
+        "user_message_summary": user_message_summary,
+        "final_response_summary": final_response_summary,
         "llm": {
             "calls": llm_calls,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
         },
         "tools": {"total": tool_calls, "items": []},
+        "tool_truth": {
+            "calls_total": tool_calls,
+            "results_total": tool_calls if results_total is None else results_total,
+            "llm_tool_call_count": tool_calls if llm_tool_call_count is None else llm_tool_call_count,
+            "tool_names": list(tool_names or []),
+            "status_counts": dict(status_counts or {"success": tool_calls}),
+            "warnings": list(tool_truth_warnings or []),
+            "assistant_claim": {
+                "claimed_tool_use": bool(claimed_but_no_tool_call),
+                "claim_phrases": [],
+                "claimed_but_no_tool_call": claimed_but_no_tool_call,
+            },
+        },
         "retries": list(retries or []),
     }
 
@@ -195,9 +218,161 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
     assert summary["last_duration"] == 1.25
     assert summary["last_llm_calls"] == 1
     assert summary["last_tool_calls"] == 0
+    assert summary["last_claimed_but_no_tool_call"] is False
+    assert summary["last_tool_truth_warnings"] == []
     assert summary["last_input_tokens"] == 10
     assert summary["last_output_tokens"] == 5
     assert summary["last_retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_turn_events_forwards_confirm_callback(service, monkeypatch):
+    svc, _manager, _db = service
+    confirm_seen = []
+
+    async def confirm(decision):
+        return "allow"
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx, *, event_sink=None, confirm=None):
+        confirm_seen.append(confirm)
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+            "turn_report": _turn_report(llm_calls=1, tool_calls=0),
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn_events(
+        "cli:default:local",
+        _source(),
+        "hello",
+        confirm=confirm,
+    )
+
+    assert result.final_response == "echo:hello"
+    assert confirm_seen == [confirm]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_events_keeps_legacy_loop_without_confirm(service, monkeypatch):
+    svc, _manager, _db = service
+    called = []
+
+    async def confirm(decision):
+        return "allow"
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages())
+
+    async def run_conversation(agent, ctx):
+        called.append(True)
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn_events(
+        "cli:default:local",
+        _source(),
+        "hello",
+        confirm=confirm,
+    )
+
+    assert result.final_response == "echo:hello"
+    assert called == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
+    from personal_agent.conversation.events import emit_event
+
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages(user_text=text))
+
+    async def run_conversation(agent, ctx, *, event_sink=None):
+        await emit_event(
+            event_sink,
+            "turn_start",
+            "开始处理",
+            turn_id="turn-tool",
+            user_message="run pwd",
+        )
+        await emit_event(
+            event_sink,
+            "tool_start",
+            "调用工具 bash",
+            tool_name="bash",
+            tool_use_id="call-1",
+            input_summary='{"cmd": "pwd"}',
+        )
+        await emit_event(
+            event_sink,
+            "tool_end",
+            "工具 bash success",
+            tool_name="bash",
+            tool_use_id="call-1",
+            status="success",
+            category="",
+            duration=0.25,
+            input_summary='{"cmd": "pwd"}',
+            output_summary="/workspace",
+            full_output="/workspace",
+            output_truncated=False,
+            guard_stage="runtime_guard",
+            guard_reason_code="allowed",
+            permission_category="bash",
+            permission_decision="allow",
+            required_allow="",
+            execution_mode="sovereign",
+            grant_matched="",
+        )
+        return {
+            "final_response": "done",
+            "messages": _messages(user_text="run pwd", assistant_text="done"),
+            "completed": True,
+            "turn_report": _turn_report(
+                tool_calls=1,
+                tool_names=["bash"],
+                status_counts={"success": 1},
+            ) | {"turn_id": "turn-tool"},
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "run pwd")
+    runs = await svc.recent_tool_runs(limit=5)
+    summary = svc.tool_run_memory_summary()
+    db_summary = await svc.tool_run_summary(limit=5)
+
+    assert result.status == "completed"
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["session_key"] == "cli:default:local"
+    assert run["turn_id"] == "turn-tool"
+    assert run["tool_use_id"] == "call-1"
+    assert run["tool_name"] == "bash"
+    assert run["status"] == "success"
+    assert run["full_output"] == "/workspace"
+    assert run["guard_stage"] == "runtime_guard"
+    assert run["reason_code"] == "allowed"
+    assert summary["inspected"] == 1
+    assert summary["tool_counts"] == {"bash": 1}
+    assert summary["status_counts"] == {"success": 1}
+    assert db_summary["inspected"] == 1
+    assert db_summary["tool_counts"] == {"bash": 1}
 
 
 @pytest.mark.asyncio
@@ -286,6 +461,118 @@ async def test_turn_report_history_keeps_recent_limit(service):
         f"cli:{TURN_REPORT_HISTORY_LIMIT + 3}:local",
         f"cli:{TURN_REPORT_HISTORY_LIMIT + 4}:local",
     ]
+
+
+@pytest.mark.asyncio
+async def test_turn_report_summary_includes_tool_truth_warnings(service):
+    svc, _manager, _db = service
+    svc.record_turn_report(
+        "cli:default:local",
+        _source(),
+        _turn_report(
+            tool_calls=0,
+            claimed_but_no_tool_call=True,
+            tool_truth_warnings=["assistant_claimed_tool_use_without_tool_call"],
+        ),
+    )
+
+    summary = svc.turn_report_summary()
+
+    assert summary["last_tool_calls"] == 0
+    assert summary["last_claimed_but_no_tool_call"] is True
+    assert summary["last_tool_truth_warnings"] == [
+        "assistant_claimed_tool_use_without_tool_call"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_recent_tool_truth_returns_stable_snapshots(service):
+    svc, _manager, _db = service
+    svc.record_turn_report(
+        "cli:default:local",
+        _source(),
+        _turn_report(
+            tool_calls=2,
+            results_total=1,
+            llm_tool_call_count=2,
+            tool_names=["bash", "search"],
+            status_counts={"success": 1, "denied": 1},
+            user_message_summary="run ls",
+            final_response_summary="done",
+        ),
+    )
+
+    recent = svc.recent_tool_truth()
+
+    assert len(recent) == 1
+    item = recent[0]
+    assert item["session_key"] == "cli:default:local"
+    assert item["source"]["platform"] == "cli"
+    assert item["status"] == "completed"
+    assert item["user_message_summary"] == "run ls"
+    assert item["final_response_summary"] == "done"
+    assert item["calls_total"] == 2
+    assert item["results_total"] == 1
+    assert item["llm_tool_call_count"] == 2
+    assert item["tool_names"] == ["bash", "search"]
+    assert item["status_counts"]["success"] == 1
+    assert item["status_counts"]["denied"] == 1
+    assert item["status_counts"]["error"] == 0
+    assert item["claimed_but_no_tool_call"] is False
+
+
+@pytest.mark.asyncio
+async def test_tool_truth_summary_aggregates_recent_reports(service):
+    svc, _manager, _db = service
+    source = _source()
+    svc.record_turn_report(
+        "cli:tools:local",
+        source,
+        _turn_report(
+            tool_calls=2,
+            tool_names=["bash", "bash"],
+            status_counts={"success": 1, "error": 1},
+        ),
+    )
+    svc.record_turn_report(
+        "cli:claim:local",
+        source,
+        _turn_report(
+            tool_calls=0,
+            tool_names=[],
+            status_counts={},
+            claimed_but_no_tool_call=True,
+            tool_truth_warnings=["assistant_claimed_tool_use_without_tool_call"],
+        ),
+    )
+    svc.record_turn_report(
+        "cli:denied:local",
+        source,
+        _turn_report(
+            tool_calls=1,
+            tool_names=["write_file"],
+            status_counts={"denied": 1},
+        ),
+    )
+
+    summary = svc.tool_truth_summary()
+
+    assert summary["stored"] == 3
+    assert summary["inspected"] == 3
+    assert summary["turns_with_tools"] == 2
+    assert summary["turns_without_tools"] == 1
+    assert summary["claim_mismatches"] == 1
+    assert summary["tool_counts"] == {"bash": 2, "write_file": 1}
+    assert summary["status_counts"]["success"] == 1
+    assert summary["status_counts"]["error"] == 1
+    assert summary["status_counts"]["denied"] == 1
+    assert summary["denied_tool_calls"] == 1
+    assert summary["failed_tool_calls"] == 1
+    assert summary["warning_counts"] == {
+        "assistant_claimed_tool_use_without_tool_call": 1
+    }
+    assert summary["last_warning"] == ""
+    assert summary["last_claimed_but_no_tool_call"] is False
 
 
 @pytest.mark.asyncio
