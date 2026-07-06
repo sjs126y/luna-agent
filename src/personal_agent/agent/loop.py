@@ -15,7 +15,9 @@ import asyncio
 import logging
 
 from personal_agent.agent.report import TurnReportRecorder
+from personal_agent.context_budget import compose_context_text, estimate_context_budget
 from personal_agent.conversation.events import emit_delta, emit_event
+from personal_agent.llm.base import LLMRequestPlan
 from personal_agent.tools.executor import execute_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
             break
 
         # ── build api_messages (injections, NOT persisted) ──
+        skill_injection_for_plan = getattr(ctx, "skill_injection", None)
         api_messages = await _build_api_messages(agent, ctx)
 
         # ── refresh system prompt if tools changed ──
@@ -66,9 +69,30 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
             "on_before_llm_call",
             api_messages, system_prompt, agent.tools,
         )
+        hook_changed_messages = False
         if isinstance(hook_result, dict):
+            hook_changed_messages = "messages" in hook_result
             api_messages = hook_result.get("messages", api_messages)
             system_prompt = hook_result.get("system_prompt", system_prompt)
+        request_plan = (
+            LLMRequestPlan.from_legacy(
+                api_messages,
+                system_prompt,
+                agent.tools,
+                metadata={"source": "hook" if hook_changed_messages else "legacy"},
+            )
+            if hook_changed_messages
+            else _build_request_plan(agent, ctx, system_prompt, skill_injection_for_plan)
+        )
+        context_budget = _build_request_context_budget(
+            agent,
+            ctx,
+            api_messages,
+            system_prompt,
+            skill_injection=skill_injection_for_plan,
+            use_actual_messages=hook_changed_messages,
+        )
+        context_usage_payload = _context_usage_payload(context_budget)
 
         # ── LLM call (interruptible — polls _interrupt_requested every 5s) ──
         try:
@@ -80,6 +104,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 message_count=len(api_messages),
                 tool_count=len(agent.tools),
                 model=getattr(agent._provider, "model", ""),
+                **context_usage_payload,
             )
 
             # Only stream token-by-token events when a renderer opts in. On the
@@ -94,6 +119,8 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 "tools": agent.tools,
                 "max_tokens": agent._provider.max_tokens,
             }
+            if hasattr(agent._transport, "build_request_from_plan"):
+                call_kwargs["request_plan"] = request_plan
             if getattr(report_recorder, "wants_deltas", False):
                 async def on_delta(kind: str, chunk: str) -> None:
                     if kind == "thinking":
@@ -170,16 +197,28 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
         agent.session_prompt_tokens += response.usage.get("input_tokens", 0)
         agent.session_completion_tokens += response.usage.get("output_tokens", 0)
         agent.session_api_calls += 1
+        cache_diagnostics = (
+            agent._transport.last_cache_diagnostics()
+            if hasattr(agent._transport, "last_cache_diagnostics")
+            else {}
+        )
         await emit_event(
             report_recorder,
             "llm_end",
             "模型返回",
             input_tokens=response.usage.get("input_tokens", 0),
             output_tokens=response.usage.get("output_tokens", 0),
+            cache_hit_tokens=response.usage.get("cache_hit_tokens", 0),
+            cache_miss_tokens=response.usage.get("cache_miss_tokens", 0),
+            cache_write_tokens=response.usage.get("cache_write_tokens", 0),
+            cache_read_tokens=response.usage.get("cache_read_tokens", 0),
+            cache_hit_rate=response.usage.get("cache_hit_rate", 0.0),
+            cache_diagnostics=cache_diagnostics,
             tool_call_count=len(response.tool_calls or []),
             finish_reason=response.finish_reason,
             model=response.model or getattr(agent._provider, "model", ""),
             context_window=getattr(agent._provider, "context_window", 0),
+            **context_usage_payload,
         )
         if agent._compressor is not None:
             try:
@@ -371,3 +410,86 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
         msgs.insert(0, message)
 
     return msgs
+
+
+def _build_request_plan(agent, ctx, system_prompt: str, skill_injection: str | None) -> LLMRequestPlan:
+    dynamic_context: list[dict] = []
+    dynamic_context.extend(list(getattr(ctx, "memory_prefetch_messages", []) or []))
+    if skill_injection:
+        dynamic_context.append({
+            "role": "user",
+            "content": [{"type": "text", "text": skill_injection}],
+        })
+    if getattr(ctx, "skill_summaries", ""):
+        dynamic_context.append({
+            "role": "user",
+            "content": [{"type": "text", "text": ctx.skill_summaries}],
+        })
+
+    messages = list(getattr(ctx, "messages", []) or [])
+    current_idx = int(getattr(ctx, "current_turn_user_idx", max(0, len(messages) - 1)) or 0)
+    current_user = messages[current_idx] if 0 <= current_idx < len(messages) else None
+    history = [
+        message
+        for index, message in enumerate(messages)
+        if index != current_idx
+    ]
+    return LLMRequestPlan(
+        stable_system=system_prompt,
+        stable_tools=list(agent.tools or []),
+        stable_context=[],
+        dynamic_context=dynamic_context,
+        history=history,
+        current_user=current_user,
+        metadata={"source": "agent_context"},
+    )
+
+
+def _build_request_context_budget(
+    agent,
+    ctx,
+    api_messages: list[dict],
+    system_prompt: str,
+    *,
+    skill_injection: str | None,
+    use_actual_messages: bool = False,
+):
+    provider = getattr(agent, "_provider", None)
+    model = getattr(provider, "model", "") or getattr(agent, "model", "")
+    context_limit = int(getattr(provider, "context_window", 0) or 0)
+
+    if use_actual_messages:
+        messages = api_messages
+        skills_summary = ""
+        memory_injections = ""
+    else:
+        messages = list(getattr(ctx, "messages", []) or [])
+        skills_summary = compose_context_text(
+            getattr(ctx, "skill_summaries", "") or "",
+            skill_injection or "",
+        )
+        memory_injections = getattr(ctx, "memory_injections_text", "") or ""
+
+    budget = estimate_context_budget(
+        messages=messages,
+        system_prompt=system_prompt,
+        tools=list(getattr(agent, "tools", []) or []),
+        skills_summary=skills_summary,
+        memory_injections=memory_injections,
+        context_limit=context_limit,
+        model=model,
+    )
+    compressor = getattr(agent, "_compressor", None)
+    threshold_tokens = int(getattr(compressor, "threshold_tokens", 0) or 0)
+    if threshold_tokens:
+        budget.compression_threshold = threshold_tokens
+    return budget
+
+
+def _context_usage_payload(budget) -> dict:
+    return {
+        "context_used_tokens": budget.used,
+        "context_remaining_tokens": budget.remaining_context,
+        "context_percent": budget.percent,
+        "context_budget": budget.as_dict(),
+    }

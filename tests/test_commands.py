@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.commands.runtime import current_mode_from_policy, handle_slash_command
+from personal_agent.commands.runtime import (
+    current_mode_from_policy,
+    handle_slash_command,
+    slash_argument_choices,
+    slash_command_metadata,
+)
 from personal_agent.config import Settings
 from personal_agent.models.messages import SessionSource
 from personal_agent.plugins.models import CommandEntry
@@ -70,6 +75,70 @@ class Runtime:
         self.deleted = None
         self.exported = False
         self.memory_deleted = None
+        self.activity = {
+            "summary": {
+                "has_active_work": True,
+                "active_total": 2,
+                "attention_required": False,
+                "longest_running_seconds": 12.5,
+                "counts": {
+                    "sub_agents": {
+                        "active": 1,
+                        "recent": 1,
+                        "failed_recent": 0,
+                        "stop_requested": 0,
+                    },
+                    "background_processes": {
+                        "total": 1,
+                        "running": 1,
+                        "done": 0,
+                        "killed": 0,
+                    },
+                    "gateway_agents": {
+                        "running": 0,
+                        "stop_requested": 0,
+                    },
+                },
+            },
+            "sub_agents": {
+                "counts": {
+                    "active": 1,
+                    "recent": 1,
+                    "failed_recent": 0,
+                    "stop_requested": 0,
+                },
+                "active_runs": [{
+                    "id": "agent-1",
+                    "kind": "sub_agent",
+                    "status": "running",
+                    "duration_seconds": 12.5,
+                    "task": "inspect",
+                }],
+                "recent_runs": [],
+            },
+            "background_processes": {
+                "counts": {
+                    "total": 1,
+                    "running": 1,
+                    "done": 0,
+                    "killed": 0,
+                },
+                "items": [{
+                    "id": "3",
+                    "kind": "background_process",
+                    "status": "running",
+                    "duration_seconds": 3.0,
+                    "command": "uv run pytest",
+                }],
+            },
+            "gateway_agents": {
+                "counts": {
+                    "running": 0,
+                    "stop_requested": 0,
+                },
+                "running_agent_runs": [],
+            },
+        }
 
     @property
     def session_key(self):
@@ -135,6 +204,46 @@ class Runtime:
         self.memory_deleted = (identifier, target)
         return identifier == "memory:1"
 
+    async def activity_snapshot(self, *, limit: int = 20):
+        return self.activity
+
+    async def activity_detail(self, kind: str, id_: str):
+        if kind == "sub_agent" and id_ == "agent-1":
+            return {
+                "kind": "sub_agent",
+                "id": id_,
+                "run": {
+                    "id": id_,
+                    "kind": "sub_agent",
+                    "status": "running",
+                    "duration_seconds": 12.5,
+                    "task": "inspect",
+                },
+            }
+        if kind == "background_process" and id_ == "3":
+            return {
+                "kind": "background_process",
+                "id": id_,
+                "process": {
+                    "id": id_,
+                    "kind": "background_process",
+                    "status": "running",
+                    "duration_seconds": 3.0,
+                    "command": "uv run pytest",
+                },
+            }
+        return None
+
+    async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20):
+        if provider == "activity_agents":
+            return [{
+                "value": "agent-1",
+                "label": "agent-1",
+                "description": "reviewer running",
+                "append_space": False,
+            }]
+        return []
+
     async def clear_agent(self):
         self.clear_called = True
 
@@ -181,6 +290,9 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
     result = await handle_slash_command(runtime, "/usage")
     assert "上下文窗口" in result.response
+    assert "最近一轮工具执行" in result.response
+    assert "单轮工具上限" in result.response
+    assert "本轮工具调用" not in result.response
 
     result = await handle_slash_command(runtime, "/export")
     assert "已导出 1 条对话" in result.response
@@ -318,6 +430,66 @@ async def test_shared_command_stop_reports_delegate_agent_count(tmp_path, monkey
 
     assert result.response == "已停止。已请求停止 2 个子 agent。"
     assert runtime.agent._interrupt_requested
+
+
+@pytest.mark.asyncio
+async def test_shared_command_activity_returns_structured_payload(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/activity")
+
+    assert result.handled
+    assert result.kind == "activity"
+    assert result.payload["summary"]["active_total"] == 2
+    assert "运行活动" in result.response
+    assert "子 agent" in result.response
+    assert "后台任务" in result.response
+
+
+@pytest.mark.asyncio
+async def test_shared_command_activity_lists_and_shows_detail(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    listed = await handle_slash_command(runtime, "/activity agents")
+    shown = await handle_slash_command(runtime, "/activity agents agent-1")
+    missing = await handle_slash_command(runtime, "/activity processes missing")
+
+    assert listed.kind == "activity"
+    assert listed.payload["scope"] == "agents"
+    assert listed.payload["sub_agents"]["active_runs"][0]["id"] == "agent-1"
+    assert shown.kind == "activity"
+    assert shown.payload["kind"] == "sub_agent"
+    assert shown.payload["run"]["task"] == "inspect"
+    assert "Activity detail" in shown.response
+    assert missing.payload["not_found"] is True
+    assert "未找到 activity" in missing.response
+
+
+@pytest.mark.asyncio
+async def test_slash_metadata_and_activity_argument_choices(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    metadata = slash_command_metadata(runtime)
+    activity = next(item for item in metadata if item["name"] == "activity")
+    choices = await slash_argument_choices(
+        runtime,
+        "activity_agents",
+        command="activity",
+        args=("agents",),
+        query="agent",
+    )
+
+    assert activity["result_kind"] == "activity"
+    assert activity["usage"] == "/activity [agents|processes|gateway] [id]"
+    assert activity["arguments"][0]["kind"] == "choice"
+    assert activity["arguments"][1]["provider_by_scope"]["agents"] == "activity_agents"
+    assert activity["children"][1]["arguments"][0]["provider"] == "activity_processes"
+    assert choices == [{
+        "value": "agent-1",
+        "label": "agent-1",
+        "description": "reviewer running",
+        "append_space": False,
+    }]
 
 
 @pytest.mark.asyncio

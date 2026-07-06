@@ -10,6 +10,13 @@ from personal_agent.agent.retry import RetryState
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.tools.registry import tool_registry
 
+TOOL_PROTOCOL_PROMPT = (
+    "工具调用规则：\n"
+    "- 如果需要读取文件、搜索、执行命令、访问外部状态或使用任何可用工具，必须通过 tool call 调用对应工具。\n"
+    "- 不要用文字声称已经调用、读取、搜索或执行了工具，除非本轮实际产生了对应 tool call。\n"
+    "- 如果不需要或无法调用工具，请直接说明并回答，不要伪装成已调用工具。"
+)
+
 
 @dataclass
 class Agent:
@@ -139,7 +146,7 @@ def _build_system_prompt(agent: Agent, template: str = "") -> str:
 
     # Tool list (sorted for deterministic byte stream → cache hits)
     if agent.tools:
-        tool_lines = ["可用工具："]
+        tool_lines = [TOOL_PROTOCOL_PROMPT, "可用工具："]
         for t in sorted(agent.tools, key=lambda t: t["name"]):
             tool_lines.append(f"- {t['name']}: {t['description']}")
         parts.append("\n".join(tool_lines))

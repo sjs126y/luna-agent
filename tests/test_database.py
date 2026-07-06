@@ -153,6 +153,69 @@ def test_tool_runs_roundtrip_and_summary(db):
     assert summary["truncated"] == 1
 
 
+def test_turn_reports_roundtrip_filters_and_summary(db):
+    sid = str(uuid.uuid4())
+    _run(db.create_session_direct(sid, "cli:default:local"))
+    first_id = _run(db.save_turn_report({
+        "session_id": sid,
+        "session_key": "cli:default:local",
+        "source": {"platform": "cli", "user_id": "local"},
+        "created_at": 1000.0,
+        "report": {
+            "turn_id": "turn-1",
+            "status": "completed",
+            "completed": True,
+            "duration": 0.5,
+            "error": "",
+            "user_message_summary": "hello",
+            "final_response_summary": "done",
+            "llm": {
+                "calls": 1,
+                "cache_hit_tokens": 4,
+                "cache_miss_tokens": 6,
+                "cache_write_tokens": 0,
+                "cache_read_tokens": 4,
+            },
+            "tools": {"total": 1},
+        },
+    }))
+    second_id = _run(db.save_turn_report({
+        "session_id": sid,
+        "session_key": "cli:other:local",
+        "source": {"platform": "cli", "user_id": "local"},
+        "created_at": 1001.0,
+        "report": {
+            "turn_id": "turn-2",
+            "status": "failed",
+            "completed": False,
+            "duration": 0.25,
+            "error": "RuntimeError: boom",
+            "llm": {"calls": 0},
+            "tools": {"total": 0},
+        },
+    }))
+
+    recent = _run(db.recent_turn_reports(limit=10))
+    filtered = _run(db.recent_turn_reports(limit=10, session_key="cli:default:local"))
+    failed = _run(db.recent_turn_reports(limit=10, status="failed"))
+    detail = _run(db.get_turn_report(first_id))
+    summary = _run(db.turn_report_summary())
+
+    assert [item["id"] for item in recent] == [first_id, second_id]
+    assert [item["turn_id"] for item in filtered] == ["turn-1"]
+    assert [item["turn_id"] for item in failed] == ["turn-2"]
+    assert detail["session_key"] == "cli:default:local"
+    assert detail["turn_id"] == "turn-1"
+    assert detail["completed"] is True
+    assert detail["cache_hit_tokens"] == 4
+    assert detail["source"] == {"platform": "cli", "user_id": "local"}
+    assert detail["report"]["final_response_summary"] == "done"
+    assert summary["stored"] == 2
+    assert summary["last_id"] == second_id
+    assert summary["last_status"] == "failed"
+    assert summary["last_error"] == "RuntimeError: boom"
+
+
 def test_delete_cleans_messages(db):
     sid = str(uuid.uuid4())
     _run(db.create_session_direct(sid, "test:1:1"))
@@ -164,9 +227,16 @@ def test_delete_cleans_messages(db):
         "tool_name": "bash",
         "status": "success",
     }]))
+    _run(db.save_turn_report({
+        "session_id": sid,
+        "session_key": "test:1:1",
+        "report": {"turn_id": "turn-1", "status": "completed"},
+    }))
     _run(db.delete_session(sid))
 
     history = _run(db.load_history(sid))
     tool_runs = _run(db.recent_tool_runs(limit=10, session_key="test:1:1"))
+    turn_reports = _run(db.recent_turn_reports(limit=10, session_key="test:1:1"))
     assert len(history) == 0
     assert tool_runs == []
+    assert turn_reports == []

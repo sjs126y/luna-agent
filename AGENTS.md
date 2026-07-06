@@ -38,6 +38,16 @@ uv run pytest -q
 
 Some tests update `src/personal_agent/skills/builtin/.usage.json`; restore that file before committing unless the usage data is intentionally changed.
 
+## Frontend/Backend Codex Workflow
+
+This project may have separate frontend and backend Codex agents working in parallel. Each Codex owns its own branch and progress file, and must update that progress file at the end of each work session.
+
+The backend Codex owns backend runtime, agent loop, tools, permissions, provider/transport, gateway/platform adapters, tests, and backend-facing documentation. The frontend Codex owns TUI/classic CLI/desktop-web layout, interaction, visual polish, and frontend progress.
+
+Backend-to-frontend contracts are documented in `BACKEND_INTERFACE.md`. When backend work adds or changes any frontend-consumable event, command, payload, diagnostic field, or API, the backend Codex must update `BACKEND_INTERFACE.md` in the same work session.
+
+Frontend-to-backend requests are tracked in `FRONTEND_INTERFACE_REQUIREMENTS.md`. The frontend Codex should record backend needs there as small field/interface requests; the backend Codex should use that file as the intake list for frontend-facing backend changes.
+
 ## Commit & Pull Request Guidelines
 
 Recent history uses short imperative commits with a `[codex]` prefix, for example `[codex] polish terminal input frame`. Keep commits scoped and include tests with behavior changes.

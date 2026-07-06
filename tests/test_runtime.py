@@ -121,8 +121,16 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["boot_ok"] is True
         assert health["boot_failed_step"] == ""
         assert health["turns"]["stored"] == 0
+        assert health["turns"]["persisted"]["stored"] == 0
         assert health["tool_truth"]["inspected"] == 0
         assert health["tool_runs"]["inspected"] == 0
+        assert health["activity"]["summary"]["active_total"] >= 0
+        assert "sub_agents" in health["activity"]
+        assert "background_processes" in health["activity"]
+        assert "gateway_agents" in health["activity"]
+        assert health["llm_cache"]["provider"] == settings.llm_provider
+        assert health["llm_cache"]["strategy"] in {"none", "prefix", "explicit"}
+        assert health["llm_cache"]["last_usage"]["cache_hit_tokens"] == 0
         runtime.conversation_service.record_turn_report(
             "cli:default:local",
             type("Source", (), {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"})(),
@@ -130,7 +138,17 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
                 "status": "completed",
                 "duration": 1.5,
                 "error": "",
-                "llm": {"calls": 1, "input_tokens": 10, "output_tokens": 5},
+                "llm": {
+                    "calls": 1,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_hit_tokens": 4,
+                    "cache_miss_tokens": 6,
+                    "cache_write_tokens": 0,
+                    "cache_read_tokens": 4,
+                    "cache_hit_rate": 0.4,
+                    "cache_diagnostics": {"stable_prefix_hash": "abc123"},
+                },
                 "tools": {"total": 2, "items": []},
                 "tool_truth": {
                     "calls_total": 2,
@@ -155,7 +173,45 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert turn_health["last_duration"] == 1.5
         assert turn_health["last_llm_calls"] == 1
         assert turn_health["last_tool_calls"] == 2
+        assert turn_health["last_cache_hit_tokens"] == 4
+        assert turn_health["last_cache_hit_rate"] == 0.4
+        assert turn_health["last_cache_diagnostics"]["stable_prefix_hash"] == "abc123"
         assert turn_health["last_retries"] == 1
+        session_source = type(
+            "Source",
+            (),
+            {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"},
+        )()
+        session = await runtime.session_store.get_or_create("cli:default:local", session_source)
+        await runtime.session_store.save_turn_report({
+            "session_id": session.session_id,
+            "session_key": "cli:default:local",
+            "source": {"platform": "cli", "user_id": "local"},
+            "report": {
+                "turn_id": "turn-runtime",
+                "status": "completed",
+                "completed": True,
+                "duration": 0.75,
+                "llm": {
+                    "calls": 1,
+                    "cache_hit_tokens": 4,
+                    "cache_miss_tokens": 6,
+                    "cache_write_tokens": 0,
+                    "cache_read_tokens": 4,
+                },
+                "tools": {"total": 2},
+            },
+        })
+        persisted_summary = await runtime.conversation_service.persisted_turn_report_summary()
+        assert persisted_summary["stored"] == 1
+        persisted_health = runtime.health_snapshot()["turns"]["persisted"]
+        assert persisted_health["stored"] == 1
+        assert persisted_health["last_turn_id"] == "turn-runtime"
+        assert persisted_health["last_status"] == "completed"
+        assert persisted_health["last_cache_hit_tokens"] == 4
+        cache_health = updated_health["llm_cache"]
+        assert cache_health["last_usage"]["cache_hit_tokens"] == 4
+        assert cache_health["last_diagnostics"]["stable_prefix_hash"] == "abc123"
         truth_health = updated_health["tool_truth"]
         assert truth_health["inspected"] == 1
         assert truth_health["turns_with_tools"] == 1

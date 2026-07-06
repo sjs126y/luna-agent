@@ -60,6 +60,51 @@ class ConversationCommandRuntime:
     async def memory_delete(self, identifier: str, *, target: str = "all") -> bool:
         return await self.conversation_service.memory_manager.delete(identifier, target=target)
 
+    async def activity_snapshot(self, *, limit: int = 20) -> dict:
+        from personal_agent.activity import activity_snapshot
+
+        return activity_snapshot(gateway_snapshot=self._gateway_snapshot(), limit=limit)
+
+    async def activity_detail(self, kind: str, id_: str) -> dict | None:
+        from personal_agent.activity import activity_detail
+
+        return activity_detail(kind, id_, gateway_snapshot=self._gateway_snapshot())
+
+    async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20) -> list[dict]:
+        from personal_agent.activity import activity_choices
+
+        return activity_choices(
+            provider,
+            query=query,
+            limit=limit,
+            gateway_snapshot=self._gateway_snapshot(),
+        )
+
+    def slash_command_metadata(self) -> list[dict]:
+        from personal_agent.commands.runtime import slash_command_metadata
+
+        return slash_command_metadata(self)
+
+    async def slash_argument_choices(
+        self,
+        provider: str,
+        *,
+        command: str = "",
+        args: tuple[str, ...] = (),
+        query: str = "",
+        limit: int = 20,
+    ) -> list[dict]:
+        from personal_agent.commands.runtime import slash_argument_choices
+
+        return await slash_argument_choices(
+            self,
+            provider,
+            command=command,
+            args=args,
+            query=query,
+            limit=limit,
+        )
+
     async def usage(self, *, current_user_message: str = "") -> str:
         return await self.conversation_service.usage_summary(
             self.session_key,
@@ -97,3 +142,13 @@ class ConversationCommandRuntime:
 
     def session_list_current_key(self) -> str:
         return self.session_key
+
+    def _gateway_snapshot(self) -> dict:
+        gateway = getattr(self, "gateway", None)
+        if gateway is not None and hasattr(gateway, "health_snapshot"):
+            return gateway.health_snapshot()
+        app_runtime = getattr(self, "app_runtime", None)
+        gateway = getattr(app_runtime, "gateway", None)
+        if gateway is not None and hasattr(gateway, "health_snapshot"):
+            return gateway.health_snapshot()
+        return {}

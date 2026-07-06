@@ -17,6 +17,11 @@ async def _web_fetch(url: str) -> str:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             resp = await client.get(url, headers={"User-Agent": "PersonalAgent/1.0"})
             resp.raise_for_status()
+        final_url = str(resp.url)
+        if final_url != url:
+            redirect_error = check_url(final_url)
+            if redirect_error:
+                return f"Error: redirected URL blocked: {redirect_error}"
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.ignore_images = True

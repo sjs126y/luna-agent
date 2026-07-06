@@ -1,8 +1,10 @@
 """Provider profile — 'who to talk to' vs Transport's 'how to talk'."""
 
-from dataclasses import dataclass, field
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
+
+CacheStrategy = str
 
 
 @dataclass
@@ -22,6 +24,21 @@ class ProviderProfile:
     response_hook: Callable[[dict], dict] | None = None
 
     extra_headers: dict[str, str] = field(default_factory=dict)
+
+    # Provider cache capability. Transports use this for diagnostics and
+    # provider-specific usage normalization; v1 does not change request layout.
+    cache_strategy: CacheStrategy = "none"          # none | prefix | explicit
+    supports_cache_usage: bool = False
+    cache_usage_fields: dict[str, str] = field(default_factory=dict)
+    cacheable_blocks: tuple[str, ...] = ()
+
+    def cache_capability(self) -> dict[str, Any]:
+        return {
+            "strategy": self.cache_strategy,
+            "supports_usage": self.supports_cache_usage,
+            "usage_fields": dict(self.cache_usage_fields),
+            "cacheable_blocks": list(self.cacheable_blocks),
+        }
 
 
 def _detect_context_window(model: str) -> int:
@@ -90,6 +107,13 @@ def _deepseek_factory(config) -> ProviderProfile:
         name="deepseek", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
         context_window=_detect_context_window(config.llm_model),
+        cache_strategy="prefix",
+        supports_cache_usage=True,
+        cache_usage_fields={
+            "cache_hit_tokens": "prompt_cache_hit_tokens",
+            "cache_miss_tokens": "prompt_cache_miss_tokens",
+        },
+        cacheable_blocks=("system", "tools", "message_prefix"),
     )
 
 def _openai_factory(config) -> ProviderProfile:
@@ -97,6 +121,12 @@ def _openai_factory(config) -> ProviderProfile:
         name="openai", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
         context_window=_detect_context_window(config.llm_model),
+        cache_strategy="prefix",
+        supports_cache_usage=True,
+        cache_usage_fields={
+            "cache_hit_tokens": "prompt_tokens_details.cached_tokens",
+        },
+        cacheable_blocks=("system", "tools", "message_prefix"),
     )
 
 def _anthropic_factory(config) -> ProviderProfile:
@@ -104,6 +134,13 @@ def _anthropic_factory(config) -> ProviderProfile:
         name="anthropic", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
         context_window=_detect_context_window(config.llm_model),
+        cache_strategy="explicit",
+        supports_cache_usage=True,
+        cache_usage_fields={
+            "cache_write_tokens": "cache_creation_input_tokens",
+            "cache_read_tokens": "cache_read_input_tokens",
+        },
+        cacheable_blocks=("system",),
     )
 
 def _openrouter_factory(config) -> ProviderProfile:
@@ -119,6 +156,12 @@ def _openrouter_factory(config) -> ProviderProfile:
             "HTTP-Referer": "http://localhost",
             "X-Title": "Personal Agent",
         },
+        cache_strategy="prefix",
+        supports_cache_usage=True,
+        cache_usage_fields={
+            "cache_hit_tokens": "prompt_tokens_details.cached_tokens",
+        },
+        cacheable_blocks=("system", "tools", "message_prefix"),
     )
 
 

@@ -424,7 +424,23 @@ async def test_file_edit_replace_reports_occurrences(tmp_path: Path):
     assert "old_text cannot be empty" in empty_old
     assert "occurrences=0" in missing
     assert "Replaced 1 of 2 occurrences" in replaced
+    assert "replace_all" in replaced
     assert path.read_text(encoding="utf-8") == "alpha BETA beta"
+
+
+@pytest.mark.asyncio
+async def test_file_edit_replace_all_updates_every_occurrence(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+    from personal_agent.tools.sandbox import init_sandbox
+
+    path = tmp_path / "notes.md"
+    path.write_text("alpha beta beta", encoding="utf-8")
+    init_sandbox([tmp_path], [])
+
+    replaced = await _file_edit("replace_all", str(path), old_text="beta", new_text="BETA")
+
+    assert "Replaced all 2 occurrences" in replaced
+    assert path.read_text(encoding="utf-8") == "alpha BETA BETA"
 
 
 @pytest.mark.asyncio
@@ -442,6 +458,43 @@ async def test_file_edit_size_limit_and_sandbox_block(tmp_path: Path, monkeypatc
 
     assert "exceed max size" in too_large.lower()
     assert "path blocked" in blocked.lower()
+
+
+@pytest.mark.asyncio
+async def test_grep_literal_treats_pattern_as_plain_text(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+    from personal_agent.tools.sandbox import init_sandbox
+
+    path = tmp_path / "app.py"
+    path.write_text("foo.bar()\nfooXbar()\n", encoding="utf-8")
+    init_sandbox([tmp_path], [])
+
+    regex_result = await _grep("foo.bar()", str(tmp_path))
+    literal_result = await _grep("foo.bar()", str(tmp_path), literal=True)
+
+    assert "fooXbar()" in regex_result
+    assert "foo.bar()" in literal_result
+    assert "fooXbar()" not in literal_result
+
+
+@pytest.mark.asyncio
+async def test_task_list_search_filters_title_and_description(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import task as task_tool
+
+    monkeypatch.setattr(task_tool, "_db_path", tmp_path / "tasks.db")
+
+    await task_tool._task("add", title="Fix provider cache", description="cache hit rate")
+    await task_tool._task("add", title="Polish frontend", description="activity drawer")
+
+    title_result = await task_tool._task("list", search="provider")
+    desc_result = await task_tool._task("list", search="drawer")
+    empty_result = await task_tool._task("list", search="missing")
+
+    assert "Fix provider cache" in title_result
+    assert "Polish frontend" not in title_result
+    assert "Polish frontend" in desc_result
+    assert "Fix provider cache" not in desc_result
+    assert "No tasks match" in empty_result
 
 
 @pytest.mark.asyncio
@@ -883,3 +936,114 @@ def test_key_builtin_tools_declare_usage_metadata():
         assert entry.risk_level == risk
         assert tag in entry.tags
         assert entry.usage_hint
+
+
+def test_process_tools_are_core_and_in_interact_toolset():
+    from personal_agent.tools.toolsets import TOOLSETS, is_core_tool
+
+    for name in {"process_start", "process_list", "process_read", "process_clear", "process_kill", "process_wait"}:
+        assert is_core_tool(name) is True
+        assert name in TOOLSETS["interact"]
+
+
+def test_worktree_tools_declare_permission_metadata():
+    import personal_agent.plugins.builtin.tools.builtin.worktree_tool  # noqa: F401
+    from personal_agent.tools.registry import tool_registry
+
+    expected = {
+        "worktree_create": ("write", "medium", False),
+        "worktree_merge": ("write", "high", True),
+        "worktree_cleanup": ("write", "high", True),
+        "worktree_list": ("read", "low", False),
+    }
+    for name, (category, risk, destructive) in expected.items():
+        entry = tool_registry.get(name)
+        assert entry.permission_category == category
+        assert entry.risk_level == risk
+        assert entry.is_destructive is destructive
+        assert entry.usage_hint
+
+
+@pytest.mark.asyncio
+async def test_worktree_cleanup_refuses_dirty_worktree_without_force(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import worktree_tool
+
+    worktree_root = tmp_path / "worktrees"
+    dirty_tree = worktree_root / "demo"
+    dirty_tree.mkdir(parents=True)
+    monkeypatch.setattr(worktree_tool, "_WORKTREE_DIR", worktree_root)
+
+    calls = []
+
+    async def fake_git(*args, cwd=None):
+        calls.append((args, cwd))
+        if args[:2] == ("status", "--porcelain"):
+            return 0, " M file.txt", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(worktree_tool, "_git", fake_git)
+
+    result = await worktree_tool._worktree_cleanup("demo", force=False)
+
+    assert "uncommitted changes" in result
+    assert not any(args[:2] == ("worktree", "remove") for args, _ in calls)
+
+
+@pytest.mark.asyncio
+async def test_worktree_cleanup_force_removes_with_force_flag(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import worktree_tool
+
+    worktree_root = tmp_path / "worktrees"
+    dirty_tree = worktree_root / "demo"
+    dirty_tree.mkdir(parents=True)
+    monkeypatch.setattr(worktree_tool, "_WORKTREE_DIR", worktree_root)
+
+    calls = []
+
+    async def fake_git(*args, cwd=None):
+        calls.append((args, cwd))
+        return 0, "", ""
+
+    monkeypatch.setattr(worktree_tool, "_git", fake_git)
+
+    result = await worktree_tool._worktree_cleanup("demo", force=True)
+
+    assert "removed" in result
+    assert any(args == ("worktree", "remove", str(dirty_tree), "--force") for args, _ in calls)
+    assert any(args == ("branch", "-D", "worktree/demo") for args, _ in calls)
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_rechecks_redirect_target(monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import web_fetch
+
+    class FakeResponse:
+        url = "http://127.0.0.1/admin"
+        text = "<html><body>secret</body></html>"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(web_fetch.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(
+        "personal_agent.tools.url_safety.check_url",
+        lambda url: "Error: access to loopback blocked" if "127.0.0.1" in url else None,
+    )
+
+    result = await web_fetch._web_fetch("https://example.com")
+
+    assert "redirected URL blocked" in result
+    assert "loopback" in result

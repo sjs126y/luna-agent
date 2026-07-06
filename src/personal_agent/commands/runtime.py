@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import inspect
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass
@@ -12,6 +13,8 @@ class CommandResult:
     handled: bool
     response: str | None = None
     continue_text: str | None = None
+    kind: str = ""
+    payload: dict[str, Any] | None = None
 
     @classmethod
     def unhandled(cls) -> "CommandResult":
@@ -20,6 +23,10 @@ class CommandResult:
     @classmethod
     def reply(cls, response: str) -> "CommandResult":
         return cls(handled=True, response=response)
+
+    @classmethod
+    def structured(cls, response: str, *, kind: str, payload: dict[str, Any]) -> "CommandResult":
+        return cls(handled=True, response=response, kind=kind, payload=payload)
 
     @classmethod
     def continue_with(cls, text: str) -> "CommandResult":
@@ -66,6 +73,12 @@ class CommandRuntime(Protocol):
 
     async def memory_delete(self, identifier: str, *, target: str = "all") -> bool: ...
 
+    async def activity_snapshot(self, *, limit: int = 20) -> dict: ...
+
+    async def activity_detail(self, kind: str, id_: str) -> dict | None: ...
+
+    async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20) -> list[dict]: ...
+
     def plugin_command_kwargs(self, args: str) -> dict: ...
 
 
@@ -105,6 +118,21 @@ _MODE_ALIASES = {
     "sovereign": "full-auto",
 }
 
+_ALLOW_CHOICES = (
+    ("write", "write", "Allow file writes"),
+    ("bash", "bash", "Allow shell commands"),
+    ("background", "background", "Allow background processes"),
+    ("network", "network", "Allow network actions"),
+    ("destructive", "destructive", "Allow destructive actions"),
+    ("all", "all", "Allow all categories"),
+)
+
+_ACTIVITY_SCOPE_CHOICES = (
+    ("agents", "agents", "Sub-agent runs"),
+    ("processes", "processes", "Background processes"),
+    ("gateway", "gateway", "Gateway agent runs"),
+)
+
 
 async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandResult:
     text = text.strip()
@@ -141,6 +169,10 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
     if command_name in {"agents", "agent-runs"}:
         return CommandResult.reply(await _agents(args))
 
+    if command_name == "activity":
+        payload, response = await _activity(runtime, args)
+        return CommandResult.structured(response, kind="activity", payload=payload)
+
     if command_name == "memory":
         return CommandResult.reply(await _memory(runtime, args))
 
@@ -169,6 +201,261 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         return CommandResult.continue_with(skill_text)
 
     return CommandResult.unhandled()
+
+
+def slash_command_metadata(runtime: CommandRuntime | None = None) -> list[dict[str, Any]]:
+    """Return frontend-consumable slash command registry metadata."""
+    entries = _core_slash_command_metadata()
+    plugin_lines = _plugin_command_metadata(runtime)
+    if plugin_lines:
+        entries.extend(plugin_lines)
+    return entries
+
+
+async def slash_argument_choices(
+    runtime: CommandRuntime | None,
+    provider: str,
+    *,
+    command: str = "",
+    args: tuple[str, ...] = (),
+    query: str = "",
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return dynamic slash argument candidates for registry metadata providers."""
+    del command, args
+    provider = str(provider or "").strip()
+    limit = max(1, int(limit or 20))
+    if provider in {"activity_agents", "activity_processes", "activity_gateway"}:
+        if runtime is not None:
+            custom = await _call_optional(
+                runtime,
+                "activity_choices",
+                provider,
+                query=query,
+                limit=limit,
+            )
+            if custom is not None:
+                return _normalize_choice_items(custom, limit=limit)
+        from personal_agent.activity import activity_choices
+
+        return _normalize_choice_items(
+            activity_choices(provider, query=query, limit=limit),
+            limit=limit,
+        )
+    return []
+
+
+def _core_slash_command_metadata() -> list[dict[str, Any]]:
+    mode_choices = [
+        {
+            "value": choice.label,
+            "label": choice.label,
+            "description": choice.profile,
+            "append_space": False,
+        }
+        for choice in MODE_CHOICES
+    ]
+    allow_choices = [
+        {
+            "value": value,
+            "label": label,
+            "description": description,
+            "append_space": False,
+        }
+        for value, label, description in _ALLOW_CHOICES
+    ]
+    activity_scope_choices = [
+        {
+            "value": value,
+            "label": label,
+            "description": description,
+            "append_space": True,
+        }
+        for value, label, description in _ACTIVITY_SCOPE_CHOICES
+    ]
+    return deepcopy([
+        {
+            "name": "new",
+            "command": "/new",
+            "summary": "重置当前会话",
+            "usage": "/new",
+            "arguments": [],
+        },
+        {
+            "name": "session",
+            "command": "/session",
+            "summary": "管理会话",
+            "usage": "/session [current|list|switch <name>|rename <name>|delete [name]]",
+            "arguments": [],
+        },
+        {
+            "name": "usage",
+            "command": "/usage",
+            "summary": "查看当前会话上下文预算",
+            "usage": "/usage",
+            "arguments": [],
+        },
+        {
+            "name": "allow",
+            "command": "/allow",
+            "summary": "授权危险操作",
+            "usage": "/allow <category>",
+            "arguments": [{
+                "name": "category",
+                "kind": "choice",
+                "required": False,
+                "choices": allow_choices,
+            }],
+        },
+        {
+            "name": "mode",
+            "command": "/mode",
+            "summary": "切换执行模式",
+            "usage": "/mode <mode>",
+            "arguments": [{
+                "name": "mode",
+                "kind": "choice",
+                "required": False,
+                "choices": mode_choices,
+            }],
+        },
+        {
+            "name": "stop",
+            "command": "/stop",
+            "summary": "停止当前处理",
+            "usage": "/stop",
+            "arguments": [],
+        },
+        {
+            "name": "export",
+            "command": "/export",
+            "summary": "导出当前会话 JSONL",
+            "usage": "/export",
+            "arguments": [],
+        },
+        {
+            "name": "agents",
+            "command": "/agents",
+            "summary": "查看子 agent 运行记录",
+            "usage": "/agents [list [limit]|show <run_id>|clear]",
+            "arguments": [],
+        },
+        {
+            "name": "activity",
+            "command": "/activity",
+            "summary": "查看子 agent、后台任务和 Gateway agent 活动",
+            "usage": "/activity [agents|processes|gateway] [id]",
+            "result_kind": "activity",
+            "arguments": [
+                {
+                    "name": "scope",
+                    "kind": "choice",
+                    "required": False,
+                    "choices": activity_scope_choices,
+                },
+                {
+                    "name": "id",
+                    "kind": "dynamic",
+                    "required": False,
+                    "provider_by_scope": {
+                        "agents": "activity_agents",
+                        "processes": "activity_processes",
+                        "gateway": "activity_gateway",
+                    },
+                },
+            ],
+            "children": [
+                {
+                    "name": "agents",
+                    "usage": "/activity agents [id]",
+                    "summary": "查看子 agent 活动",
+                    "arguments": [{
+                        "name": "id",
+                        "kind": "dynamic",
+                        "provider": "activity_agents",
+                        "required": False,
+                    }],
+                },
+                {
+                    "name": "processes",
+                    "usage": "/activity processes [id]",
+                    "summary": "查看后台任务活动",
+                    "arguments": [{
+                        "name": "id",
+                        "kind": "dynamic",
+                        "provider": "activity_processes",
+                        "required": False,
+                    }],
+                },
+                {
+                    "name": "gateway",
+                    "usage": "/activity gateway [id]",
+                    "summary": "查看 Gateway agent 活动",
+                    "arguments": [{
+                        "name": "id",
+                        "kind": "dynamic",
+                        "provider": "activity_gateway",
+                        "required": False,
+                    }],
+                },
+            ],
+        },
+        {
+            "name": "memory",
+            "command": "/memory",
+            "summary": "查看和管理记忆",
+            "usage": "/memory [list|search <query>|show <id>|delete <id>|doctor]",
+            "arguments": [],
+        },
+        {
+            "name": "help",
+            "command": "/help",
+            "summary": "显示帮助",
+            "usage": "/help",
+            "arguments": [],
+        },
+    ])
+
+
+def _plugin_command_metadata(runtime: CommandRuntime | None) -> list[dict[str, Any]]:
+    if runtime is None or runtime.plugin_manager is None:
+        return []
+    commands = getattr(runtime.plugin_manager, "commands", {})
+    if not isinstance(commands, dict):
+        return []
+    scopes = set(_plugin_command_scopes(runtime))
+    entries = []
+    for name, entry in sorted(commands.items()):
+        entry_scope = getattr(entry, "scope", "slash")
+        if entry_scope != "both" and entry_scope not in scopes:
+            continue
+        description = getattr(entry, "description", "") or "插件命令"
+        entries.append({
+            "name": name,
+            "command": f"/{name}",
+            "summary": description,
+            "usage": f"/{name}",
+            "plugin": getattr(entry, "plugin_key", "") or "",
+            "arguments": [],
+        })
+    return entries
+
+
+def _normalize_choice_items(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    choices = []
+    for item in items:
+        value = str(item.get("value") or "")
+        if not value:
+            continue
+        choices.append({
+            "value": value,
+            "label": str(item.get("label") or value),
+            "description": str(item.get("description") or ""),
+            "append_space": bool(item.get("append_space", False)),
+        })
+        if len(choices) >= limit:
+            break
+    return choices
 
 
 def _parse_command(text: str) -> tuple[str, str] | None:
@@ -233,6 +520,8 @@ async def _usage(runtime: CommandRuntime, *, current_user_message: str) -> str:
     if budget.compression_threshold:
         marker = "，已达到" if budget.over_compression_threshold else ""
         threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
+    recent_tool_calls = len(getattr(agent, "_last_tool_results", []) or [])
+    max_tool_calls = int(getattr(agent, "_max_tool_calls_per_turn", 0) or 0)
     return (
         f"会话用量\n"
         f"API 调用: {agent.session_api_calls} 次\n"
@@ -248,7 +537,8 @@ async def _usage(runtime: CommandRuntime, *, current_user_message: str) -> str:
         f"  MCP tools: {budget.mcp_tools:,}\n"
         f"剩余: {budget.remaining_context:,} tokens\n"
         f"{threshold_line}"
-        f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
+        f"\n最近一轮工具执行: {recent_tool_calls} 次\n"
+        f"单轮工具上限: {max_tool_calls} 次"
     )
 
 
@@ -355,6 +645,211 @@ async def _agents(args: str) -> str:
         count = clear_agent_runs()
         return f"已清理 {count} 条子 agent 运行记录。"
     return "用法: /agents [list [limit]|show <run_id>|clear]"
+
+
+async def _activity(runtime: CommandRuntime, args: str) -> tuple[dict[str, Any], str]:
+    parts = args.split()
+    scope = _activity_scope(parts[0]) if parts else "all"
+    if scope == "":
+        payload = {"error": "usage", "usage": "/activity [agents|processes|gateway] [id]"}
+        return payload, "用法: /activity [agents|processes|gateway] [id]"
+
+    if len(parts) >= 2:
+        detail = await _activity_detail(runtime, scope, parts[1])
+        if detail is None:
+            payload = {
+                "scope": scope,
+                "id": parts[1],
+                "not_found": True,
+            }
+            return payload, f"未找到 activity: {scope} {parts[1]}"
+        return detail, _format_activity_detail(detail)
+
+    snapshot = await _activity_snapshot(runtime)
+    payload = snapshot if scope == "all" else _activity_scope_payload(snapshot, scope)
+    return payload, _format_activity_payload(payload, scope=scope)
+
+
+async def _activity_snapshot(runtime: CommandRuntime) -> dict[str, Any]:
+    custom = await _call_optional(runtime, "activity_snapshot", limit=20)
+    if custom is not None:
+        return dict(custom)
+    from personal_agent.activity import activity_snapshot
+
+    return activity_snapshot()
+
+
+async def _activity_detail(runtime: CommandRuntime, scope: str, id_: str) -> dict[str, Any] | None:
+    kind = {
+        "agents": "sub_agent",
+        "processes": "background_process",
+        "gateway": "gateway_agent",
+    }[scope]
+    custom = await _call_optional(runtime, "activity_detail", kind, id_)
+    if custom is not None:
+        return custom
+    from personal_agent.activity import activity_detail
+
+    return activity_detail(kind, id_)
+
+
+def _activity_scope(raw: str) -> str:
+    value = raw.strip().lower()
+    aliases = {
+        "all": "all",
+        "summary": "all",
+        "list": "all",
+        "agents": "agents",
+        "agent": "agents",
+        "sub_agents": "agents",
+        "sub-agent": "agents",
+        "sub-agents": "agents",
+        "processes": "processes",
+        "process": "processes",
+        "background": "processes",
+        "background_processes": "processes",
+        "gateway": "gateway",
+        "gateways": "gateway",
+        "gateway_agents": "gateway",
+    }
+    return aliases.get(value, "")
+
+
+def _activity_scope_payload(snapshot: dict[str, Any], scope: str) -> dict[str, Any]:
+    key = {
+        "agents": "sub_agents",
+        "processes": "background_processes",
+        "gateway": "gateway_agents",
+    }[scope]
+    return {
+        "scope": scope,
+        "summary": dict(snapshot.get("summary") or {}),
+        key: dict(snapshot.get(key) or {}),
+    }
+
+
+def _format_activity_payload(payload: dict[str, Any], *, scope: str) -> str:
+    if scope == "agents":
+        return _format_activity_agents(payload.get("sub_agents") or {})
+    if scope == "processes":
+        return _format_activity_processes(payload.get("background_processes") or {})
+    if scope == "gateway":
+        return _format_activity_gateway(payload.get("gateway_agents") or {})
+    return "\n".join([
+        _format_activity_summary(payload),
+        "",
+        _format_activity_agents(payload.get("sub_agents") or {}),
+        "",
+        _format_activity_processes(payload.get("background_processes") or {}),
+        "",
+        _format_activity_gateway(payload.get("gateway_agents") or {}),
+    ]).strip()
+
+
+def _format_activity_summary(payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or {}
+    counts = summary.get("counts") or {}
+    sub_agents = counts.get("sub_agents") or {}
+    processes = counts.get("background_processes") or {}
+    gateway = counts.get("gateway_agents") or {}
+    attention = "是" if summary.get("attention_required") else "否"
+    return "\n".join([
+        "运行活动",
+        f"活跃任务: {int(summary.get('active_total') or 0)}",
+        f"需要注意: {attention}",
+        f"最长运行: {float(summary.get('longest_running_seconds') or 0.0):.1f}s",
+        (
+            "子 agent: "
+            f"active={int(sub_agents.get('active') or 0)} "
+            f"recent={int(sub_agents.get('recent') or 0)} "
+            f"failed_recent={int(sub_agents.get('failed_recent') or 0)}"
+        ),
+        (
+            "后台任务: "
+            f"running={int(processes.get('running') or 0)} "
+            f"done={int(processes.get('done') or 0)} "
+            f"killed={int(processes.get('killed') or 0)}"
+        ),
+        f"Gateway agent: running={int(gateway.get('running') or 0)}",
+    ])
+
+
+def _format_activity_agents(payload: dict[str, Any]) -> str:
+    active = payload.get("active_runs") or []
+    recent = payload.get("recent_runs") or []
+    lines = [f"子 agent: active={len(active)} recent={len(recent)}"]
+    for item in active:
+        lines.append(_format_activity_item(item))
+    for item in recent:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无子 agent 活动。")
+    return "\n".join(lines)
+
+
+def _format_activity_processes(payload: dict[str, Any]) -> str:
+    items = payload.get("items") or []
+    counts = payload.get("counts") or {}
+    lines = [
+        (
+            "后台任务: "
+            f"total={int(counts.get('total') or 0)} "
+            f"running={int(counts.get('running') or 0)} "
+            f"done={int(counts.get('done') or 0)} "
+            f"killed={int(counts.get('killed') or 0)}"
+        )
+    ]
+    for item in items:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无后台任务。")
+    return "\n".join(lines)
+
+
+def _format_activity_gateway(payload: dict[str, Any]) -> str:
+    items = payload.get("running_agent_runs") or []
+    counts = payload.get("counts") or {}
+    lines = [
+        (
+            "Gateway agent: "
+            f"running={int(counts.get('running') or 0)} "
+            f"stop_requested={int(counts.get('stop_requested') or 0)}"
+        )
+    ]
+    for item in items:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无 Gateway agent 活动。")
+    return "\n".join(lines)
+
+
+def _format_activity_item(item: dict[str, Any]) -> str:
+    item_id = item.get("id") or item.get("run_id") or item.get("session_key") or "-"
+    status = item.get("status") or "-"
+    duration = float(item.get("duration_seconds") or 0.0)
+    title = item.get("task") or item.get("command") or item.get("platform") or ""
+    suffix = f" - {_short_text(str(title), 90)}" if title else ""
+    return f"- {item_id} [{status}] {duration:.1f}s{suffix}"
+
+
+def _format_activity_detail(payload: dict[str, Any]) -> str:
+    item = payload.get("run") or payload.get("process") or payload.get("gateway_run") or {}
+    kind = payload.get("kind") or item.get("kind") or "activity"
+    item_id = payload.get("id") or item.get("id") or "-"
+    lines = [
+        f"Activity detail: {kind} {item_id}",
+        f"status: {item.get('status') or '-'}",
+        f"duration: {float(item.get('duration_seconds') or 0.0):.1f}s",
+        f"started_at: {item.get('started_at') or '-'}",
+    ]
+    if item.get("finished_at"):
+        lines.append(f"finished_at: {item.get('finished_at')}")
+    if item.get("error"):
+        lines.append(f"error: {item.get('error')}")
+    title = item.get("task") or item.get("command") or item.get("platform")
+    if title:
+        lines.append(str(title))
+    return "\n".join(lines)
 
 
 async def _memory(runtime: CommandRuntime, args: str) -> str:
@@ -526,6 +1021,7 @@ def help_text(runtime: CommandRuntime | None = None) -> str:
         "/stop - 停止当前处理",
         "/export - 导出当前会话 JSONL",
         "/agents [list|show|clear] - 查看子 agent 运行记录",
+        "/activity [agents|processes|gateway] [id] - 查看子 agent、后台任务和 Gateway agent 活动",
         "/memory [list|search|show|delete|doctor] - 查看和管理记忆",
         "/help - 显示此帮助",
         "/<skill-name> [message] - 加载技能后发送消息",

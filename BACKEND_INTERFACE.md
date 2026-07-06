@@ -63,6 +63,10 @@
 - `message_count: integer`
 - `tool_count: integer`
 - `model: string`
+- `context_used_tokens: integer`
+- `context_remaining_tokens: integer`
+- `context_percent: number`
+- `context_budget: object`
 
 ### `assistant_delta`
 
@@ -88,10 +92,54 @@
 
 - `input_tokens: integer`
 - `output_tokens: integer`
+- `cache_hit_tokens: integer`
+- `cache_miss_tokens: integer`
+- `cache_write_tokens: integer`
+- `cache_read_tokens: integer`
+- `cache_hit_rate: number`
+- `cache_diagnostics: object`
 - `tool_call_count: integer`
 - `finish_reason: string`
 - `model: string`
 - `context_window: integer`
+- `context_used_tokens: integer`
+- `context_remaining_tokens: integer`
+- `context_percent: number`
+- `context_budget: object`
+
+字段语义：
+
+- `input_tokens` / `output_tokens` 是 provider 返回的最近一次 API 调用实际消耗。
+- `context_window` 是模型上下文窗口大小。
+- `context_used_tokens` / `context_remaining_tokens` / `context_percent` 是后端按当前请求体估算的上下文占用，前端 context meter 应优先使用这些字段。
+- `context_budget` 是上下文估算明细，常见字段：
+  - `system_prompt`
+  - `history_messages`
+  - `tools_schema`
+  - `skills`
+  - `memory_injections`
+  - `mcp_tools`
+  - `used`
+  - `context_limit`
+  - `remaining_context`
+  - `percent`
+  - `compression_threshold`
+  - `over_compression_threshold`
+
+`cache_diagnostics` 用于排查 provider prompt cache 命中率，当前常见字段：
+
+- `cache_strategy: string`，`none` / `prefix` / `explicit`
+- `system_hash: string`
+- `tools_hash: string`
+- `message_prefix_hash: string`
+- `stable_prefix_hash: string`
+- `dynamic_context_hash: string`
+- `stable_block_count: integer`
+- `dynamic_block_count: integer`
+- `current_user_present: boolean`
+- `source: string`
+- `message_count: integer`
+- `tool_count: integer`
 
 ### `assistant_message`
 
@@ -302,7 +350,18 @@ async def confirm_callback(decision) -> str:
 
 切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-## 5. Tool Runs / Tool Truth
+## 5. Usage / Context Summary
+
+`/usage` 返回人类可读文本，当前语义如下：
+
+- `API 调用`、`输入 tokens`、`输出 tokens` 是当前 session 累计值，其中输入/输出来自 provider usage 报告。
+- `上下文窗口 (估算)` 使用同一套 context budget 估算逻辑，展示当前历史、system prompt、tools schema、skill、memory 和 MCP tools 占用。
+- `最近一轮工具执行` 是上一轮实际执行并记录到 agent runtime 的工具结果数量。
+- `单轮工具上限` 是当前 agent 的工具调用上限配置。
+
+注意：`最近一轮工具执行` 不等于活跃 turn 内部计数；前端如需结构化历史工具明细，应优先使用 Tool Runs / Turn Reports。
+
+## 6. Tool Runs / Tool Truth
 
 后端已持久化工具运行结果，供后续前端/desktop 查询使用。
 
@@ -316,6 +375,8 @@ async def confirm_callback(decision) -> str:
 - `ConversationService` 从 `tool_end` 事件自动记录 tool runs。
 - runtime health / doctor 会显示 tool run 摘要。
 
+`recent_tool_runs(...)` 当前支持按 `session_key` 和 `turn_id` 过滤，用于和持久化 turn report 关联。
+
 后续如果前端需要 UI 查询接口，请先明确：
 
 - 查询范围：当前 session / 最近全局 / 指定 turn。
@@ -323,7 +384,189 @@ async def confirm_callback(decision) -> str:
 - 是否需要 `full_output`。
 - 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-## 6. Compatibility Notes
+## 7. Turn Reports
+
+后端会把每轮 `AgentTurnReport` 持久化到 SQLite，作为 turn 级审计记录。它记录一轮对话的整体状态、LLM/cache usage、工具调用汇总、retry、错误、tool truth 等信息。
+
+当前能力：
+
+- `Database.save_turn_report(...)`
+- `Database.recent_turn_reports(limit=20, session_key=None, status=None)`
+- `Database.get_turn_report(report_id)`
+- `Database.turn_report_summary()`
+- `SessionStore` 有对应代理。
+- `ConversationService.recent_persisted_turn_reports(...)`
+- `ConversationService.get_persisted_turn_report(...)`
+- `ConversationService.tool_runs_for_turn_report(report_id)`
+- `ConversationService.persisted_turn_report_summary()`
+
+常见字段：
+
+- `id: integer`
+- `session_id: string`
+- `session_key: string`
+- `turn_id: string`
+- `status: string`，`completed` / `failed` / `stopped` / `context_overflow`
+- `completed: boolean`
+- `duration: number`
+- `error: string`
+- `user_message_summary: string`
+- `final_response_summary: string`
+- `llm_calls: integer`
+- `tool_calls: integer`
+- `cache_hit_tokens: integer`
+- `cache_miss_tokens: integer`
+- `cache_write_tokens: integer`
+- `cache_read_tokens: integer`
+- `source: object`
+- `report: object`，完整 `AgentTurnReport`
+- `created_at: number`
+
+完整 `report.llm` 除了 `input_tokens` / `output_tokens` / cache 字段外，也包含：
+
+- `context_window`
+- `context_used_tokens`
+- `context_remaining_tokens`
+- `context_percent`
+- `context_budget`
+
+关联语义：
+
+- `turn_reports.turn_id` 与 `tool_runs.turn_id` 对齐。
+- `session_key` 用于查询同一逻辑会话，包括发生压缩后的会话链。
+- `session_id` 用于精确归属当前物理 session。
+- `tool_runs_for_turn_report(report_id)` 会按 `session_key + turn_id` 返回该轮工具明细。
+
+## 8. Runtime / Doctor Cache Diagnostics
+
+`personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
+
+常见字段：
+
+- `provider: string`
+- `model: string`
+- `strategy: string`，`none` / `prefix` / `explicit`
+- `supports_usage: boolean`
+- `usage_fields: object`
+- `cacheable_blocks: list[string]`
+- `last_usage: object`
+- `last_diagnostics: object`
+- `error: string`
+
+`last_usage` 当前包含：
+
+- `cache_hit_tokens`
+- `cache_miss_tokens`
+- `cache_write_tokens`
+- `cache_read_tokens`
+- `cache_hit_rate`
+
+`last_diagnostics` 与 `llm_end.cache_diagnostics` 字段一致。
+
+`personal-agent doctor --section runtime --json` 的 `runtime.turns.persisted` 会暴露持久化 turn report 摘要。
+
+常见字段：
+
+- `stored: integer`
+- `last_id: integer`
+- `last_turn_id: string`
+- `last_session_key: string`
+- `last_status: string`
+- `last_error: string`
+- `last_duration: number`
+- `last_llm_calls: integer`
+- `last_tool_calls: integer`
+- `last_cache_hit_tokens: integer`
+- `last_cache_miss_tokens: integer`
+- `last_cache_write_tokens: integer`
+- `last_cache_read_tokens: integer`
+
+## 9. Activity Runtime Interface
+
+后端已提供稳定 Activity 接口，用于前端展示“系统正在做什么”。Activity 覆盖：
+
+- `sub_agent`：主 agent 委派的子任务。
+- `background_process`：`process_start` 启动的后台进程。
+- `gateway_agent`：gateway 平台消息触发的一次主 agent 处理流程。
+
+入口：
+
+- Slash command：`/activity [agents|processes|gateway] [id]`
+- Command result：`CommandResult.kind == "activity"`，结构化数据在 `payload`。
+- Runtime/query API：
+  - `activity_snapshot(limit=20)`
+  - `activity_detail(kind, id_)`
+  - `activity_choices(provider, query="", limit=20)`
+  - `slash_command_metadata()`
+  - `slash_argument_choices(provider, command="", args=(), query="", limit=20)`
+
+`/activity` overview payload：
+
+```json
+{
+  "summary": {
+    "has_active_work": true,
+    "active_total": 3,
+    "attention_required": false,
+    "longest_running_seconds": 34.6,
+    "counts": {
+      "sub_agents": {"active": 1, "recent": 12, "failed_recent": 1, "stop_requested": 0},
+      "background_processes": {"total": 2, "running": 1, "done": 1, "killed": 0},
+      "gateway_agents": {"running": 1, "stop_requested": 0}
+    }
+  },
+  "sub_agents": {"active_runs": [], "recent_runs": []},
+  "background_processes": {"items": []},
+  "gateway_agents": {"running_agent_runs": []}
+}
+```
+
+列表 item 公共字段：
+
+- `id: string`
+- `kind: "sub_agent" | "background_process" | "gateway_agent"`
+- `status: "running" | "completed" | "failed" | "stopped" | "stopping"`
+- `started_at: string`
+- `finished_at: string`
+- `duration_seconds: number`
+- `stop_requested: boolean`
+- `error: string`
+- `attention_required: boolean`
+
+各类 item 还会提供前端常用字段：
+
+- `sub_agent`：`run_id`, `role`, `task`, `task_preview`, `usage`, `quota`, `tool_counts`, `result_preview`。
+- `background_process`：`pid`, `command`, `command_preview`, `cwd`, `returncode`, `has_stdout`, `has_stderr`, `stdout_bytes`, `stderr_bytes`, `output_preview`, `stdout_truncated`, `stderr_truncated`。
+- `gateway_agent`：`session_key`, `platform`, `chat_id`, `user_id`。
+
+详情 payload：
+
+```json
+{"kind": "sub_agent", "id": "abc123", "run": {}}
+{"kind": "background_process", "id": "3", "process": {}}
+{"kind": "gateway_agent", "id": "telegram:c1:u1", "gateway_run": {}}
+```
+
+Slash metadata：
+
+- `slash_command_metadata()` 中 `/activity` 声明 `result_kind="activity"`。
+- `/activity` 的 `scope` 参数是 choice：`agents`, `processes`, `gateway`。
+- `/activity agents [id]` 使用 dynamic provider `activity_agents`。
+- `/activity processes [id]` 使用 dynamic provider `activity_processes`。
+- `/activity gateway [id]` 使用 dynamic provider `activity_gateway`。
+
+动态候选外形：
+
+```json
+{
+  "value": "abc123",
+  "label": "abc123",
+  "description": "reviewer running",
+  "append_space": false
+}
+```
+
+## 10. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

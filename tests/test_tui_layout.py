@@ -109,6 +109,21 @@ def test_meter_bar_shows_model_and_usage():
     assert "0%" in bar
 
 
+def test_meter_bar_prefers_context_usage():
+    from personal_agent.tui.layout import _meter_bar
+
+    state = UIState()
+    state.model = "deepseek-v4-flash"
+    state.context_window = 1_000_000
+    state.input_tokens = 213
+    state.output_tokens = 50
+    state.context_used_tokens = 12_345
+    state.context_percent = 1.2
+    bar = _meter_bar(state)
+    assert "12.3k/1M" in bar
+    assert "1%" in bar
+
+
 def test_hint_bar_uses_distinct_mode_colors():
     from personal_agent.tui import theme
     from personal_agent.tui.layout import _hint_bar

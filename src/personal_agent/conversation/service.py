@@ -57,6 +57,9 @@ class ConversationService:
         )
         self.turn_reports: deque[dict[str, Any]] = deque(maxlen=TURN_REPORT_HISTORY_LIMIT)
         self._recent_tool_runs: deque[dict[str, Any]] = deque(maxlen=TURN_REPORT_HISTORY_LIMIT)
+        self._persisted_turn_report_count = 0
+        self._last_persisted_turn_report: dict[str, Any] = {}
+        self._last_persisted_turn_report_error = ""
 
     async def run_turn(self, session_key: str, source, text: str) -> ConversationTurnResult:
         return await self.run_turn_events(session_key, source, text)
@@ -150,6 +153,7 @@ class ConversationService:
         turn_report = dict(result.get("turn_report") or {})
         if turn_report:
             self.record_turn_report(session_key, source, turn_report)
+            await self._record_turn_report(stored_session_id, session_key, source, turn_report)
         await self._record_tool_runs(
             stored_session_id,
             session_key,
@@ -206,6 +210,12 @@ class ConversationService:
             "last_tool_calls": int(tools.get("total") or 0),
             "last_input_tokens": int(llm.get("input_tokens") or 0),
             "last_output_tokens": int(llm.get("output_tokens") or 0),
+            "last_cache_hit_tokens": int(llm.get("cache_hit_tokens") or 0),
+            "last_cache_miss_tokens": int(llm.get("cache_miss_tokens") or 0),
+            "last_cache_write_tokens": int(llm.get("cache_write_tokens") or 0),
+            "last_cache_read_tokens": int(llm.get("cache_read_tokens") or 0),
+            "last_cache_hit_rate": float(llm.get("cache_hit_rate") or 0.0),
+            "last_cache_diagnostics": dict(llm.get("cache_diagnostics") or {}),
             "last_retries": len(retries) if isinstance(retries, list) else 0,
             "last_tool_truth_warnings": list(tool_truth.get("warnings") or []),
             "last_claimed_but_no_tool_call": bool(
@@ -292,8 +302,13 @@ class ConversationService:
         *,
         limit: int = 20,
         session_key: str | None = None,
+        turn_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return await self.session_store.recent_tool_runs(limit=limit, session_key=session_key)
+        return await self.session_store.recent_tool_runs(
+            limit=limit,
+            session_key=session_key,
+            turn_id=turn_id,
+        )
 
     async def get_tool_run(self, run_id: int) -> dict[str, Any] | None:
         return await self.session_store.get_tool_run(run_id)
@@ -301,9 +316,73 @@ class ConversationService:
     async def tool_run_summary(self, *, limit: int = 50) -> dict[str, Any]:
         return await self.session_store.tool_run_summary(limit=limit)
 
+    async def recent_persisted_turn_reports(
+        self,
+        *,
+        limit: int = 20,
+        session_key: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self.session_store.recent_turn_reports(
+            limit=limit,
+            session_key=session_key,
+            status=status,
+        )
+
+    async def get_persisted_turn_report(self, report_id: int) -> dict[str, Any] | None:
+        return await self.session_store.get_turn_report(report_id)
+
+    async def tool_runs_for_turn_report(
+        self,
+        report_id: int,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        report = await self.get_persisted_turn_report(report_id)
+        if not report:
+            return []
+        return await self.recent_tool_runs(
+            limit=limit,
+            session_key=str(report.get("session_key") or ""),
+            turn_id=str(report.get("turn_id") or ""),
+        )
+
+    async def persisted_turn_report_summary(self) -> dict[str, Any]:
+        try:
+            summary = await self.session_store.turn_report_summary()
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).exception("Failed to summarize persisted turn reports")
+            summary = _empty_persisted_turn_report_summary()
+            summary["last_error"] = f"{type(exc).__name__}: {exc}"
+            return summary
+        self._apply_persisted_turn_summary(summary)
+        return summary
+
     def tool_run_memory_summary(self, limit: int = 50) -> dict[str, Any]:
         recent = list(self._recent_tool_runs)[-limit:] if limit > 0 else []
         return _tool_run_summary(recent)
+
+    def turn_report_persistence_summary(self) -> dict[str, Any]:
+        if not self._last_persisted_turn_report:
+            summary = _empty_persisted_turn_report_summary()
+            summary["stored"] = self._persisted_turn_report_count
+            summary["last_error"] = self._last_persisted_turn_report_error
+            return summary
+        summary = dict(self._last_persisted_turn_report)
+        summary["stored"] = max(
+            int(summary.get("stored") or 0),
+            self._persisted_turn_report_count,
+        )
+        if self._last_persisted_turn_report_error:
+            summary["last_error"] = self._last_persisted_turn_report_error
+        return summary
+
+    def _apply_persisted_turn_summary(self, summary: dict[str, Any]) -> None:
+        self._last_persisted_turn_report = dict(summary)
+        self._persisted_turn_report_count = int(summary.get("stored") or 0)
+        self._last_persisted_turn_report_error = ""
 
     async def get_or_create_agent(self, session_key: str):
         agent = self.agent_cache.get(session_key)
@@ -354,6 +433,27 @@ class ConversationService:
             logging.getLogger(__name__).exception("Failed to persist tool runs")
             return
         self._recent_tool_runs.extend(runs)
+
+    async def _record_turn_report(
+        self,
+        session_id: str,
+        session_key: str,
+        source,
+        report: dict[str, Any],
+    ) -> None:
+        envelope = _turn_report_envelope(session_id, session_key, source, report)
+        try:
+            report_id = await self.session_store.save_turn_report(envelope)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Failed to persist turn report")
+            self._last_persisted_turn_report_error = "persist_failed"
+            return
+        self._persisted_turn_report_count += 1
+        summary = _persisted_turn_report_summary_from_envelope(envelope, report_id)
+        summary["stored"] = self._persisted_turn_report_count
+        self._apply_persisted_turn_summary(summary)
 
     async def load_history(self, session_key: str, source) -> list[dict]:
         session = await self.session_store.get_or_create(session_key, source)
@@ -451,6 +551,8 @@ class ConversationService:
         if budget.compression_threshold:
             marker = "，已达到" if budget.over_compression_threshold else ""
             threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
+        recent_tool_calls = len(getattr(agent, "_last_tool_results", []) or [])
+        max_tool_calls = int(getattr(agent, "_max_tool_calls_per_turn", 0) or 0)
         return (
             f"会话用量\n"
             f"API 调用: {agent.session_api_calls} 次\n"
@@ -466,7 +568,8 @@ class ConversationService:
             f"  MCP tools: {budget.mcp_tools:,}\n"
             f"剩余: {budget.remaining_context:,} tokens\n"
             f"{threshold_line}"
-            f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
+            f"\n最近一轮工具执行: {recent_tool_calls} 次\n"
+            f"单轮工具上限: {max_tool_calls} 次"
         )
 
     def get_cached_agent(self, session_key: str):
@@ -557,6 +660,23 @@ def _source_snapshot(source) -> dict[str, str]:
     }
 
 
+def _turn_report_envelope(
+    session_id: str,
+    session_key: str,
+    source,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "session_key": session_key,
+        "source": _source_snapshot(source),
+        "created_at": time.time(),
+        "status": str(report.get("status") or ""),
+        "turn_id": str(report.get("turn_id") or ""),
+        "report": dict(report),
+    }
+
+
 def _empty_turn_report_summary() -> dict[str, Any]:
     return {
         "stored": 0,
@@ -567,9 +687,57 @@ def _empty_turn_report_summary() -> dict[str, Any]:
         "last_tool_calls": 0,
         "last_input_tokens": 0,
         "last_output_tokens": 0,
+        "last_cache_hit_tokens": 0,
+        "last_cache_miss_tokens": 0,
+        "last_cache_write_tokens": 0,
+        "last_cache_read_tokens": 0,
+        "last_cache_hit_rate": 0.0,
+        "last_cache_diagnostics": {},
         "last_retries": 0,
         "last_tool_truth_warnings": [],
         "last_claimed_but_no_tool_call": False,
+    }
+
+
+def _empty_persisted_turn_report_summary() -> dict[str, Any]:
+    return {
+        "stored": 0,
+        "last_id": 0,
+        "last_turn_id": "",
+        "last_session_key": "",
+        "last_status": "",
+        "last_error": "",
+        "last_duration": 0.0,
+        "last_llm_calls": 0,
+        "last_tool_calls": 0,
+        "last_cache_hit_tokens": 0,
+        "last_cache_miss_tokens": 0,
+        "last_cache_write_tokens": 0,
+        "last_cache_read_tokens": 0,
+    }
+
+
+def _persisted_turn_report_summary_from_envelope(
+    envelope: dict[str, Any],
+    report_id: int,
+) -> dict[str, Any]:
+    report = envelope.get("report") if isinstance(envelope.get("report"), dict) else {}
+    llm = report.get("llm") if isinstance(report.get("llm"), dict) else {}
+    tools = report.get("tools") if isinstance(report.get("tools"), dict) else {}
+    return {
+        "stored": 1,
+        "last_id": int(report_id or 0),
+        "last_turn_id": str(report.get("turn_id") or envelope.get("turn_id") or ""),
+        "last_session_key": str(envelope.get("session_key") or ""),
+        "last_status": str(report.get("status") or envelope.get("status") or ""),
+        "last_error": str(report.get("error") or ""),
+        "last_duration": _as_float(report.get("duration")),
+        "last_llm_calls": _as_int(llm.get("calls")),
+        "last_tool_calls": _as_int(tools.get("total")),
+        "last_cache_hit_tokens": _as_int(llm.get("cache_hit_tokens")),
+        "last_cache_miss_tokens": _as_int(llm.get("cache_miss_tokens")),
+        "last_cache_write_tokens": _as_int(llm.get("cache_write_tokens")),
+        "last_cache_read_tokens": _as_int(llm.get("cache_read_tokens")),
     }
 
 
@@ -702,6 +870,13 @@ def _as_float(value: Any) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _turn_status(result: dict[str, Any], *, completed: bool, context_overflow: bool) -> str:

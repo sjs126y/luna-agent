@@ -6,7 +6,9 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from textwrap import shorten
 from typing import Literal
 
 from personal_agent.tools.entry import ToolEntry
@@ -264,6 +266,71 @@ async def _process_wait(pid: int, timeout: int = 30) -> str:
         return f"Error waiting for process [{pid}]: {e}"
 
 
+def process_snapshot(status: str = "all", limit: int | None = None) -> dict:
+    """Return structured process state for UI/runtime activity views."""
+    if status not in {"running", "done", "killed", "all"}:
+        status = "all"
+
+    processes = [
+        process
+        for process in sorted(_processes.values(), key=lambda item: item.pid, reverse=True)
+        if status == "all" or process.status == status
+    ]
+    if limit is not None:
+        limit = max(1, int(limit))
+        processes = processes[:limit]
+
+    items = [_process_record(process) for process in processes]
+    return {
+        "total": len(_processes),
+        "running": sum(1 for process in _processes.values() if process.status == "running"),
+        "done": sum(1 for process in _processes.values() if process.status == "done"),
+        "killed": sum(1 for process in _processes.values() if process.status == "killed"),
+        "items": items,
+    }
+
+
+def process_detail(pid: int) -> dict | None:
+    """Return full retained details for a tracked background process."""
+    tp = _processes.get(int(pid))
+    if tp is None:
+        return None
+    data = _process_record(tp)
+    data.update({
+        "stdout": tp.stdout,
+        "stderr": tp.stderr,
+        "stdout_truncated": bool(tp.stdout_truncated),
+        "stderr_truncated": bool(tp.stderr_truncated),
+    })
+    return data
+
+
+def process_choices(query: str = "", limit: int = 20) -> list[dict]:
+    """Return slash-completion candidates for tracked background processes."""
+    query = str(query or "").strip().lower()
+    processes = sorted(
+        _processes.values(),
+        key=lambda item: (item.status != "running", -item.pid),
+    )
+    choices = []
+    for process in processes:
+        haystack = f"{process.pid} {process.status} {process.command}".lower()
+        if query and query not in haystack:
+            continue
+        choices.append({
+            "value": str(process.pid),
+            "label": f"[{process.pid}] {process.status}",
+            "description": (
+                f"{_runtime_seconds(process):.1f}s - "
+                f"{shorten(process.command, width=90, placeholder='...')}"
+            ),
+            "append_space": False,
+        })
+        if len(choices) >= max(1, int(limit)):
+            break
+    return choices
+
+
 def _format_started(tp: TrackedProcess) -> str:
     return (
         f"Process [{tp.pid}] started\n"
@@ -271,6 +338,49 @@ def _format_started(tp: TrackedProcess) -> str:
         f"cwd: {tp.cwd or '-'}\n"
         f"command: {tp.command}"
     )
+
+
+def _process_record(tp: TrackedProcess) -> dict:
+    public_status = "running"
+    if tp.status == "killed":
+        public_status = "stopped"
+    elif tp.status == "done":
+        public_status = "failed" if tp.returncode not in {None, 0} else "completed"
+
+    error = ""
+    if public_status == "failed":
+        error = f"exit_code={tp.returncode}"
+
+    return {
+        "id": str(tp.pid),
+        "pid": tp.pid,
+        "kind": "background_process",
+        "status": public_status,
+        "raw_status": tp.status,
+        "command": tp.command,
+        "command_preview": shorten(tp.command, width=160, placeholder="..."),
+        "cwd": tp.cwd,
+        "started_at": _iso_from_epoch(tp.started_at),
+        "finished_at": _iso_from_epoch(tp.finished_at) if tp.finished_at is not None else "",
+        "duration_seconds": round(_runtime_seconds(tp), 3),
+        "returncode": tp.returncode,
+        "stop_requested": tp.status == "killed",
+        "error": error,
+        "attention_required": public_status == "failed",
+        "stdout_tail": _tail(tp.stdout.strip(), 1000),
+        "stderr_tail": _tail(tp.stderr.strip(), 1000),
+        "has_stdout": bool(tp.stdout),
+        "has_stderr": bool(tp.stderr),
+        "stdout_bytes": len(tp.stdout.encode("utf-8")),
+        "stderr_bytes": len(tp.stderr.encode("utf-8")),
+        "output_preview": _tail((tp.stdout or tp.stderr).strip(), 1000),
+        "stdout_truncated": bool(tp.stdout_truncated),
+        "stderr_truncated": bool(tp.stderr_truncated),
+    }
+
+
+def _iso_from_epoch(value: float) -> str:
+    return datetime.fromtimestamp(value, tz=timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _format_result(tp: TrackedProcess, status: str) -> str:

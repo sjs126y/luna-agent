@@ -73,6 +73,33 @@ CREATE INDEX IF NOT EXISTS idx_tool_runs_session ON tool_runs(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_tool_runs_session_key ON tool_runs(session_key, id);
 CREATE INDEX IF NOT EXISTS idx_tool_runs_turn ON tool_runs(turn_id, id);
 CREATE INDEX IF NOT EXISTS idx_tool_runs_status ON tool_runs(status, id);
+
+CREATE TABLE IF NOT EXISTS turn_reports (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id             TEXT NOT NULL REFERENCES sessions(session_id),
+    session_key            TEXT NOT NULL,
+    turn_id                TEXT DEFAULT '',
+    status                 TEXT NOT NULL,
+    completed              INTEGER DEFAULT 0,
+    duration               REAL DEFAULT 0,
+    error                  TEXT DEFAULT '',
+    user_message_summary   TEXT DEFAULT '',
+    final_response_summary TEXT DEFAULT '',
+    llm_calls              INTEGER DEFAULT 0,
+    tool_calls             INTEGER DEFAULT 0,
+    cache_hit_tokens       INTEGER DEFAULT 0,
+    cache_miss_tokens      INTEGER DEFAULT 0,
+    cache_write_tokens     INTEGER DEFAULT 0,
+    cache_read_tokens      INTEGER DEFAULT 0,
+    source_json            TEXT DEFAULT '{}',
+    report_json            TEXT NOT NULL,
+    created_at             REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_turn_reports_session ON turn_reports(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_turn_reports_session_key ON turn_reports(session_key, id);
+CREATE INDEX IF NOT EXISTS idx_turn_reports_turn ON turn_reports(turn_id);
+CREATE INDEX IF NOT EXISTS idx_turn_reports_status ON turn_reports(status, id);
 """
 
 
@@ -135,6 +162,7 @@ class Database:
 
     async def delete_session(self, session_id: str) -> None:
         async with self._write_lock:
+            await self._conn.execute("DELETE FROM turn_reports WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM tool_runs WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
@@ -316,14 +344,19 @@ class Database:
         *,
         limit: int = 20,
         session_key: str | None = None,
+        turn_id: str | None = None,
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
+        clauses: list[str] = []
         params: list[Any] = []
-        where = ""
         if session_key:
-            where = "WHERE session_key = ?"
+            clauses.append("session_key = ?")
             params.append(session_key)
+        if turn_id:
+            clauses.append("turn_id = ?")
+            params.append(turn_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(int(limit))
         rows = await self._conn.execute(
             f"""SELECT * FROM tool_runs
@@ -386,6 +419,106 @@ class Database:
             "truncated": truncated,
         }
 
+    # ── turn reports ──────────────────────────────────
+
+    async def save_turn_report(self, envelope: dict[str, Any]) -> int:
+        report = envelope.get("report") if isinstance(envelope.get("report"), dict) else {}
+        llm = report.get("llm") if isinstance(report.get("llm"), dict) else {}
+        tools = report.get("tools") if isinstance(report.get("tools"), dict) else {}
+        source = envelope.get("source") if isinstance(envelope.get("source"), dict) else {}
+        row = (
+            str(envelope.get("session_id") or ""),
+            str(envelope.get("session_key") or ""),
+            str(report.get("turn_id") or envelope.get("turn_id") or ""),
+            str(report.get("status") or envelope.get("status") or ""),
+            1 if report.get("completed") else 0,
+            _as_float(report.get("duration")),
+            clean_text(str(report.get("error") or "")),
+            clean_text(str(report.get("user_message_summary") or "")),
+            clean_text(str(report.get("final_response_summary") or "")),
+            _as_int(llm.get("calls")),
+            _as_int(tools.get("total")),
+            _as_int(llm.get("cache_hit_tokens")),
+            _as_int(llm.get("cache_miss_tokens")),
+            _as_int(llm.get("cache_write_tokens")),
+            _as_int(llm.get("cache_read_tokens")),
+            json.dumps(clean_payload(source), ensure_ascii=False, sort_keys=True),
+            json.dumps(clean_payload(report), ensure_ascii=False, sort_keys=True),
+            _as_float(envelope.get("created_at")) or time.time(),
+        )
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                """INSERT INTO turn_reports (
+                    session_id, session_key, turn_id, status, completed, duration,
+                    error, user_message_summary, final_response_summary, llm_calls,
+                    tool_calls, cache_hit_tokens, cache_miss_tokens,
+                    cache_write_tokens, cache_read_tokens, source_json, report_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                row,
+            )
+            await self._conn.commit()
+        return int(cursor.lastrowid or 0)
+
+    async def recent_turn_reports(
+        self,
+        *,
+        limit: int = 20,
+        session_key: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_key:
+            clauses.append("session_key = ?")
+            params.append(session_key)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(limit))
+        rows = await self._conn.execute(
+            f"""SELECT * FROM turn_reports
+                {where}
+                ORDER BY id DESC
+                LIMIT ?""",
+            params,
+        )
+        items: list[dict[str, Any]] = []
+        async for row in rows:
+            items.append(_turn_report_row(row))
+        items.reverse()
+        return items
+
+    async def get_turn_report(self, report_id: int) -> dict[str, Any] | None:
+        rows = await self._conn.execute(
+            "SELECT * FROM turn_reports WHERE id = ?",
+            (report_id,),
+        )
+        async for row in rows:
+            return _turn_report_row(row)
+        return None
+
+    async def turn_report_summary(self) -> dict[str, Any]:
+        count_rows = await self._conn.execute("SELECT COUNT(*) AS cnt FROM turn_reports")
+        stored = 0
+        async for row in count_rows:
+            stored = int(row["cnt"] or 0)
+            break
+        if stored <= 0:
+            return _empty_turn_report_persistence_summary()
+        rows = await self._conn.execute(
+            """SELECT * FROM turn_reports
+               ORDER BY id DESC
+               LIMIT 1"""
+        )
+        async for row in rows:
+            item = _turn_report_row(row)
+            return _turn_report_persistence_summary_from_item(item, stored=stored)
+        return _empty_turn_report_persistence_summary()
+
 
 def _tool_run_row(row) -> dict[str, Any]:
     return {
@@ -425,6 +558,89 @@ def _empty_tool_run_summary() -> dict[str, Any]:
         "timeouts": 0,
         "truncated": 0,
     }
+
+
+def _turn_report_row(row) -> dict[str, Any]:
+    source = _loads_object(row["source_json"])
+    report = _loads_object(row["report_json"])
+    return {
+        "id": int(row["id"]),
+        "session_id": str(row["session_id"] or ""),
+        "session_key": str(row["session_key"] or ""),
+        "turn_id": str(row["turn_id"] or ""),
+        "status": str(row["status"] or ""),
+        "completed": bool(row["completed"]),
+        "duration": float(row["duration"] or 0.0),
+        "error": str(row["error"] or ""),
+        "user_message_summary": str(row["user_message_summary"] or ""),
+        "final_response_summary": str(row["final_response_summary"] or ""),
+        "llm_calls": int(row["llm_calls"] or 0),
+        "tool_calls": int(row["tool_calls"] or 0),
+        "cache_hit_tokens": int(row["cache_hit_tokens"] or 0),
+        "cache_miss_tokens": int(row["cache_miss_tokens"] or 0),
+        "cache_write_tokens": int(row["cache_write_tokens"] or 0),
+        "cache_read_tokens": int(row["cache_read_tokens"] or 0),
+        "source": source,
+        "report": report,
+        "created_at": float(row["created_at"] or 0.0),
+    }
+
+
+def _loads_object(value: Any) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(str(value))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _empty_turn_report_persistence_summary() -> dict[str, Any]:
+    return {
+        "stored": 0,
+        "last_id": 0,
+        "last_turn_id": "",
+        "last_session_key": "",
+        "last_status": "",
+        "last_error": "",
+        "last_duration": 0.0,
+        "last_llm_calls": 0,
+        "last_tool_calls": 0,
+        "last_cache_hit_tokens": 0,
+        "last_cache_miss_tokens": 0,
+        "last_cache_write_tokens": 0,
+        "last_cache_read_tokens": 0,
+    }
+
+
+def _turn_report_persistence_summary_from_item(
+    item: dict[str, Any],
+    *,
+    stored: int,
+) -> dict[str, Any]:
+    return {
+        "stored": int(stored),
+        "last_id": int(item.get("id") or 0),
+        "last_turn_id": str(item.get("turn_id") or ""),
+        "last_session_key": str(item.get("session_key") or ""),
+        "last_status": str(item.get("status") or ""),
+        "last_error": str(item.get("error") or ""),
+        "last_duration": float(item.get("duration") or 0.0),
+        "last_llm_calls": int(item.get("llm_calls") or 0),
+        "last_tool_calls": int(item.get("tool_calls") or 0),
+        "last_cache_hit_tokens": int(item.get("cache_hit_tokens") or 0),
+        "last_cache_miss_tokens": int(item.get("cache_miss_tokens") or 0),
+        "last_cache_write_tokens": int(item.get("cache_write_tokens") or 0),
+        "last_cache_read_tokens": int(item.get("cache_read_tokens") or 0),
+    }
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _as_float(value: Any) -> float:

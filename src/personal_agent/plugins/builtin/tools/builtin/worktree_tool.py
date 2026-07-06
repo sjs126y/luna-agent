@@ -121,13 +121,33 @@ async def _worktree_cleanup(name: str, force: bool = False) -> str:
     if not worktree_path.exists():
         return f"Error: worktree '{name}' not found"
 
+    if not force:
+        rc, out, err = await _git("status", "--porcelain", cwd=str(worktree_path))
+        if rc != 0:
+            return f"Error checking worktree status: {err}"
+        if out.strip():
+            return (
+                f"Error: worktree '{name}' has uncommitted changes. "
+                "Commit, merge, or call cleanup with force=true to discard them.\n"
+                f"Changes:\n{out[:500]}"
+            )
+        rc, out, err = await _git("branch", "--merged")
+        if rc == 0 and branch_name not in out.split():
+            return (
+                f"Error: branch '{branch_name}' is not merged. "
+                "Merge it first or call cleanup with force=true to discard it."
+            )
+
     # Remove worktree
-    rc, out, err = await _git("worktree", "remove", str(worktree_path), "--force")
+    args = ["worktree", "remove", str(worktree_path)]
+    if force:
+        args.append("--force")
+    rc, out, err = await _git(*args)
     if rc != 0:
         return f"Error removing worktree: {err}"
 
     # Delete the branch
-    await _git("branch", "-D", branch_name)
+    await _git("branch", "-D" if force else "-d", branch_name)
 
     # Clean up directory if git left anything
     try:
@@ -182,6 +202,11 @@ tool_registry.register(ToolEntry(
     },
     handler=_wt_create,
     toolset="builtin",
+    permission_category="write",
+    tags=["git", "worktree", "write"],
+    risk_level="medium",
+    usage_hint="Use to create an isolated git worktree before parallel backend/frontend work.",
+    is_parallel_safe=False,
 ))
 
 tool_registry.register(ToolEntry(
@@ -196,7 +221,12 @@ tool_registry.register(ToolEntry(
     },
     handler=_wt_merge,
     toolset="builtin",
+    permission_category="write",
+    tags=["git", "worktree", "merge"],
+    risk_level="high",
+    usage_hint="Use after reviewing and committing worktree changes; may create merge conflicts.",
     is_destructive=True,
+    is_parallel_safe=False,
 ))
 
 tool_registry.register(ToolEntry(
@@ -212,7 +242,12 @@ tool_registry.register(ToolEntry(
     },
     handler=_wt_cleanup,
     toolset="builtin",
+    permission_category="write",
+    tags=["git", "worktree", "cleanup"],
+    risk_level="high",
+    usage_hint="Use after merge to remove worktree records; force=true discards unmerged work.",
     is_destructive=True,
+    is_parallel_safe=False,
 ))
 
 tool_registry.register(ToolEntry(
@@ -221,4 +256,8 @@ tool_registry.register(ToolEntry(
     schema={"type": "object", "properties": {}, "required": []},
     handler=_wt_list,
     toolset="builtin",
+    permission_category="read",
+    tags=["git", "worktree", "read"],
+    risk_level="low",
+    usage_hint="Use to inspect active git worktrees before merge or cleanup.",
 ))

@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 
 from personal_agent.agent.factory import create_agent_runtime
+from personal_agent.agent.agent import _build_system_prompt, init_agent
 from personal_agent.config import Settings
-from personal_agent.llm.provider import provider_registry
+from personal_agent.llm.provider import ProviderProfile, provider_registry
 from personal_agent.llm.transport_registry import transport_registry
 from personal_agent.models.messages import NormalizedResponse
 
@@ -78,3 +79,20 @@ async def test_create_agent_runtime_wires_plugin_hooks(tmp_path):
     assert runtime.agent.hooks.on_after_llm_call
     assert runtime.agent.hooks.on_before_tool_exec
     assert runtime.agent.hooks.on_after_tool_exec
+
+
+def test_system_prompt_includes_tool_protocol_before_tool_list():
+    provider = ProviderProfile(name="test", base_url="https://example.test", api_key="", model="test-model")
+    agent = init_agent(FakeTransport(provider), provider=provider)
+    agent.tools = [
+        {"name": "web_search", "description": "Search the web"},
+        {"name": "read", "description": "Read a file"},
+    ]
+
+    prompt = _build_system_prompt(agent, "base system")
+
+    assert "工具调用规则：" in prompt
+    assert "必须通过 tool call 调用对应工具" in prompt
+    assert "不要用文字声称已经调用" in prompt
+    assert prompt.index("工具调用规则：") < prompt.index("可用工具：")
+    assert prompt.index("- read: Read a file") < prompt.index("- web_search: Search the web")

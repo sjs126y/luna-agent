@@ -40,6 +40,30 @@ class FailingTransport(MockTransport):
         raise RuntimeError("transport boom")
 
 
+class PlanProbeTransport(MockTransport):
+    def __init__(self, responses: list[NormalizedResponse]):
+        super().__init__(responses)
+        self.request_plan = None
+
+    def build_request_from_plan(self, plan, max_tokens):
+        return {}
+
+    def last_cache_diagnostics(self):
+        return {}
+
+    async def call(
+        self,
+        messages,
+        system_prompt="",
+        tools=None,
+        max_tokens=4096,
+        stream=False,
+        request_plan=None,
+    ):
+        self.request_plan = request_plan
+        return await super().call(messages, system_prompt, tools, max_tokens, stream)
+
+
 class ProbeCompressor:
     threshold_tokens = 1
     protect_head = 2
@@ -91,6 +115,8 @@ async def test_simple_response(provider):
     assert report["llm"]["calls"] == 1
     assert report["llm"]["input_tokens"] == 5
     assert report["llm"]["output_tokens"] == 3
+    assert report["llm"]["cache_hit_tokens"] == 0
+    assert report["llm"]["cache_hit_rate"] == 0.0
     assert report["tools"]["total"] == 0
     assert report["tool_truth"]["calls_total"] == 0
     assert report["tool_truth"]["results_total"] == 0
@@ -98,6 +124,8 @@ async def test_simple_response(provider):
     assert report["tool_truth"]["assistant_claim"]["claimed_but_no_tool_call"] is False
     assert report["tool_truth"]["warnings"] == []
     assert report["final_response_summary"] == "Hello!"
+    assert report["llm"]["context_used_tokens"] > 0
+    assert report["llm"]["context_budget"]["used"] == report["llm"]["context_used_tokens"]
     assert [event.type for event in recorder.events] == [
         "turn_start",
         "llm_start",
@@ -106,7 +134,27 @@ async def test_simple_response(provider):
         "turn_end",
     ]
     assert recorder.events[2].data["input_tokens"] == 5
+    assert recorder.events[2].data["cache_hit_tokens"] == 0
+    assert recorder.events[2].data["context_used_tokens"] > 0
+    assert recorder.events[2].data["context_remaining_tokens"] >= 0
+    assert recorder.events[2].data["context_budget"]["used"] == recorder.events[2].data["context_used_tokens"]
     assert recorder.events[3].message == "Hello!"
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_passes_request_plan_to_supported_transport(provider):
+    transport = PlanProbeTransport([
+        NormalizedResponse(text="Hello!", finish_reason="end_turn",
+                          usage={"input_tokens": 5, "output_tokens": 3}),
+    ])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi")
+
+    await run_conversation(agent, ctx)
+
+    assert transport.request_plan is not None
+    assert transport.request_plan.stable_system == agent._cached_system_prompt
+    assert transport.request_plan.current_user["role"] == "user"
 
 
 @pytest.mark.asyncio
