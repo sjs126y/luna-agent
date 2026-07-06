@@ -413,7 +413,46 @@ SLASH_COMMAND_REGISTRY_VERSION = 1
 - `available_in`
 - `mutates_state`
 - `requires_agent`
+- `arguments`
 - `children`
+
+`arguments` metadata：
+
+- `name`
+- `kind`: `choice` 或 `dynamic`
+- `choices`: 静态候选列表。
+- `provider`: 动态候选 provider。
+- `required`
+
+候选项字段：
+
+- `value`
+- `label`
+- `description`
+- `append_space`
+
+当前静态候选：
+
+- `/mode set <mode>`: `Read Only`, `Ask First`, `Edit Freely`, `Full Auto`
+- `/allow <category>`: `write`, `bash`, `background`, `network`, `destructive`, `all`
+
+当前动态 provider：
+
+- `tools`: 用于 `/tools show <name>`。
+- `sessions`: 用于 `/session switch <name>` 和 `/session delete [name]`。
+
+动态候选查询入口：
+
+```python
+await slash_argument_choices(
+    runtime,
+    provider,
+    command="tools",
+    args=("show",),
+    query="rea",
+    limit=20,
+)
+```
 
 未知命令或子命令会尽量返回 `suggestions`。完全未知且可能是技能命令的输入仍保持原有 fallback，不强行拦截。
 

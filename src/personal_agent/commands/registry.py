@@ -10,6 +10,40 @@ SLASH_COMMAND_REGISTRY_VERSION = 1
 
 
 @dataclass(frozen=True)
+class ArgumentChoiceSpec:
+    value: str
+    label: str
+    description: str = ""
+    append_space: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "label": self.label,
+            "description": self.description,
+            "append_space": self.append_space,
+        }
+
+
+@dataclass(frozen=True)
+class CommandArgumentSpec:
+    name: str
+    kind: str
+    choices: tuple[ArgumentChoiceSpec, ...] = ()
+    provider: str = ""
+    required: bool = True
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "choices": [choice.as_dict() for choice in self.choices],
+            "provider": self.provider,
+            "required": self.required,
+        }
+
+
+@dataclass(frozen=True)
 class CommandSpec:
     name: str
     summary: str
@@ -17,6 +51,7 @@ class CommandSpec:
     category: str = "general"
     aliases: tuple[str, ...] = ()
     children: tuple["CommandSpec", ...] = field(default_factory=tuple)
+    arguments: tuple[CommandArgumentSpec, ...] = field(default_factory=tuple)
     available_in: tuple[str, ...] = ("chat", "gateway")
     mutates_state: bool = False
     requires_agent: bool = False
@@ -31,8 +66,47 @@ class CommandSpec:
             "available_in": list(self.available_in),
             "mutates_state": self.mutates_state,
             "requires_agent": self.requires_agent,
+            "arguments": [argument.as_dict() for argument in self.arguments],
             "children": [child.as_dict() for child in self.children],
         }
+
+
+_MODE_ARGUMENT = CommandArgumentSpec(
+    name="mode",
+    kind="choice",
+    choices=(
+        ArgumentChoiceSpec("Read Only", "Read Only", "只读"),
+        ArgumentChoiceSpec("Ask First", "Ask First", "执行前确认"),
+        ArgumentChoiceSpec("Edit Freely", "Edit Freely", "可编辑"),
+        ArgumentChoiceSpec("Full Auto", "Full Auto", "全自动"),
+    ),
+)
+
+_ALLOW_ARGUMENT = CommandArgumentSpec(
+    name="category",
+    kind="choice",
+    choices=(
+        ArgumentChoiceSpec("write", "write", "文件写入"),
+        ArgumentChoiceSpec("bash", "bash", "终端命令"),
+        ArgumentChoiceSpec("background", "background", "后台任务"),
+        ArgumentChoiceSpec("network", "network", "网络访问"),
+        ArgumentChoiceSpec("destructive", "destructive", "高风险操作"),
+        ArgumentChoiceSpec("all", "all", "全部类别"),
+    ),
+)
+
+_TOOL_NAME_ARGUMENT = CommandArgumentSpec(
+    name="name",
+    kind="dynamic",
+    provider="tools",
+)
+
+_SESSION_NAME_ARGUMENT = CommandArgumentSpec(
+    name="name",
+    kind="dynamic",
+    provider="sessions",
+    required=False,
+)
 
 
 CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
@@ -45,9 +119,21 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         children=(
             CommandSpec("current", "显示当前会话", "/session current", category="session"),
             CommandSpec("list", "列出会话", "/session list", category="session"),
-            CommandSpec("switch", "切换会话", "/session switch <name>", category="session"),
+            CommandSpec(
+                "switch",
+                "切换会话",
+                "/session switch <name>",
+                category="session",
+                arguments=(_SESSION_NAME_ARGUMENT,),
+            ),
             CommandSpec("rename", "重命名会话", "/session rename <name>", category="session"),
-            CommandSpec("delete", "删除会话", "/session delete [name]", category="session"),
+            CommandSpec(
+                "delete",
+                "删除会话",
+                "/session delete [name]",
+                category="session",
+                arguments=(_SESSION_NAME_ARGUMENT,),
+            ),
         ),
     ),
     CommandSpec("usage", "查看当前会话上下文预算", "/usage", category="runtime"),
@@ -59,6 +145,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         category="execution",
         mutates_state=True,
         requires_agent=True,
+        arguments=(_ALLOW_ARGUMENT,),
     ),
     CommandSpec(
         "mode",
@@ -70,7 +157,14 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         children=(
             CommandSpec("list", "列出执行模式", "/mode list", category="execution"),
             CommandSpec("show", "显示当前执行模式", "/mode show", category="execution"),
-            CommandSpec("set", "切换执行模式", "/mode set <mode>", category="execution", mutates_state=True),
+            CommandSpec(
+                "set",
+                "切换执行模式",
+                "/mode set <mode>",
+                category="execution",
+                arguments=(_MODE_ARGUMENT,),
+                mutates_state=True,
+            ),
         ),
     ),
     CommandSpec(
@@ -117,7 +211,13 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         category="tools",
         children=(
             CommandSpec("list", "列出工具总览", "/tools list", category="tools"),
-            CommandSpec("show", "查看工具详情", "/tools show <name>", category="tools"),
+            CommandSpec(
+                "show",
+                "查看工具详情",
+                "/tools show <name>",
+                category="tools",
+                arguments=(_TOOL_NAME_ARGUMENT,),
+            ),
         ),
     ),
     CommandSpec(

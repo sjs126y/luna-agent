@@ -284,6 +284,24 @@ def _find_plugin_command(plugin_manager, name: str, scopes: tuple[str, ...]):
     return None, scopes[0] if scopes else "slash"
 
 
+async def slash_argument_choices(
+    runtime: CommandRuntime,
+    provider: str,
+    *,
+    command: str,
+    args: tuple[str, ...] = (),
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    """Return frontend-facing slash argument candidates for dynamic providers."""
+    normalized_provider = str(provider or "").strip()
+    if normalized_provider == "tools":
+        return _tool_argument_choices(runtime, query=query, limit=limit)
+    if normalized_provider == "sessions":
+        return await _session_argument_choices(runtime, query=query, limit=limit)
+    return []
+
+
 async def _call_optional(runtime: CommandRuntime, name: str, *args, **kwargs):
     handler = getattr(runtime, name, None)
     if handler is None:
@@ -1024,3 +1042,79 @@ def _tool_name_suggestions(value: str, items: list[dict]) -> list[str]:
 
     names = sorted(str(item.get("name") or "") for item in items)
     return get_close_matches(str(value or ""), names, n=3, cutoff=0.65)
+
+
+def _tool_argument_choices(
+    runtime: CommandRuntime,
+    *,
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    from personal_agent.tools.registry import tool_registry
+
+    needle = str(query or "").strip().lower()
+    result: list[dict] = []
+    for item in tool_registry.catalog(_enabled_toolsets(runtime)):
+        name = str(item.get("name") or "")
+        if needle and needle not in name.lower():
+            continue
+        description_parts = [
+            str(item.get("permission_category") or "").strip(),
+            str(item.get("risk_level") or "").strip(),
+        ]
+        description = " · ".join(part for part in description_parts if part)
+        result.append({
+            "value": name,
+            "label": name,
+            "description": description,
+            "append_space": False,
+        })
+        if len(result) >= max(0, int(limit)):
+            break
+    return result
+
+
+async def _session_argument_choices(
+    runtime: CommandRuntime,
+    *,
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    query_service = getattr(getattr(runtime, "conversation_service", None), "queries", None)
+    if query_service is None:
+        return []
+    source = getattr(runtime, "source", None)
+    platform = str(getattr(source, "platform", "") or "")
+    user_id = str(getattr(source, "user_id", "") or "")
+    current_key = str(getattr(runtime, "session_key", "") or "")
+    if not platform or not user_id:
+        return []
+    data = await query_service.list_sessions(
+        platform=platform,
+        user_id=user_id,
+        current_key=current_key,
+        limit=max(0, int(limit)),
+    )
+    needle = str(query or "").strip().lower()
+    result: list[dict] = []
+    for item in data.get("items") or []:
+        session_key = str(item.get("session_key") or "")
+        name = _session_name_from_key(session_key, platform=platform, user_id=user_id)
+        if needle and needle not in name.lower() and needle not in session_key.lower():
+            continue
+        message_count = int(item.get("message_count") or 0)
+        result.append({
+            "value": name,
+            "label": name,
+            "description": f"{message_count} messages",
+            "append_space": False,
+        })
+    return result
+
+
+def _session_name_from_key(session_key: str, *, platform: str, user_id: str) -> str:
+    prefix = f"{platform}:"
+    suffix = f":{user_id}"
+    if session_key.startswith(prefix) and session_key.endswith(suffix):
+        return session_key[len(prefix):-len(suffix)]
+    return session_key

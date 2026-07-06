@@ -14,14 +14,18 @@
 - `retry` / `stop` / `error` 的增强状态字段：`max_attempts`, `recoverable`, `reason`, `stopped_tools`, `stopped_agents`, `category`, `detail_id`。
 - 协议 schema 入口：`frontend_protocol_schema()` 和 `personal-agent protocol schema --json`。
 - Slash command registry 和 `CommandResult v2`：inline TUI 补全使用 registry metadata，并能消费 `continue_text` 继续进入 inline event renderer。
+- Slash command argument metadata：registry 已提供 `arguments`，支持 `choice` 和 `dynamic`。
+- 静态参数候选：`/mode set <mode>` 和 `/allow <category>`。
+- 动态参数候选入口：`slash_argument_choices(...)`，当前 provider 为 `tools` 和 `sessions`。
+- Tool Runs 查询入口：`ConversationQueryService` 和 `/tool-runs [recent|summary|show <id>]`，返回 `CommandResult.kind="tool_runs"` 与结构化 payload。
 
 ## 当前活跃需求
 
-暂无 P0 阻塞项。
+暂无 P0/P1 阻塞项。
 
-## P1：Slash command 参数候选 metadata
+## 已提供：Slash command 参数候选 metadata
 
-当前 inline TUI 已能消费 slash command registry 的一级命令和 children，用于 `/mode` -> `/mode set` 这类命令补全。下一步需要后端把“参数阶段候选”也放进 registry / runtime 接口，让前端可以做连续选择：
+当前 inline TUI 已能消费 slash command registry 的一级命令和 children。后端现在也把“参数阶段候选”放进 registry / runtime 接口，前端可以做连续选择：
 
 ```text
 /mode
@@ -30,7 +34,7 @@
 → /mode set Ask First
 ```
 
-前端期望任何 command / child spec 都可以声明可选的 `arguments` metadata：
+任何 command / child spec 都可以声明可选的 `arguments` metadata：
 
 ```python
 {
@@ -52,15 +56,16 @@
 }
 ```
 
-静态候选优先需求：
+已提供静态候选：
 
 - `/mode set <mode>`: `Read Only`, `Ask First`, `Edit Freely`, `Full Auto`
 - `/allow <category>`: `write`, `bash`, `background`, `network`, `destructive`, `all`
 
-动态候选可以后续提供。建议 registry 先暴露 `kind="dynamic"` 和 `provider`，再由 runtime 提供统一查询入口：
+已提供动态候选入口。registry 暴露 `kind="dynamic"` 和 `provider`，runtime 提供统一查询入口：
 
 ```python
 async def slash_argument_choices(
+    runtime,
     provider: str,
     *,
     command: str,
@@ -81,11 +86,14 @@ async def slash_argument_choices(
 }
 ```
 
-后续适合动态 provider 的命令：
+当前动态 provider：
 
 - `/session switch <name>` / `/session delete [name]`: session names
-- `/agents show <run_id>`: recent agent run ids
 - `/tools show <name>`: tool names
+
+后续适合补充的动态 provider：
+
+- `/agents show <run_id>`: recent agent run ids
 - `/memory show <id>` / `/memory delete <id>`: memory ids
 
 前端消费语义：
@@ -94,33 +102,6 @@ async def slash_argument_choices(
 - Enter 在菜单打开时只插入当前候选，不立即执行命令。
 - 当命令已经完整且没有后续候选时，菜单收起；下一次 Enter 执行命令。
 - `value` 是实际插入文本，`label` / `description` 只用于展示。
-
-## P1：Tool Runs 查询入口（暂缓）
-
-当前 inline TUI 已能消费事件流里的工具结果摘要和确认结果。短期内如果后端不做工具结果持久化，前端可以先不开发历史工具结果面板。
-
-后续如果要做 Ctrl+O 展开最近工具完整输出、future desktop 工具运行历史、或从 denied/error 跳转到完整审计详情，前端仍需要一个 runtime 层查询入口，不直接访问 Database。
-
-建议接口形态：
-
-```python
-async def recent_tool_runs(
-    *,
-    session_key: str | None = None,
-    turn_id: str | None = None,
-    limit: int = 20,
-    status: str | None = None,
-    tool_name: str | None = None,
-    permission_category: str | None = None,
-    include_output: bool = False,
-) -> list[dict]: ...
-
-async def get_tool_run(
-    run_id: str,
-    *,
-    include_output: bool = True,
-) -> dict | None: ...
-```
 
 ## P2：更专门的预览字段
 

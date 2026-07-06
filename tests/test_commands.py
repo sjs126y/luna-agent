@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from personal_agent.commands.registry import command_specs_as_dict
-from personal_agent.commands.runtime import current_mode_from_policy, handle_slash_command
+from personal_agent.commands.runtime import (
+    current_mode_from_policy,
+    handle_slash_command,
+    slash_argument_choices,
+)
 from personal_agent.config import Settings
 from personal_agent.models.messages import SessionSource
 from personal_agent.plugins.models import CommandEntry
@@ -57,10 +61,30 @@ class PluginManager:
         return value
 
 
+class QueryService:
+    async def list_sessions(self, *, platform: str, user_id: str, current_key: str, limit: int = 10):
+        return {
+            "platform": platform,
+            "user_id": user_id,
+            "current_key": current_key,
+            "limit": limit,
+            "total": 2,
+            "items": [
+                {"session_key": f"{platform}:default:{user_id}", "message_count": 3},
+                {"session_key": f"{platform}:work:{user_id}", "message_count": 8},
+            ][:limit],
+        }
+
+
+class ConversationService:
+    queries = QueryService()
+
+
 class Runtime:
     def __init__(self, tmp_path):
         self.settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
         self.plugin_manager = PluginManager()
+        self.conversation_service = ConversationService()
         self._session_key = "cli:default:local"
         self.source = SessionSource(platform="cli", user_id="local", chat_id="default")
         self.agent = Agent()
@@ -540,6 +564,65 @@ def test_command_registry_exports_structured_metadata(tmp_path):
     assert {child["name"] for child in mode["children"]} >= {"list", "show", "set"}
     assert mode["mutates_state"] is True
     assert mode["requires_agent"] is True
+    mode_set = next(child for child in mode["children"] if child["name"] == "set")
+    mode_argument = mode_set["arguments"][0]
+    assert mode_argument["name"] == "mode"
+    assert mode_argument["kind"] == "choice"
+    assert [choice["value"] for choice in mode_argument["choices"]] == [
+        "Read Only",
+        "Ask First",
+        "Edit Freely",
+        "Full Auto",
+    ]
+    allow = next(item for item in data["commands"] if item["name"] == "allow")
+    assert [choice["value"] for choice in allow["arguments"][0]["choices"]] == [
+        "write",
+        "bash",
+        "background",
+        "network",
+        "destructive",
+        "all",
+    ]
+    tools = next(item for item in data["commands"] if item["name"] == "tools")
+    tools_show = next(child for child in tools["children"] if child["name"] == "show")
+    assert tools_show["arguments"][0]["kind"] == "dynamic"
+    assert tools_show["arguments"][0]["provider"] == "tools"
+    session = next(item for item in data["commands"] if item["name"] == "session")
+    session_switch = next(child for child in session["children"] if child["name"] == "switch")
+    assert session_switch["arguments"][0]["provider"] == "sessions"
+
+
+@pytest.mark.asyncio
+async def test_slash_argument_choices_return_dynamic_candidates(tmp_path):
+    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+
+    runtime = Runtime(tmp_path)
+
+    tool_choices = await slash_argument_choices(
+        runtime,
+        "tools",
+        command="tools",
+        args=("show",),
+        query="rea",
+    )
+    assert any(choice["value"] == "read" for choice in tool_choices)
+    assert all("append_space" in choice for choice in tool_choices)
+
+    session_choices = await slash_argument_choices(
+        runtime,
+        "sessions",
+        command="session",
+        args=("switch",),
+        query="wor",
+    )
+    assert session_choices == [{
+        "value": "work",
+        "label": "work",
+        "description": "8 messages",
+        "append_space": False,
+    }]
+
+    assert await slash_argument_choices(runtime, "missing", command="tools") == []
 
 
 @pytest.mark.asyncio

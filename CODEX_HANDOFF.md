@@ -96,7 +96,15 @@
   - `error`
   - `suggestions`
 - `/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 已有结构化 payload。
-- command metadata 新增 `available_in`、`mutates_state`、`requires_agent`。
+- command metadata 新增 `available_in`、`mutates_state`、`requires_agent`、`arguments`。
+- argument metadata 支持 `choice` 和 `dynamic`。
+- 静态候选：
+  - `/mode set <mode>`
+  - `/allow <category>`
+- 动态候选入口：`slash_argument_choices(...)`。
+- 当前动态 provider：
+  - `tools`
+  - `sessions`
 - 未知命令/子命令会尽量返回建议，但不破坏技能命令 fallback。
 
 ## 当前约定
@@ -113,12 +121,13 @@
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest tests/test_conversation_service.py tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
+uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 uv run pytest -q
 ```
 
-最近一次后端相关结果：`79 passed`。
-最近一次全量结果：`694 passed`。
+最近一次后端相关结果：`55 passed`。
+全量 `uv run pytest -q` 当前被前端线新增的 `tests/test_tui_app.py::test_completer_offers_argument_choices_from_registry` 阻塞：
+测试按字符串比较 `Completion.display`，实际 prompt_toolkit 返回 `FormattedText([('', 'Ask First')])`。
 
 ## 注意事项
 

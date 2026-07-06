@@ -276,6 +276,8 @@ async def test_gateway_commands_lists_slash_plugin_commands_only(gateway):
     assert '"name": "demo"' in data
     assert '"name": "local"' not in data
     assert '"available_in": [' in data
+    assert '"arguments": [' in data
+    assert '"provider": "tools"' in data
 
 
 @pytest.mark.asyncio
