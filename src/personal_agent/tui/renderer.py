@@ -181,15 +181,17 @@ class InlineRenderer(Renderer):
         text = event.message or "准备重试"
         attempt = data.get("attempt")
         max_attempts = data.get("max_attempts")
-        suffix = ""
+        parts: list[str] = []
         if attempt and max_attempts:
-            suffix = f" · {attempt}/{max_attempts}"
+            parts.append(f"{attempt}/{max_attempts}")
         elif attempt:
-            suffix = f" · attempt {attempt}"
+            parts.append(f"attempt {attempt}")
         names = data.get("tool_names") or data.get("tool_name") or ""
         if names:
-            suffix += f" · {names}"
-        await self._print_above(render_plain(theme.sgr(f"  ↻ {text}{suffix}", theme.NOTICE), width=self.width))
+            parts.append(str(names))
+        if data.get("recoverable") is False:
+            parts.append("不可恢复")
+        await self._print_above(render_plain(theme.sgr(f"  ↻ {_join_notice(text, parts)}", theme.NOTICE), width=self.width))
 
     async def on_compression(self, event: ConversationEvent) -> None:
         data = event.data
@@ -200,19 +202,36 @@ class InlineRenderer(Renderer):
         await self._print_above(render_plain(theme.sgr(f"  ◇ {text}{suffix}", theme.NOTICE), width=self.width))
 
     async def on_stop(self, event: ConversationEvent) -> None:
-        text = event.message or str(event.data.get("message") or "已停止")
+        data = event.data
+        text = event.message or str(data.get("message") or "已停止")
+        parts = [str(data.get("reason") or "")] if data.get("reason") else []
+        stopped_tools = _optional_int(data.get("stopped_tools"))
+        stopped_agents = _optional_int(data.get("stopped_agents"))
+        if stopped_tools:
+            parts.append(f"tools {stopped_tools}")
+        if stopped_agents:
+            parts.append(f"agents {stopped_agents}")
         self.state.streaming = False
         self.state.status_message = "stopped"
-        await self._print_above(render_plain(theme.sgr(f"  ■ {text}", theme.NOTICE), width=self.width))
+        await self._print_above(render_plain(theme.sgr(f"  ■ {_join_notice(text, parts)}", theme.NOTICE), width=self.width))
         self._invalidate()
 
     async def on_error(self, event: ConversationEvent) -> None:
+        data = event.data
         text = event.message or "运行错误"
-        detail = str(event.data.get("error") or "")
+        detail = str(data.get("error") or "")
         suffix = f": {detail}" if detail and detail not in text else ""
+        parts = [str(data.get("category") or "")] if data.get("category") else []
+        if data.get("recoverable") is True:
+            parts.append("可恢复")
+        elif data.get("recoverable") is False:
+            parts.append("不可恢复")
+        detail_id = str(data.get("detail_id") or "")
+        if detail_id:
+            parts.append(f"id {detail_id}")
         self.state.streaming = False
         self.state.status_message = "error"
-        await self._print_above(render_plain(theme.sgr(f"  ✗ {text}{suffix}", theme.ERROR), width=self.width))
+        await self._print_above(render_plain(theme.sgr(f"  ✗ {_join_notice(text + suffix, parts)}", theme.ERROR), width=self.width))
         self._invalidate()
 
     async def on_turn_end(self, event: ConversationEvent) -> None:
@@ -230,3 +249,17 @@ class InlineRenderer(Renderer):
         if item.risk_summary and item.status in {"denied", "error"}:
             summary += f" {theme.dim(item.risk_summary)}"
         return f"  ⚙ {item.display_name}{summary}  {mark}{dur}"
+
+
+def _join_notice(text: str, parts: list[str]) -> str:
+    details = [part for part in parts if part]
+    if not details:
+        return text
+    return f"{text} · {' · '.join(details)}"
+
+
+def _optional_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0

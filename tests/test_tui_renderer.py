@@ -128,13 +128,23 @@ async def test_retry_compression_stop_and_error_are_printed():
         "category": "empty_response",
         "attempt": 1,
         "max_attempts": 2,
+        "recoverable": True,
     }))
     await r.emit(ConversationEvent("compression", "历史消息已压缩", data={
         "pre_message_count": 12,
         "post_message_count": 5,
     }))
-    await r.emit(ConversationEvent("stop", "已停止"))
-    await r.emit(ConversationEvent("error", "模型调用失败", data={"error": "Timeout"}))
+    await r.emit(ConversationEvent("stop", "已停止", data={
+        "reason": "user",
+        "stopped_tools": 2,
+        "stopped_agents": 1,
+    }))
+    await r.emit(ConversationEvent("error", "模型调用失败", data={
+        "error": "Timeout",
+        "category": "llm",
+        "recoverable": False,
+        "detail_id": "err-1",
+    }))
 
     text = "\n".join(printed)
     assert "模型空回复" in text
@@ -142,8 +152,14 @@ async def test_retry_compression_stop_and_error_are_printed():
     assert "历史消息已压缩" in text
     assert "12 -> 5" in text
     assert "已停止" in text
+    assert "user" in text
+    assert "tools 2" in text
+    assert "agents 1" in text
     assert "模型调用失败" in text
     assert "Timeout" in text
+    assert "llm" in text
+    assert "不可恢复" in text
+    assert "err-1" in text
     assert r.state.status_message == "error"
 
 
