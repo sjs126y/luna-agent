@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 20:40 CST
+更新时间：2026-07-06 20:55 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -37,13 +37,15 @@
 - 菜单打开时：
   - `Up/Down` 在菜单内移动选择。
   - `Enter` 只插入当前候选，不直接执行。
+  - parent command 在第一层显示为 `/session ›`、`/mode ›`；按 `Enter` 进入下一层，再展示 `/session list` 或 `/mode set` 等子项。
+  - 叶子命令仍在第一层直接展示；选中后下一次 `Enter` 执行。
   - 当命令完整且没有后续候选时，菜单收起；下一次 `Enter` 才执行命令。
 - 已完成视觉细调：
   - 当前选中行有轻量 row highlight，不只依赖 `›` 标记。
   - 候选很多时 header 显示克制的位置提示，例如 `5/8`。
   - 无匹配候选时显示 `No matches`；动态候选加载中不会提前显示空结果。
   - `Esc` 在 confirm 中仍拒绝；在 slash 模式下关闭并清空命令输入；普通输入下清空输入。
-- 已关闭 prompt_toolkit 内置补全浮层，避免隐藏 completion state 抢 `Up/Down/Enter`。
+- 已关闭 prompt_toolkit 内置补全浮层和 completer 输入改写，slash 菜单只走 inline TUI 自己的状态机，避免隐藏 completion state 抢 `Up/Down/Enter` 或改坏输入文本。
 
 最近相关提交：
 
@@ -110,6 +112,12 @@
 - 完成 tool trace / `/tool-runs show` 展示精简：统一摘要优先级、短英文标签、短展开标题、展开块边界。
 - 完成 confirm 面板压缩：短标签、可用动作过滤、默认动作显式化、去掉冗余元信息。
 
+### 2026-07-06 20:55 CST
+
+- 修复真实终端里 slash completion 可能改坏输入的问题：inline TUI 不再把 prompt_toolkit completer 挂到输入框，`Enter` 不再读取隐藏 completion state。
+- 明确 parent command 层级行为：第一层显示 `/session ›`、`/mode ›`，按 `Enter` 后进入子命令菜单；不会把 `/session list` 等全部摊到第一层。
+- 增加回归测试覆盖 `/session` 进入子菜单、`/mode set` 完整文本保留，避免 `/mode` 被改成 `/mde` 这类问题回归。
+
 已验证：
 
 ```bash
@@ -119,7 +127,7 @@ git diff --check
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 ```
 
-结果：TUI tests `71 passed`，command/gateway tests `55 passed`。
+结果：TUI tests `73 passed`，command/gateway tests `55 passed`。
 
 ## 不建议现在做
 

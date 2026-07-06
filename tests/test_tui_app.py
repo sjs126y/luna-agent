@@ -1,6 +1,6 @@
 """Unit tests for InlineTuiApp wiring (no real terminal).
 
-Covers completer/history wiring, Ctrl+O expand behavior, and the guard that
+Covers slash-menu/history wiring, Ctrl+O expand behavior, and the guard that
 prevents launching a second turn while one is running.
 """
 
@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from prompt_toolkit.formatted_text import to_plain_text
 
 from personal_agent.commands.runtime import CommandResult
 from personal_agent.tui.app import InlineTuiApp
@@ -52,35 +51,29 @@ def _app() -> InlineTuiApp:
     return InlineTuiApp(_Runtime())
 
 
-def test_completer_and_history_wired():
+def test_history_wired_and_prompt_toolkit_completer_disabled():
     app = _app()
-    assert app.input_area.completer is not None
+    assert app.input_area.completer is None
     assert app.input_area.buffer.history is not None
 
 
-def test_completer_uses_command_registry_metadata():
-    from prompt_toolkit.document import Document
-
+def test_slash_menu_uses_command_registry_metadata():
     app = _app()
-    completions = list(app.input_area.completer.get_completions(Document("/comm"), None))
-    assert any(item.text == "/commands" for item in completions)
+    app.input_area.text = "/comm"
+    assert any(item.text == "/commands" for item in app.state.slash_items)
 
 
-def test_completer_offers_child_commands_without_placeholders():
-    from prompt_toolkit.document import Document
-
+def test_slash_menu_offers_child_commands_without_placeholders():
     app = _app()
-    completions = list(app.input_area.completer.get_completions(Document("/mode "), None))
-    texts = {item.text for item in completions}
+    app.input_area.text = "/mode "
+    texts = {item.text for item in app.state.slash_items}
     assert "/mode list" in texts
     assert "/mode show" in texts
     assert "/mode set" in texts
     assert all("<mode>" not in text for text in texts)
 
 
-def test_completer_offers_argument_choices_from_registry(monkeypatch):
-    from prompt_toolkit.document import Document
-
+def test_slash_menu_offers_argument_choices_from_registry(monkeypatch):
     def command_specs_as_dict(runtime):
         return {
             "commands": [
@@ -132,8 +125,8 @@ def test_completer_offers_argument_choices_from_registry(monkeypatch):
         ("/mode set Full Auto", "Full Auto", "全自动"),
     ]
 
-    completions = list(app.input_area.completer.get_completions(Document("/mode set A"), None))
-    assert [(item.text, to_plain_text(item.display)) for item in completions] == [
+    app.input_area.text = "/mode set A"
+    assert [(item.text, item.display_text) for item in app.state.slash_items] == [
         ("/mode set Ask First", "Ask First")
     ]
 
@@ -686,6 +679,34 @@ def test_parent_slash_command_shows_child_candidates():
     assert "/mode list" in texts
     assert "/mode show" in texts
     assert "/mode set" in texts
+
+
+def test_root_parent_command_enters_child_menu():
+    app = _app()
+    app.input_area.text = "/s"
+    texts = [item.text for item in app.state.slash_items]
+    app._move_slash_selection(texts.index("/session"))
+
+    assert app._apply_selected_slash_item() is True
+    assert app.input_area.text == "/session"
+    assert [item.text for item in app.state.slash_items] == [
+        "/session current",
+        "/session list",
+        "/session switch",
+        "/session rename",
+        "/session delete",
+    ]
+
+
+def test_mode_menu_apply_preserves_full_command_text():
+    app = _app()
+    app.input_area.text = "/mode"
+    texts = [item.text for item in app.state.slash_items]
+    app._move_slash_selection(texts.index("/mode set"))
+
+    assert app._apply_selected_slash_item() is True
+    assert app.input_area.text == "/mode set"
+    assert "/mde" not in app.input_area.text
 
 
 def test_slash_menu_selection_moves_and_applies_current_candidate():

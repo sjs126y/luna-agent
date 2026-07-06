@@ -15,11 +15,10 @@ import asyncio
 from pathlib import Path
 import sys
 import unicodedata
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import run_in_terminal
-from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory, History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -68,21 +67,6 @@ class _DynamicChoiceRequest(NamedTuple):
     command: str
     args: tuple[str, ...]
     query: str
-
-
-class _InlineSlashCompleter(Completer):
-    def __init__(self, items_for_text: Callable[[str], tuple[SlashMenuItem, ...]]) -> None:
-        self._items_for_text = items_for_text
-
-    def get_completions(self, document, complete_event):
-        text = document.text_before_cursor
-        for item in self._items_for_text(text):
-            yield Completion(
-                item.text,
-                start_position=-len(text),
-                display=item.display_text or item.text,
-                display_meta=item.description,
-            )
 
 
 def _decision_field(decision, name: str) -> str:
@@ -344,7 +328,6 @@ class InlineTuiApp:
         self._slash_commands = self._load_slash_commands()
         self.root, self.input_area = build_layout(
             self.state,
-            completer=self._build_completer(),
             history=self._build_history(),
         )
         self.input_area.buffer.on_text_changed += self._on_input_text_changed
@@ -363,12 +346,7 @@ class InlineTuiApp:
         self._print_worker_task: asyncio.Task | None = None
         self.app: Application | None = None
 
-    # ── command registry completer + history ──
-    def _build_completer(self):
-        if not self._slash_commands:
-            return None
-        return _InlineSlashCompleter(self._slash_menu_items)
-
+    # ── command registry + history ──
     def _load_slash_commands(self) -> tuple[_SlashCommand, ...]:
         try:
             from personal_agent.commands.registry import command_specs_as_dict
@@ -585,7 +563,11 @@ class InlineTuiApp:
 
     def _command_menu_items(self, commands: tuple[_SlashCommand, ...]) -> tuple[SlashMenuItem, ...]:
         return tuple(
-            SlashMenuItem(text=item.text, description=item.description)
+            SlashMenuItem(
+                text=item.text,
+                description=item.description,
+                display_text=f"{item.text} ›" if item.children else "",
+            )
             for item in commands
         )
 
@@ -994,17 +976,6 @@ class InlineTuiApp:
                 return
             if self._apply_selected_slash_item():
                 return
-            # If the completion menu is open, accept it instead of submitting,
-            # so a bare '/' + Enter picks the top command (matches classic shell).
-            buf = event.current_buffer
-            state = buf.complete_state
-            if state is not None:
-                completion = state.current_completion or (
-                    state.completions[0] if state.completions else None
-                )
-                if completion is not None:
-                    buf.apply_completion(completion)
-                    return
             self._on_enter()
 
         @kb.add("up", filter=Condition(lambda: self.state.has_slash_menu()), eager=True)
