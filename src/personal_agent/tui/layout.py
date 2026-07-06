@@ -106,6 +106,7 @@ def build_layout(
         prompt=[("bold ansicyan", "  ❯ ")],
         multiline=True,
         wrap_lines=True,
+        dont_extend_height=True,
         completer=completer,
         complete_while_typing=True,  # slash menu pops as you type '/'
         history=history,

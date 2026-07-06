@@ -790,6 +790,85 @@ async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
 
 
 @pytest.mark.asyncio
+async def test_parallel_safe_tools_requiring_confirm_are_serialized():
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_calls
+    from personal_agent.tools.registry import tool_registry
+
+    original_first = tool_registry.get("confirm_parallel_first")
+    original_second = tool_registry.get("confirm_parallel_second")
+    running_confirms = 0
+    max_running_confirms = 0
+    decisions = []
+
+    async def first():
+        return "first"
+
+    async def second():
+        return "second"
+
+    async def confirm(decision):
+        nonlocal running_confirms, max_running_confirms
+        decisions.append(decision.tool_name)
+        running_confirms += 1
+        max_running_confirms = max(max_running_confirms, running_confirms)
+        await asyncio.sleep(0)
+        running_confirms -= 1
+        return "allow"
+
+    tool_registry.register(ToolEntry(
+        name="confirm_parallel_first",
+        description="confirm",
+        schema={},
+        handler=first,
+        permission_category="network",
+        is_parallel_safe=True,
+    ))
+    tool_registry.register(ToolEntry(
+        name="confirm_parallel_second",
+        description="confirm",
+        schema={},
+        handler=second,
+        permission_category="network",
+        is_parallel_safe=True,
+    ))
+    agent = MockAgent()
+    agent._execution_policy = ExecutionPolicy(
+        mode="trusted",
+        permissions={"default": "allow", "network": "ask"},
+    )
+    messages = []
+
+    try:
+        results = await execute_tool_calls(
+            [
+                {"id": "c1", "name": "confirm_parallel_first", "input": {}},
+                {"id": "c2", "name": "confirm_parallel_second", "input": {}},
+            ],
+            messages,
+            agent=agent,
+            confirm=confirm,
+        )
+    finally:
+        for name, original in (
+            ("confirm_parallel_first", original_first),
+            ("confirm_parallel_second", original_second),
+        ):
+            if original is None:
+                tool_registry.unregister(name)
+            else:
+                tool_registry.register(original)
+
+    assert [result.status for result in results] == ["success", "success"]
+    assert [result.content for result in results] == ["first", "second"]
+    assert decisions == ["confirm_parallel_first", "confirm_parallel_second"]
+    assert max_running_confirms == 1
+    assert messages[-1]["content"][0]["content"] == "first"
+    assert messages[-1]["content"][1]["content"] == "second"
+
+
+@pytest.mark.asyncio
 async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
     import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
     from personal_agent.execution import ExecutionPolicy

@@ -23,6 +23,7 @@ from personal_agent.tools.execution_guard import (
     run_precheck,
     tool_decision_for_unknown_tool,
     tool_decision_from_guard,
+    tool_permission_category,
 )
 from personal_agent.tools.registry import tool_registry
 
@@ -103,12 +104,12 @@ async def execute_tool_calls(
         current = tool_calls[i]
         entry = tool_registry.get(str(current.get("name", "")))
 
-        if entry and entry.is_parallel_safe and not entry.is_destructive:
+        if _can_run_in_parallel(current, entry, agent, confirm=confirm):
             # Collect adjacent safe parallel tools into a batch.
             batch: list[tuple[int, dict]] = []
             while i < len(tool_calls):
                 e = tool_registry.get(str(tool_calls[i].get("name", "")))
-                if e and e.is_parallel_safe and not e.is_destructive:
+                if _can_run_in_parallel(tool_calls[i], e, agent, confirm=confirm):
                     batch.append((i, tool_calls[i]))
                     i += 1
                 else:
@@ -444,6 +445,30 @@ def _needs_tool_confirm(decision: ToolDecision) -> bool:
         and decision.permission_decision == "ask"
         and not decision.allowed
     )
+
+
+def _can_run_in_parallel(tc: dict, entry: Any, agent: Any = None, *, confirm: Any = None) -> bool:
+    if entry is None or not entry.is_parallel_safe or entry.is_destructive:
+        return False
+    if confirm is None:
+        return True
+    return not _would_need_permission_confirm(tc, entry, agent)
+
+
+def _would_need_permission_confirm(tc: dict, entry: Any, agent: Any = None) -> bool:
+    if agent is None:
+        return False
+    policy = getattr(agent, "_execution_policy", None)
+    category = tool_permission_category(str(tc.get("name", "")), entry)
+    decision = "ask" if entry.is_destructive else "allow"
+    if policy is not None:
+        decision = policy.permission_for(category)
+        if decision == "allow" and entry.is_destructive and category == "default":
+            decision = policy.permission_for("destructive")
+    if decision != "ask":
+        return False
+    grants = getattr(agent, "_destructive_allowed", set())
+    return "all" not in grants and category not in grants
 
 
 async def _confirm_tool_decision(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> str:

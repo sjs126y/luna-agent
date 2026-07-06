@@ -46,6 +46,7 @@ def test_layout_keeps_input_panel_compact_without_spacer():
     # that combination starved the buffer and made typed text disappear.
     assert height.min == 1
     assert height.max == 6
+    assert input_area.window.dont_extend_height()
 
 
 def test_active_region_truncates_many_tools():
