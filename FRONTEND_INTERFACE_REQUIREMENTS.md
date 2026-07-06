@@ -4,6 +4,17 @@
 
 本文给后端线使用，描述 inline TUI / future desktop-web 前端为了做更完整体验还需要的接口能力。当前后端已提供能力见 `BACKEND_INTERFACE.md`；本文只列前端希望补齐或固化的部分。
 
+## 当前对接状态
+
+截至 2026-07-06：
+
+- `tool_decision` / `tool_end` 的确认展示字段已由后端提供，并已被 inline TUI 消费。
+- `confirm(decision)` 的 allow / deny / always 语义已由后端提供，并已被 inline TUI 接入。
+- `/stop` 打断 pending confirm 的 `tool_end.status/category/error` 已在 `BACKEND_INTERFACE.md` 固化。
+- `frontend_protocol_schema()` 与 `personal-agent protocol schema --json` 已由后端提供。
+
+本文后续条目中，已满足的部分保留为历史需求和前端消费依据；未满足或待细化部分集中在 tool runs 查询 UI、retry/error/stop 细粒度字段、以及更专门的 diff/network 展示。
+
 ## 0. 前端目标
 
 短期目标不是增加花哨 UI，而是让用户在 inline TUI 里清楚知道：
@@ -23,7 +34,7 @@
 - `reason_code`
 - `decision_message`
 
-这足够做 `[y/n/a]`，但不足以做更好的确认面板。希望后端在传给 `confirm` 的 decision 对象，以及相关 `tool_decision` / `tool_end` 事件里稳定提供以下字段。
+这足够做 `[y/n/a]`，但不足以做更好的确认面板。后端现已在 `confirm` decision 对象，以及相关 `tool_decision` / `tool_end` 事件里稳定提供以下字段；前端应继续兼容字段缺失的旧后端。
 
 ### 1.1 必需字段
 
@@ -102,7 +113,7 @@ Enter 允许本次   A 始终允许 bash   Esc 拒绝
 - `"always"` = allow always for current agent/session grant scope。
 - `"deny"` = deny this tool call。
 
-希望后端明确：
+后端现已明确：
 
 - `"always"` 的有效范围：当前 agent、当前 session、当前 turn，还是直到模式切换。
 - `/mode` 切换后会清空哪些 grants。
@@ -204,15 +215,17 @@ async def get_tool_run(
 
 ## 5. Schema / Versioning
 
-后端文档里已经提到 `protocol_version`、`EVENT_SCHEMAS`、`event_protocol_schema()`。前端希望补一个可调用 runtime/CLI 接口，方便 desktop/web 启动时校验协议。
+后端已提供 `protocol_version`、`EVENT_SCHEMAS`、`event_protocol_schema()`，并补了稳定的前端入口，方便 desktop/web 启动时校验协议。
 
-建议：
+Python 入口：
 
 ```python
-def frontend_protocol_schema() -> dict: ...
+from personal_agent.conversation import frontend_protocol_schema
+
+schema = frontend_protocol_schema()
 ```
 
-或 CLI：
+CLI 入口：
 
 ```bash
 personal-agent protocol schema --json
@@ -238,8 +251,8 @@ personal-agent protocol schema --json
 
 P0：
 
-- confirm decision 增加 `tool_use_id`, `display_name`, `execution_mode_label`, `default_action`, `available_actions`, `risk_summary`, `input_preview`。
-- 固化 `/stop` 打断 confirm 后的 `tool_end` 字段。
+- 已完成：confirm decision 增加 `tool_use_id`, `display_name`, `execution_mode_label`, `default_action`, `available_actions`, `risk_summary`, `input_preview`。
+- 已完成：固化 `/stop` 打断 confirm 后的 `tool_end` 字段。
 
 P1：
 
@@ -248,5 +261,5 @@ P1：
 
 P2：
 
-- 协议 schema CLI/API。
+- 已完成：协议 schema CLI/API。
 - diff preview / affected paths / network host 等按工具类别细化字段。
