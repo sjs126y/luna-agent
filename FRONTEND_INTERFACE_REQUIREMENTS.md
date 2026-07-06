@@ -1,6 +1,6 @@
 # Frontend Interface Requirements
 
-更新时间：2026-07-06
+更新时间：2026-07-06 22:58 CST
 
 本文给后端线使用，只记录 inline TUI / future desktop-web 前端仍需要后端配合或需要继续固化的接口事项。已经完成并被前端消费的需求不再保留在待办区，避免重复实现或误判优先级。
 
@@ -21,7 +21,205 @@
 
 ## 当前活跃需求
 
-暂无 P0/P1 阻塞项。
+### P1：Activity Summary / Detail 结构化接口
+
+目标：inline TUI / future desktop-web 需要一个统一入口展示“当前系统是否有活跃工作”，并能按类型查看具体对象。这个需求覆盖三个层级不同的运行对象：
+
+- `sub_agent`：主 agent 内部委派出去的子任务。
+- `background_process`：工具层启动的后台进程。
+- `gateway_agent`：平台 gateway 收到消息后启动的一次主 agent 处理流程；它不是子 agent。
+
+前端第一版 UI 计划：
+
+- 状态栏只显示轻量 badge，例如 `activity 3` 或 `activity 3 !`。
+- `/activity` 打印 summary + 三类列表到 scrollback。
+- `/activity agents <id>`、`/activity processes <id>`、`/activity gateway <id>` 后续打印详情到 scrollback。
+
+建议后端提供 `CommandResult.kind="activity"` 的 slash command payload，或等价 runtime API；前端可先消费 slash command payload。
+
+#### `/activity` summary payload
+
+```json
+{
+  "summary": {
+    "has_active_work": true,
+    "active_total": 3,
+    "attention_required": false,
+    "longest_running_seconds": 34.6,
+    "counts": {
+      "sub_agents": {
+        "active": 1,
+        "recent": 12,
+        "failed_recent": 1,
+        "stop_requested": 0
+      },
+      "background_processes": {
+        "total": 2,
+        "running": 1,
+        "done": 1,
+        "killed": 0
+      },
+      "gateway_agents": {
+        "running": 1,
+        "stop_requested": 0
+      }
+    }
+  },
+  "sub_agents": {
+    "active_runs": [],
+    "recent_runs": []
+  },
+  "background_processes": {
+    "items": []
+  },
+  "gateway_agents": {
+    "running_agent_runs": []
+  }
+}
+```
+
+#### 列表 item 最小公共字段
+
+每个列表 item 建议尽量包含：
+
+- `id: string`
+- `kind: "sub_agent" | "background_process" | "gateway_agent"`
+- `status: string`
+- `duration_seconds: number`
+- `stop_requested: boolean`
+- `error: string`
+
+`status` 建议稳定在：
+
+- `running`
+- `completed`
+- `failed`
+- `stopped`
+- `stopping`
+
+时间字段建议统一：
+
+- `started_at` / `finished_at`：ISO string 或 unix seconds 二选一，建议后端统一。
+- `duration_seconds`：必须提供，前端主要显示它。
+
+#### sub agent 列表字段
+
+```json
+{
+  "id": "abc123",
+  "kind": "sub_agent",
+  "run_id": "abc123",
+  "status": "running",
+  "role": "reviewer",
+  "task": "检查 provider cache 实现",
+  "task_preview": "检查 provider cache 实现",
+  "started_at": "2026-07-06T22:10:00Z",
+  "finished_at": "",
+  "duration_seconds": 18.4,
+  "stop_requested": false,
+  "usage": {
+    "input_tokens": 1000,
+    "output_tokens": 200
+  },
+  "quota": {
+    "used_tokens": 1200,
+    "max_tokens": 4096,
+    "over_token_quota": false
+  },
+  "tool_counts": {
+    "requested": 2,
+    "executed": 1,
+    "denied": 1
+  },
+  "result_preview": "",
+  "error": ""
+}
+```
+
+#### background process 列表字段
+
+```json
+{
+  "id": "3",
+  "kind": "background_process",
+  "pid": 3,
+  "status": "running",
+  "command": "uv run pytest -q",
+  "command_preview": "uv run pytest -q",
+  "cwd": "/home/sujinsheng/projects/Personal-Agent-backend",
+  "started_at": "2026-07-06T22:10:00Z",
+  "finished_at": "",
+  "duration_seconds": 23.1,
+  "returncode": null,
+  "stop_requested": false,
+  "has_stdout": true,
+  "has_stderr": false,
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "stdout_bytes": 1200,
+  "stderr_bytes": 0,
+  "output_preview": "tests/test_runtime.py ...",
+  "error": ""
+}
+```
+
+列表里只需要 preview / bytes / truncated；完整 stdout/stderr 放详情 payload，避免 summary 太重。
+
+#### gateway agent 列表字段
+
+```json
+{
+  "id": "telegram:c1:u1",
+  "kind": "gateway_agent",
+  "session_key": "telegram:c1:u1",
+  "platform": "telegram",
+  "chat_id": "c1",
+  "user_id": "u1",
+  "status": "running",
+  "started_at": "2026-07-06T22:10:00Z",
+  "finished_at": "",
+  "duration_seconds": 34.6,
+  "stop_requested": false,
+  "error": ""
+}
+```
+
+#### Detail payload
+
+后续详情接口可按以下形态返回：
+
+```json
+{
+  "kind": "sub_agent",
+  "id": "abc123",
+  "run": {}
+}
+```
+
+```json
+{
+  "kind": "background_process",
+  "id": "3",
+  "process": {}
+}
+```
+
+```json
+{
+  "kind": "gateway_agent",
+  "id": "telegram:c1:u1",
+  "gateway_run": {}
+}
+```
+
+前端第一版可先只接 `/activity` summary + lists；详情可以随后补。
+
+#### 前端展示假设
+
+- `summary.attention_required` 由后端计算，前端不自行猜测。
+- `summary.active_total` 是状态栏 badge 的主要数字。
+- `summary.has_active_work=false` 时，前端显示 `activity idle`。
+- `kind` 字段用于前端做统一 activity list 和 detail 路由。
 
 ## 已提供：Slash command 参数候选 metadata
 
