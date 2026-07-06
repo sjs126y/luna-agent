@@ -398,6 +398,7 @@ SLASH_COMMAND_REGISTRY_VERSION = 1
 
 - `/commands`、`/commands json`、`/commands <name>`
 - `/tools list`、`/tools show <name>`
+- `/tool-runs recent`、`/tool-runs summary`、`/tool-runs show <id>`
 - `/permissions list`、`/permissions grants`
 - `/protocol`、`/protocol schema`
 - `/mode list`、`/mode show`、`/mode set <mode>`
@@ -418,7 +419,7 @@ SLASH_COMMAND_REGISTRY_VERSION = 1
 
 ## 6. Tool Runs / Tool Truth
 
-后端已持久化工具运行结果，供后续前端/desktop 查询使用。
+后端已持久化工具运行结果，并提供只读查询 facade 与 slash command 查询入口。
 
 当前能力：
 
@@ -428,14 +429,60 @@ SLASH_COMMAND_REGISTRY_VERSION = 1
 - `Database.tool_run_summary(...)`
 - `SessionStore` 有对应代理。
 - `ConversationService` 从 `tool_end` 事件自动记录 tool runs。
+- `ConversationQueryService` 提供只读查询 facade。
 - runtime health / doctor 会显示 tool run 摘要。
 
-后续如果前端需要 UI 查询接口，请先明确：
+`/tool-runs` slash command：
 
-- 查询范围：当前 session / 最近全局 / 指定 turn。
-- 分页参数。
-- 是否需要 `full_output`。
-- 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
+- `/tool-runs` 或 `/tool-runs recent`
+- `/tool-runs recent --all --limit 20`
+- `/tool-runs summary`
+- `/tool-runs summary --all`
+- `/tool-runs show <id>`
+
+`/tool-runs` 返回 `CommandResult.kind="tool_runs"`，文本 `response` 给 CLI/Gateway 展示，结构化 `payload` 给前端/TUI 使用。
+
+recent payload：
+
+- `action`
+- `scope`
+- `session_key`
+- `limit`
+- `items`
+
+summary payload：
+
+- `inspected`
+- `tool_counts`
+- `status_counts`
+- `category_counts`
+- `denied`
+- `failed`
+- `timeouts`
+- `truncated`
+
+detail payload 的 `tool_run` 包含：
+
+- `id`
+- `session_id`
+- `session_key`
+- `turn_id`
+- `tool_use_id`
+- `tool_name`
+- `status`
+- `category`
+- `duration`
+- `input_summary`
+- `output_summary`
+- `full_output`
+- `output_truncated`
+- `error`
+- `permission_category`
+- `permission_decision`
+- `execution_mode`
+- `created_at`
+
+后续如果前端需要更复杂 UI 查询，再补分页游标和按 `status` / `tool_name` / `permission_category` 过滤。
 
 ## 7. Compatibility Notes
 

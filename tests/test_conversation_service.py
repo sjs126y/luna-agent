@@ -376,6 +376,78 @@ async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_query_service_exposes_tool_runs_and_summaries(service, monkeypatch):
+    from personal_agent.conversation.events import emit_event
+
+    svc, _manager, _db = service
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(_messages(user_text=text))
+
+    async def run_conversation(agent, ctx, *, event_sink=None):
+        await emit_event(event_sink, "turn_start", "开始处理", turn_id="turn-query")
+        await emit_event(
+            event_sink,
+            "tool_end",
+            "工具 read success",
+            tool_name="read",
+            tool_use_id="call-read",
+            status="success",
+            category="read",
+            duration=0.1,
+            input_summary='{"path": "README.md"}',
+            output_summary="README",
+            full_output="README contents",
+            output_truncated=False,
+            permission_category="read",
+            permission_decision="allow",
+            execution_mode="standard",
+        )
+        await emit_event(
+            event_sink,
+            "tool_end",
+            "工具 bash denied",
+            tool_name="bash",
+            tool_use_id="call-bash",
+            status="denied",
+            category="authorization",
+            duration=0.0,
+            input_summary='{"cmd": "rm -rf /"}',
+            output_summary="",
+            error="blocked",
+            permission_category="bash",
+            permission_decision="deny",
+            execution_mode="standard",
+        )
+        return {
+            "final_response": "done",
+            "messages": _messages(user_text="inspect", assistant_text="done"),
+            "completed": True,
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    await svc.run_turn("cli:default:local", _source(), "inspect")
+
+    recent = await svc.queries.recent_tool_runs(limit=10, session_key="cli:default:local")
+    summary = await svc.queries.tool_run_summary(limit=10, session_key="cli:default:local")
+    detail = await svc.queries.tool_run_detail(recent["items"][0]["id"])
+
+    assert recent["scope"] == "session"
+    assert recent["session_key"] == "cli:default:local"
+    assert [item["tool_name"] for item in recent["items"]] == ["read", "bash"]
+    assert summary["inspected"] == 2
+    assert summary["tool_counts"] == {"bash": 1, "read": 1}
+    assert summary["status_counts"] == {"denied": 1, "success": 1}
+    assert summary["denied"] == 1
+    assert detail is not None
+    assert detail["tool_name"] == "read"
+    assert detail["full_output"] == "README contents"
+    assert await svc.queries.tool_run_detail(999999) is None
+
+
+@pytest.mark.asyncio
 async def test_run_turn_keeps_empty_turn_report_for_legacy_loop(service, monkeypatch):
     svc, _manager, _db = service
 

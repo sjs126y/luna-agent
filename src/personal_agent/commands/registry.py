@@ -121,6 +121,17 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        "tool-runs",
+        "查询工具运行记录",
+        "/tool-runs [recent|summary|show <id>] [--all] [--limit N]",
+        category="tools",
+        children=(
+            CommandSpec("recent", "查看最近工具运行", "/tool-runs recent [--all] [--limit N]", category="tools"),
+            CommandSpec("summary", "查看工具运行摘要", "/tool-runs summary [--all] [--limit N]", category="tools"),
+            CommandSpec("show", "查看工具运行详情", "/tool-runs show <id>", category="tools"),
+        ),
+    ),
+    CommandSpec(
         "protocol",
         "查看前端事件协议摘要",
         "/protocol [schema]",

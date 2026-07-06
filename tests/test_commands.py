@@ -71,6 +71,48 @@ class Runtime:
         self.deleted = None
         self.exported = False
         self.memory_deleted = None
+        self.tool_runs = [
+            {
+                "id": 1,
+                "session_id": "session-a",
+                "session_key": "cli:default:local",
+                "turn_id": "turn-1",
+                "tool_use_id": "call-1",
+                "tool_name": "read",
+                "status": "success",
+                "category": "read",
+                "duration": 0.1,
+                "input_summary": '{"path": "README.md"}',
+                "output_summary": "README",
+                "full_output": "README contents",
+                "output_truncated": False,
+                "error": "",
+                "permission_category": "read",
+                "permission_decision": "allow",
+                "execution_mode": "standard",
+                "created_at": 1.0,
+            },
+            {
+                "id": 2,
+                "session_id": "session-b",
+                "session_key": "cli:other:local",
+                "turn_id": "turn-2",
+                "tool_use_id": "call-2",
+                "tool_name": "bash",
+                "status": "denied",
+                "category": "authorization",
+                "duration": 0.0,
+                "input_summary": '{"cmd": "rm"}',
+                "output_summary": "",
+                "full_output": "",
+                "output_truncated": False,
+                "error": "blocked",
+                "permission_category": "bash",
+                "permission_decision": "deny",
+                "execution_mode": "standard",
+                "created_at": 2.0,
+            },
+        ]
 
     @property
     def session_key(self):
@@ -135,6 +177,49 @@ class Runtime:
     async def memory_delete(self, identifier: str, *, target: str = "all"):
         self.memory_deleted = (identifier, target)
         return identifier == "memory:1"
+
+    async def tool_runs_recent(self, *, limit: int = 10, all_sessions: bool = False):
+        items = self.tool_runs if all_sessions else [
+            item for item in self.tool_runs if item["session_key"] == self.session_key
+        ]
+        return {
+            "scope": "all" if all_sessions else "session",
+            "session_key": "" if all_sessions else self.session_key,
+            "limit": limit,
+            "items": items[:limit],
+        }
+
+    async def tool_run_detail(self, run_id: int):
+        for item in self.tool_runs:
+            if item["id"] == run_id:
+                return item
+        return None
+
+    async def tool_runs_summary(self, *, limit: int = 50, all_sessions: bool = False):
+        items = self.tool_runs if all_sessions else [
+            item for item in self.tool_runs if item["session_key"] == self.session_key
+        ]
+        items = items[:limit]
+        tool_counts = {}
+        status_counts = {}
+        category_counts = {}
+        for item in items:
+            tool_counts[item["tool_name"]] = tool_counts.get(item["tool_name"], 0) + 1
+            status_counts[item["status"]] = status_counts.get(item["status"], 0) + 1
+            category_counts[item["category"]] = category_counts.get(item["category"], 0) + 1
+        return {
+            "scope": "all" if all_sessions else "session",
+            "session_key": "" if all_sessions else self.session_key,
+            "limit": limit,
+            "inspected": len(items),
+            "tool_counts": dict(sorted(tool_counts.items())),
+            "status_counts": dict(sorted(status_counts.items())),
+            "category_counts": dict(sorted(category_counts.items())),
+            "denied": status_counts.get("denied", 0),
+            "failed": status_counts.get("error", 0),
+            "timeouts": status_counts.get("timeout", 0),
+            "truncated": sum(1 for item in items if item.get("output_truncated")),
+        }
 
     async def clear_agent(self):
         self.clear_called = True
@@ -406,13 +491,51 @@ async def test_shared_command_tools_permissions_and_protocol(tmp_path):
     assert "tool_decision" in result.payload["events"]
 
 
+@pytest.mark.asyncio
+async def test_shared_command_tool_runs_queries(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/tool-runs")
+    assert result.kind == "tool_runs"
+    assert "工具运行记录: 1 条" in result.response
+    assert result.payload["action"] == "recent"
+    assert result.payload["scope"] == "session"
+    assert result.payload["items"][0]["tool_name"] == "read"
+
+    result = await handle_slash_command(runtime, "/tool-runs recent --all --limit 20")
+    assert result.payload["scope"] == "all"
+    assert [item["tool_name"] for item in result.payload["items"]] == ["read", "bash"]
+
+    result = await handle_slash_command(runtime, "/tool-runs summary")
+    assert "工具运行摘要" in result.response
+    assert result.payload["inspected"] == 1
+    assert result.payload["tool_counts"] == {"read": 1}
+
+    result = await handle_slash_command(runtime, "/tool-runs summary --all")
+    assert result.payload["inspected"] == 2
+    assert result.payload["status_counts"] == {"denied": 1, "success": 1}
+
+    result = await handle_slash_command(runtime, "/tool-runs show 1")
+    assert "Tool Run #1" in result.response
+    assert result.payload["tool_run"]["full_output"] == "README contents"
+
+    result = await handle_slash_command(runtime, "/tool-runs show missing")
+    assert result.error
+    assert result.payload["error"] == "invalid_tool_run_id"
+
+    result = await handle_slash_command(runtime, "/tool-runs recnt")
+    assert result.error
+    assert result.payload["error"] == "unknown_tool_runs_action"
+    assert "/tool-runs recent" in result.suggestions
+
+
 def test_command_registry_exports_structured_metadata(tmp_path):
     runtime = Runtime(tmp_path)
     data = command_specs_as_dict(runtime)
 
     assert data["version"] == 1
     names = {item["name"] for item in data["commands"]}
-    assert {"commands", "tools", "permissions", "protocol"} <= names
+    assert {"commands", "tools", "tool-runs", "permissions", "protocol"} <= names
     mode = next(item for item in data["commands"] if item["name"] == "mode")
     assert {child["name"] for child in mode["children"]} >= {"list", "show", "set"}
     assert mode["mutates_state"] is True

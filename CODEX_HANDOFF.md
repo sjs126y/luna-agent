@@ -70,7 +70,9 @@
 - `AgentTurnReport` 汇总每轮 LLM、工具、retry、tool truth。
 - `ConversationService` 记录最近 turn report 与 tool truth 摘要。
 - `tool_runs` 已持久化，runtime / doctor 可看到摘要。
-- 用户当前不急着推进 Tool Runs 查询 API，暂缓。
+- `ConversationQueryService` 提供只读查询 facade。
+- `/tool-runs [recent|summary|show <id>] [--all] [--limit N]` 已提供查询入口。
+- `/tool-runs` 返回 `CommandResult.kind="tool_runs"`，兼容文本和结构化 payload。
 
 ### Chat Slash Commands v1/v2
 
@@ -84,6 +86,7 @@
 - `/help` 由 registry 生成。
 - 新增用户可用命令：
   - `/tools [list|show <name>]`
+  - `/tool-runs [recent|summary|show <id>]`
   - `/permissions [list|grants]`
   - `/protocol [schema]`
 - 插件命令继续按 `slash` / `cli` / `both` scope 暴露。
@@ -110,12 +113,12 @@
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
+uv run pytest tests/test_conversation_service.py tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 uv run pytest -q
 ```
 
-最近一次后端相关结果：`53 passed`。
-最近一次全量结果：`684 passed`。
+最近一次后端相关结果：`79 passed`。
+最近一次全量结果：`694 passed`。
 
 ## 注意事项
 

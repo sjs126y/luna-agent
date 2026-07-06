@@ -7,12 +7,14 @@ from personal_agent.conversation.events import (
     EventRecorder,
     frontend_protocol_schema,
 )
+from personal_agent.conversation.query import ConversationQueryService
 from personal_agent.conversation.service import ConversationService, ConversationTurnResult
 
 __all__ = [
     "ConversationCommandRuntime",
     "ConversationEvent",
     "ConversationEventSink",
+    "ConversationQueryService",
     "ConversationService",
     "ConversationTurnResult",
     "EventRecorder",

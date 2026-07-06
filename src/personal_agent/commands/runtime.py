@@ -103,6 +103,12 @@ class CommandRuntime(Protocol):
 
     async def memory_delete(self, identifier: str, *, target: str = "all") -> bool: ...
 
+    async def tool_runs_recent(self, *, limit: int = 10, all_sessions: bool = False) -> dict: ...
+
+    async def tool_run_detail(self, run_id: int) -> dict | None: ...
+
+    async def tool_runs_summary(self, *, limit: int = 50, all_sessions: bool = False) -> dict: ...
+
     def plugin_command_kwargs(self, args: str) -> dict: ...
 
 
@@ -195,6 +201,12 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         if payload.get("error"):
             return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
         return CommandResult.reply(text, payload=payload, kind="tools")
+
+    if command_name == "tool-runs":
+        text, payload = await _tool_runs(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="tool_runs")
 
     if command_name == "protocol":
         text, payload = _protocol(args)
@@ -659,6 +671,70 @@ def _tools_show(runtime: CommandRuntime, name: str) -> tuple[str, dict]:
     }
 
 
+async def _tool_runs(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
+    parts = args.split()
+    action = parts[0] if parts else "recent"
+    rest = parts[1:] if parts else []
+    if action == "list":
+        action = "recent"
+    if action in {"recent", "summary"}:
+        options = _parse_tool_run_options(rest)
+        if options.get("error"):
+            return str(options["message"]), {
+                "action": action,
+                "error": options["error"],
+            }
+        limit = int(options["limit"])
+        all_sessions = bool(options["all_sessions"])
+        if action == "summary":
+            payload = await runtime.tool_runs_summary(
+                limit=limit,
+                all_sessions=all_sessions,
+            )
+            payload = {"action": "summary", **payload}
+            return _format_tool_runs_summary_text(payload), payload
+        payload = await runtime.tool_runs_recent(
+            limit=limit,
+            all_sessions=all_sessions,
+        )
+        payload = {"action": "recent", **payload}
+        return _format_tool_runs_recent_text(payload), payload
+    if action == "show":
+        if not rest:
+            return "用法: /tool-runs show <id>", {
+                "action": "show",
+                "error": "missing_tool_run_id",
+            }
+        run_id = _parse_int(rest[0])
+        if run_id is None:
+            return f"无效 tool run id: {rest[0]}", {
+                "action": "show",
+                "error": "invalid_tool_run_id",
+                "query": rest[0],
+            }
+        item = await runtime.tool_run_detail(run_id)
+        if item is None:
+            return f"未找到 tool run: {run_id}", {
+                "action": "show",
+                "error": "unknown_tool_run",
+                "id": run_id,
+            }
+        payload = {
+            "action": "show",
+            "tool_run": item,
+        }
+        return _format_tool_run_detail_text(item), payload
+    suggestions = _subcommand_suggestions(action, ["recent", "summary", "show"])
+    text = f"未知 tool-runs 子命令: {action}"
+    if suggestions:
+        text += "\n你是不是想用: " + ", ".join(f"/tool-runs {item}" for item in suggestions)
+    return text, {
+        "action": action,
+        "error": "unknown_tool_runs_action",
+        "suggestions": [f"/tool-runs {item}" for item in suggestions],
+    }
+
+
 async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     parts = args.split()
     action = parts[0] if parts else "list"
@@ -848,6 +924,89 @@ def _format_counts(counts) -> str:
 
 def _yes(value: bool) -> str:
     return "是" if value else "否"
+
+
+def _parse_tool_run_options(tokens: list[str]) -> dict:
+    result = {
+        "limit": 10,
+        "all_sessions": False,
+    }
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--all":
+            result["all_sessions"] = True
+        elif token.startswith("--limit="):
+            limit = _parse_int(token.split("=", 1)[1])
+            if limit is None:
+                return {"error": "invalid_limit", "message": f"无效 limit: {token}"}
+            result["limit"] = limit
+        elif token == "--limit":
+            if index + 1 >= len(tokens):
+                return {"error": "missing_limit", "message": "用法: --limit <number>"}
+            limit = _parse_int(tokens[index + 1])
+            if limit is None:
+                return {"error": "invalid_limit", "message": f"无效 limit: {tokens[index + 1]}"}
+            result["limit"] = limit
+            index += 1
+        else:
+            return {"error": "unknown_option", "message": f"未知参数: {token}"}
+        index += 1
+    result["limit"] = max(0, int(result["limit"]))
+    return result
+
+
+def _format_tool_runs_recent_text(payload: dict) -> str:
+    items = payload.get("items") or []
+    scope = "全局" if payload.get("scope") == "all" else f"当前会话 {payload.get('session_key') or '-'}"
+    if not items:
+        return f"工具运行记录: 无（{scope}）"
+    lines = [f"工具运行记录: {len(items)} 条（{scope}）"]
+    for item in items:
+        lines.append(
+            f"- #{item.get('id')} {item.get('tool_name') or '-'} "
+            f"{item.get('status') or '-'} {float(item.get('duration') or 0.0):.2f}s "
+            f"{_short_text(str(item.get('output_summary') or item.get('error') or ''), 80)}"
+        )
+    lines.append("用法: /tool-runs show <id>")
+    return "\n".join(lines)
+
+
+def _format_tool_runs_summary_text(payload: dict) -> str:
+    scope = "全局" if payload.get("scope") == "all" else f"当前会话 {payload.get('session_key') or '-'}"
+    return "\n".join([
+        f"工具运行摘要（{scope}）",
+        f"inspected: {payload.get('inspected', 0)}",
+        f"denied: {payload.get('denied', 0)} failed: {payload.get('failed', 0)} timeouts: {payload.get('timeouts', 0)} truncated: {payload.get('truncated', 0)}",
+        f"tool counts: {_format_counts(payload.get('tool_counts'))}",
+        f"status counts: {_format_counts(payload.get('status_counts'))}",
+        f"category counts: {_format_counts(payload.get('category_counts'))}",
+    ])
+
+
+def _format_tool_run_detail_text(item: dict) -> str:
+    output = str(item.get("full_output") or item.get("output_summary") or "")
+    return "\n".join([
+        f"Tool Run #{item.get('id')}",
+        f"tool: {item.get('tool_name') or '-'}",
+        f"status: {item.get('status') or '-'}",
+        f"category: {item.get('category') or '-'}",
+        f"duration: {float(item.get('duration') or 0.0):.2f}s",
+        f"session: {item.get('session_key') or '-'}",
+        f"turn: {item.get('turn_id') or '-'}",
+        f"permission: {item.get('permission_category') or '-'} / {item.get('permission_decision') or '-'}",
+        f"mode: {item.get('execution_mode') or '-'}",
+        f"input: {_short_text(str(item.get('input_summary') or ''), 160) or '-'}",
+        f"output: {_short_text(output, 300) or '-'}",
+        f"error: {item.get('error') or '-'}",
+    ])
+
+
+def _parse_int(value: str) -> int | None:
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
 
 
 def _subcommand_suggestions(value: str, candidates: list[str]) -> list[str]:

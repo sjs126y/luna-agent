@@ -58,6 +58,9 @@ class ConversationService:
         )
         self.turn_reports: deque[dict[str, Any]] = deque(maxlen=TURN_REPORT_HISTORY_LIMIT)
         self._recent_tool_runs: deque[dict[str, Any]] = deque(maxlen=TURN_REPORT_HISTORY_LIMIT)
+        from personal_agent.conversation.query import ConversationQueryService
+
+        self.queries = ConversationQueryService(self)
 
     async def run_turn(self, session_key: str, source, text: str) -> ConversationTurnResult:
         return await self.run_turn_events(session_key, source, text)
