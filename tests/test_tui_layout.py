@@ -305,6 +305,17 @@ def test_meter_bar_computes_cache_rate_from_hit_and_miss():
     assert "cache 75%" in bar
 
 
+def test_meter_bar_shows_activity_badge():
+    from personal_agent.tui.layout import _meter_bar
+
+    state = UIState()
+    state.model = "deepseek-v4-flash"
+    state.activity_total = 3
+    state.activity_attention = True
+    bar = _meter_bar(state)
+    assert "activity 3 !" in bar
+
+
 def test_hint_bar_uses_distinct_mode_colors():
     from personal_agent.tui import theme
     from personal_agent.tui.layout import _hint_bar

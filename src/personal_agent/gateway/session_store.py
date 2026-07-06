@@ -197,14 +197,41 @@ class SessionStore:
         *,
         limit: int = 20,
         session_key: str | None = None,
+        turn_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return await self._db.recent_tool_runs(limit=limit, session_key=session_key)
+        return await self._db.recent_tool_runs(
+            limit=limit,
+            session_key=session_key,
+            turn_id=turn_id,
+        )
 
     async def get_tool_run(self, run_id: int) -> dict[str, Any] | None:
         return await self._db.get_tool_run(run_id)
 
     async def tool_run_summary(self, *, limit: int = 50) -> dict[str, Any]:
         return await self._db.tool_run_summary(limit=limit)
+
+    async def save_turn_report(self, envelope: dict[str, Any]) -> int:
+        return await self._db.save_turn_report(envelope)
+
+    async def recent_turn_reports(
+        self,
+        *,
+        limit: int = 20,
+        session_key: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self._db.recent_turn_reports(
+            limit=limit,
+            session_key=session_key,
+            status=status,
+        )
+
+    async def get_turn_report(self, report_id: int) -> dict[str, Any] | None:
+        return await self._db.get_turn_report(report_id)
+
+    async def turn_report_summary(self) -> dict[str, Any]:
+        return await self._db.turn_report_summary()
 
     async def expire_sessions(self, max_age_days: int = 30) -> int:
         """Remove sessions inactive for > max_age_days. Returns count removed."""

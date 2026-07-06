@@ -2,7 +2,7 @@
 
 更新时间：2026-07-06
 
-本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；历史需求文档已归档到 `docs/archive/`。
+本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
 
 ## 1. Conversation Event Stream
 
@@ -23,20 +23,6 @@
 - `data`：结构化字段，前端逻辑应主要依赖这里。
 - `assistant_delta` / `thinking_delta` 是高频事件，只有 sink 设置 `wants_deltas=True` 才会收到。
 
-前端/桌面端可以通过稳定入口读取协议 schema：
-
-```bash
-personal-agent protocol schema --json
-```
-
-Python 层入口：
-
-```python
-from personal_agent.conversation import frontend_protocol_schema
-
-schema = frontend_protocol_schema()
-```
-
 后端源码契约在：
 
 - `src/personal_agent/conversation/events.py`
@@ -44,28 +30,6 @@ schema = frontend_protocol_schema()
 - `EVENT_SCHEMAS`
 - `event_protocol_schema()`
 - `ConversationEvent.as_dict()`
-
-## Doctor Diagnostics
-
-`personal-agent doctor` 和 `personal-agent doctor --section runtime --json` 会暴露当前后端能力摘要，供联调排查使用。
-
-runtime section 中与前端/工具联调相关的字段：
-
-- `commands.registry_version`
-- `commands.core_commands`
-- `commands.plugin_commands`
-- `commands.argument_specs`
-- `commands.dynamic_providers`
-- `commands.has_tool_runs`
-- `commands.has_mode_arguments`
-- `commands.has_allow_arguments`
-- `query.conversation_query_service`
-- `query.tool_runs_query`
-- `execution.mode`
-- `execution.label`
-- `execution.isolation`
-- `execution.network`
-- `execution.permissions`
 
 ## 2. Event Types
 
@@ -124,10 +88,31 @@ runtime section 中与前端/工具联调相关的字段：
 
 - `input_tokens: integer`
 - `output_tokens: integer`
+- `cache_hit_tokens: integer`
+- `cache_miss_tokens: integer`
+- `cache_write_tokens: integer`
+- `cache_read_tokens: integer`
+- `cache_hit_rate: number`
+- `cache_diagnostics: object`
 - `tool_call_count: integer`
 - `finish_reason: string`
 - `model: string`
 - `context_window: integer`
+
+`cache_diagnostics` 用于排查 provider prompt cache 命中率，当前常见字段：
+
+- `cache_strategy: string`，`none` / `prefix` / `explicit`
+- `system_hash: string`
+- `tools_hash: string`
+- `message_prefix_hash: string`
+- `stable_prefix_hash: string`
+- `dynamic_context_hash: string`
+- `stable_block_count: integer`
+- `dynamic_block_count: integer`
+- `current_user_present: boolean`
+- `source: string`
+- `message_count: integer`
+- `tool_count: integer`
 
 ### `assistant_message`
 
@@ -179,10 +164,6 @@ runtime section 中与前端/工具联调相关的字段：
 - `command_preview: string`
 - `url_preview: string`
 - `host: string`
-- `cwd: string`
-- `timeout_seconds: number`
-- `method: string`
-- `process_label: string`
 
 确认 UI 建议优先读：
 
@@ -231,10 +212,6 @@ runtime section 中与前端/工具联调相关的字段：
 - `command_preview: string`
 - `url_preview: string`
 - `host: string`
-- `cwd: string`
-- `timeout_seconds: number`
-- `method: string`
-- `process_label: string`
 
 ### `retry`
 
@@ -247,22 +224,13 @@ runtime section 中与前端/工具联调相关的字段：
 常见字段：
 
 - `attempt: integer`
-- `max_attempts: integer`
 - `error: string`
 - `tool_name: string`
 - `tool_names: string`
-- `recoverable: boolean`
 
 ### `stop`
 
 当前 turn 被停止或中断。
-
-常见字段：
-
-- `reason: string`，如 `user` / `interrupt` / `timeout` / `shutdown`
-- `message: string`
-- `stopped_tools: integer`
-- `stopped_agents: integer`
 
 ### `error`
 
@@ -271,12 +239,6 @@ runtime section 中与前端/工具联调相关的字段：
 必需字段：
 
 - `error: string`
-
-常见字段：
-
-- `category: string`，如 `llm` / `runtime` / `tool`
-- `recoverable: boolean`
-- `detail_id: string`
 
 ### `turn_end`
 
@@ -333,13 +295,10 @@ async def confirm_callback(decision) -> str:
 
 ## 4. Execution Mode
 
-当前用户入口是：
+当前唯一用户入口是：
 
 ```text
-/mode
-/mode list
-/mode show
-/mode set <mode>
+/mode <mode>
 ```
 
 用户可见四档：
@@ -364,123 +323,9 @@ async def confirm_callback(decision) -> str:
 
 切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-## 5. Chat Slash Commands
+## 5. Tool Runs / Tool Truth
 
-CLI chat、inline TUI 和 Gateway 共享 slash command runtime。Typer CLI (`personal-agent ...`) 仍是独立入口，不和 slash command registry 合并。
-
-当前 registry 版本：
-
-```text
-SLASH_COMMAND_REGISTRY_VERSION = 1
-```
-
-可发现入口：
-
-- `/commands`
-- `/commands json`
-- `/commands <name>`
-- `/help`
-
-核心命令：
-
-- `/new`
-- `/session [current|list|switch <name>|rename <name>|delete [name]]`
-- `/usage`
-- `/export`
-- `/allow [write|bash|background|network|destructive|all]`
-- `/mode [list|show|set <mode>]`
-- `/permissions [list|grants]`
-- `/stop`
-- `/agents [list [limit]|show <run_id>|clear]`
-- `/memory [list|search <query>|show <id>|delete <id>|doctor]`
-- `/tools [list|show <name>]`
-- `/protocol [schema]`
-
-插件命令仍使用插件系统自己的 command registry，并按 scope 暴露：
-
-- `slash`
-- `cli`
-- `both`
-
-`/commands` 和 `/help` 会按当前 runtime scope 合并展示可见插件命令。
-
-### CommandResult v2
-
-`handle_slash_command(...)` 现在返回兼容文本和结构化结果：
-
-- `handled: bool`
-- `response: str | None`：CLI/Gateway 的兼容展示文本。
-- `continue_text: str | None`：技能命令继续进入普通 agent 消息。
-- `payload: dict | None`：前端/TUI 可消费的结构化数据。
-- `kind: str`：例如 `text`, `commands`, `tools`, `permissions`, `protocol`, `mode`, `command_error`。
-- `error: str | None`
-- `suggestions: list[str] | None`
-
-已提供结构化 payload 的命令：
-
-- `/commands`、`/commands json`、`/commands <name>`
-- `/tools list`、`/tools show <name>`
-- `/tool-runs recent`、`/tool-runs summary`、`/tool-runs show <id>`
-- `/permissions list`、`/permissions grants`
-- `/protocol`、`/protocol schema`
-- `/mode list`、`/mode show`、`/mode set <mode>`
-
-`/commands json` 的 command metadata 包含：
-
-- `name`
-- `summary`
-- `usage`
-- `category`
-- `aliases`
-- `available_in`
-- `mutates_state`
-- `requires_agent`
-- `arguments`
-- `children`
-
-`arguments` metadata：
-
-- `name`
-- `kind`: `choice` 或 `dynamic`
-- `choices`: 静态候选列表。
-- `provider`: 动态候选 provider。
-- `required`
-
-候选项字段：
-
-- `value`
-- `label`
-- `description`
-- `append_space`
-
-当前静态候选：
-
-- `/mode set <mode>`: `Read Only`, `Ask First`, `Edit Freely`, `Full Auto`
-- `/allow <category>`: `write`, `bash`, `background`, `network`, `destructive`, `all`
-
-当前动态 provider：
-
-- `tools`: 用于 `/tools show <name>`。
-- `sessions`: 用于 `/session switch <name>` 和 `/session delete [name]`。
-
-动态候选查询入口：
-
-```python
-await slash_argument_choices(
-    runtime,
-    provider,
-    command="tools",
-    args=("show",),
-    query="rea",
-    limit=20,
-)
-```
-
-未知命令或子命令会尽量返回 `suggestions`。完全未知且可能是技能命令的输入仍保持原有 fallback，不强行拦截。
-
-## 6. Tool Runs / Tool Truth
-
-后端已持久化工具运行结果，并提供只读查询 facade 与 slash command 查询入口。
+后端已持久化工具运行结果，供后续前端/desktop 查询使用。
 
 当前能力：
 
@@ -490,62 +335,192 @@ await slash_argument_choices(
 - `Database.tool_run_summary(...)`
 - `SessionStore` 有对应代理。
 - `ConversationService` 从 `tool_end` 事件自动记录 tool runs。
-- `ConversationQueryService` 提供只读查询 facade。
 - runtime health / doctor 会显示 tool run 摘要。
 
-`/tool-runs` slash command：
+`recent_tool_runs(...)` 当前支持按 `session_key` 和 `turn_id` 过滤，用于和持久化 turn report 关联。
 
-- `/tool-runs` 或 `/tool-runs recent`
-- `/tool-runs recent --all --limit 20`
-- `/tool-runs summary`
-- `/tool-runs summary --all`
-- `/tool-runs show <id>`
+后续如果前端需要 UI 查询接口，请先明确：
 
-`/tool-runs` 返回 `CommandResult.kind="tool_runs"`，文本 `response` 给 CLI/Gateway 展示，结构化 `payload` 给前端/TUI 使用。
+- 查询范围：当前 session / 最近全局 / 指定 turn。
+- 分页参数。
+- 是否需要 `full_output`。
+- 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-recent payload：
+## 6. Turn Reports
 
-- `action`
-- `scope`
-- `session_key`
-- `limit`
-- `items`
+后端会把每轮 `AgentTurnReport` 持久化到 SQLite，作为 turn 级审计记录。它记录一轮对话的整体状态、LLM/cache usage、工具调用汇总、retry、错误、tool truth 等信息。
 
-summary payload：
+当前能力：
 
-- `inspected`
-- `tool_counts`
-- `status_counts`
-- `category_counts`
-- `denied`
-- `failed`
-- `timeouts`
-- `truncated`
+- `Database.save_turn_report(...)`
+- `Database.recent_turn_reports(limit=20, session_key=None, status=None)`
+- `Database.get_turn_report(report_id)`
+- `Database.turn_report_summary()`
+- `SessionStore` 有对应代理。
+- `ConversationService.recent_persisted_turn_reports(...)`
+- `ConversationService.get_persisted_turn_report(...)`
+- `ConversationService.tool_runs_for_turn_report(report_id)`
+- `ConversationService.persisted_turn_report_summary()`
 
-detail payload 的 `tool_run` 包含：
+常见字段：
 
-- `id`
-- `session_id`
-- `session_key`
-- `turn_id`
-- `tool_use_id`
-- `tool_name`
-- `status`
-- `category`
-- `duration`
-- `input_summary`
-- `output_summary`
-- `full_output`
-- `output_truncated`
-- `error`
-- `permission_category`
-- `permission_decision`
-- `execution_mode`
-- `created_at`
+- `id: integer`
+- `session_id: string`
+- `session_key: string`
+- `turn_id: string`
+- `status: string`，`completed` / `failed` / `stopped` / `context_overflow`
+- `completed: boolean`
+- `duration: number`
+- `error: string`
+- `user_message_summary: string`
+- `final_response_summary: string`
+- `llm_calls: integer`
+- `tool_calls: integer`
+- `cache_hit_tokens: integer`
+- `cache_miss_tokens: integer`
+- `cache_write_tokens: integer`
+- `cache_read_tokens: integer`
+- `source: object`
+- `report: object`，完整 `AgentTurnReport`
+- `created_at: number`
 
-后续如果前端需要更复杂 UI 查询，再补分页游标和按 `status` / `tool_name` / `permission_category` 过滤。
+关联语义：
 
-## 7. Compatibility Notes
+- `turn_reports.turn_id` 与 `tool_runs.turn_id` 对齐。
+- `session_key` 用于查询同一逻辑会话，包括发生压缩后的会话链。
+- `session_id` 用于精确归属当前物理 session。
+- `tool_runs_for_turn_report(report_id)` 会按 `session_key + turn_id` 返回该轮工具明细。
+
+## 7. Runtime / Doctor Cache Diagnostics
+
+`personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
+
+常见字段：
+
+- `provider: string`
+- `model: string`
+- `strategy: string`，`none` / `prefix` / `explicit`
+- `supports_usage: boolean`
+- `usage_fields: object`
+- `cacheable_blocks: list[string]`
+- `last_usage: object`
+- `last_diagnostics: object`
+- `error: string`
+
+`last_usage` 当前包含：
+
+- `cache_hit_tokens`
+- `cache_miss_tokens`
+- `cache_write_tokens`
+- `cache_read_tokens`
+- `cache_hit_rate`
+
+`last_diagnostics` 与 `llm_end.cache_diagnostics` 字段一致。
+
+`personal-agent doctor --section runtime --json` 的 `runtime.turns.persisted` 会暴露持久化 turn report 摘要。
+
+常见字段：
+
+- `stored: integer`
+- `last_id: integer`
+- `last_turn_id: string`
+- `last_session_key: string`
+- `last_status: string`
+- `last_error: string`
+- `last_duration: number`
+- `last_llm_calls: integer`
+- `last_tool_calls: integer`
+- `last_cache_hit_tokens: integer`
+- `last_cache_miss_tokens: integer`
+- `last_cache_write_tokens: integer`
+- `last_cache_read_tokens: integer`
+
+## 8. Activity Runtime Interface
+
+后端已提供稳定 Activity 接口，用于前端展示“系统正在做什么”。Activity 覆盖：
+
+- `sub_agent`：主 agent 委派的子任务。
+- `background_process`：`process_start` 启动的后台进程。
+- `gateway_agent`：gateway 平台消息触发的一次主 agent 处理流程。
+
+入口：
+
+- Slash command：`/activity [agents|processes|gateway] [id]`
+- Command result：`CommandResult.kind == "activity"`，结构化数据在 `payload`。
+- Runtime/query API：
+  - `activity_snapshot(limit=20)`
+  - `activity_detail(kind, id_)`
+  - `activity_choices(provider, query="", limit=20)`
+  - `slash_command_metadata()`
+  - `slash_argument_choices(provider, command="", args=(), query="", limit=20)`
+
+`/activity` overview payload：
+
+```json
+{
+  "summary": {
+    "has_active_work": true,
+    "active_total": 3,
+    "attention_required": false,
+    "longest_running_seconds": 34.6,
+    "counts": {
+      "sub_agents": {"active": 1, "recent": 12, "failed_recent": 1, "stop_requested": 0},
+      "background_processes": {"total": 2, "running": 1, "done": 1, "killed": 0},
+      "gateway_agents": {"running": 1, "stop_requested": 0}
+    }
+  },
+  "sub_agents": {"active_runs": [], "recent_runs": []},
+  "background_processes": {"items": []},
+  "gateway_agents": {"running_agent_runs": []}
+}
+```
+
+列表 item 公共字段：
+
+- `id: string`
+- `kind: "sub_agent" | "background_process" | "gateway_agent"`
+- `status: "running" | "completed" | "failed" | "stopped" | "stopping"`
+- `started_at: string`
+- `finished_at: string`
+- `duration_seconds: number`
+- `stop_requested: boolean`
+- `error: string`
+- `attention_required: boolean`
+
+各类 item 还会提供前端常用字段：
+
+- `sub_agent`：`run_id`, `role`, `task`, `task_preview`, `usage`, `quota`, `tool_counts`, `result_preview`。
+- `background_process`：`pid`, `command`, `command_preview`, `cwd`, `returncode`, `has_stdout`, `has_stderr`, `stdout_bytes`, `stderr_bytes`, `output_preview`, `stdout_truncated`, `stderr_truncated`。
+- `gateway_agent`：`session_key`, `platform`, `chat_id`, `user_id`。
+
+详情 payload：
+
+```json
+{"kind": "sub_agent", "id": "abc123", "run": {}}
+{"kind": "background_process", "id": "3", "process": {}}
+{"kind": "gateway_agent", "id": "telegram:c1:u1", "gateway_run": {}}
+```
+
+Slash metadata：
+
+- `slash_command_metadata()` 中 `/activity` 声明 `result_kind="activity"`。
+- `/activity` 的 `scope` 参数是 choice：`agents`, `processes`, `gateway`。
+- `/activity agents [id]` 使用 dynamic provider `activity_agents`。
+- `/activity processes [id]` 使用 dynamic provider `activity_processes`。
+- `/activity gateway [id]` 使用 dynamic provider `activity_gateway`。
+
+动态候选外形：
+
+```json
+{
+  "value": "abc123",
+  "label": "abc123",
+  "description": "reviewer running",
+  "append_space": false
+}
+```
+
+## 9. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

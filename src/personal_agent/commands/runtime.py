@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import inspect
 import json
-from typing import Protocol
+from typing import Any, Protocol
 
 from personal_agent.commands.registry import (
     command_specs_as_dict,
@@ -59,6 +59,10 @@ class CommandResult:
         )
 
     @classmethod
+    def structured(cls, response: str, *, kind: str, payload: dict[str, Any]) -> "CommandResult":
+        return cls(handled=True, response=response, kind=kind, payload=payload)
+
+    @classmethod
     def continue_with(cls, text: str) -> "CommandResult":
         return cls(handled=True, continue_text=text, kind="continue")
 
@@ -109,6 +113,12 @@ class CommandRuntime(Protocol):
 
     async def tool_runs_summary(self, *, limit: int = 50, all_sessions: bool = False) -> dict: ...
 
+    async def activity_snapshot(self, *, limit: int = 20) -> dict: ...
+
+    async def activity_detail(self, kind: str, id_: str) -> dict | None: ...
+
+    async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20) -> list[dict]: ...
+
     def plugin_command_kwargs(self, args: str) -> dict: ...
 
 
@@ -147,6 +157,12 @@ _MODE_ALIASES = {
     "auto": "full-auto",
     "sovereign": "full-auto",
 }
+
+_ACTIVITY_SCOPE_CHOICES = (
+    ("agents", "agents", "Sub-agent runs"),
+    ("processes", "processes", "Background processes"),
+    ("gateway", "gateway", "Gateway agent runs"),
+)
 
 
 async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandResult:
@@ -192,6 +208,12 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
 
     if command_name in {"agents", "agent-runs"}:
         return CommandResult.reply(await _agents(args))
+
+    if command_name == "activity":
+        payload, response = await _activity(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(response, payload=payload, kind="activity_error")
+        return CommandResult.structured(response, kind="activity", payload=payload)
 
     if command_name == "memory":
         return CommandResult.reply(await _memory(runtime, args))
@@ -258,6 +280,14 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
     return CommandResult.unhandled()
 
 
+def slash_command_metadata(runtime: CommandRuntime | None = None) -> list[dict[str, Any]]:
+    """Return frontend-consumable slash command registry metadata."""
+    payload = command_specs_as_dict(runtime)
+    entries = list(payload.get("commands") or [])
+    entries.extend(list(payload.get("plugin_commands") or []))
+    return entries
+
+
 def _parse_command(text: str) -> tuple[str, str] | None:
     if not text.startswith("/") or text == "/":
         return None
@@ -284,6 +314,23 @@ def _find_plugin_command(plugin_manager, name: str, scopes: tuple[str, ...]):
     return None, scopes[0] if scopes else "slash"
 
 
+def _normalize_choice_items(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    choices = []
+    for item in items:
+        value = str(item.get("value") or "")
+        if not value:
+            continue
+        choices.append({
+            "value": value,
+            "label": str(item.get("label") or value),
+            "description": str(item.get("description") or ""),
+            "append_space": bool(item.get("append_space", False)),
+        })
+        if len(choices) >= limit:
+            break
+    return choices
+
+
 async def slash_argument_choices(
     runtime: CommandRuntime,
     provider: str,
@@ -299,6 +346,22 @@ async def slash_argument_choices(
         return _tool_argument_choices(runtime, query=query, limit=limit)
     if normalized_provider == "sessions":
         return await _session_argument_choices(runtime, query=query, limit=limit)
+    if normalized_provider in {"activity_agents", "activity_processes", "activity_gateway"}:
+        custom = await _call_optional(
+            runtime,
+            "activity_choices",
+            normalized_provider,
+            query=query,
+            limit=limit,
+        )
+        if custom is not None:
+            return _normalize_choice_items(custom, limit=limit)
+        from personal_agent.activity import activity_choices
+
+        return _normalize_choice_items(
+            activity_choices(normalized_provider, query=query, limit=limit),
+            limit=limit,
+        )
     return []
 
 
@@ -526,6 +589,212 @@ async def _agents(args: str) -> str:
         count = clear_agent_runs()
         return f"已清理 {count} 条子 agent 运行记录。"
     return "用法: /agents [list [limit]|show <run_id>|clear]"
+
+
+async def _activity(runtime: CommandRuntime, args: str) -> tuple[dict[str, Any], str]:
+    parts = args.split()
+    scope = _activity_scope(parts[0]) if parts else "all"
+    if scope == "":
+        payload = {"error": "usage", "usage": "/activity [agents|processes|gateway] [id]"}
+        return payload, "用法: /activity [agents|processes|gateway] [id]"
+
+    if len(parts) >= 2:
+        detail = await _activity_detail(runtime, scope, parts[1])
+        if detail is None:
+            payload = {
+                "scope": scope,
+                "id": parts[1],
+                "not_found": True,
+            }
+            return payload, f"未找到 activity: {scope} {parts[1]}"
+        return detail, _format_activity_detail(detail)
+
+    snapshot = await _activity_snapshot(runtime)
+    payload = snapshot if scope == "all" else _activity_scope_payload(snapshot, scope)
+    return payload, _format_activity_payload(payload, scope=scope)
+
+
+async def _activity_snapshot(runtime: CommandRuntime) -> dict[str, Any]:
+    custom = await _call_optional(runtime, "activity_snapshot", limit=20)
+    if custom is not None:
+        return dict(custom)
+    from personal_agent.activity import activity_snapshot
+
+    return activity_snapshot()
+
+
+async def _activity_detail(runtime: CommandRuntime, scope: str, id_: str) -> dict[str, Any] | None:
+    kind = {
+        "agents": "sub_agent",
+        "processes": "background_process",
+        "gateway": "gateway_agent",
+    }[scope]
+    custom = await _call_optional(runtime, "activity_detail", kind, id_)
+    if custom is not None:
+        return custom
+    from personal_agent.activity import activity_detail
+
+    return activity_detail(kind, id_)
+
+
+def _activity_scope(raw: str) -> str:
+    value = raw.strip().lower()
+    aliases = {
+        "all": "all",
+        "summary": "all",
+        "list": "all",
+        "agents": "agents",
+        "agent": "agents",
+        "sub_agents": "agents",
+        "sub-agent": "agents",
+        "sub-agents": "agents",
+        "processes": "processes",
+        "process": "processes",
+        "background": "processes",
+        "background_processes": "processes",
+        "gateway": "gateway",
+        "gateways": "gateway",
+        "gateway_agents": "gateway",
+    }
+    return aliases.get(value, "")
+
+
+def _activity_scope_payload(snapshot: dict[str, Any], scope: str) -> dict[str, Any]:
+    key = {
+        "agents": "sub_agents",
+        "processes": "background_processes",
+        "gateway": "gateway_agents",
+    }[scope]
+    return {
+        "scope": scope,
+        "summary": dict(snapshot.get("summary") or {}),
+        key: dict(snapshot.get(key) or {}),
+    }
+
+
+def _format_activity_payload(payload: dict[str, Any], *, scope: str) -> str:
+    if scope == "agents":
+        return _format_activity_agents(payload.get("sub_agents") or {})
+    if scope == "processes":
+        return _format_activity_processes(payload.get("background_processes") or {})
+    if scope == "gateway":
+        return _format_activity_gateway(payload.get("gateway_agents") or {})
+    return "\n".join([
+        _format_activity_summary(payload),
+        "",
+        _format_activity_agents(payload.get("sub_agents") or {}),
+        "",
+        _format_activity_processes(payload.get("background_processes") or {}),
+        "",
+        _format_activity_gateway(payload.get("gateway_agents") or {}),
+    ]).strip()
+
+
+def _format_activity_summary(payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or {}
+    counts = summary.get("counts") or {}
+    sub_agents = counts.get("sub_agents") or {}
+    processes = counts.get("background_processes") or {}
+    gateway = counts.get("gateway_agents") or {}
+    attention = "是" if summary.get("attention_required") else "否"
+    return "\n".join([
+        "运行活动",
+        f"活跃任务: {int(summary.get('active_total') or 0)}",
+        f"需要注意: {attention}",
+        f"最长运行: {float(summary.get('longest_running_seconds') or 0.0):.1f}s",
+        (
+            "子 agent: "
+            f"active={int(sub_agents.get('active') or 0)} "
+            f"recent={int(sub_agents.get('recent') or 0)} "
+            f"failed_recent={int(sub_agents.get('failed_recent') or 0)}"
+        ),
+        (
+            "后台任务: "
+            f"running={int(processes.get('running') or 0)} "
+            f"done={int(processes.get('done') or 0)} "
+            f"killed={int(processes.get('killed') or 0)}"
+        ),
+        f"Gateway agent: running={int(gateway.get('running') or 0)}",
+    ])
+
+
+def _format_activity_agents(payload: dict[str, Any]) -> str:
+    active = payload.get("active_runs") or []
+    recent = payload.get("recent_runs") or []
+    lines = [f"子 agent: active={len(active)} recent={len(recent)}"]
+    for item in active:
+        lines.append(_format_activity_item(item))
+    for item in recent:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无子 agent 活动。")
+    return "\n".join(lines)
+
+
+def _format_activity_processes(payload: dict[str, Any]) -> str:
+    items = payload.get("items") or []
+    counts = payload.get("counts") or {}
+    lines = [
+        (
+            "后台任务: "
+            f"total={int(counts.get('total') or 0)} "
+            f"running={int(counts.get('running') or 0)} "
+            f"done={int(counts.get('done') or 0)} "
+            f"killed={int(counts.get('killed') or 0)}"
+        )
+    ]
+    for item in items:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无后台任务。")
+    return "\n".join(lines)
+
+
+def _format_activity_gateway(payload: dict[str, Any]) -> str:
+    items = payload.get("running_agent_runs") or []
+    counts = payload.get("counts") or {}
+    lines = [
+        (
+            "Gateway agent: "
+            f"running={int(counts.get('running') or 0)} "
+            f"stop_requested={int(counts.get('stop_requested') or 0)}"
+        )
+    ]
+    for item in items:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无 Gateway agent 活动。")
+    return "\n".join(lines)
+
+
+def _format_activity_item(item: dict[str, Any]) -> str:
+    item_id = item.get("id") or item.get("run_id") or item.get("session_key") or "-"
+    status = item.get("status") or "-"
+    duration = float(item.get("duration_seconds") or 0.0)
+    title = item.get("task_preview") or item.get("task") or item.get("command_preview")
+    title = title or item.get("command") or item.get("platform") or ""
+    suffix = f" - {_short_text(str(title), 90)}" if title else ""
+    return f"- {item_id} [{status}] {duration:.1f}s{suffix}"
+
+
+def _format_activity_detail(payload: dict[str, Any]) -> str:
+    item = payload.get("run") or payload.get("process") or payload.get("gateway_run") or {}
+    kind = payload.get("kind") or item.get("kind") or "activity"
+    item_id = payload.get("id") or item.get("id") or "-"
+    lines = [
+        f"Activity detail: {kind} {item_id}",
+        f"status: {item.get('status') or '-'}",
+        f"duration: {float(item.get('duration_seconds') or 0.0):.1f}s",
+        f"started_at: {item.get('started_at') or '-'}",
+    ]
+    if item.get("finished_at"):
+        lines.append(f"finished_at: {item.get('finished_at')}")
+    if item.get("error"):
+        lines.append(f"error: {item.get('error')}")
+    title = item.get("task") or item.get("command") or item.get("platform")
+    if title:
+        lines.append(str(title))
+    return "\n".join(lines)
 
 
 async def _memory(runtime: CommandRuntime, args: str) -> str:

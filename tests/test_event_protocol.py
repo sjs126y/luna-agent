@@ -83,7 +83,19 @@ def test_event_protocol_schema_is_frontend_serializable():
 
 
 def test_frontend_protocol_schema_aliases_event_protocol_schema():
-    assert frontend_protocol_schema() == event_protocol_schema()
+    schema = event_protocol_schema()
+    assert frontend_protocol_schema() == schema
+
+    llm_fields = {
+        field["name"]: field
+        for field in schema["events"]["llm_end"]["fields"]
+    }
+    assert llm_fields["cache_hit_tokens"]["type"] == "integer"
+    assert llm_fields["cache_miss_tokens"]["type"] == "integer"
+    assert llm_fields["cache_write_tokens"]["type"] == "integer"
+    assert llm_fields["cache_read_tokens"]["type"] == "integer"
+    assert llm_fields["cache_hit_rate"]["type"] == "number"
+    assert llm_fields["cache_diagnostics"]["type"] == "object"
 
 
 def test_conversation_event_as_dict_includes_protocol_version():

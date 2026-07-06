@@ -73,6 +73,15 @@ def test_slash_menu_offers_child_commands_without_placeholders():
     assert all("<mode>" not in text for text in texts)
 
 
+def test_slash_menu_offers_activity_child_commands():
+    app = _app()
+    app.input_area.text = "/activity "
+    texts = {item.text for item in app.state.slash_items}
+    assert "/activity agents" in texts
+    assert "/activity processes" in texts
+    assert "/activity gateway" in texts
+
+
 def test_slash_menu_offers_argument_choices_from_registry(monkeypatch):
     def command_specs_as_dict(runtime):
         return {
@@ -698,6 +707,131 @@ async def test_tool_run_detail_payload_sets_expandable_output(monkeypatch):
     assert app.state.last_expandable == ("read #7", "line1\nline2")
 
 
+@pytest.mark.asyncio
+async def test_activity_payload_formats_overview_and_updates_badge(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/activity"
+        return CommandResult.structured(
+            "backend fallback text",
+            kind="activity",
+            payload={
+                "summary": {
+                    "active_total": 3,
+                    "attention_required": True,
+                    "longest_running_seconds": 72,
+                    "counts": {
+                        "sub_agents": {"active": 1, "recent": 2},
+                        "background_processes": {"running": 1, "done": 1, "killed": 0},
+                        "gateway_agents": {"running": 1},
+                    },
+                },
+                "gateway_agents": {
+                    "running_agent_runs": [
+                        {
+                            "id": "telegram:c1:u1",
+                            "session_key": "telegram:c1:u1",
+                            "platform": "telegram",
+                            "status": "running",
+                            "duration_seconds": 72,
+                        }
+                    ]
+                },
+                "sub_agents": {
+                    "active_runs": [
+                        {
+                            "id": "abc123",
+                            "run_id": "abc123",
+                            "role": "reviewer",
+                            "status": "running",
+                            "duration_seconds": 18,
+                            "task_preview": "检查 provider cache 实现",
+                            "quota": {"used_tokens": 1200, "max_tokens": 4096},
+                            "tool_counts": {"requested": 2, "executed": 1, "denied": 0},
+                        }
+                    ],
+                    "recent_runs": [],
+                },
+                "background_processes": {
+                    "counts": {"running": 1, "done": 1, "killed": 0},
+                    "items": [
+                        {
+                            "id": "3",
+                            "pid": 3,
+                            "status": "running",
+                            "command_preview": "uv run pytest -q",
+                            "cwd": "/tmp/project",
+                            "duration_seconds": 23,
+                        }
+                    ],
+                },
+            },
+        )
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/activity")
+
+    text = "\n".join(printed)
+    assert "Activity 3 active" in text
+    assert "Gateway" in text
+    assert "Sub agents" in text
+    assert "Processes" in text
+    assert "reviewer" in text
+    assert "uv run pytest -q" in text
+    assert "backend fallback text" not in text
+    assert app.state.activity_total == 3
+    assert app.state.activity_attention is True
+
+
+@pytest.mark.asyncio
+async def test_activity_process_detail_sets_expandable_output(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/activity processes 3"
+        return CommandResult.structured(
+            "backend fallback text",
+            kind="activity",
+            payload={
+                "kind": "background_process",
+                "id": "3",
+                "process": {
+                    "id": "3",
+                    "pid": 3,
+                    "status": "running",
+                    "duration_seconds": 23,
+                    "started_at": 1783347000.0,
+                    "command": "uv run pytest -q",
+                    "cwd": "/tmp/project",
+                    "stdout": "tests passed",
+                    "stderr": "",
+                },
+            },
+        )
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/activity processes 3")
+
+    text = "\n".join(printed)
+    assert "Activity background_process 3" in text
+    assert "uv run pytest -q" in text
+    assert "Ctrl+O" in text
+    assert app.state.last_expandable == ("Activity background_process 3", "stdout\ntests passed")
+
+
 def test_slash_mode_tracks_input_text():
     app = _app()
     assert app.state.slash_mode is False
@@ -735,7 +869,7 @@ def test_unknown_slash_command_shows_no_matches():
 def test_partial_slash_command_shows_matching_candidates():
     app = _app()
     app.input_area.text = "/a"
-    assert [item.text for item in app.state.slash_items] == ["/allow", "/agents"]
+    assert [item.text for item in app.state.slash_items] == ["/allow", "/agents", "/activity"]
 
 
 def test_parent_slash_command_shows_child_candidates():

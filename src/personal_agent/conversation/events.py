@@ -105,6 +105,12 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
         fields=(
             EventFieldSpec("input_tokens", "integer", "Input tokens reported by the provider."),
             EventFieldSpec("output_tokens", "integer", "Output tokens reported by the provider."),
+            EventFieldSpec("cache_hit_tokens", "integer", "Input tokens served from provider prompt cache."),
+            EventFieldSpec("cache_miss_tokens", "integer", "Input tokens not served from provider prompt cache."),
+            EventFieldSpec("cache_write_tokens", "integer", "Input tokens written to provider prompt cache."),
+            EventFieldSpec("cache_read_tokens", "integer", "Input tokens read from provider prompt cache."),
+            EventFieldSpec("cache_hit_rate", "number", "cache_hit_tokens divided by input_tokens."),
+            EventFieldSpec("cache_diagnostics", "object", "Request hash diagnostics for cache debugging."),
             EventFieldSpec("tool_call_count", "integer", "Number of tool calls in the response."),
             EventFieldSpec("finish_reason", "string", "Provider finish reason."),
             EventFieldSpec("model", "string", "Resolved model name."),

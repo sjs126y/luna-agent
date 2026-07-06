@@ -158,8 +158,14 @@ def _meter_bar(state: UIState) -> str:
     # Line ABOVE the input box: model name + a colored context-usage meter.
     model = theme.sgr(state.model or "-", theme.METER_MODEL)
     cache = _cache_summary(state)
+    activity = _activity_summary(state)
     if not state.context_window:
-        return "  " + model + (f"  {cache}" if cache else "")
+        parts = [model]
+        if cache:
+            parts.append(cache)
+        if activity:
+            parts.append(activity)
+        return "  " + "  ".join(parts)
     used = state.input_tokens + state.output_tokens
     frac = used / state.context_window if state.context_window else 0.0
     pct = int(frac * 100)
@@ -170,6 +176,8 @@ def _meter_bar(state: UIState) -> str:
     parts = [model, meter, f"{usage} {pct_s}"]
     if cache:
         parts.append(cache)
+    if activity:
+        parts.append(activity)
     return "  " + "  ".join(parts)
 
 
@@ -193,6 +201,13 @@ def _cache_summary(state: UIState) -> str:
     if state.cache_write_tokens:
         parts.append(f"w{theme.humanize(state.cache_write_tokens)}")
     return theme.dim(" ".join(parts))
+
+
+def _activity_summary(state: UIState) -> str:
+    if not state.activity_total and not state.activity_attention:
+        return ""
+    suffix = " !" if state.activity_attention else ""
+    return theme.dim(f"activity {state.activity_total}{suffix}")
 
 
 def _hint_bar(state: UIState) -> str:

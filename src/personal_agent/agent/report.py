@@ -29,9 +29,15 @@ class TurnLlmReport:
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_hit_rate: float = 0.0
     tool_call_count: int = 0
     model: str = ""
     context_window: int = 0
+    cache_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -111,6 +117,12 @@ class AgentTurnReport:
             self.llm.calls += 1
             self.llm.input_tokens += _as_int(data.get("input_tokens"))
             self.llm.output_tokens += _as_int(data.get("output_tokens"))
+            self.llm.cache_hit_tokens += _as_int(data.get("cache_hit_tokens"))
+            self.llm.cache_miss_tokens += _as_int(data.get("cache_miss_tokens"))
+            self.llm.cache_write_tokens += _as_int(data.get("cache_write_tokens"))
+            self.llm.cache_read_tokens += _as_int(data.get("cache_read_tokens"))
+            if self.llm.input_tokens:
+                self.llm.cache_hit_rate = self.llm.cache_hit_tokens / self.llm.input_tokens
             self.llm.tool_call_count += _as_int(data.get("tool_call_count"))
             model = str(data.get("model") or "")
             if model:
@@ -118,6 +130,9 @@ class AgentTurnReport:
             context_window = _as_int(data.get("context_window"))
             if context_window:
                 self.llm.context_window = context_window
+            diagnostics = data.get("cache_diagnostics")
+            if isinstance(diagnostics, dict):
+                self.llm.cache_diagnostics = dict(diagnostics)
         elif event.type == "tool_decision":
             self._apply_tool_decision(data)
         elif event.type == "tool_end":

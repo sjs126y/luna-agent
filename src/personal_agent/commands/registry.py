@@ -108,6 +108,38 @@ _SESSION_NAME_ARGUMENT = CommandArgumentSpec(
     required=False,
 )
 
+_ACTIVITY_SCOPE_ARGUMENT = CommandArgumentSpec(
+    name="scope",
+    kind="choice",
+    choices=(
+        ArgumentChoiceSpec("agents", "agents", "子 agent"),
+        ArgumentChoiceSpec("processes", "processes", "后台任务"),
+        ArgumentChoiceSpec("gateway", "gateway", "Gateway agent"),
+    ),
+    required=False,
+)
+
+_ACTIVITY_AGENT_ARGUMENT = CommandArgumentSpec(
+    name="id",
+    kind="dynamic",
+    provider="activity_agents",
+    required=False,
+)
+
+_ACTIVITY_PROCESS_ARGUMENT = CommandArgumentSpec(
+    name="id",
+    kind="dynamic",
+    provider="activity_processes",
+    required=False,
+)
+
+_ACTIVITY_GATEWAY_ARGUMENT = CommandArgumentSpec(
+    name="id",
+    kind="dynamic",
+    provider="activity_gateway",
+    required=False,
+)
+
 
 CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("new", "重置当前会话", "/new", category="session", mutates_state=True),
@@ -189,6 +221,36 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
             CommandSpec("list", "列出子 agent 运行记录", "/agents list [limit]", category="agents"),
             CommandSpec("show", "查看子 agent 运行详情", "/agents show <run_id>", category="agents"),
             CommandSpec("clear", "清理子 agent 运行记录", "/agents clear", category="agents", mutates_state=True),
+        ),
+    ),
+    CommandSpec(
+        "activity",
+        "查看子 agent、后台任务和 Gateway agent 活动",
+        "/activity [agents|processes|gateway] [id]",
+        category="runtime",
+        arguments=(_ACTIVITY_SCOPE_ARGUMENT,),
+        children=(
+            CommandSpec(
+                "agents",
+                "查看子 agent 活动",
+                "/activity agents [id]",
+                category="runtime",
+                arguments=(_ACTIVITY_AGENT_ARGUMENT,),
+            ),
+            CommandSpec(
+                "processes",
+                "查看后台任务活动",
+                "/activity processes [id]",
+                category="runtime",
+                arguments=(_ACTIVITY_PROCESS_ARGUMENT,),
+            ),
+            CommandSpec(
+                "gateway",
+                "查看 Gateway agent 活动",
+                "/activity gateway [id]",
+                category="runtime",
+                arguments=(_ACTIVITY_GATEWAY_ARGUMENT,),
+            ),
         ),
     ),
     CommandSpec(

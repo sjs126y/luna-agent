@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-from personal_agent.llm.base import BaseTransport, DeltaCallback
+from personal_agent.llm.base import BaseTransport, DeltaCallback, LLMRequestPlan
 from personal_agent.llm.client import call_chat_completions
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.models.messages import NormalizedResponse
@@ -39,7 +39,7 @@ class ChatCompletionsTransport(BaseTransport):
             "messages": self.convert_messages(messages, system_prompt),
         }
         if tools:
-            body["tools"] = self.convert_tool_definitions(tools)
+            body["tools"] = self.convert_tool_definitions(_sorted_tools(tools))
 
         if self._provider.request_hook:
             body = self._provider.request_hook(body)
@@ -60,17 +60,15 @@ class ChatCompletionsTransport(BaseTransport):
         """
         text_parts: list[str] = []
         tool_call_deltas: dict[int, dict] = {}
-        usage = {"input_tokens": 0, "output_tokens": 0}
+        raw_usage: dict = {}
         finish_reason = ""
         model = self._provider.model
 
         async for event in stream:
+            if event.get("usage"):
+                raw_usage.update(event.get("usage") or {})
             choices = event.get("choices", [])
             if not choices:
-                u = event.get("usage")
-                if u:
-                    usage["input_tokens"] = u.get("prompt_tokens", 0)
-                    usage["output_tokens"] = u.get("completion_tokens", 0)
                 continue
 
             choice = choices[0]
@@ -116,7 +114,7 @@ class ChatCompletionsTransport(BaseTransport):
         normalized = NormalizedResponse(
             text="".join(text_parts),
             tool_calls=tool_calls,
-            usage=usage,
+            usage=self.normalize_usage(raw_usage),
             finish_reason=finish_reason or ("tool_calls" if has_tool_calls else "stop"),
             stop_reason=finish_reason,
             model=model,
@@ -203,8 +201,13 @@ class ChatCompletionsTransport(BaseTransport):
         tools: list[dict] | None = None,
         max_tokens: int = 4096,
         stream: bool = False,
+        request_plan: LLMRequestPlan | None = None,
     ) -> NormalizedResponse:
-        body = self.build_request(messages, system_prompt, tools or [], max_tokens)
+        if request_plan is not None:
+            body = self.build_request_from_plan(request_plan, max_tokens)
+        else:
+            body = self.build_request(messages, system_prompt, tools or [], max_tokens)
+        self.remember_cache_diagnostics(body, request_plan=request_plan)
         event_stream = call_chat_completions(
             base_url=self._provider.base_url,
             api_key=self._provider.api_key,
@@ -213,3 +216,7 @@ class ChatCompletionsTransport(BaseTransport):
             extra_headers=self._provider.extra_headers,
         )
         return await self.parse_stream(event_stream)
+
+
+def _sorted_tools(tools: list[dict]) -> list[dict]:
+    return sorted(tools, key=lambda item: str(item.get("name") or ""))

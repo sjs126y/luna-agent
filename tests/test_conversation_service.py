@@ -223,6 +223,15 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
     assert summary["last_input_tokens"] == 10
     assert summary["last_output_tokens"] == 5
     assert summary["last_retries"] == 0
+    persisted = await svc.recent_persisted_turn_reports(limit=5)
+    assert len(persisted) == 1
+    assert persisted[0]["session_key"] == "cli:default:local"
+    assert persisted[0]["status"] == "completed"
+    assert persisted[0]["report"] == result.turn_report
+    persisted_summary = await svc.persisted_turn_report_summary()
+    assert persisted_summary["stored"] == 1
+    assert persisted_summary["last_status"] == "completed"
+    assert persisted_summary["last_session_key"] == "cli:default:local"
 
 
 @pytest.mark.asyncio
@@ -373,6 +382,15 @@ async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
     assert summary["status_counts"] == {"success": 1}
     assert db_summary["inspected"] == 1
     assert db_summary["tool_counts"] == {"bash": 1}
+    reports = await svc.recent_persisted_turn_reports(
+        limit=5,
+        session_key="cli:default:local",
+    )
+    assert len(reports) == 1
+    assert reports[0]["turn_id"] == "turn-tool"
+    report_runs = await svc.tool_runs_for_turn_report(reports[0]["id"])
+    assert len(report_runs) == 1
+    assert report_runs[0]["tool_use_id"] == "call-1"
 
 
 @pytest.mark.asyncio
@@ -469,6 +487,7 @@ async def test_run_turn_keeps_empty_turn_report_for_legacy_loop(service, monkeyp
     assert result.turn_report == {}
     assert len(svc.turn_reports) == 0
     assert svc.turn_report_summary()["stored"] == 0
+    assert await svc.recent_persisted_turn_reports(limit=5) == []
 
 
 @pytest.mark.asyncio
@@ -506,6 +525,15 @@ async def test_run_turn_records_failed_stopped_and_context_reports(service, monk
     assert stopped.status == "stopped"
     assert overflow.status == "context_overflow"
     assert [item["status"] for item in svc.turn_reports] == ["failed", "stopped", "context_overflow"]
+    persisted_failed = await svc.recent_persisted_turn_reports(limit=5, status="failed")
+    persisted_stopped = await svc.recent_persisted_turn_reports(limit=5, status="stopped")
+    persisted_overflow = await svc.recent_persisted_turn_reports(limit=5, status="context_overflow")
+    assert [item["status"] for item in persisted_failed] == ["failed"]
+    assert [item["status"] for item in persisted_stopped] == ["stopped"]
+    assert [item["status"] for item in persisted_overflow] == ["context_overflow"]
+    persisted_summary = svc.turn_report_persistence_summary()
+    assert persisted_summary["stored"] == 3
+    assert persisted_summary["last_status"] == "context_overflow"
     summary = svc.turn_report_summary()
     assert summary["stored"] == 3
     assert summary["last_status"] == "context_overflow"

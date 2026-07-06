@@ -94,6 +94,42 @@ async def test_conversation_command_runtime_common_methods():
     assert await runtime.usage(current_user_message="/usage") == "usage"
     assert service.usage_kwargs["create_agent"] is True
     assert await runtime.stop_agents() == "已停止。已请求停止 2 个子 agent。"
+    activity = await runtime.activity_snapshot()
+    assert activity["summary"]["active_total"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_conversation_command_runtime_activity_uses_gateway_snapshot():
+    service = Service()
+    runtime = Runtime(service)
+    runtime.gateway = SimpleNamespace(
+        health_snapshot=lambda: {
+            "running_agents": 1,
+            "stop_requested_agents": 0,
+            "running_agent_runs": [{
+                "session_key": "telegram:c1:u1",
+                "platform": "telegram",
+                "chat_id": "c1",
+                "user_id": "u1",
+                "status": "running",
+            }],
+        }
+    )
+
+    snapshot = await runtime.activity_snapshot()
+    detail = await runtime.activity_detail("gateway_agent", "telegram:c1:u1")
+    choices = await runtime.slash_argument_choices(
+        "activity_gateway",
+        command="activity",
+        args=("gateway",),
+        query="telegram",
+    )
+    metadata = runtime.slash_command_metadata()
+
+    assert snapshot["gateway_agents"]["running_agent_runs"][0]["id"] == "telegram:c1:u1"
+    assert detail["gateway_run"]["platform"] == "telegram"
+    assert choices[0]["value"] == "telegram:c1:u1"
+    assert any(item["name"] == "activity" for item in metadata)
 
 
 @pytest.mark.asyncio

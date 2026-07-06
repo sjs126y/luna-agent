@@ -322,6 +322,217 @@ def _format_tool_run_detail(item: dict) -> tuple[str, tuple[str, str] | None]:
     return "\n".join(lines), expandable
 
 
+def _format_activity_payload(payload: dict) -> tuple[str, tuple[str, str] | None]:
+    if not isinstance(payload, dict):
+        return "Activity: missing payload", None
+    if payload.get("kind") or payload.get("run") or payload.get("process") or payload.get("gateway_run"):
+        return _format_activity_detail(payload)
+
+    lines: list[str] = []
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    if summary:
+        lines.append(_format_activity_summary(summary))
+    if isinstance(payload.get("gateway_agents"), dict):
+        lines.extend(_format_activity_gateway(payload["gateway_agents"]))
+    if isinstance(payload.get("sub_agents"), dict):
+        lines.extend(_format_activity_agents(payload["sub_agents"]))
+    if isinstance(payload.get("background_processes"), dict):
+        lines.extend(_format_activity_processes(payload["background_processes"]))
+    if not lines:
+        return "Activity: none", None
+    return "\n".join(lines), None
+
+
+def _format_activity_summary(summary: dict) -> str:
+    active = int(summary.get("active_total") or 0)
+    longest = _format_activity_seconds(summary.get("longest_running_seconds"))
+    attention = " attention" if summary.get("attention_required") else ""
+    counts = summary.get("counts") if isinstance(summary.get("counts"), dict) else {}
+    sub_agents = counts.get("sub_agents") if isinstance(counts.get("sub_agents"), dict) else {}
+    processes = counts.get("background_processes") if isinstance(counts.get("background_processes"), dict) else {}
+    gateway = counts.get("gateway_agents") if isinstance(counts.get("gateway_agents"), dict) else {}
+    detail = (
+        f"gateway {int(gateway.get('running') or 0)}"
+        f" · agents {int(sub_agents.get('active') or 0)}"
+        f" · processes {int(processes.get('running') or 0)}"
+    )
+    return theme.sgr(
+        f"Activity {active} active{attention} · longest {longest} · {detail}",
+        theme.EXPAND_HEADER,
+    )
+
+
+def _format_activity_gateway(payload: dict) -> list[str]:
+    items = [item for item in payload.get("running_agent_runs") or [] if isinstance(item, dict)]
+    lines = [theme.sgr("  Gateway", theme.SLASH_META)]
+    if not items:
+        lines.append("    none")
+        return lines
+    for item in items:
+        name = _field(item, "session_key") or _field(item, "id") or "-"
+        platform = _field(item, "platform") or "-"
+        status = _field(item, "status") or "-"
+        stop = " stop" if item.get("stop_requested") else ""
+        lines.append(
+            f"    {_activity_dot(item)} {_fit(name, 28)}  {status}{stop}  "
+            f"{_format_activity_seconds(item.get('duration_seconds'))}  {platform}"
+        )
+    return lines
+
+
+def _format_activity_agents(payload: dict) -> list[str]:
+    active = [item for item in payload.get("active_runs") or [] if isinstance(item, dict)]
+    recent = [item for item in payload.get("recent_runs") or [] if isinstance(item, dict)]
+    lines = [theme.sgr(f"  Sub agents  active {len(active)} · recent {len(recent)}", theme.SLASH_META)]
+    items = active + recent
+    if not items:
+        lines.append("    none")
+        return lines
+    for item in items:
+        role = _field(item, "role") or "agent"
+        item_id = _field(item, "run_id") or _field(item, "id") or "-"
+        status = _field(item, "status") or "-"
+        quota = item.get("quota") if isinstance(item.get("quota"), dict) else {}
+        tools = item.get("tool_counts") if isinstance(item.get("tool_counts"), dict) else {}
+        usage = _format_activity_tokens(quota)
+        tool_text = _format_activity_tools(tools)
+        lines.append(
+            f"    {_activity_dot(item)} {_fit(role, 12)} {_fit(item_id, 12)}  {status}  "
+            f"{_format_activity_seconds(item.get('duration_seconds'))}  {usage}  {tool_text}".rstrip()
+        )
+        preview = _field(item, "task_preview") or _field(item, "task") or _field(item, "result_preview")
+        if preview:
+            lines.append(f"      {_fit(preview, 96)}")
+    return lines
+
+
+def _format_activity_processes(payload: dict) -> list[str]:
+    items = [item for item in payload.get("items") or [] if isinstance(item, dict)]
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    header = (
+        f"  Processes  running {int(counts.get('running') or 0)}"
+        f" · done {int(counts.get('done') or 0)}"
+        f" · killed {int(counts.get('killed') or 0)}"
+    )
+    lines = [theme.sgr(header, theme.SLASH_META)]
+    if not items:
+        lines.append("    none")
+        return lines
+    for item in items:
+        pid = _field(item, "pid") or _field(item, "id") or "-"
+        status = _field(item, "status") or "-"
+        command = _field(item, "command_preview") or _field(item, "command") or "-"
+        lines.append(
+            f"    {_activity_dot(item)} #{pid}  {status}  "
+            f"{_format_activity_seconds(item.get('duration_seconds'))}  {_fit(command, 88)}"
+        )
+        cwd = _field(item, "cwd")
+        if cwd:
+            lines.append(f"      {cwd}")
+    return lines
+
+
+def _format_activity_detail(payload: dict) -> tuple[str, tuple[str, str] | None]:
+    item = payload.get("run") or payload.get("process") or payload.get("gateway_run") or {}
+    if not isinstance(item, dict):
+        return "Activity detail: missing", None
+    kind = str(payload.get("kind") or item.get("kind") or "activity")
+    item_id = str(payload.get("id") or item.get("id") or item.get("run_id") or item.get("pid") or "-")
+    lines = [
+        theme.sgr(f"Activity {kind} {item_id}", theme.EXPAND_HEADER),
+        f"  status   {_field(item, 'status') or '-'}",
+        f"  duration {_format_activity_seconds(item.get('duration_seconds'))}",
+        f"  started  {_field(item, 'started_at') or '-'}",
+    ]
+    if item.get("finished_at"):
+        lines.append(f"  finished {_field(item, 'finished_at')}")
+    if item.get("stop_requested"):
+        lines.append("  stop     requested")
+    if item.get("role"):
+        lines.append(f"  role     {_field(item, 'role')}")
+    if item.get("platform"):
+        lines.append(f"  platform {_field(item, 'platform')}")
+    if item.get("cwd"):
+        lines.append(f"  cwd      {_field(item, 'cwd')}")
+    if item.get("command"):
+        lines.append(f"  command  {_fit(_field(item, 'command'), 130)}")
+    if item.get("task"):
+        lines.append(f"  task     {_fit(_field(item, 'task'), 130)}")
+    if isinstance(item.get("quota"), dict):
+        lines.append(f"  quota    {_format_activity_tokens(item['quota'])}")
+    if isinstance(item.get("tool_counts"), dict):
+        lines.append(f"  tools    {_format_activity_tools(item['tool_counts'])}")
+    error = _field(item, "error")
+    if error:
+        lines.append(f"  error    {_fit(error, 130)}")
+    result = _field(item, "result_preview") or _field(item, "output_preview")
+    if result:
+        lines.append(f"  preview  {_fit(result, 130)}")
+    output = _activity_detail_output(item)
+    if output:
+        lines.append(theme.sgr("  Ctrl+O", theme.KEY) + theme.sgr(" expand output", theme.HINT_LABEL))
+    return "\n".join(lines), (f"Activity {kind} {item_id}", output) if output else None
+
+
+def _activity_detail_output(item: dict) -> str:
+    parts: list[str] = []
+    stdout = _field(item, "stdout")
+    stderr = _field(item, "stderr")
+    result = _field(item, "result")
+    if stdout:
+        parts.append("stdout\n" + stdout)
+    if stderr:
+        parts.append("stderr\n" + stderr)
+    if result:
+        parts.append("result\n" + result)
+    return "\n\n".join(parts)
+
+
+def _format_activity_tokens(quota: dict) -> str:
+    used = quota.get("used_tokens")
+    maximum = quota.get("max_tokens")
+    if used is None and maximum is None:
+        return ""
+    used_text = theme.humanize(int(used or 0))
+    if maximum:
+        return f"{used_text}/{theme.humanize(int(maximum or 0))}"
+    return used_text
+
+
+def _format_activity_tools(tool_counts: dict) -> str:
+    if not tool_counts:
+        return ""
+    executed = int(tool_counts.get("executed") or 0)
+    requested = int(tool_counts.get("requested") or 0)
+    denied = int(tool_counts.get("denied") or 0)
+    text = f"tools {executed}/{requested}"
+    if denied:
+        text += f" denied {denied}"
+    return text
+
+
+def _format_activity_seconds(value: object) -> str:
+    try:
+        seconds = max(0, float(value or 0.0))
+    except (TypeError, ValueError):
+        seconds = 0.0
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes, rest = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {rest:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+def _activity_dot(item: dict) -> str:
+    if item.get("attention_required") or item.get("error"):
+        return theme.sgr("!", theme.ERROR)
+    if item.get("stop_requested"):
+        return theme.sgr("!", theme.NOTICE)
+    return theme.sgr("●", theme.TOOL_OK)
+
+
 def _tool_run_scope(payload: dict) -> str:
     if payload.get("scope") == "all":
         return "all sessions"
@@ -872,7 +1083,31 @@ class InlineTuiApp:
                     self.state.last_expandable = expandable
                     self._invalidate()
                 return text
+        if _command_kind(result) == "activity":
+            payload = _command_payload(result)
+            if payload and not payload.get("error"):
+                self._update_activity_state(payload)
+                text, expandable = _format_activity_payload(payload)
+                if expandable is not None:
+                    self.state.last_expandable = expandable
+                self._invalidate()
+                return text
         return _command_response_text(result)
+
+    def _update_activity_state(self, payload: dict) -> None:
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        if not summary and any(key in payload for key in ("run", "process", "gateway_run")):
+            item = payload.get("run") or payload.get("process") or payload.get("gateway_run") or {}
+            active = str(item.get("status") or "") in {"running", "stopping"}
+            self.state.activity_total = 1 if active else self.state.activity_total
+            self.state.activity_attention = bool(
+                item.get("attention_required") or item.get("error") or item.get("stop_requested")
+            )
+            return
+        if not summary:
+            return
+        self.state.activity_total = int(summary.get("active_total") or 0)
+        self.state.activity_attention = bool(summary.get("attention_required"))
 
     def _user_message_block(self, text: str) -> str:
         width = max(20, self._term_width())

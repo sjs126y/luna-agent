@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 23:02 CST
+更新时间：2026-07-06 23:48 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -10,7 +10,7 @@
 - 前端主要范围：`src/personal_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`
-- 注意：当前工作区可能存在后端线文件改动，例如 `CODEX_HANDOFF.md`、`BACKEND_PROGRESS.md`。前端 Codex 不要误提交这些文件，除非用户明确要求。
+- 注意：本轮用户明确要求前端 worktree 合入后端已完成的 Activity Runtime 接口，因此当前分支包含后端 activity/cache 相关文件变更。后续仍应避免无关跨线改动。
 
 ## 已完成进度
 
@@ -69,6 +69,19 @@
 - 前端不直接调用 `ConversationQueryService`，而是消费 `CommandResult.kind == "tool_runs"` 的结构化 `payload`。
 - `/tool-runs show <id>` 若有完整输出，也接到 `Ctrl+O` 展开；展示顺序已和实时 trace 的重点字段对齐。
 
+### Activity Runtime UI
+
+- 已合入后端 Activity Runtime 接口实现和 `BACKEND_INTERFACE.md` 第 8 节。
+- `/activity` 已接入 `CommandResult.kind == "activity"` payload。
+- TUI 会把 activity payload 渲染成结构化面板：
+  - 顶部 summary：active 总数、attention、最长运行、Gateway / 子 agent / 后台进程数量。
+  - `Gateway` 列表：session、platform、status、duration、stop/attention 状态。
+  - `Sub agents` 列表：role、run id、status、duration、quota token、tool counts、task preview。
+  - `Processes` 列表：pid/status/duration/command/cwd。
+- `/activity processes <id>` 等详情 payload 会显示单个对象详情；进程详情里的 stdout/stderr、子 agent result 会接到 `Ctrl+O` 展开。
+- 执行 `/activity` 后，meter line 会同步 `activity N` badge；有 attention 状态时显示 `activity N !`。
+- Slash 菜单已加入 `/activity` 和二级项 `/activity agents|processes|gateway`，并支持后端动态 provider：`activity_agents`、`activity_processes`、`activity_gateway`。
+
 ### Confirm UI
 
 - 前端已实现 `confirm_tool(decision)` 回调。
@@ -89,7 +102,9 @@
 - Slash argument metadata：`choice` / `dynamic`
 - 动态参数入口：`slash_argument_choices(...)`
 - 当前动态 provider：`tools`、`sessions`
+- Activity 动态 provider：`activity_agents`、`activity_processes`、`activity_gateway`
 - Tool Runs 查询：`/tool-runs ...` + `kind="tool_runs"` payload
+- Activity Runtime 查询：`/activity ...` + `kind="activity"` payload
 - Tool confirmation fields
 - LLM cache usage fields：`cache_hit_tokens`、`cache_miss_tokens`、`cache_write_tokens`、`cache_read_tokens`、`cache_hit_rate`
 - `retry` / `stop` / `error` 增强字段
@@ -143,6 +158,13 @@
 
 - 将 Activity 需求改为长期稳定接口契约：明确 `/activity [agents|processes|gateway] [id]`、summary/list/detail payload、公共 item 字段、动态候选 provider 和前端展示假设。
 
+### 2026-07-06 23:48 CST
+
+- 合入后端 `feature/backend-provider-cache` 的 Activity Runtime / LLM cache / turn report persistence 接口实现。
+- 前端 TUI 消费 `/activity` 结构化 payload，新增 activity 总览、三类列表、详情输出和 `Ctrl+O` 展开。
+- Slash registry 增加 `/activity` 二级命令和动态 id provider，`/a` 下现在会出现 `/activity`。
+- Runtime health snapshot 同时保留前端 command/query/execution 诊断，并加入后端 `activity`、`llm_cache` 和 persisted turn report summary。
+
 已验证：
 
 ```bash
@@ -150,9 +172,10 @@ uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_rend
 python -m compileall -q src/personal_agent/tui
 git diff --check
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
+uv run pytest tests/test_commands.py tests/test_runtime.py tests/test_activity.py tests/test_conversation_command_runtime.py tests/test_cli.py -q
 ```
 
-结果：TUI tests `81 passed`，command/gateway tests `55 passed`。
+结果：TUI tests `85 passed`；activity/runtime/commands/CLI tests `62 passed`。
 
 ## 不建议现在做
 
@@ -182,6 +205,7 @@ uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_c
 - 小窗口下输入框、slash 菜单、meter 是否挤压。
 - `Ctrl+C`、`Esc`、`Enter` 在普通输入、slash 菜单、confirm 面板三种状态下是否冲突。
 - `/tool-runs`、`/tool-runs show <id>` 和 `Ctrl+O` 展开体验。
+- `/activity`、`/activity agents`、`/activity processes`、`/activity gateway`，以及对应详情命令。
 
 ## 提交注意
 

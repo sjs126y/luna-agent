@@ -226,6 +226,8 @@ class AppRuntime:
         await self.db.close()
 
     def health_snapshot(self) -> dict[str, Any]:
+        from personal_agent.activity import activity_snapshot
+
         mcp_health = _mcp_health_snapshot(
             self.mcp_manager,
             enabled=bool(self.settings.mcp_enabled),
@@ -234,6 +236,9 @@ class AppRuntime:
         boot = self.boot_report.as_dict()
         command_health = _command_health_snapshot(self)
         query_health = _query_health_snapshot(self)
+        turns = self.conversation_service.turn_report_summary()
+        turns["persisted"] = self.conversation_service.turn_report_persistence_summary()
+        gateway = self.gateway.health_snapshot() if self.gateway is not None else {}
         return {
             "data_dir": str(self.data_dir),
             "db_open": getattr(self.db, "_conn", None) is not None,
@@ -245,8 +250,10 @@ class AppRuntime:
             "boot_failed_step": str(boot["failed_step"]),
             "gateway_created": self.gateway is not None,
             "gateway_running": bool(self.gateway is not None and self.gateway_started),
-            "gateway": self.gateway.health_snapshot() if self.gateway is not None else {},
-            "turns": self.conversation_service.turn_report_summary(),
+            "gateway": gateway,
+            "activity": activity_snapshot(gateway_snapshot=gateway),
+            "turns": turns,
+            "llm_cache": _llm_cache_health_snapshot(self.settings, turns),
             "tool_truth": self.conversation_service.tool_truth_summary(),
             "tool_runs": self.conversation_service.tool_run_memory_summary(),
             "commands": command_health,
@@ -392,6 +399,7 @@ def _command_health_snapshot(runtime: AppRuntime) -> dict[str, Any]:
         "argument_specs": argument_specs,
         "dynamic_providers": dynamic_providers,
         "has_tool_runs": "tool-runs" in command_names,
+        "has_activity": "activity" in command_names,
         "has_mode_arguments": _command_has_arguments(commands, "mode", child="set"),
         "has_allow_arguments": _command_has_arguments(commands, "allow"),
     }
@@ -417,6 +425,44 @@ def _execution_health_snapshot(settings: Settings) -> dict[str, Any]:
         "isolation": policy.isolation,
         "network": policy.network,
         "permissions": dict(policy.permissions),
+    }
+
+
+def _llm_cache_health_snapshot(settings: Settings, turns: dict[str, Any]) -> dict[str, Any]:
+    from personal_agent.llm.provider import provider_registry
+
+    try:
+        provider = provider_registry.get(settings.llm_provider, settings)
+        capability = provider.cache_capability()
+    except Exception as exc:
+        return {
+            "provider": getattr(settings, "llm_provider", ""),
+            "model": getattr(settings, "llm_model", ""),
+            "strategy": "none",
+            "supports_usage": False,
+            "usage_fields": {},
+            "cacheable_blocks": [],
+            "last_usage": {},
+            "last_diagnostics": {},
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    return {
+        "provider": provider.name,
+        "model": provider.model,
+        "strategy": capability["strategy"],
+        "supports_usage": capability["supports_usage"],
+        "usage_fields": capability["usage_fields"],
+        "cacheable_blocks": capability["cacheable_blocks"],
+        "last_usage": {
+            "cache_hit_tokens": int(turns.get("last_cache_hit_tokens") or 0),
+            "cache_miss_tokens": int(turns.get("last_cache_miss_tokens") or 0),
+            "cache_write_tokens": int(turns.get("last_cache_write_tokens") or 0),
+            "cache_read_tokens": int(turns.get("last_cache_read_tokens") or 0),
+            "cache_hit_rate": float(turns.get("last_cache_hit_rate") or 0.0),
+        },
+        "last_diagnostics": dict(turns.get("last_cache_diagnostics") or {}),
+        "error": "",
     }
 
 

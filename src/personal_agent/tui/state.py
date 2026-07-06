@@ -142,6 +142,8 @@ class UIState:
     cache_write_tokens: int = 0
     cache_read_tokens: int = 0
     cache_hit_rate: float | None = None
+    activity_total: int = 0
+    activity_attention: bool = False
     exec_mode: str = "Ask First"
 
     # last expandable (display_name, full_text) for Ctrl+O
