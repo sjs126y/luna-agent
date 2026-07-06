@@ -2,8 +2,13 @@
 # API keys / base URLs / secrets → .env
 
 agent:
+  ui: "classic"                   # classic | inline
   max_iterations: 30
   max_tool_calls_per_turn: 20
+
+execution:
+  mode: "standard"                # guarded | standard | trusted | sovereign
+  policy: {}                      # optional permission overrides, e.g. {"tool_permissions": {"bash": "ask"}}
 
 agents:
   max_concurrent_runs: 4          # max active delegated sub-agents

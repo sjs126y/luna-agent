@@ -150,7 +150,7 @@ uv run personal-agent init --profile telegram --force
 ## 配置文件
 
 - `.env`：放 secret 和 provider/platform 环境变量，例如 `LLM_API_KEY`、`TELEGRAM_BOT_TOKEN`。
-- `config.yaml`：放行为配置，例如 storage、plugins、memory、sandbox、mcp、auth、session、`agent.ui`。
+- `config.yaml`：放行为配置，例如 storage、plugins、memory、sandbox、mcp、auth、session、`agent.ui`、`execution.mode`。
 - `plugins/`：用户插件或本地开发插件目录。
 - `data/`：运行数据、会话、记忆、审计日志等。
 
