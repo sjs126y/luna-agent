@@ -152,6 +152,17 @@ def test_active_region_confirm_shows_command_detail():
     assert "命令: uv run pytest -q" in text
 
 
+def test_active_region_confirm_shows_process_label():
+    state = UIState()
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="Start process",
+        process_label="vite dev server",
+    )
+    text = _active_text(state)
+    assert "进程: vite dev server" in text
+
+
 def test_hint_bar_shows_expand_key():
     from personal_agent.tui.layout import _hint_bar
 

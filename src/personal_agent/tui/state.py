@@ -28,6 +28,7 @@ class ToolTrace:
     cwd: str = ""
     timeout_seconds: float | None = None
     method: str = ""
+    process_label: str = ""
     risk_level: str = ""
     risk_summary: str = ""
     started_at: float = 0.0
@@ -62,6 +63,7 @@ class ConfirmPrompt:
     command_preview: str = ""
     url_preview: str = ""
     host: str = ""
+    process_label: str = ""
     affected_paths: tuple[str, ...] = ()
     default_action: str = "allow"  # allow | deny | none
     available_actions: tuple[str, ...] = ("allow_once", "allow_always", "deny")

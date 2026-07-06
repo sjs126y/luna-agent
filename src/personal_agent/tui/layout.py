@@ -217,6 +217,8 @@ def _confirm_detail_lines(confirm) -> list[str]:
         if confirm.host and confirm.host not in target:
             target = f"{target} ({confirm.host})"
         lines.append(theme.dim(f"  网络: {target}"))
+    if confirm.process_label:
+        lines.append(theme.dim(f"  进程: {confirm.process_label}"))
     if confirm.affected_paths:
         paths = ", ".join(confirm.affected_paths[:3])
         if len(confirm.affected_paths) > 3:

@@ -141,6 +141,21 @@ async def test_tool_end_summarizes_web_search_args_without_raw_json():
 
 
 @pytest.mark.asyncio
+async def test_tool_end_shows_process_label():
+    r, printed, _ = _make()
+    await r.emit(ConversationEvent("tool_end", data={
+        "tool_use_id": "t1",
+        "tool_name": "process_start",
+        "display_name": "Start process",
+        "status": "success",
+        "process_label": "vite dev server",
+    }))
+    text = "\n".join(printed)
+    assert "Start process" in text
+    assert "进程: vite dev server" in text
+
+
+@pytest.mark.asyncio
 async def test_retry_compression_stop_and_error_are_printed():
     r, printed, _ = _make()
     await r.emit(ConversationEvent("retry", "模型空回复，准备重试", data={

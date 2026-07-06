@@ -52,7 +52,6 @@ async def get_tool_run(
 - `write` / `edit`: `diff_summary`, `diff_preview`
 - `bash`: future shell-specific safety summary if needed
 - `network`: request body/header preview if future tools expose it
-- `background`: process lifecycle action summary if needed
 
 这些字段都应允许为空；前端会按存在字段渐进展示。
 

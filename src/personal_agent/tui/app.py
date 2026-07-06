@@ -444,6 +444,7 @@ class InlineTuiApp:
         command_preview = _decision_field(decision, "command_preview")
         url_preview = _decision_field(decision, "url_preview")
         host = _decision_field(decision, "host")
+        process_label = _decision_field(decision, "process_label")
         if paths and not (command_preview or url_preview):
             preview = (preview + " · " if preview else "") + ", ".join(paths[:3])
 
@@ -458,6 +459,7 @@ class InlineTuiApp:
             command_preview=command_preview,
             url_preview=url_preview,
             host=host,
+            process_label=process_label,
             affected_paths=tuple(paths),
             default_action=default_action,
             available_actions=actions,

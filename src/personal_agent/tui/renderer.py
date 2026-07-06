@@ -135,6 +135,7 @@ class InlineRenderer(Renderer):
             cwd=str(data.get("cwd") or ""),
             timeout_seconds=_optional_float(data.get("timeout_seconds")),
             method=str(data.get("method") or ""),
+            process_label=str(data.get("process_label") or ""),
             risk_level=str(data.get("risk_level") or ""),
             risk_summary=str(data.get("risk_summary") or ""),
             started_at=time.monotonic(),
@@ -162,6 +163,7 @@ class InlineRenderer(Renderer):
                 cwd=str(data.get("cwd") or ""),
                 timeout_seconds=_optional_float(data.get("timeout_seconds")),
                 method=str(data.get("method") or ""),
+                process_label=str(data.get("process_label") or ""),
                 risk_level=str(data.get("risk_level") or ""),
                 risk_summary=str(data.get("risk_summary") or ""),
                 started_at=time.monotonic(),
@@ -303,7 +305,7 @@ def _apply_tool_display_metadata(item: ToolTrace, data: dict) -> None:
     paths = _string_list(data.get("affected_paths"))
     if paths:
         item.affected_paths = tuple(paths)
-    for field in ("command_preview", "url_preview", "host", "cwd", "method"):
+    for field in ("command_preview", "url_preview", "host", "cwd", "method", "process_label"):
         value = str(data.get(field) or "")
         if value:
             setattr(item, field, value)
@@ -313,8 +315,12 @@ def _apply_tool_display_metadata(item: ToolTrace, data: dict) -> None:
 
 
 def _tool_summary(item: ToolTrace) -> str:
+    if item.process_label and not item.command_preview:
+        return f"进程: {item.process_label}"
     if item.command_preview:
         parts = [f"命令: {item.command_preview}"]
+        if item.process_label and item.process_label != item.command_preview:
+            parts.append(item.process_label)
         if item.cwd:
             parts.append(f"cwd {item.cwd}")
         if item.timeout_seconds is not None:
