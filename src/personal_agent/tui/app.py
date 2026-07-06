@@ -295,7 +295,7 @@ class InlineTuiApp:
 
         @kb.add("y", filter=Condition(lambda: self._confirm_future is not None))
         def _(event) -> None:
-            self._resolve_confirm("allow")
+            self._resolve_confirm_action("allow_once")
 
         @kb.add("n", filter=Condition(lambda: self._confirm_future is not None))
         def _(event) -> None:
@@ -303,11 +303,11 @@ class InlineTuiApp:
 
         @kb.add("a", filter=Condition(lambda: self._confirm_future is not None))
         def _(event) -> None:
-            self._resolve_confirm("allow")
+            self._resolve_confirm_action("allow_once")
 
         @kb.add("A", filter=Condition(lambda: self._confirm_future is not None))
         def _(event) -> None:
-            self._resolve_confirm("always")
+            self._resolve_confirm_action("allow_always")
 
         @kb.add("escape", filter=Condition(lambda: self._confirm_future is not None))
         def _(event) -> None:
@@ -325,7 +325,7 @@ class InlineTuiApp:
                 if default == "deny":
                     self._resolve_confirm("deny")
                 elif default == "allow":
-                    self._resolve_confirm("allow")
+                    self._resolve_confirm_action("allow_once")
                 return
             # If the completion menu is open, accept it instead of submitting,
             # so a bare '/' + Enter picks the top command (matches classic shell).
@@ -411,9 +411,13 @@ class InlineTuiApp:
         category = _decision_field(decision, "permission_category") or ""
         mode = _decision_field(decision, "execution_mode_label") or _decision_field(decision, "execution_mode")
         risk = _decision_field(decision, "risk_summary") or _decision_field(decision, "decision_message")
+        risk_level = _decision_field(decision, "risk_level") or ""
         default_action = (_decision_field(decision, "default_action") or "allow").lower()
         if default_action not in {"allow", "deny", "none"}:
             default_action = "allow"
+        actions = tuple(_decision_list(decision, "available_actions"))
+        if not actions:
+            actions = ("allow_once", "allow_always", "deny")
         preview = (
             _decision_field(decision, "input_preview")
             or _decision_field(decision, "command_preview")
@@ -429,10 +433,20 @@ class InlineTuiApp:
             display_name=name,
             permission_category=category,
             execution_mode=mode,
+            risk_level=risk_level,
             risk_summary=risk,
             input_preview=preview,
             default_action=default_action,
+            available_actions=actions,
         )
+
+    def _resolve_confirm_action(self, action: str) -> None:
+        prompt = self.state.pending_confirm
+        available = set(prompt.available_actions if prompt is not None else ())
+        if action == "allow_once" and (not available or "allow_once" in available):
+            self._resolve_confirm("allow")
+        elif action == "allow_always" and (not available or "allow_always" in available):
+            self._resolve_confirm("always")
 
     def _resolve_confirm(self, answer: str) -> None:
         self.input_area.text = ""

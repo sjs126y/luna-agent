@@ -253,6 +253,7 @@ def test_confirm_prompt_uses_future_display_fields():
         "permission_category": "bash",
         "execution_mode_label": "Ask First",
         "default_action": "deny",
+        "available_actions": ["deny"],
         "command_preview": "rm -rf build",
         "affected_paths": ["build"],
     })
@@ -260,8 +261,23 @@ def test_confirm_prompt_uses_future_display_fields():
     assert prompt.permission_category == "bash"
     assert prompt.execution_mode == "Ask First"
     assert prompt.default_action == "deny"
+    assert prompt.available_actions == ("deny",)
     assert "rm -rf build" in prompt.input_preview
     assert "build" in prompt.input_preview
+
+
+@pytest.mark.asyncio
+async def test_confirm_action_respects_available_actions():
+    app = _app()
+    fut = asyncio.get_running_loop().create_future()
+    app._confirm_future = fut
+    app.state.pending_confirm = app._build_confirm_prompt({
+        "tool_name": "bash",
+        "available_actions": ["deny"],
+    })
+    app._resolve_confirm_action("allow_once")
+    assert fut.done() is False
+    app._resolve_confirm("deny")
 
 
 def test_runtime_accepts_confirm_detection():

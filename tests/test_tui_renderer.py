@@ -83,12 +83,42 @@ async def test_tool_lifecycle_and_expandable():
 @pytest.mark.asyncio
 async def test_tool_decision_updates_mode_label():
     r, _, _ = _make()
+    await r.emit(ConversationEvent("tool_start", data={
+        "tool_name": "bash", "tool_use_id": "t1", "input_summary": "{}",
+    }))
     await r.emit(ConversationEvent("tool_decision", data={
-        "tool_name": "write",
+        "tool_name": "bash",
         "tool_use_id": "t1",
         "execution_mode_label": "Edit Freely",
+        "display_name": "Shell command",
+        "input_preview": "ls -la",
+        "risk_level": "medium",
+        "risk_summary": "Will execute a shell command.",
     }))
     assert r.state.exec_mode == "Edit Freely"
+    item = r.state.active_tools["t1"]
+    assert item.display_name == "Shell command"
+    assert item.input_preview == "ls -la"
+    assert item.risk_summary == "Will execute a shell command."
+
+
+@pytest.mark.asyncio
+async def test_tool_end_uses_display_metadata_in_trace():
+    r, printed, _ = _make()
+    await r.emit(ConversationEvent("tool_end", data={
+        "tool_use_id": "t1",
+        "tool_name": "bash",
+        "display_name": "Shell command",
+        "status": "denied",
+        "input_preview": "rm -rf build",
+        "risk_summary": "Will execute a shell command.",
+        "error": "not allowed",
+    }))
+    text = "\n".join(printed)
+    assert "Shell command" in text
+    assert "rm -rf build" in text
+    assert "Will execute a shell" in text
+    assert "command." in text
 
 
 @pytest.mark.asyncio

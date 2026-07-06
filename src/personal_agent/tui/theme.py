@@ -37,6 +37,9 @@ ERROR = "1;31"        # turn-level errors: bold red
 EXPAND_HEADER = "34"  # Ctrl+O expand header: blue
 KEY = "36"            # keyboard-hint keys (⏎, Ctrl+J…): cyan
 CONFIRM = "1;33"      # inline tool confirmation prompt: bold yellow
+RISK_LOW = "32"
+RISK_MEDIUM = "33"
+RISK_HIGH = "1;31"
 
 # Per-mode accent colors so the current execution mode is instantly readable.
 MODE_STYLES = {
@@ -53,6 +56,14 @@ MODE_STYLES = {
 
 def mode_style(mode: str) -> str:
     return MODE_STYLES.get(mode, "36")
+
+
+def risk_style(level: str) -> str:
+    return {
+        "low": RISK_LOW,
+        "medium": RISK_MEDIUM,
+        "high": RISK_HIGH,
+    }.get(level, CONFIRM)
 
 
 def meter_style(fraction: float) -> str:

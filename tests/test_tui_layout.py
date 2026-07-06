@@ -86,6 +86,7 @@ def test_active_region_shows_pending_confirm():
         title="需要确认",
         display_name="write_file",
         permission_category="write",
+        risk_level="medium",
         risk_summary="将写入文件",
         input_preview="src/app.py",
     )
@@ -110,6 +111,20 @@ def test_active_region_confirm_none_default_requires_explicit_allow():
     text = _active_text(state)
     assert "A 允许本次" in text
     assert "Enter 允许本次" not in text
+
+
+def test_active_region_confirm_hides_unavailable_actions():
+    state = UIState()
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="bash",
+        default_action="deny",
+        available_actions=("deny",),
+    )
+    text = _active_text(state)
+    assert "Enter 拒绝" in text
+    assert "始终允许" not in text
+    assert "A 允许本次" not in text
 
 
 def test_hint_bar_shows_expand_key():

@@ -20,6 +20,9 @@ class ToolTrace:
     name: str
     display_name: str
     input_summary: str = ""
+    input_preview: str = ""
+    risk_level: str = ""
+    risk_summary: str = ""
     started_at: float = 0.0
     status: str = "running"       # running | success | error | denied | ...
     output_summary: str = ""
@@ -46,9 +49,11 @@ class ConfirmPrompt:
     display_name: str
     permission_category: str = ""
     execution_mode: str = ""
+    risk_level: str = ""
     risk_summary: str = ""
     input_preview: str = ""
     default_action: str = "allow"  # allow | deny | none
+    available_actions: tuple[str, ...] = ("allow_once", "allow_always", "deny")
 
 
 @dataclass

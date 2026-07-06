@@ -93,9 +93,25 @@ class InlineRenderer(Renderer):
 
     # ── tools ────────────────────────────────────────────
     async def on_tool_decision(self, event: ConversationEvent) -> None:
-        mode = str(event.data.get("execution_mode_label") or "")
+        data = event.data
+        mode = str(data.get("execution_mode_label") or "")
         if mode:
             self.state.exec_mode = mode
+        tool_use_id = str(data.get("tool_use_id") or "")
+        item = self.state.active_tools.get(tool_use_id)
+        if item is not None:
+            display_name = str(data.get("display_name") or "")
+            if display_name:
+                item.display_name = display_name
+            preview = str(data.get("input_preview") or data.get("input_summary") or "")
+            if preview:
+                item.input_preview = preview
+            risk_level = str(data.get("risk_level") or "")
+            if risk_level:
+                item.risk_level = risk_level
+            risk_summary = str(data.get("risk_summary") or "")
+            if risk_summary:
+                item.risk_summary = risk_summary
         self._invalidate()
 
     async def on_tool_start(self, event: ConversationEvent) -> None:
@@ -109,6 +125,9 @@ class InlineRenderer(Renderer):
             name=str(data.get("tool_name") or name),
             display_name=name,
             input_summary=str(data.get("input_summary") or ""),
+            input_preview=str(data.get("input_preview") or data.get("input_summary") or ""),
+            risk_level=str(data.get("risk_level") or ""),
+            risk_summary=str(data.get("risk_summary") or ""),
             started_at=time.monotonic(),
         )
         self.state.status_message = f"calling {name}…"
@@ -126,8 +145,23 @@ class InlineRenderer(Renderer):
                 name=str(data.get("tool_name") or "tool"),
                 display_name=str(data.get("display_name") or data.get("tool_name") or "tool"),
                 input_summary=str(data.get("input_summary") or ""),
+                input_preview=str(data.get("input_preview") or data.get("input_summary") or ""),
+                risk_level=str(data.get("risk_level") or ""),
+                risk_summary=str(data.get("risk_summary") or ""),
                 started_at=time.monotonic(),
             )
+        display_name = str(data.get("display_name") or "")
+        if display_name:
+            item.display_name = display_name
+        preview = str(data.get("input_preview") or data.get("input_summary") or "")
+        if preview:
+            item.input_preview = preview
+        risk_level = str(data.get("risk_level") or "")
+        if risk_level:
+            item.risk_level = risk_level
+        risk_summary = str(data.get("risk_summary") or "")
+        if risk_summary:
+            item.risk_summary = risk_summary
         item.finish(
             status=str(data.get("status") or ""),
             output_summary=str(data.get("output_summary") or ""),
@@ -191,5 +225,8 @@ class InlineRenderer(Renderer):
         ok = item.status in ("success", "ok", "")
         mark = theme.sgr("✓", theme.TOOL_OK) if ok else theme.sgr("✗", theme.TOOL_ERR)
         dur = f" {item.duration:.1f}s" if item.duration else ""
-        summary = f" {item.input_summary}" if item.input_summary else ""
+        summary_text = item.input_preview or item.input_summary
+        summary = f" {theme.dim(summary_text)}" if summary_text else ""
+        if item.risk_summary and item.status in {"denied", "error"}:
+            summary += f" {theme.dim(item.risk_summary)}"
         return f"  ⚙ {item.display_name}{summary}  {mark}{dur}"

@@ -171,9 +171,10 @@ def _hint_bar(state: UIState) -> str:
 
 
 def _confirm_lines(confirm) -> list[str]:
+    accent = theme.risk_style(confirm.risk_level)
     lines = [
-        theme.sgr(f"⚠ {confirm.title}", theme.CONFIRM),
-        f"  {theme.sgr(confirm.display_name, theme.CONFIRM)}",
+        theme.sgr(f"⚠ {confirm.title}", accent),
+        f"  {theme.sgr(confirm.display_name, accent)}",
     ]
     meta = " · ".join(
         part for part in (
@@ -187,18 +188,22 @@ def _confirm_lines(confirm) -> list[str]:
         lines.append(f"  风险: {confirm.risk_summary}")
     if confirm.input_preview:
         lines.append(theme.dim(f"  {confirm.input_preview}"))
-    if confirm.default_action == "allow":
+    actions = set(confirm.available_actions)
+    if confirm.default_action == "allow" and "allow_once" in actions:
         default = "Enter 允许本次"
-    elif confirm.default_action == "deny":
+    elif confirm.default_action == "deny" and "deny" in actions:
         default = "Enter 拒绝"
-    else:
+    elif "allow_once" in actions:
         default = "A 允许本次"
-    lines.append(
-        "  "
-        + theme.sgr(default, theme.KEY)
-        + theme.sgr("   Shift+A", theme.KEY)
-        + theme.sgr(" 始终允许", theme.HINT_LABEL)
-        + theme.sgr("   Esc/Ctrl+C", theme.KEY)
-        + theme.sgr(" 拒绝", theme.HINT_LABEL)
-    )
+    else:
+        default = ""
+    action_parts: list[str] = []
+    if default:
+        action_parts.append(theme.sgr(default, theme.KEY))
+    if "allow_always" in actions:
+        action_parts.append(theme.sgr("Shift+A", theme.KEY) + theme.sgr(" 始终允许", theme.HINT_LABEL))
+    if "deny" in actions:
+        action_parts.append(theme.sgr("Esc/Ctrl+C", theme.KEY) + theme.sgr(" 拒绝", theme.HINT_LABEL))
+    if action_parts:
+        lines.append("  " + "   ".join(action_parts))
     return lines
