@@ -1,5 +1,8 @@
 # 后端需求 — Inline TUI Phase 4（工具确认）+ 前端已预留接口
 
+> 2026-07-06 更新：需求 1、2、3、4、5 的后端实现已完成。本文保留为历史需求与联调语义说明。
+> 当前后端进度以 `CODEX_HANDOFF.md` 为准；inline TUI 视觉/输入框问题归前端线继续处理。
+
 本文件列出 **inline TUI 前端已经做好、但需要后端配合** 的点。前端侧代码已在
 `feature/tui-inline` 分支合入并通过测试（`uv run pytest -q` 628 passed）；下面每个需求
 都标注了前端当前的「占位/降级」行为，后端补齐后即可自动接上，无需再改前端。
@@ -15,6 +18,8 @@
 ---
 
 ## 需求 1：`run_message_events` / `run_turn_events` 透传 `confirm` 回调
+
+状态：已完成（`91db4a9 [codex] wire inline tool confirmations`）。
 
 **目标**：让前端传入的 confirm 回调能一路传到工具执行处。
 
@@ -52,6 +57,8 @@ async def execute_tool_calls(tool_calls, messages, *, agent, hooks, event_sink, 
 
 ## 需求 2：工具执行前调用 confirm，并按返回值决定放行/拒绝
 
+状态：已完成（`91db4a9 [codex] wire inline tool confirmations`）。后续补充：需要确认的 parallel-safe 工具已串行化，避免多个确认框并发覆盖前端 `_confirm_future`（`b381ce9 [codex] serialize confirmed tool prompts`）。
+
 **目标**：destructive / 需要授权的工具在真正执行前，先问 confirm 回调。
 
 **位置**：`tools/executor.py`，就在现有 guard 判定（`tool_decision_from_guard`）之后、
@@ -71,14 +78,15 @@ async def execute_tool_calls(tool_calls, messages, *, agent, hooks, event_sink, 
 - 若 `confirm is None`（没有前端接入，如 Gateway / 单轮），保持**现有行为**（按 guard 结果直接
   ask/deny），不得因为新参数改变旧路径。
 
-**并发注意**：`execute_tool_calls` 会把相邻的 parallel-safe 工具用 `asyncio.gather` 并发跑
-（executor.py:104-126）。但 destructive 工具本来就是串行 barrier（`not entry.is_destructive`
-才进并发批次），所以需要确认的工具天然是串行的，confirm 不会并发弹多个。**请保持这个前提**
-——不要让需要 confirm 的工具进入并发批次，否则前端一次只能显示一个确认框会卡住。
+**并发注意**：`execute_tool_calls` 会把相邻的 parallel-safe 工具用 `asyncio.gather` 并发跑。
+后端现在会在组 batch 前做只读 permission 预测；凡是会触发 confirm 的工具都不进入并发 batch，
+改为串行确认。原因是前端一次只能持有一个 `_confirm_future`，并发 confirm 会互相覆盖并卡住。
 
 ---
 
 ## 需求 3：ToolDecision 暴露给 confirm 的展示字段
+
+状态：已完成。`ToolDecision` 已暴露 `tool_name`、`permission_category`、`required_allow` 等字段。
 
 **目标**：前端确认框要显示「在请求执行什么」。
 
@@ -98,6 +106,8 @@ async def execute_tool_calls(tool_calls, messages, *, agent, hooks, event_sink, 
 
 ## 需求 4（可选，未来）：确认超时 / 中断的后端语义
 
+状态：已完成 `/stop` 中断语义（`5957564 [codex] interrupt pending tool confirmations`）。未实现自动 timeout，短期不计划引入。
+
 **目标**：定义「用户一直不回答」或「turn 被 /stop 打断」时 confirm 的行为。
 
 前端当前：确认框弹出后会一直等用户按键；用户按 `Ctrl+C` 会 resolve 成 `"deny"`。但如果后端在
@@ -111,6 +121,8 @@ async def execute_tool_calls(tool_calls, messages, *, agent, hooks, event_sink, 
 ---
 
 ## 需求 5：`/mode` 真正切换 execution policy profile（Phase 3 执行模式，后端大功能）
+
+状态：已完成（`ca11bb9 [codex] wire mode command to execution policy`）。当前 `/mode` 已是唯一执行模式入口，用户可见四档为 `Read Only`、`Ask First`、`Edit Freely`、`Full Auto`。
 
 **背景 — 现在有两条独立的「模式」轴，别混淆**：
 
