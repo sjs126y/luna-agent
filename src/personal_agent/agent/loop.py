@@ -15,6 +15,7 @@ import asyncio
 import logging
 
 from personal_agent.agent.report import TurnReportRecorder
+from personal_agent.context_budget import compose_context_text, estimate_context_budget
 from personal_agent.conversation.events import emit_delta, emit_event
 from personal_agent.llm.base import LLMRequestPlan
 from personal_agent.tools.executor import execute_tool_calls
@@ -83,6 +84,15 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
             if hook_changed_messages
             else _build_request_plan(agent, ctx, system_prompt, skill_injection_for_plan)
         )
+        context_budget = _build_request_context_budget(
+            agent,
+            ctx,
+            api_messages,
+            system_prompt,
+            skill_injection=skill_injection_for_plan,
+            use_actual_messages=hook_changed_messages,
+        )
+        context_usage_payload = _context_usage_payload(context_budget)
 
         # ── LLM call (interruptible — polls _interrupt_requested every 5s) ──
         try:
@@ -94,6 +104,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 message_count=len(api_messages),
                 tool_count=len(agent.tools),
                 model=getattr(agent._provider, "model", ""),
+                **context_usage_payload,
             )
 
             # Only stream token-by-token events when a renderer opts in. On the
@@ -207,6 +218,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
             finish_reason=response.finish_reason,
             model=response.model or getattr(agent._provider, "model", ""),
             context_window=getattr(agent._provider, "context_window", 0),
+            **context_usage_payload,
         )
         if agent._compressor is not None:
             try:
@@ -431,3 +443,53 @@ def _build_request_plan(agent, ctx, system_prompt: str, skill_injection: str | N
         current_user=current_user,
         metadata={"source": "agent_context"},
     )
+
+
+def _build_request_context_budget(
+    agent,
+    ctx,
+    api_messages: list[dict],
+    system_prompt: str,
+    *,
+    skill_injection: str | None,
+    use_actual_messages: bool = False,
+):
+    provider = getattr(agent, "_provider", None)
+    model = getattr(provider, "model", "") or getattr(agent, "model", "")
+    context_limit = int(getattr(provider, "context_window", 0) or 0)
+
+    if use_actual_messages:
+        messages = api_messages
+        skills_summary = ""
+        memory_injections = ""
+    else:
+        messages = list(getattr(ctx, "messages", []) or [])
+        skills_summary = compose_context_text(
+            getattr(ctx, "skill_summaries", "") or "",
+            skill_injection or "",
+        )
+        memory_injections = getattr(ctx, "memory_injections_text", "") or ""
+
+    budget = estimate_context_budget(
+        messages=messages,
+        system_prompt=system_prompt,
+        tools=list(getattr(agent, "tools", []) or []),
+        skills_summary=skills_summary,
+        memory_injections=memory_injections,
+        context_limit=context_limit,
+        model=model,
+    )
+    compressor = getattr(agent, "_compressor", None)
+    threshold_tokens = int(getattr(compressor, "threshold_tokens", 0) or 0)
+    if threshold_tokens:
+        budget.compression_threshold = threshold_tokens
+    return budget
+
+
+def _context_usage_payload(budget) -> dict:
+    return {
+        "context_used_tokens": budget.used,
+        "context_remaining_tokens": budget.remaining_context,
+        "context_percent": budget.percent,
+        "context_budget": budget.as_dict(),
+    }

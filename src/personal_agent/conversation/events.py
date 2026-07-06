@@ -85,6 +85,10 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("message_count", "integer", "Messages sent to the model."),
             EventFieldSpec("tool_count", "integer", "Tool definitions available to the model."),
             EventFieldSpec("model", "string", "Model name when known."),
+            EventFieldSpec("context_used_tokens", "integer", "Estimated tokens in the current request context."),
+            EventFieldSpec("context_remaining_tokens", "integer", "Estimated remaining tokens in the context window."),
+            EventFieldSpec("context_percent", "number", "Estimated percent of the context window in use."),
+            EventFieldSpec("context_budget", "object", "Estimated context budget breakdown for the current request."),
         ),
     ),
     "assistant_delta": EventSchema(
@@ -115,6 +119,10 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("finish_reason", "string", "Provider finish reason."),
             EventFieldSpec("model", "string", "Resolved model name."),
             EventFieldSpec("context_window", "integer", "Model context window when known."),
+            EventFieldSpec("context_used_tokens", "integer", "Estimated tokens in the current request context."),
+            EventFieldSpec("context_remaining_tokens", "integer", "Estimated remaining tokens in the context window."),
+            EventFieldSpec("context_percent", "number", "Estimated percent of the context window in use."),
+            EventFieldSpec("context_budget", "object", "Estimated context budget breakdown for the current request."),
         ),
     ),
     "assistant_message": EventSchema(

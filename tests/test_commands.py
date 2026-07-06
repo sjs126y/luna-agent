@@ -290,6 +290,9 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
     result = await handle_slash_command(runtime, "/usage")
     assert "上下文窗口" in result.response
+    assert "最近一轮工具执行" in result.response
+    assert "单轮工具上限" in result.response
+    assert "本轮工具调用" not in result.response
 
     result = await handle_slash_command(runtime, "/export")
     assert "已导出 1 条对话" in result.response

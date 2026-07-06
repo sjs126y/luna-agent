@@ -96,6 +96,21 @@ def test_cli_shell_prompt_renders_status_input_line():
 
 
 @pytest.mark.asyncio
+async def test_terminal_renderer_context_prefers_context_usage():
+    renderer, _ = _renderer()
+
+    await renderer.on_llm_end(ConversationEvent("llm_end", data={
+        "input_tokens": 10,
+        "output_tokens": 3,
+        "context_window": 1_000_000,
+        "context_used_tokens": 12_345,
+        "context_percent": 1.2,
+    }))
+
+    assert renderer._context_text() == "ctx 12.3K/1M 1.2%"
+
+
+@pytest.mark.asyncio
 async def test_cli_shell_handles_command_without_running_turn():
     renderer, stream = _renderer()
     runtime = FakeRuntime()

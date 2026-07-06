@@ -551,6 +551,8 @@ class ConversationService:
         if budget.compression_threshold:
             marker = "，已达到" if budget.over_compression_threshold else ""
             threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
+        recent_tool_calls = len(getattr(agent, "_last_tool_results", []) or [])
+        max_tool_calls = int(getattr(agent, "_max_tool_calls_per_turn", 0) or 0)
         return (
             f"会话用量\n"
             f"API 调用: {agent.session_api_calls} 次\n"
@@ -566,7 +568,8 @@ class ConversationService:
             f"  MCP tools: {budget.mcp_tools:,}\n"
             f"剩余: {budget.remaining_context:,} tokens\n"
             f"{threshold_line}"
-            f"\n本轮工具调用: {agent._tool_calls_this_turn} / {agent._max_tool_calls_per_turn}"
+            f"\n最近一轮工具执行: {recent_tool_calls} 次\n"
+            f"单轮工具上限: {max_tool_calls} 次"
         )
 
     def get_cached_agent(self, session_key: str):

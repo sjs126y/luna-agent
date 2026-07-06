@@ -63,6 +63,10 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert llm_fields["cache_read_tokens"]["type"] == "integer"
     assert llm_fields["cache_hit_rate"]["type"] == "number"
     assert llm_fields["cache_diagnostics"]["type"] == "object"
+    assert llm_fields["context_used_tokens"]["type"] == "integer"
+    assert llm_fields["context_remaining_tokens"]["type"] == "integer"
+    assert llm_fields["context_percent"]["type"] == "number"
+    assert llm_fields["context_budget"]["type"] == "object"
 
 
 def test_conversation_event_as_dict_includes_protocol_version():

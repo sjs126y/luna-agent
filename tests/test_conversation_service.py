@@ -882,3 +882,5 @@ async def test_usage_summary_reuses_cached_agent_without_forcing_creation(servic
     assert "cli:missing:local" not in svc.agent_cache
     assert "会话用量" in usage
     assert "上下文窗口" in usage
+    assert "最近一轮工具执行" in usage
+    assert "本轮工具调用" not in usage

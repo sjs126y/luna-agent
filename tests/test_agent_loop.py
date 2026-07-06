@@ -124,6 +124,8 @@ async def test_simple_response(provider):
     assert report["tool_truth"]["assistant_claim"]["claimed_but_no_tool_call"] is False
     assert report["tool_truth"]["warnings"] == []
     assert report["final_response_summary"] == "Hello!"
+    assert report["llm"]["context_used_tokens"] > 0
+    assert report["llm"]["context_budget"]["used"] == report["llm"]["context_used_tokens"]
     assert [event.type for event in recorder.events] == [
         "turn_start",
         "llm_start",
@@ -133,6 +135,9 @@ async def test_simple_response(provider):
     ]
     assert recorder.events[2].data["input_tokens"] == 5
     assert recorder.events[2].data["cache_hit_tokens"] == 0
+    assert recorder.events[2].data["context_used_tokens"] > 0
+    assert recorder.events[2].data["context_remaining_tokens"] >= 0
+    assert recorder.events[2].data["context_budget"]["used"] == recorder.events[2].data["context_used_tokens"]
     assert recorder.events[3].message == "Hello!"
 
 

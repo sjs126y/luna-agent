@@ -37,6 +37,10 @@ class TurnLlmReport:
     tool_call_count: int = 0
     model: str = ""
     context_window: int = 0
+    context_used_tokens: int = 0
+    context_remaining_tokens: int = 0
+    context_percent: float = 0.0
+    context_budget: dict[str, Any] = field(default_factory=dict)
     cache_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -128,6 +132,18 @@ class AgentTurnReport:
             context_window = _as_int(data.get("context_window"))
             if context_window:
                 self.llm.context_window = context_window
+            context_used = _as_int(data.get("context_used_tokens"))
+            if context_used:
+                self.llm.context_used_tokens = context_used
+            context_remaining = _as_int(data.get("context_remaining_tokens"))
+            if context_remaining:
+                self.llm.context_remaining_tokens = context_remaining
+            context_percent = _as_float(data.get("context_percent"))
+            if context_percent:
+                self.llm.context_percent = context_percent
+            context_budget = data.get("context_budget")
+            if isinstance(context_budget, dict):
+                self.llm.context_budget = dict(context_budget)
             diagnostics = data.get("cache_diagnostics")
             if isinstance(diagnostics, dict):
                 self.llm.cache_diagnostics = dict(diagnostics)

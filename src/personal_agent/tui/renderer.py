@@ -89,6 +89,12 @@ class InlineRenderer(Renderer):
         ctx = int(data.get("context_window", 0) or 0)
         if ctx:
             self.state.context_window = ctx
+        context_used = int(data.get("context_used_tokens", 0) or 0)
+        if context_used:
+            self.state.context_used_tokens = context_used
+        context_percent = float(data.get("context_percent", 0.0) or 0.0)
+        if context_percent:
+            self.state.context_percent = context_percent
         self._invalidate()
 
     # ── tools ────────────────────────────────────────────

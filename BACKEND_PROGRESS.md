@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-06 23:25 CST
+更新时间：2026-07-07 00:45 CST
 
 ## 交接定位
 
@@ -26,6 +26,7 @@
 - Tool runs：工具执行结果已持久化，并提供 `/tool-runs` 与 `ConversationQueryService` 查询。
 - Turn reports：每轮 `AgentTurnReport` 已进入持久化审计链路，可和 tool runs 通过 `turn_id/session_key` 关联。
 - Activity runtime：已提供统一结构化接口，覆盖子 agent、后台进程和 gateway agent，并支持 `/activity`、结构化 `CommandResult.kind="activity"`、runtime/query API、slash metadata 和动态候选。
+- Usage / context：`llm_start` / `llm_end` 已区分“最近一次 API token 消耗”和“当前上下文占用估算”；`/usage` 已修正工具计数文案，避免把活跃 turn 内部计数显示成会话统计。
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
@@ -36,6 +37,7 @@
 ## 当前分工约定
 
 - 后端 Codex 不主动改 `src/personal_agent/tui/`。
+- 如用户明确要求修后端事件字段的本地 TUI/CLI 消费，可做最小兼容改动，并同步接口文档。
 - 前端 Codex 如果需要字段或接口，应通过 `FRONTEND_INTERFACE_REQUIREMENTS.md` 明确写出小需求。
 - 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
 - `CLAUDE.md` 不处理。
@@ -126,6 +128,31 @@ uv run pytest tests/test_activity.py tests/test_commands.py tests/test_conversat
 
 - 跑全量回归，确认没有影响旧命令和 CLI/TUI。
 - 前端接入后如果需要 activity 历史分页或 gateway 已完成记录，再扩展持久化层；当前 gateway detail 只覆盖运行中的 gateway agent。
+
+## 已完成方向：Usage / Context 语义修正
+
+状态：已完成实现并通过聚焦验证。
+
+目标：修正前端 context meter 和 `/usage` 工具计数的语义错位。
+
+已完成：
+
+- `llm_start` / `llm_end` 新增 `context_used_tokens`、`context_remaining_tokens`、`context_percent`、`context_budget`。
+- `AgentTurnReport.llm` 同步记录最新 context 估算，历史详情和实时事件语义一致。
+- `input_tokens` / `output_tokens` 保持为 provider 最近一次 API 调用消耗，不再建议前端用它们作为当前上下文占用。
+- CLI shell / TUI 状态栏优先使用 `context_used_tokens`，没有新字段时回退旧逻辑。
+- `/usage` 将“本轮工具调用”改为“最近一轮工具执行”和“单轮工具上限”，避免常见 `0 / 20` 误导。
+- `BACKEND_INTERFACE.md` 已同步 context 字段和 `/usage` 语义。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_event_protocol.py tests/test_agent_loop.py tests/test_commands.py tests/test_conversation_service.py tests/test_cli_shell.py tests/test_tui_renderer.py tests/test_tui_layout.py -q
+uv run pytest -q
+```
+
+结果：聚焦 `108 passed`，全量 `684 passed`。
 
 ## 后续可评估方向
 

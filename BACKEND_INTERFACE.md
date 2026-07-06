@@ -63,6 +63,10 @@
 - `message_count: integer`
 - `tool_count: integer`
 - `model: string`
+- `context_used_tokens: integer`
+- `context_remaining_tokens: integer`
+- `context_percent: number`
+- `context_budget: object`
 
 ### `assistant_delta`
 
@@ -98,6 +102,29 @@
 - `finish_reason: string`
 - `model: string`
 - `context_window: integer`
+- `context_used_tokens: integer`
+- `context_remaining_tokens: integer`
+- `context_percent: number`
+- `context_budget: object`
+
+字段语义：
+
+- `input_tokens` / `output_tokens` 是 provider 返回的最近一次 API 调用实际消耗。
+- `context_window` 是模型上下文窗口大小。
+- `context_used_tokens` / `context_remaining_tokens` / `context_percent` 是后端按当前请求体估算的上下文占用，前端 context meter 应优先使用这些字段。
+- `context_budget` 是上下文估算明细，常见字段：
+  - `system_prompt`
+  - `history_messages`
+  - `tools_schema`
+  - `skills`
+  - `memory_injections`
+  - `mcp_tools`
+  - `used`
+  - `context_limit`
+  - `remaining_context`
+  - `percent`
+  - `compression_threshold`
+  - `over_compression_threshold`
 
 `cache_diagnostics` 用于排查 provider prompt cache 命中率，当前常见字段：
 
@@ -323,7 +350,18 @@ async def confirm_callback(decision) -> str:
 
 切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-## 5. Tool Runs / Tool Truth
+## 5. Usage / Context Summary
+
+`/usage` 返回人类可读文本，当前语义如下：
+
+- `API 调用`、`输入 tokens`、`输出 tokens` 是当前 session 累计值，其中输入/输出来自 provider usage 报告。
+- `上下文窗口 (估算)` 使用同一套 context budget 估算逻辑，展示当前历史、system prompt、tools schema、skill、memory 和 MCP tools 占用。
+- `最近一轮工具执行` 是上一轮实际执行并记录到 agent runtime 的工具结果数量。
+- `单轮工具上限` 是当前 agent 的工具调用上限配置。
+
+注意：`最近一轮工具执行` 不等于活跃 turn 内部计数；前端如需结构化历史工具明细，应优先使用 Tool Runs / Turn Reports。
+
+## 6. Tool Runs / Tool Truth
 
 后端已持久化工具运行结果，供后续前端/desktop 查询使用。
 
@@ -346,7 +384,7 @@ async def confirm_callback(decision) -> str:
 - 是否需要 `full_output`。
 - 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-## 6. Turn Reports
+## 7. Turn Reports
 
 后端会把每轮 `AgentTurnReport` 持久化到 SQLite，作为 turn 级审计记录。它记录一轮对话的整体状态、LLM/cache usage、工具调用汇总、retry、错误、tool truth 等信息。
 
@@ -384,6 +422,14 @@ async def confirm_callback(decision) -> str:
 - `report: object`，完整 `AgentTurnReport`
 - `created_at: number`
 
+完整 `report.llm` 除了 `input_tokens` / `output_tokens` / cache 字段外，也包含：
+
+- `context_window`
+- `context_used_tokens`
+- `context_remaining_tokens`
+- `context_percent`
+- `context_budget`
+
 关联语义：
 
 - `turn_reports.turn_id` 与 `tool_runs.turn_id` 对齐。
@@ -391,7 +437,7 @@ async def confirm_callback(decision) -> str:
 - `session_id` 用于精确归属当前物理 session。
 - `tool_runs_for_turn_report(report_id)` 会按 `session_key + turn_id` 返回该轮工具明细。
 
-## 7. Runtime / Doctor Cache Diagnostics
+## 8. Runtime / Doctor Cache Diagnostics
 
 `personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
 
@@ -435,7 +481,7 @@ async def confirm_callback(decision) -> str:
 - `last_cache_write_tokens: integer`
 - `last_cache_read_tokens: integer`
 
-## 8. Activity Runtime Interface
+## 9. Activity Runtime Interface
 
 后端已提供稳定 Activity 接口，用于前端展示“系统正在做什么”。Activity 覆盖：
 
@@ -520,7 +566,7 @@ Slash metadata：
 }
 ```
 
-## 9. Compatibility Notes
+## 10. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

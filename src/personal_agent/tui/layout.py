@@ -142,9 +142,9 @@ def _meter_bar(state: UIState) -> str:
     model = theme.sgr(state.model or "-", theme.METER_MODEL)
     if not state.context_window:
         return "  " + model
-    used = state.input_tokens + state.output_tokens
+    used = state.context_used_tokens or (state.input_tokens + state.output_tokens)
     frac = used / state.context_window if state.context_window else 0.0
-    pct = int(frac * 100)
+    pct = int(state.context_percent if state.context_used_tokens and state.context_percent else frac * 100)
     color = theme.meter_style(frac)
     meter = theme.sgr(theme.bar_meter(frac), color)
     usage = theme.dim(f"{theme.humanize(used)}/{theme.humanize(state.context_window)}")

@@ -60,6 +60,8 @@ class UIState:
     output_tokens: int = 0
     api_calls: int = 0
     context_window: int = 0
+    context_used_tokens: int = 0
+    context_percent: float = 0.0
     exec_mode: str = "Ask First"
 
     # last expandable (display_name, full_text) for Ctrl+O

@@ -104,6 +104,8 @@ class TerminalRenderer(Renderer):
         self._last_api_calls = 0
         self._last_model = ""
         self._last_context_window = 0
+        self._last_context_used_tokens = 0
+        self._last_context_percent = 0.0
         self._tool_seq = 0
         self._active_tools: dict[str, ToolTraceItem] = {}
         self._completed_tools: list[ToolTraceItem] = []
@@ -285,6 +287,12 @@ class TerminalRenderer(Renderer):
         context_window = int(event.data.get("context_window", 0) or 0)
         if context_window:
             self._last_context_window = context_window
+        context_used = int(event.data.get("context_used_tokens", 0) or 0)
+        if context_used:
+            self._last_context_used_tokens = context_used
+        context_percent = float(event.data.get("context_percent", 0.0) or 0.0)
+        if context_percent:
+            self._last_context_percent = context_percent
         if self._llm_started_at is not None:
             self._last_llm_duration = max(0.0, time.monotonic() - self._llm_started_at)
 
@@ -746,11 +754,12 @@ class TerminalRenderer(Renderer):
         return value, truncated
 
     def _context_text(self) -> str:
-        if self._last_context_window <= 0 or self._last_input_tokens <= 0:
+        used = self._last_context_used_tokens or self._last_input_tokens
+        if self._last_context_window <= 0 or used <= 0:
             return ""
-        percent = round(self._last_input_tokens / max(self._last_context_window, 1) * 100, 1)
+        percent = self._last_context_percent or round(used / max(self._last_context_window, 1) * 100, 1)
         return (
-            f"ctx {self._format_count(self._last_input_tokens)}/"
+            f"ctx {self._format_count(used)}/"
             f"{self._format_count(self._last_context_window)} {percent}%"
         )
 
