@@ -883,3 +883,114 @@ def test_key_builtin_tools_declare_usage_metadata():
         assert entry.risk_level == risk
         assert tag in entry.tags
         assert entry.usage_hint
+
+
+def test_process_tools_are_core_and_in_interact_toolset():
+    from personal_agent.tools.toolsets import TOOLSETS, is_core_tool
+
+    for name in {"process_start", "process_list", "process_read", "process_clear", "process_kill", "process_wait"}:
+        assert is_core_tool(name) is True
+        assert name in TOOLSETS["interact"]
+
+
+def test_worktree_tools_declare_permission_metadata():
+    import personal_agent.plugins.builtin.tools.builtin.worktree_tool  # noqa: F401
+    from personal_agent.tools.registry import tool_registry
+
+    expected = {
+        "worktree_create": ("write", "medium", False),
+        "worktree_merge": ("write", "high", True),
+        "worktree_cleanup": ("write", "high", True),
+        "worktree_list": ("read", "low", False),
+    }
+    for name, (category, risk, destructive) in expected.items():
+        entry = tool_registry.get(name)
+        assert entry.permission_category == category
+        assert entry.risk_level == risk
+        assert entry.is_destructive is destructive
+        assert entry.usage_hint
+
+
+@pytest.mark.asyncio
+async def test_worktree_cleanup_refuses_dirty_worktree_without_force(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import worktree_tool
+
+    worktree_root = tmp_path / "worktrees"
+    dirty_tree = worktree_root / "demo"
+    dirty_tree.mkdir(parents=True)
+    monkeypatch.setattr(worktree_tool, "_WORKTREE_DIR", worktree_root)
+
+    calls = []
+
+    async def fake_git(*args, cwd=None):
+        calls.append((args, cwd))
+        if args[:2] == ("status", "--porcelain"):
+            return 0, " M file.txt", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(worktree_tool, "_git", fake_git)
+
+    result = await worktree_tool._worktree_cleanup("demo", force=False)
+
+    assert "uncommitted changes" in result
+    assert not any(args[:2] == ("worktree", "remove") for args, _ in calls)
+
+
+@pytest.mark.asyncio
+async def test_worktree_cleanup_force_removes_with_force_flag(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import worktree_tool
+
+    worktree_root = tmp_path / "worktrees"
+    dirty_tree = worktree_root / "demo"
+    dirty_tree.mkdir(parents=True)
+    monkeypatch.setattr(worktree_tool, "_WORKTREE_DIR", worktree_root)
+
+    calls = []
+
+    async def fake_git(*args, cwd=None):
+        calls.append((args, cwd))
+        return 0, "", ""
+
+    monkeypatch.setattr(worktree_tool, "_git", fake_git)
+
+    result = await worktree_tool._worktree_cleanup("demo", force=True)
+
+    assert "removed" in result
+    assert any(args == ("worktree", "remove", str(dirty_tree), "--force") for args, _ in calls)
+    assert any(args == ("branch", "-D", "worktree/demo") for args, _ in calls)
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_rechecks_redirect_target(monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import web_fetch
+
+    class FakeResponse:
+        url = "http://127.0.0.1/admin"
+        text = "<html><body>secret</body></html>"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(web_fetch.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(
+        "personal_agent.tools.url_safety.check_url",
+        lambda url: "Error: access to loopback blocked" if "127.0.0.1" in url else None,
+    )
+
+    result = await web_fetch._web_fetch("https://example.com")
+
+    assert "redirected URL blocked" in result
+    assert "loopback" in result

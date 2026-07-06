@@ -14,7 +14,7 @@ _CORE_TOOLS: set[str] = {
     "clarify", "execute_code",
     "sub_agent", "sub_parallel", "sub_pipeline",
     "delegate_task", "run_research", "run_review", "run_workflow",
-    "process_list", "process_kill", "process_wait",
+    "process_start", "process_list", "process_read", "process_clear", "process_kill", "process_wait",
     "confirm", "task",
     "workflow_run", "workflow_list",
     "worktree_create", "worktree_merge", "worktree_cleanup", "worktree_list",
@@ -31,7 +31,10 @@ TOOLSETS: dict[str, set[str]] = {
     "info":     {"weather"},
     "mcp":      set(),  # MCP tools are registered dynamically at startup
     "code":     {"execute_code", "delegate_task"},
-    "interact": {"clarify", "confirm", "process_list", "process_kill", "process_wait"},
+    "interact": {
+        "clarify", "confirm",
+        "process_start", "process_list", "process_read", "process_clear", "process_kill", "process_wait",
+    },
 }
 
 
