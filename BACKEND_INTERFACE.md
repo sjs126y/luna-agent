@@ -1,0 +1,296 @@
+# Backend Interface Contract
+
+更新时间：2026-07-06
+
+本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
+
+## 1. Conversation Event Stream
+
+所有实时前端消费同一种事件模型：
+
+```json
+{
+  "protocol_version": 1,
+  "type": "tool_end",
+  "message": "工具 read success",
+  "data": {}
+}
+```
+
+- `protocol_version`：当前为 `1`。
+- `type`：事件类型。
+- `message`：给人看的摘要，可显示也可忽略。
+- `data`：结构化字段，前端逻辑应主要依赖这里。
+- `assistant_delta` / `thinking_delta` 是高频事件，只有 sink 设置 `wants_deltas=True` 才会收到。
+
+后端源码契约在：
+
+- `src/personal_agent/conversation/events.py`
+- `EVENT_PROTOCOL_VERSION`
+- `EVENT_SCHEMAS`
+- `event_protocol_schema()`
+- `ConversationEvent.as_dict()`
+
+## 2. Event Types
+
+### `turn_start`
+
+一轮用户请求开始。
+
+常见字段：
+
+- `turn_id: string`
+- `user_message: string`
+- `message_count: integer`
+- `was_compressed: boolean`
+
+### `compression`
+
+历史消息被压缩。
+
+常见字段：
+
+- `pre_message_count: integer`
+- `post_message_count: integer`
+
+### `llm_start`
+
+一次模型请求开始。
+
+常见字段：
+
+- `api_calls: integer`
+- `message_count: integer`
+- `tool_count: integer`
+- `model: string`
+
+### `assistant_delta`
+
+助手流式文本增量。仅发送给 `wants_deltas=True` 的 renderer。
+
+必需字段：
+
+- `chunk: string`
+
+### `thinking_delta`
+
+模型 reasoning / thinking 增量。仅发送给 `wants_deltas=True` 的 renderer。
+
+必需字段：
+
+- `chunk: string`
+
+### `llm_end`
+
+一次模型请求结束。
+
+常见字段：
+
+- `input_tokens: integer`
+- `output_tokens: integer`
+- `tool_call_count: integer`
+- `finish_reason: string`
+- `model: string`
+- `context_window: integer`
+
+### `assistant_message`
+
+一段完整助手文本已定稿。正文在 `message` 字段，不在 `data`。
+
+### `tool_start`
+
+工具开始执行。
+
+必需字段：
+
+- `tool_name: string`
+- `tool_use_id: string`
+
+常见字段：
+
+- `input_summary: string`
+
+### `tool_decision`
+
+工具执行前的 guard / permission 决策。前端做权限确认、工具 trace、审计展示时应优先读这个事件。
+
+必需字段：
+
+- `tool_name: string`
+- `tool_use_id: string`
+
+常见字段：
+
+- `allowed: boolean`
+- `stage: string`，如 `lookup` / `precheck` / `permission` / `runtime_guard` / `execution`
+- `status: string`，如 `allowed` / `denied` / `error`
+- `permission_category: string`，如 `write` / `bash` / `background` / `network`
+- `execution_mode: string`，内部 profile，如 `standard` / `trusted`
+- `permission_decision: string`，`allow` / `ask` / `deny`
+- `reason_code: string`
+- `required_allow: string`
+- `decision_message: string`
+- `grant_matched: string`
+
+### `tool_end`
+
+工具结束、失败、拒绝或中断。
+
+必需字段：
+
+- `tool_name: string`
+- `tool_use_id: string`
+
+常见字段：
+
+- `status: string`，`success` / `error` / `denied` / `timeout` / `interrupted` / `skipped`
+- `category: string`
+- `error: string`
+- `duration: number`
+- `input_summary: string`
+- `output_summary: string`
+- `full_output: string`
+- `output_truncated: boolean`
+- `guard_stage: string`
+- `guard_reason_code: string`
+- `permission_category: string`
+- `permission_decision: string`
+- `required_allow: string`
+- `execution_mode: string`
+- `grant_matched: string`
+
+### `retry`
+
+后端正在重试或要求模型恢复。
+
+必需字段：
+
+- `category: string`
+
+常见字段：
+
+- `attempt: integer`
+- `error: string`
+- `tool_name: string`
+- `tool_names: string`
+
+### `stop`
+
+当前 turn 被停止或中断。
+
+### `error`
+
+后端运行错误。
+
+必需字段：
+
+- `error: string`
+
+### `turn_end`
+
+一轮结束或会话保存完成。注意现在 agent loop 和 conversation service 都可能发 `turn_end`，字段会按阶段不同略有差异。
+
+常见字段：
+
+- `session_key: string`
+- `status: string`
+- `completed: boolean`
+- `final_response: string`
+- `api_calls: integer`
+- `should_review_memory: boolean`
+- `was_compressed: boolean`
+- `context_overflow: boolean`
+
+## 3. Inline Tool Confirmation
+
+前端可以在调用：
+
+```python
+runtime.run_message_events(text, event_sink=renderer, confirm=confirm_callback)
+```
+
+时传入：
+
+```python
+async def confirm_callback(decision) -> str:
+    return "allow"  # or "deny" / "always"
+```
+
+后端语义：
+
+- 只在 `permission_required + ask` 时调用 `confirm`。
+- `"allow"`：本次临时放行，执行后撤销临时 grant。
+- `"deny"`：不执行工具，返回 denied 工具结果。
+- `"always"`：放行，并加入当前 agent 的 `_destructive_allowed`，本轮后续同类工具不再询问。
+- `/stop` 中断 pending confirm 时，后端会取消等待并按 denied 结果收口。
+- 需要 confirm 的工具不会并发确认；后端会串行化这些工具，避免前端单一确认框被覆盖。
+
+前端确认框最少需要读：
+
+- `decision.tool_name`
+- `decision.permission_category`
+
+可选展示：
+
+- `decision.required_allow`
+- `decision.reason_code`
+- `decision.decision_message`
+
+## 4. Execution Mode
+
+当前唯一用户入口是：
+
+```text
+/mode <mode>
+```
+
+用户可见四档：
+
+- `Read Only`
+- `Ask First`
+- `Edit Freely`
+- `Full Auto`
+
+内部 profile 映射：
+
+- `Read Only` -> `guarded`
+- `Ask First` -> `standard`
+- `Edit Freely` -> `trusted`
+- `Full Auto` -> `sovereign`
+
+兼容旧别名：
+
+- `normal` -> `Ask First`
+- `acceptEdits` -> `Edit Freely`
+- `auto` -> `Full Auto`
+
+切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
+
+## 5. Tool Runs / Tool Truth
+
+后端已持久化工具运行结果，供后续前端/desktop 查询使用。
+
+当前能力：
+
+- `Database.save_tool_runs(...)`
+- `Database.recent_tool_runs(...)`
+- `Database.get_tool_run(...)`
+- `Database.tool_run_summary(...)`
+- `SessionStore` 有对应代理。
+- `ConversationService` 从 `tool_end` 事件自动记录 tool runs。
+- runtime health / doctor 会显示 tool run 摘要。
+
+后续如果前端需要 UI 查询接口，请先明确：
+
+- 查询范围：当前 session / 最近全局 / 指定 turn。
+- 分页参数。
+- 是否需要 `full_output`。
+- 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
+
+## 6. Compatibility Notes
+
+- 前端不要依赖事件字段顺序。
+- `message` 是给人看的摘要，机器逻辑优先读 `data`。
+- 未列为必需的字段都应按可缺省处理。
+- delta 事件不会被 `EventRecorder` 存储，但会转发给 opt-in renderer。
+- 当前协议是 v1；破坏性字段变更必须提升 `protocol_version`。
