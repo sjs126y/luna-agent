@@ -25,7 +25,7 @@ from prompt_toolkit.history import FileHistory, History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
 
-from personal_agent.tui.layout import build_layout
+from personal_agent.tui.layout import SLASH_MENU_VISIBLE_ITEMS, build_layout
 from personal_agent.tui.renderer import InlineRenderer
 from personal_agent.tui.state import ConfirmPrompt, SlashMenuItem, UIState
 from personal_agent.tui import theme
@@ -398,10 +398,83 @@ class InlineTuiApp:
         text = self.input_area.text
         slash_mode = text.startswith("/") and "\n" not in text
         slash_items = self._slash_menu_items(text) if slash_mode else ()
-        if self.state.slash_mode != slash_mode or self.state.slash_items != slash_items:
+        self._set_slash_state(slash_mode, slash_items)
+
+    def _set_slash_state(self, slash_mode: bool, slash_items: tuple[SlashMenuItem, ...]) -> None:
+        selected = self.state.slash_selected
+        scroll = self.state.slash_scroll
+        if not slash_mode or not slash_items:
+            selected = 0
+            scroll = 0
+        elif slash_items != self.state.slash_items:
+            previous = self._selected_slash_item()
+            selected = 0
+            if previous is not None:
+                for index, item in enumerate(slash_items):
+                    if item.text == previous.text:
+                        selected = index
+                        break
+            scroll = 0
+        selected, scroll = self._clamped_slash_view(slash_items, selected, scroll)
+        if (
+            self.state.slash_mode != slash_mode
+            or self.state.slash_items != slash_items
+            or self.state.slash_selected != selected
+            or self.state.slash_scroll != scroll
+        ):
             self.state.slash_mode = slash_mode
             self.state.slash_items = slash_items
+            self.state.slash_selected = selected
+            self.state.slash_scroll = scroll
             self._invalidate()
+
+    def _clamped_slash_view(
+        self,
+        items: tuple[SlashMenuItem, ...],
+        selected: int,
+        scroll: int,
+    ) -> tuple[int, int]:
+        if not items:
+            return 0, 0
+        selected = max(0, min(selected, len(items) - 1))
+        max_visible = max(1, SLASH_MENU_VISIBLE_ITEMS)
+        max_scroll = max(0, len(items) - max_visible)
+        scroll = max(0, min(scroll, max_scroll))
+        if selected < scroll:
+            scroll = selected
+        elif selected >= scroll + max_visible:
+            scroll = min(max_scroll, selected - max_visible + 1)
+        return selected, scroll
+
+    def _selected_slash_item(self) -> SlashMenuItem | None:
+        if not self.state.has_slash_menu():
+            return None
+        index = max(0, min(self.state.slash_selected, len(self.state.slash_items) - 1))
+        return self.state.slash_items[index]
+
+    def _move_slash_selection(self, delta: int) -> None:
+        if not self.state.has_slash_menu():
+            return
+        count = len(self.state.slash_items)
+        selected = (self.state.slash_selected + delta) % count
+        selected, scroll = self._clamped_slash_view(
+            self.state.slash_items,
+            selected,
+            self.state.slash_scroll,
+        )
+        if self.state.slash_selected != selected or self.state.slash_scroll != scroll:
+            self.state.slash_selected = selected
+            self.state.slash_scroll = scroll
+            self._invalidate()
+
+    def _apply_selected_slash_item(self) -> bool:
+        item = self._selected_slash_item()
+        if item is None:
+            return False
+        self.input_area.text = item.text
+        self.input_area.buffer.cursor_position = len(item.text)
+        self._on_input_text_changed(self.input_area.buffer)
+        return True
 
     def _slash_menu_items(self, text: str) -> tuple[SlashMenuItem, ...]:
         return tuple(
@@ -580,9 +653,7 @@ class InlineTuiApp:
         if self.state.slash_mode:
             text = self.input_area.text
             slash_items = self._slash_menu_items(text)
-            if self.state.slash_items != slash_items:
-                self.state.slash_items = slash_items
-                self._invalidate()
+            self._set_slash_state(True, slash_items)
 
     # ── prompt_toolkit callbacks the renderer uses ──
     def _invalidate(self) -> None:
@@ -854,7 +925,7 @@ class InlineTuiApp:
         def _(event) -> None:
             self._resolve_confirm("deny")
 
-        @kb.add("enter")
+        @kb.add("enter", eager=True)
         def _(event) -> None:
             # While a tool confirmation is pending, Enter uses the visible
             # default action. Today that defaults to allow for compatibility;
@@ -868,6 +939,8 @@ class InlineTuiApp:
                 elif default == "allow":
                     self._resolve_confirm_action("allow_once")
                 return
+            if self._apply_selected_slash_item():
+                return
             # If the completion menu is open, accept it instead of submitting,
             # so a bare '/' + Enter picks the top command (matches classic shell).
             buf = event.current_buffer
@@ -880,6 +953,14 @@ class InlineTuiApp:
                     buf.apply_completion(completion)
                     return
             self._on_enter()
+
+        @kb.add("up", filter=Condition(lambda: self.state.has_slash_menu()), eager=True)
+        def _(event) -> None:
+            self._move_slash_selection(-1)
+
+        @kb.add("down", filter=Condition(lambda: self.state.has_slash_menu()), eager=True)
+        def _(event) -> None:
+            self._move_slash_selection(1)
 
         @kb.add("c-j")
         def _(event) -> None:

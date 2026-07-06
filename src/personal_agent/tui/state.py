@@ -113,6 +113,8 @@ class UIState:
     # whether a visible command menu is needed.
     slash_mode: bool = False
     slash_items: tuple[SlashMenuItem, ...] = ()
+    slash_selected: int = 0
+    slash_scroll: int = 0
 
     def reset_turn(self) -> None:
         self.stream_text = ""

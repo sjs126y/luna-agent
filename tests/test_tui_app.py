@@ -673,3 +673,60 @@ def test_parent_slash_command_shows_child_candidates():
     assert "/mode list" in texts
     assert "/mode show" in texts
     assert "/mode set" in texts
+
+
+def test_slash_menu_selection_moves_and_applies_current_candidate():
+    app = _app()
+    app.input_area.text = "/memory"
+
+    assert [item.text for item in app.state.slash_items][:2] == [
+        "/memory doctor",
+        "/memory list",
+    ]
+    app._move_slash_selection(1)
+    assert app.state.slash_selected == 1
+
+    assert app._apply_selected_slash_item() is True
+    assert app.input_area.text == "/memory list"
+    assert app.state.slash_mode is True
+    assert app.state.slash_items == ()
+
+
+def test_slash_menu_scrolls_when_selection_moves_past_visible_rows():
+    app = _app()
+    app.input_area.text = "/memory"
+    assert len(app.state.slash_items) > 4
+
+    for _ in range(4):
+        app._move_slash_selection(1)
+
+    assert app.state.slash_selected == 4
+    assert app.state.slash_scroll == 1
+
+    app._move_slash_selection(1)
+    assert app.state.slash_selected == 0
+    assert app.state.slash_scroll == 0
+
+
+def test_slash_menu_enter_can_continue_into_argument_choices():
+    app = _app()
+    app.input_area.text = "/mode"
+    texts = [item.text for item in app.state.slash_items]
+    app._move_slash_selection(texts.index("/mode set"))
+
+    assert app._apply_selected_slash_item() is True
+    assert app.input_area.text == "/mode set"
+    assert [
+        (item.text, item.display_text)
+        for item in app.state.slash_items
+    ] == [
+        ("/mode set Read Only", "Read Only"),
+        ("/mode set Ask First", "Ask First"),
+        ("/mode set Edit Freely", "Edit Freely"),
+        ("/mode set Full Auto", "Full Auto"),
+    ]
+
+    app._move_slash_selection(1)
+    assert app._apply_selected_slash_item() is True
+    assert app.input_area.text == "/mode set Ask First"
+    assert app.state.slash_items == ()

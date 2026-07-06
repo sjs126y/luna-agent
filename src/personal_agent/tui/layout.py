@@ -39,6 +39,7 @@ _MAX_ACTIVE_LINES = 12
 _MAX_ACTIVE_TOOLS = 6
 _STREAM_TAIL_CHARS = 2000
 _SLASH_MENU_LINES = 5
+SLASH_MENU_VISIBLE_ITEMS = _SLASH_MENU_LINES - 1
 
 
 def build_layout(
@@ -121,7 +122,10 @@ def build_layout(
         dont_extend_height=True,
         style="bg:#242837 #e6e6e6",
         completer=completer,
-        complete_while_typing=True,  # slash menu pops as you type '/'
+        # The visible slash menu is drawn by this TUI, not prompt_toolkit's
+        # completion popup; keeping the popup closed prevents hidden completion
+        # state from stealing Up/Down/Enter.
+        complete_while_typing=False,
         history=history,
         get_line_prefix=_line_prefix,
     )
@@ -182,14 +186,26 @@ def _slash_menu_header() -> str:
     return (
         "  "
         + theme.sgr("commands", theme.SLASH_BORDER)
-        + theme.sgr("  type to filter · Enter selects", theme.SLASH_META)
+        + theme.sgr("  type to filter · ↑/↓ selects · Enter applies", theme.SLASH_META)
     )
 
 
 def _slash_menu(state: UIState) -> str:
     lines = [_slash_menu_header()]
-    for index, item in enumerate(state.slash_items[:_SLASH_MENU_LINES - 1]):
-        marker = theme.sgr("›", theme.SLASH_MARK) if index == 0 else theme.sgr(" ", theme.SLASH_BORDER)
+    max_items = SLASH_MENU_VISIBLE_ITEMS
+    count = len(state.slash_items)
+    if count <= 0:
+        return "\n".join(lines)
+    selected = max(0, min(state.slash_selected, count - 1))
+    offset = max(0, min(state.slash_scroll, max(0, count - max_items)))
+    if selected < offset:
+        offset = selected
+    elif selected >= offset + max_items:
+        offset = selected - max_items + 1
+
+    for row, item in enumerate(state.slash_items[offset:offset + max_items]):
+        index = offset + row
+        marker = theme.sgr("›", theme.SLASH_MARK) if index == selected else theme.sgr(" ", theme.SLASH_BORDER)
         description = f"  {theme.sgr(item.description, theme.SLASH_META)}" if item.description else ""
         label = item.display_text or item.text
         lines.append(f"  {marker} {theme.sgr(label, theme.SLASH_ITEM)}{description}")

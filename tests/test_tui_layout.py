@@ -7,12 +7,13 @@ would be drawn.
 
 from __future__ import annotations
 
-from prompt_toolkit.formatted_text import to_plain_text
+from prompt_toolkit.formatted_text import ANSI, to_plain_text
 
 from personal_agent.tui.layout import (
     _MAX_ACTIVE_TOOLS,
     _SLASH_MENU_LINES,
     _STREAM_TAIL_CHARS,
+    _slash_menu,
     build_layout,
 )
 from personal_agent.tui.state import ConfirmPrompt, SlashMenuItem, ToolTrace, UIState
@@ -89,6 +90,21 @@ def test_slash_command_slot_draws_dark_command_rows():
     assert "type to filter" in text
     assert "/allow" in text
     assert "/agents" in text
+
+
+def test_slash_command_slot_marks_selected_scrolled_row():
+    state = UIState(
+        slash_mode=True,
+        slash_selected=4,
+        slash_scroll=1,
+        slash_items=tuple(SlashMenuItem(f"/cmd{i}", f"desc {i}") for i in range(5)),
+    )
+
+    text = to_plain_text(ANSI(_slash_menu(state)))
+
+    assert "/cmd0" not in text
+    assert "/cmd1" in text
+    assert "› /cmd4" in text
 
 
 def test_hint_bar_hidden_while_typing_slash_command():
