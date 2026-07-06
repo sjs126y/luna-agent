@@ -54,7 +54,12 @@ async def test_llm_end_updates_status_fields():
     r, _, _ = _make()
     await r.emit(ConversationEvent("llm_end", data={
         "input_tokens": 10, "output_tokens": 5, "model": "deepseek-chat",
-        "context_window": 128000, "api_calls": 2,
+        "context_window": 128000,
+        "context_used_tokens": 1200,
+        "context_remaining_tokens": 126800,
+        "context_percent": 0.9,
+        "context_budget": {"used": 1200, "context_limit": 128000},
+        "api_calls": 2,
         "cache_hit_tokens": 100,
         "cache_miss_tokens": 25,
         "cache_write_tokens": 12,
@@ -65,6 +70,10 @@ async def test_llm_end_updates_status_fields():
     assert r.state.input_tokens == 10
     assert r.state.output_tokens == 5
     assert r.state.context_window == 128000
+    assert r.state.context_used_tokens == 1200
+    assert r.state.context_remaining_tokens == 126800
+    assert r.state.context_percent == 0.9
+    assert r.state.context_budget == {"used": 1200, "context_limit": 128000}
     assert r.state.api_calls == 2
     assert r.state.cache_hit_tokens == 100
     assert r.state.cache_miss_tokens == 25

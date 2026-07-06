@@ -157,57 +157,38 @@ def build_layout(
 def _meter_bar(state: UIState) -> str:
     # Line ABOVE the input box: model name + a colored context-usage meter.
     model = theme.sgr(state.model or "-", theme.METER_MODEL)
-    cache = _cache_summary(state)
-    activity = _activity_summary(state)
-    if not state.context_window:
-        parts = [model]
-        if cache:
-            parts.append(cache)
-        if activity:
-            parts.append(activity)
-        return "  " + "  ".join(parts)
-    used = state.input_tokens + state.output_tokens
-    frac = used / state.context_window if state.context_window else 0.0
-    pct = int(frac * 100)
-    color = theme.meter_style(frac)
-    meter = theme.sgr(theme.bar_meter(frac), color)
-    usage = theme.dim(f"{theme.humanize(used)}/{theme.humanize(state.context_window)}")
-    pct_s = theme.sgr(f"{pct}%", color)
-    parts = [model, meter, f"{usage} {pct_s}"]
-    if cache:
-        parts.append(cache)
-    if activity:
-        parts.append(activity)
+    context = _context_summary(state)
+    turn = _turn_token_summary(state)
+    parts = [model]
+    if context:
+        parts.extend(context)
+    if turn:
+        parts.append(turn)
     return "  " + "  ".join(parts)
 
 
-def _cache_summary(state: UIState) -> str:
-    has_cache = any((
-        state.cache_hit_tokens,
-        state.cache_miss_tokens,
-        state.cache_write_tokens,
-        state.cache_read_tokens,
-        state.cache_hit_rate is not None,
-    ))
-    if not has_cache:
-        return ""
-    rate = state.cache_hit_rate
-    if rate is None:
-        total = state.cache_hit_tokens + state.cache_miss_tokens
-        rate = (state.cache_hit_tokens / total) if total else 0.0
-    parts = [f"cache {int(rate * 100)}%"]
-    if state.cache_read_tokens:
-        parts.append(f"r{theme.humanize(state.cache_read_tokens)}")
-    if state.cache_write_tokens:
-        parts.append(f"w{theme.humanize(state.cache_write_tokens)}")
-    return theme.dim(" ".join(parts))
+def _context_summary(state: UIState) -> list[str]:
+    if not state.context_window or not state.context_used_tokens:
+        return []
+    frac = state.context_used_tokens / state.context_window
+    pct_value = state.context_percent if state.context_percent else frac * 100
+    pct = int(pct_value)
+    frac = max(0.0, min(1.0, frac))
+    color = theme.meter_style(frac)
+    meter = theme.sgr(theme.bar_meter(frac), color)
+    usage = theme.dim(
+        f"{theme.humanize(state.context_used_tokens)}/{theme.humanize(state.context_window)}"
+    )
+    pct_s = theme.sgr(f"{pct}%", color)
+    return [meter, f"{usage} {pct_s}"]
 
 
-def _activity_summary(state: UIState) -> str:
-    if not state.activity_total and not state.activity_attention:
+def _turn_token_summary(state: UIState) -> str:
+    if not state.input_tokens and not state.output_tokens:
         return ""
-    suffix = " !" if state.activity_attention else ""
-    return theme.dim(f"activity {state.activity_total}{suffix}")
+    return theme.dim(
+        f"turn in {theme.humanize(state.input_tokens)} out {theme.humanize(state.output_tokens)}"
+    )
 
 
 def _hint_bar(state: UIState) -> str:

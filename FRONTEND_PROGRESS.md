@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-06 23:48 CST
+更新时间：2026-07-07 00:56 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -19,7 +19,10 @@
 - 已有 inline TUI 输入区、状态行、上下文 meter、流式回复预览、工具运行活跃区。
 - 用户消息已增加底色/左侧强调，提高和助手输出的对比度；多行历史消息每行都会保持左侧蓝色强调条。
 - 输入框已有低调背景和左侧提示符；多行输入/折行会保持同一左侧蓝色强调条；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
-- 状态栏显示当前执行模式、模型、context usage 和后端 `llm_end` cache usage 摘要。
+- 状态栏显示当前执行模式、模型、真正的 context usage，以及最近一轮模型 input/output token。
+- 顶部 context meter 优先读 `llm_end.data.context_used_tokens`、`context_window`、`context_percent`；不会再用 `input_tokens + output_tokens` 伪装成上下文占用。
+- `input_tokens` / `output_tokens` 只作为最近一轮模型消耗显示，例如 `turn in 213 out 34`。
+- cache usage 和 activity 不再放在顶部 meter line；它们保留为结构化状态/详情数据。
 
 ### Slash Command UI
 
@@ -79,7 +82,7 @@
   - `Sub agents` 列表：role、run id、status、duration、quota token、tool counts、task preview。
   - `Processes` 列表：pid/status/duration/command/cwd。
 - `/activity processes <id>` 等详情 payload 会显示单个对象详情；进程详情里的 stdout/stderr、子 agent result 会接到 `Ctrl+O` 展开。
-- 执行 `/activity` 后，meter line 会同步 `activity N` badge；有 attention 状态时显示 `activity N !`。
+- Activity 不再占用顶部 meter line；运行情况只在 `/activity` 输出和详情里展示。
 - Slash 菜单已加入 `/activity` 和二级项 `/activity agents|processes|gateway`，并支持后端动态 provider：`activity_agents`、`activity_processes`、`activity_gateway`。
 
 ### Confirm UI
@@ -106,7 +109,9 @@
 - Tool Runs 查询：`/tool-runs ...` + `kind="tool_runs"` payload
 - Activity Runtime 查询：`/activity ...` + `kind="activity"` payload
 - Tool confirmation fields
-- LLM cache usage fields：`cache_hit_tokens`、`cache_miss_tokens`、`cache_write_tokens`、`cache_read_tokens`、`cache_hit_rate`
+- LLM context fields：`context_used_tokens`、`context_remaining_tokens`、`context_percent`、`context_budget`
+- LLM turn usage fields：`input_tokens`、`output_tokens`
+- LLM cache usage fields：`cache_hit_tokens`、`cache_miss_tokens`、`cache_write_tokens`、`cache_read_tokens`、`cache_hit_rate`（当前不在顶部常驻展示）
 - `retry` / `stop` / `error` 增强字段
 - Doctor diagnostics 目前仅用于联调判断，TUI 未做 UI 消费；不是当前必做项。
 
@@ -117,6 +122,7 @@
 - 确认框要清楚但不要啰嗦，重点展示风险、默认动作和关键预览。
 - 长输出展开可以做，但完整输出打印在当前 scrollback 位置，不尝试回到截断处插入。
 - 状态行中文化没必要。
+- 顶部 meter 只放 context usage 和最近一轮模型 token；不要放 cache diagnostics 或 activity badge。
 - 多工具结果列表 / Ctrl+O 选择展开：用户感兴趣，但之前尝试失败过，暂缓，不作为当前优先项。
 
 ## 最近完成
@@ -165,6 +171,13 @@
 - Slash registry 增加 `/activity` 二级命令和动态 id provider，`/a` 下现在会出现 `/activity`。
 - Runtime health snapshot 同时保留前端 command/query/execution 诊断，并加入后端 `activity`、`llm_cache` 和 persisted turn report summary。
 
+### 2026-07-07 00:56 CST
+
+- 按后端最新语义修正顶部 meter：context meter 只读 `llm_end.context_used_tokens/context_window/context_percent`。
+- 最近一轮模型消耗独立显示为 `turn in <input> out <output>`。
+- 移除顶部常驻 cache summary 和 activity badge，避免把诊断/运行状态混进 context usage。
+- `UIState` 保留 `context_budget`，后续若做 `/usage` 结构化 UI 或 context breakdown 可直接消费。
+
 已验证：
 
 ```bash
@@ -173,9 +186,10 @@ python -m compileall -q src/personal_agent/tui
 git diff --check
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 uv run pytest tests/test_commands.py tests/test_runtime.py tests/test_activity.py tests/test_conversation_command_runtime.py tests/test_cli.py -q
+uv run pytest tests/test_agent_loop.py tests/test_event_protocol.py tests/test_tui_layout.py tests/test_tui_renderer.py tests/test_tui_app.py -q
 ```
 
-结果：TUI tests `85 passed`；activity/runtime/commands/CLI tests `62 passed`。
+结果：TUI tests `85 passed`；activity/runtime/commands/CLI tests `62 passed`；context/meter/event tests `107 passed`。
 
 ## 不建议现在做
 

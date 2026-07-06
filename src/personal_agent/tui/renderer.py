@@ -93,6 +93,18 @@ class InlineRenderer(Renderer):
         ctx = int(data.get("context_window", 0) or 0)
         if ctx:
             self.state.context_window = ctx
+        context_used = int(data.get("context_used_tokens", 0) or 0)
+        if context_used:
+            self.state.context_used_tokens = context_used
+        context_remaining = int(data.get("context_remaining_tokens", 0) or 0)
+        if context_remaining:
+            self.state.context_remaining_tokens = context_remaining
+        context_percent = float(data.get("context_percent", 0.0) or 0.0)
+        if context_percent:
+            self.state.context_percent = context_percent
+        context_budget = data.get("context_budget")
+        if isinstance(context_budget, dict):
+            self.state.context_budget = dict(context_budget)
         self.state.cache_hit_tokens = _optional_int(data.get("cache_hit_tokens"))
         self.state.cache_miss_tokens = _optional_int(data.get("cache_miss_tokens"))
         self.state.cache_write_tokens = _optional_int(data.get("cache_write_tokens"))

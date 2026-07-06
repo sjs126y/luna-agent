@@ -137,6 +137,10 @@ class UIState:
     output_tokens: int = 0
     api_calls: int = 0
     context_window: int = 0
+    context_used_tokens: int = 0
+    context_remaining_tokens: int = 0
+    context_percent: float = 0.0
+    context_budget: dict = field(default_factory=dict)
     cache_hit_tokens: int = 0
     cache_miss_tokens: int = 0
     cache_write_tokens: int = 0

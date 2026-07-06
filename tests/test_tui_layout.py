@@ -269,14 +269,18 @@ def test_meter_bar_shows_model_and_usage():
     state = UIState()
     state.model = "deepseek-v4-flash"
     state.context_window = 1_000_000
+    state.context_used_tokens = 12_345
+    state.context_percent = 1.2
     state.input_tokens = 213
+    state.output_tokens = 34
     bar = _meter_bar(state)
     assert "deepseek-v4-flash" in bar
-    assert "213/1M" in bar
-    assert "0%" in bar
+    assert "12.3k/1M" in bar
+    assert "1%" in bar
+    assert "turn in 213 out 34" in bar
 
 
-def test_meter_bar_shows_cache_summary():
+def test_meter_bar_without_context_does_not_fake_usage():
     from personal_agent.tui.layout import _meter_bar
 
     state = UIState()
@@ -284,28 +288,26 @@ def test_meter_bar_shows_cache_summary():
     state.context_window = 1_000_000
     state.input_tokens = 100_000
     state.output_tokens = 20_000
-    state.cache_hit_rate = 0.42
-    state.cache_read_tokens = 12_300
-    state.cache_write_tokens = 800
     bar = _meter_bar(state)
-    assert "cache 42%" in bar
-    assert "r12.3k" in bar
-    assert "w800" in bar
+    assert "120k/1M" not in bar
+    assert "turn in 100k out 20k" in bar
 
 
-def test_meter_bar_computes_cache_rate_from_hit_and_miss():
+def test_meter_bar_does_not_show_cache_summary():
     from personal_agent.tui.layout import _meter_bar
 
     state = UIState()
     state.model = "deepseek-v4-flash"
+    state.context_window = 1_000_000
+    state.context_used_tokens = 100_000
     state.cache_hit_tokens = 3
     state.cache_miss_tokens = 1
     bar = _meter_bar(state)
     assert "deepseek-v4-flash" in bar
-    assert "cache 75%" in bar
+    assert "cache" not in bar
 
 
-def test_meter_bar_shows_activity_badge():
+def test_meter_bar_does_not_show_activity_badge():
     from personal_agent.tui.layout import _meter_bar
 
     state = UIState()
@@ -313,7 +315,7 @@ def test_meter_bar_shows_activity_badge():
     state.activity_total = 3
     state.activity_attention = True
     bar = _meter_bar(state)
-    assert "activity 3 !" in bar
+    assert "activity" not in bar
 
 
 def test_hint_bar_uses_distinct_mode_colors():
