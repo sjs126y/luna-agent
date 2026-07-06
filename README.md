@@ -1,49 +1,65 @@
 # Personal Agent
 
-Personal Agent 是一个插件化的多平台 AI Agent 运行时，不是一个只能在命令行里做单轮问答的小工具。它把对话、工具、安全、平台接入、记忆、MCP、workflow 和受控多 Agent 委派放进同一个清晰的运行时里，让本地 CLI、平台 Gateway、后续 TUI 和 desktop 能共用一套后端能力。
+Personal Agent 是一个插件化、多入口、可观测的个人 AI Agent runtime。它不是一个只会在命令行里做单轮问答的小脚本，而是把对话、工具、安全、平台接入、记忆、MCP、workflow、受控多 Agent 委派和 inline TUI 放进同一套清晰的运行时。
 
-当前主入口是 `personal-agent` CLI，但项目本身的重点不是“做了一个 CLI”，而是已经把一个真正可扩展、可观测、可长期维护的 Agent runtime 搭起来了。插件系统负责装配工具、平台、LLM transport、memory provider 和 workflow；Gateway 负责平台连接、会话路由、消息队列和 agent 调度；运行时则负责把模型调用、工具执行、安全约束和会话状态稳定地串起来。
+项目当前已经具备一个能长期扩展的底座：后端负责稳定的 agent loop、provider/transport、工具执行、安全门控、会话存储和平台 Gateway；前端 inline TUI 消费结构化事件、slash command metadata、activity payload、tool runs 和 context budget。CLI、TUI、平台 Gateway 共享同一套后端能力，后续接 desktop/web shell 不需要重写 agent runtime。
 
-如果你想找的是一个“已经能用、而且后面还能继续长”的个人 Agent 后端，这个项目就是朝这个方向做的。
+如果你想要的是一个“能真实使用、能观察、能扩展、能接平台”的个人 Agent，而不是一次性 demo，这就是这个项目的方向。
 
 ## 项目亮点
 
-- **插件化运行时，不是单体聊天脚本**
-  工具、平台、LLM transport、memory provider、workflow 都通过插件系统装配，核心 runtime 保持轻量，方便裁剪和扩展。
+- **真正的 Agent runtime，而不是聊天脚本**
+  agent loop、LLM transport、工具执行、权限、安全、记忆、workflow、MCP、Gateway 和会话存储是独立模块，通过清晰接口组合。
 
-- **一个后端，多个入口**
-  既能跑本地 CLI 多轮对话，也能挂 Telegram / 飞书 / 微信这类平台入口；CLI、Gateway、未来 TUI / desktop 共用同一套对话与工具执行链路。
+- **插件化扩展能力**
+  工具、平台、LLM provider/transport、memory provider、workflow 都通过插件系统装配。核心 runtime 保持轻量，不依赖 LangChain / CrewAI 这类重框架。
 
-- **工具安全不是补丁，而是执行主链路的一部分**
-  工具执行统一经过 execution guard、precheck、权限、沙箱、审计，不是把危险工具直接暴露给模型。
+- **inline TUI 已经接入结构化后端**
+  TUI 不是解析纯文本的终端皮肤，而是直接消费 `ConversationEvent`、`CommandResult.kind/payload`、slash metadata、tool events、activity payload 和 context budget。
 
-- **运行时可观测性已经内建**
-  启动阶段有 `BootReport`，单轮对话有 `AgentTurnReport`，`doctor` 和 `serve --dry-run` 可以直接看到启动/运行摘要，而不是只给一个异常字符串。
+- **工具安全在执行主链路里**
+  工具调用统一经过 execution guard、precheck、permission、sandbox、audit。确认 UI 可读到风险、默认动作、可选动作、路径/命令/URL 预览。
 
-- **前端友好的事件模型**
-  对话过程通过结构化事件流驱动，CLI 只是第一个消费者；后续上 TUI 或 desktop，不需要重写 agent/runtime 本身。
+- **工具调用真实可追踪**
+  实时 `tool_start/tool_decision/tool_end`、持久化 `tool_runs`、每轮 `AgentTurnReport` 和 tool truth 可以回答“模型到底有没有真的调用工具”。
 
-- **不依赖 LangChain / CrewAI 一类重框架**
-  保持 Python 原生、asyncio、插件和显式 runtime 结构，链路更直，调试和定制成本更低。
+- **Provider-aware transport 与 prompt cache 诊断**
+  `ProviderProfile` 描述 cache capability；transport 归一化 usage，记录 system/tools/message prefix hash，便于排查 Anthropic explicit cache 和 DeepSeek/OpenAI-compatible prefix cache。
+
+- **运行时 Activity 统一视图**
+  `/activity` 能统一查看子 agent、后台进程、Gateway agent 的 summary/list/detail，前端可以直接渲染结构化 payload。
+
+- **Context 和 token 语义清晰**
+  `context_used_tokens/context_window/context_percent` 表示当前上下文占用；`input_tokens/output_tokens` 表示最近一次模型调用消耗，避免 UI 指标混乱。
+
+- **可观测性内建**
+  启动有 `BootReport`，单轮有 `AgentTurnReport`，运行时有 doctor/health snapshot，缓存、工具、activity、turn reports 都可诊断。
 
 ## 现在已经能做什么
 
-- **本地多轮 CLI 对话已经可用**
-  支持会话切换、上下文预算查看、导出、记忆命令、子 Agent 运行记录、工具调用 trace、流式输出和 thinking 展示。
+- **本地 CLI / inline TUI 多轮对话**
+  支持流式回复、thinking 展示、会话切换、导出、记忆命令、上下文预算、slash command 菜单、工具确认、工具结果展开。
 
-- **平台 Gateway 已经能跑**
-  不是只停留在 demo webhook 层，而是有平台接入、会话路由、pending 消息管理、重连和运行中 agent 状态。
+- **结构化 slash commands**
+  `/commands`、`/tools`、`/permissions`、`/protocol`、`/mode`、`/tool-runs`、`/activity` 等命令既有文本输出，也能返回结构化 payload 给前端。
 
-- **工具执行不是裸奔**
-  模型想调用工具时，会经过统一的 execution guard、precheck、权限、沙箱和审计链路。
+- **平台 Gateway**
+  支持 Telegram / 飞书 / 微信插件式接入，有会话路由、pending 消息、重连、运行中 agent 状态和 Gateway activity snapshot。
 
-- **配置和诊断已经成体系**
-  `Settings()` 走统一 loader；`doctor`、`init --check`、`serve --dry-run` 能直接用来查配置、启动和运行时状态。
+- **安全工具执行**
+  文件、shell、网络、后台进程、工作区等工具都有统一执行门控；危险操作会进入确认链路，而不是直接裸露给模型。
 
-- **运行时可观测性已经不是空壳**
-  启动有 `BootReport`，每轮对话有 `AgentTurnReport`，最近 turn summary 已经进入 runtime health 和 doctor。
+- **工具结果和 turn report 持久化**
+  `tool_runs` 和 `turn_reports` 落库，能按 session/turn 查询历史工具结果和每轮审计报告。
 
-这意味着它不是“还在想怎么做”的半成品，而是一个已经能用、并且后面适合继续补前端和桌面壳的后端底座。
+- **子 agent 和后台任务可观察**
+  delegate/sub-agent、后台进程、gateway agent 都进入统一 Activity Runtime，支持 summary/list/detail 和 slash 动态候选。
+
+- **Provider cache 调试**
+  `llm_end`、runtime health、doctor 都能暴露 cache usage 和 request diagnostics，方便看缓存命中是否来自稳定 system/tools/message prefix。
+
+- **配置和诊断体系**
+  `Settings()` 走统一 loader；`doctor`、`init --check`、`serve --dry-run` 能检查配置、启动、运行时、插件、MCP、provider cache 和 activity 状态。
 
 ## 快速开始
 
@@ -55,6 +71,12 @@ uv run personal-agent init --profile local --copy-env --fix-dirs
 
 uv run personal-agent doctor
 uv run personal-agent chat
+```
+
+使用 inline TUI：
+
+```bash
+uv run personal-agent chat --ui inline
 ```
 
 单轮调用：
@@ -79,12 +101,26 @@ uv run personal-agent chat
 uv run personal-agent serve
 uv run personal-agent doctor
 uv run personal-agent doctor --json
+uv run personal-agent protocol schema --json
 
 uv run personal-agent plugins list --load
 uv run personal-agent plugins doctor platforms/telegram
 uv run personal-agent memory doctor
 uv run personal-agent agents list
 uv run personal-agent tokens session
+```
+
+交互式 chat / inline TUI 中常用 slash commands：
+
+```text
+/commands
+/tools list
+/tool-runs summary
+/activity
+/usage
+/mode
+/permissions
+/protocol schema
 ```
 
 ## 初始化 Profile
@@ -114,7 +150,7 @@ uv run personal-agent init --profile telegram --force
 ## 配置文件
 
 - `.env`：放 secret 和 provider/platform 环境变量，例如 `LLM_API_KEY`、`TELEGRAM_BOT_TOKEN`。
-- `config.yaml`：放行为配置，例如 storage、plugins、memory、sandbox、mcp、auth、session。
+- `config.yaml`：放行为配置，例如 storage、plugins、memory、sandbox、mcp、auth、session、`agent.ui`。
 - `plugins/`：用户插件或本地开发插件目录。
 - `data/`：运行数据、会话、记忆、审计日志等。
 
@@ -160,6 +196,8 @@ uv run personal-agent plugins list --load
 python -m compileall -q src/personal_agent
 uv run pytest -q
 ```
+
+当前主分支最近一次前后端合并后全量结果：`746 passed`。
 
 ## 技术栈
 

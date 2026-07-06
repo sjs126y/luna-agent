@@ -1,146 +1,80 @@
 # Codex 交接记录
 
-更新时间：2026-07-06 13:30 CST
+更新时间：2026-07-07 01:31 CST
 
 ## 当前状态
 
-- 当前工作分支：`feature/frontend-tui-polish`
-- 当前协作分工：
-  - **后端线**：负责 agent loop、tool executor、permissions / execution mode、conversation events、runtime / doctor、gateway / platform adapter、后端测试与接口文档。
-  - **前端线**：负责 `src/personal_agent/tui/`、classic CLI / future desktop-web 的布局、交互、视觉、真实终端验收。
-- 前后端接口权威文档：`BACKEND_INTERFACE.md`。
-- 前端对后端的小需求入口：`FRONTEND_INTERFACE_REQUIREMENTS.md`。
+- 当前主分支：`main`
+- 后端分支 `feature/backend-provider-cache` 已合入主分支。
+- 前端分支 `feature/frontend-tui-polish` 已合入主分支。
+- 最近主分支合并提交：
+  - `e6ccb98 Merge branch 'feature/backend-provider-cache'`
+  - `73d0f24 [codex] merge frontend tui polish`
+- 合并后验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
+
+结果：后端合并后 `685 passed`；前后端都合并后 `746 passed`。
+
+## 文档入口
+
+- `BACKEND_INTERFACE.md`：前端消费后端事件、slash commands、tool metadata、tool runs、activity、usage/context 等接口的权威文档。
+- `BACKEND_PROGRESS.md`：后端线进度，记录 agent runtime、provider/transport、tool pipeline、activity、turn report 等工作。
+- `FRONTEND_PROGRESS.md`：前端线进度，记录 inline TUI、slash menu、confirm UI、activity UI、context meter 等工作。
+- `FRONTEND_INTERFACE_REQUIREMENTS.md`：前端向后端提出的小接口/字段需求入口。
+- `docs/frontend_decisions.md`：前端视觉和交互决策记录。
 - 历史计划/需求文档已归档到 `docs/archive/`。
 
-## 最近完成
+## 当前项目总进度
 
-### Event Protocol / Frontend Contract
+项目已经从“CLI agent 原型”推进到一个可用的个人 Agent runtime：
 
-- `ConversationEvent.as_dict()` 带 `protocol_version`。
-- `EVENT_SCHEMAS` 覆盖所有事件类型。
-- `frontend_protocol_schema()` 暴露 Python 层协议 schema。
-- `personal-agent protocol schema --json` 暴露 CLI 层协议 schema。
-- `retry` / `error` / `stop` 状态事件已结构化：
-  - `retry`: `max_attempts`, `recoverable`
-  - `error`: `category`, `recoverable`, `detail_id`
-  - `stop`: `reason`, `message`, `stopped_tools`, `stopped_agents`
+- 后端 runtime、工具执行、安全门控、插件加载、LLM transport、memory、MCP、workflow、Gateway 和会话存储已经形成稳定主链路。
+- inline TUI 已经能消费后端结构化事件和 slash command metadata，不再只是普通 CLI 输出。
+- 前后端通过 `ConversationEvent`、`CommandResult.kind/payload`、slash metadata、activity payload、tool runs、turn reports 和 context budget 建立了较清晰的接口边界。
+- Provider/transport 已具备 provider-aware cache capability 和 request diagnostics，可继续围绕真实 provider cache 命中率做验证。
+- 工具调用、权限确认、tool truth、tool runs 和 turn report 已经可观测、可持久化、可排查。
 
-### Tool Decision / Tool End Metadata
+## 后端完成项
 
-- `tool_decision` 和 `tool_end` 已提供确认 UI 所需展示字段：
-  - `display_name`
-  - `execution_mode_label`
-  - `risk_level`
-  - `risk_summary`
-  - `default_action`
-  - `available_actions`
-  - `input_summary`
-  - `input_preview`
-  - `affected_paths`
-  - `command_preview`
-  - `url_preview`
-  - `host`
-  - `cwd`
-  - `timeout_seconds`
-  - `method`
-  - `process_label`
-- `confirm(decision)` 对象与事件流字段保持一致。
+- **Execution Mode v3**：四档模式已稳定，对应权限、沙箱、工具类别和确认行为。
+- **Tool execution / permission pipeline**：工具执行统一经过 executor、execution guard、precheck、permission、sandbox、audit。
+- **Tool decision metadata**：`tool_decision` / `tool_end` 提供前端确认 UI 所需字段，包括风险、默认动作、可选动作、路径/命令/URL 预览等。
+- **Event protocol**：事件带 `protocol_version`，`retry` / `error` / `stop` / `tool_decision` / `tool_end` / `llm_end` 等字段结构化。
+- **Provider / transport cache**：`ProviderProfile`、`BaseTransport`、Anthropic、OpenAI-compatible/DeepSeek 已支持 cache capability、usage normalization、request hash diagnostics 和 `LLMRequestPlan`。
+- **Turn reports**：每轮 `AgentTurnReport` 已持久化到 SQLite，可和 `tool_runs` 通过 `turn_id/session_key` 关联。
+- **Tool truth**：能记录真实工具调用、模型请求工具调用、工具结果、模型声称调用但实际没有 tool call 等诊断。
+- **Activity runtime**：统一暴露子 agent、后台进程、gateway agent 的 summary/list/detail，并接入 `/activity`、slash metadata 和动态候选。
+- **Usage / context**：`llm_start` / `llm_end` 区分最近一次 API token 消耗与当前上下文占用估算；`/usage` 已修正工具计数语义。
+- **Tool protocol prompt**：系统提示已加入稳定工具调用规则，降低模型只用文字声称调用工具的概率。
+- **Doctor/runtime diagnostics**：runtime health 已能展示 commands、query、execution、activity、provider cache、turn reports、tool truth 等摘要。
 
-### Tool Confirmation / Execution Mode
+## 前端完成项
 
-- `confirm=None` 已从 runtime 透传到 executor。
-- executor 只在 `permission_required + ask` 时调用 confirm。
-- confirm 返回语义：
-  - `"allow"`：本次放行。
-  - `"deny"`：拒绝本次工具。
-  - `"always"`：加入当前 agent grant，后续同类工具不再询问。
-- `/stop` 打断 pending confirm 时固定收口：
-  - `tool_end.status="denied"`
-  - `tool_end.category="authorization"`
-  - `tool_end.error="tool confirmation interrupted"`
-- 需要确认的工具会串行化，避免多个确认框并发覆盖。
-- Execution Mode 四档：
-  - `Read Only` -> `guarded`
-  - `Ask First` -> `standard`
-  - `Edit Freely` -> `trusted`
-  - `Full Auto` -> `sovereign`
-
-### Tool Truth / Tool Runs
-
-- `AgentTurnReport` 汇总每轮 LLM、工具、retry、tool truth。
-- `ConversationService` 记录最近 turn report 与 tool truth 摘要。
-- `tool_runs` 已持久化，runtime / doctor 可看到摘要。
-- `ConversationQueryService` 提供只读查询 facade。
-- `/tool-runs [recent|summary|show <id>] [--all] [--limit N]` 已提供查询入口。
-- `/tool-runs` 返回 `CommandResult.kind="tool_runs"`，兼容文本和结构化 payload。
-
-### Chat Slash Commands v1/v2
-
-- CLI chat、inline TUI 和 Gateway 共享 `handle_slash_command(...)`。
-- Slash commands 与 Typer CLI 保持分离。
-- 新增 slash command metadata registry：
-  - `SLASH_COMMAND_REGISTRY_VERSION = 1`
-  - `/commands`
-  - `/commands json`
-  - `/commands <name>`
-- `/help` 由 registry 生成。
-- 新增用户可用命令：
-  - `/tools [list|show <name>]`
-  - `/tool-runs [recent|summary|show <id>]`
-  - `/permissions [list|grants]`
-  - `/protocol [schema]`
-- 插件命令继续按 `slash` / `cli` / `both` scope 暴露。
-- `CommandResult` v2 保持 `response` 文本兼容，同时新增：
-  - `payload`
-  - `kind`
-  - `error`
-  - `suggestions`
-- `/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 已有结构化 payload。
-- command metadata 新增 `available_in`、`mutates_state`、`requires_agent`、`arguments`。
-- argument metadata 支持 `choice` 和 `dynamic`。
-- 静态候选：
-  - `/mode set <mode>`
-  - `/allow <category>`
-- 动态候选入口：`slash_argument_choices(...)`。
-- 当前动态 provider：
-  - `tools`
-  - `sessions`
-- 未知命令/子命令会尽量返回建议，但不破坏技能命令 fallback。
-
-### Doctor Runtime Diagnostics
-
-- `AppRuntime.health_snapshot()` 增加：
-  - `commands`
-  - `query`
-  - `execution`
-- `doctor` runtime 输出会展示：
-  - slash registry version / command counts / argument metadata / dynamic providers
-  - ConversationQueryService 和 tool-runs query 是否可用
-  - 当前 execution mode label / profile / isolation / permissions
+- **Inline TUI 主体**：输入区、状态行、上下文 meter、流式回复预览、工具活跃区、用户消息强调和多行输入已成型。
+- **Context meter 语义修正**：顶部 meter 使用 `context_used_tokens/context_window/context_percent`；最近一轮模型消耗独立显示为 `↓input | ↑output`。
+- **Slash command UI**：消费后端 slash command registry，支持一级命令、children、静态候选、动态候选、键盘选择和层级进入。
+- **Confirm UI**：工具确认面板支持可选 action row、默认项、风险摘要、关键输入/路径/命令/URL 预览。
+- **Tool trace / tool runs**：实时 `tool_start/tool_decision/tool_end` 和历史 `/tool-runs` 已消费结构化字段，并支持 `Ctrl+O` 展开完整输出。
+- **Activity UI**：`/activity` 消费 `kind="activity"` payload，展示 gateway、sub agents、background processes 的总览、列表和详情。
+- **前端状态消费**：`UIState` 保留 context budget、cache usage、activity summary 等结构化状态，便于后续做面板或详情页。
 
 ## 当前约定
 
 - 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
-- 前端提出后端需求时，应尽量是字段/小接口级别，不直接要求重构后端流程。
-- 前端视觉和 prompt_toolkit 真实终端问题归前端线。
-- 后端线不主动编辑 TUI 文件，除非确认是事件/接口问题。
-- `CLAUDE.md` 保留，不在本轮文档清理中处理。
+- 前端提出后端需求时，应写入 `FRONTEND_INTERFACE_REQUIREMENTS.md`，优先是字段/小接口级别。
+- 后端线不主动重做 TUI 交互；前端线不直接改后端 runtime 架构，除非用户明确要求。
+- 每次工作结束要更新自己负责的进度文件。
+- 提交信息继续使用 `[codex]` 前缀。
+- 测试可能修改 `src/personal_agent/skills/builtin/.usage.json`，提交前必须恢复。
 
-## 已验证
+## 后续建议
 
-最近后端提交前运行过：
-
-```bash
-python -m compileall -q src/personal_agent
-uv run pytest tests/test_runtime.py tests/test_cli.py -q
-uv run pytest -q
-```
-
-最近一次 doctor 相关结果：`46 passed`。
-最近一次全量结果：`703 passed`。
-
-## 注意事项
-
-- 测试会修改 `src/personal_agent/skills/builtin/.usage.json`，提交前必须恢复。
-- 当前分支仍混有前后端提交，提交时要精确暂存文件，避免把另一条线的改动混入。
-- `PROVIDER_TRANSPORT_RETRY.md` 仍留在根目录，因为 `CLAUDE.md` 直接引用它，而本轮不处理 `CLAUDE.md`。
+- 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段和命中率。
+- 长对话压缩质量：优化压缩后的任务状态、路径、工具结果保留。
+- 工具失败恢复：继续改进工具错误、权限拒绝、格式错误后的恢复提示；暂不做正则触发 retry。
+- Activity 历史：如果前端需要历史分页或 gateway completed records，再扩展持久化层。
+- TUI 体验手测：重点验证 slash menu、confirm、context meter、activity、工具结果展开在真实终端中的行为。
