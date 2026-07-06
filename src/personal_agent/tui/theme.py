@@ -17,12 +17,13 @@ RESET = "\x1b[0m"
 # Semantic SGR codes. Keep names intent-based (role) rather than color-based, so
 # the palette can be retuned without renaming call sites. Values stay within the
 # terminal's own 16-color palette so the UI follows the user's theme (CC/Codex
-# minimal look) instead of fighting it.
+# minimal look) instead of fighting it. User-message backgrounds use 256-color
+# SGR because they need a visible block contrast on common dark terminals.
 DIM = "2"
 BOLD = "1"
 PROMPT = "1;36"       # input prompt symbol ❯: bold cyan
-USER_BAR = "34"       # user message left bar ▌: blue (distinct from AI)
-USER_MSG = "39"       # user message text: default fg (full contrast, readable)
+USER_BAR = "1;38;5;111;48;5;236"    # user message left bar ▌ on row bg
+USER_MSG = "1;37;48;5;236"          # user message text on row bg
 METER_MODEL = "36"    # model name above the prompt: readable, not ghosted
 HINT_LABEL = "37"     # shortcut labels: quieter than keys, still legible
 AGENT_BAR = "35"      # agent streaming bar ▍: magenta

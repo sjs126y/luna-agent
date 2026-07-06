@@ -142,6 +142,21 @@ async def test_submit_routes_message_to_runtime():
 
 
 @pytest.mark.asyncio
+async def test_submit_echoes_user_message_with_background():
+    app = _app()
+    printed: list[str] = []
+
+    async def print_above(text):
+        printed.append(text)
+
+    app._print_above = print_above  # type: ignore[method-assign]
+    await app._submit("现在试一下？")
+    text = "\n".join(printed)
+    assert "现在试一下？" in text
+    assert "\x1b[1;37;48;5;236m" in text
+
+
+@pytest.mark.asyncio
 async def test_submit_preserves_message_body_whitespace():
     app = _app()
 

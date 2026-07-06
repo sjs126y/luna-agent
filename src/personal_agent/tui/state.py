@@ -21,6 +21,13 @@ class ToolTrace:
     display_name: str
     input_summary: str = ""
     input_preview: str = ""
+    affected_paths: tuple[str, ...] = ()
+    command_preview: str = ""
+    url_preview: str = ""
+    host: str = ""
+    cwd: str = ""
+    timeout_seconds: float | None = None
+    method: str = ""
     risk_level: str = ""
     risk_summary: str = ""
     started_at: float = 0.0

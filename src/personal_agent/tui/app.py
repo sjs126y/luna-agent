@@ -14,6 +14,7 @@ import asyncio
 
 from pathlib import Path
 import sys
+import unicodedata
 from typing import NamedTuple
 
 from prompt_toolkit.application import Application
@@ -210,11 +211,26 @@ class InlineTuiApp:
             await self._print_above(str(command_result))
             await self._refresh_mode()
             return
-        bar = theme.sgr(theme.USER_BARCH, theme.USER_BAR)
-        await self._print_above(f"\n{bar} {theme.sgr(text, theme.USER_MSG)}")
+        await self._print_above(self._user_message_block(text))
         result = await self._run_turn(text)
         await self._refresh_mode()
         return result
+
+    def _user_message_block(self, text: str) -> str:
+        width = max(20, self._term_width())
+        prefix = f"{theme.USER_BARCH} "
+        rows: list[str] = [""]
+        for index, line in enumerate(text.splitlines() or [text]):
+            raw_prefix = prefix if index == 0 else "  "
+            visible = f"{raw_prefix}{line}"
+            pad = " " * max(0, width - _display_width(visible))
+            styled_prefix = (
+                theme.sgr(theme.USER_BARCH, theme.USER_BAR) + theme.sgr(" ", theme.USER_MSG)
+                if index == 0
+                else theme.sgr(raw_prefix, theme.USER_MSG)
+            )
+            rows.append(styled_prefix + theme.sgr(line + pad, theme.USER_MSG))
+        return "\n".join(rows)
 
     async def _run_turn(self, text: str):
         """Drive one message turn, offering the inline confirm callback if the
@@ -487,3 +503,10 @@ async def run_inline_tui(*, session_name: str = "default") -> None:
 
 def run_inline_tui_sync(*, session_name: str = "default") -> None:
     asyncio.run(run_inline_tui(session_name=session_name))
+
+
+def _display_width(text: str) -> int:
+    width = 0
+    for char in text:
+        width += 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
+    return width

@@ -122,6 +122,25 @@ async def test_tool_end_uses_display_metadata_in_trace():
 
 
 @pytest.mark.asyncio
+async def test_tool_end_summarizes_web_search_args_without_raw_json():
+    r, printed, _ = _make()
+    await r.emit(ConversationEvent("tool_end", data={
+        "tool_use_id": "t1",
+        "tool_name": "web_search",
+        "display_name": "Web search",
+        "status": "success",
+        "input_summary": '{"max_results": 5, "query": "MCP 最新进展 2026"}',
+        "duration": 0.4,
+    }))
+    text = "\n".join(printed)
+    assert "Web search" in text
+    assert "搜索: MCP 最新进展 2026" in text
+    assert "5 条" in text
+    assert '"max_results"' not in text
+    assert '{"' not in text
+
+
+@pytest.mark.asyncio
 async def test_retry_compression_stop_and_error_are_printed():
     r, printed, _ = _make()
     await r.emit(ConversationEvent("retry", "模型空回复，准备重试", data={

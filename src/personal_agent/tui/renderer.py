@@ -11,6 +11,7 @@ Both default to no-ops so the renderer can be unit-tested without a terminal.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import json
 import time
 
 from personal_agent.conversation.events import ConversationEvent
@@ -112,6 +113,7 @@ class InlineRenderer(Renderer):
             risk_summary = str(data.get("risk_summary") or "")
             if risk_summary:
                 item.risk_summary = risk_summary
+            _apply_tool_display_metadata(item, data)
         self._invalidate()
 
     async def on_tool_start(self, event: ConversationEvent) -> None:
@@ -126,6 +128,13 @@ class InlineRenderer(Renderer):
             display_name=name,
             input_summary=str(data.get("input_summary") or ""),
             input_preview=str(data.get("input_preview") or data.get("input_summary") or ""),
+            affected_paths=tuple(_string_list(data.get("affected_paths"))),
+            command_preview=str(data.get("command_preview") or ""),
+            url_preview=str(data.get("url_preview") or ""),
+            host=str(data.get("host") or ""),
+            cwd=str(data.get("cwd") or ""),
+            timeout_seconds=_optional_float(data.get("timeout_seconds")),
+            method=str(data.get("method") or ""),
             risk_level=str(data.get("risk_level") or ""),
             risk_summary=str(data.get("risk_summary") or ""),
             started_at=time.monotonic(),
@@ -146,6 +155,13 @@ class InlineRenderer(Renderer):
                 display_name=str(data.get("display_name") or data.get("tool_name") or "tool"),
                 input_summary=str(data.get("input_summary") or ""),
                 input_preview=str(data.get("input_preview") or data.get("input_summary") or ""),
+                affected_paths=tuple(_string_list(data.get("affected_paths"))),
+                command_preview=str(data.get("command_preview") or ""),
+                url_preview=str(data.get("url_preview") or ""),
+                host=str(data.get("host") or ""),
+                cwd=str(data.get("cwd") or ""),
+                timeout_seconds=_optional_float(data.get("timeout_seconds")),
+                method=str(data.get("method") or ""),
                 risk_level=str(data.get("risk_level") or ""),
                 risk_summary=str(data.get("risk_summary") or ""),
                 started_at=time.monotonic(),
@@ -162,6 +178,7 @@ class InlineRenderer(Renderer):
         risk_summary = str(data.get("risk_summary") or "")
         if risk_summary:
             item.risk_summary = risk_summary
+        _apply_tool_display_metadata(item, data)
         item.finish(
             status=str(data.get("status") or ""),
             output_summary=str(data.get("output_summary") or ""),
@@ -244,7 +261,7 @@ class InlineRenderer(Renderer):
         ok = item.status in ("success", "ok", "")
         mark = theme.sgr("✓", theme.TOOL_OK) if ok else theme.sgr("✗", theme.TOOL_ERR)
         dur = f" {item.duration:.1f}s" if item.duration else ""
-        summary_text = item.input_preview or item.input_summary
+        summary_text = _tool_summary(item)
         summary = f" {theme.dim(summary_text)}" if summary_text else ""
         if item.risk_summary and item.status in {"denied", "error"}:
             summary += f" {theme.dim(item.risk_summary)}"
@@ -263,3 +280,106 @@ def _optional_int(value) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_float(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _string_list(value) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if item]
+    if value:
+        return [str(value)]
+    return []
+
+
+def _apply_tool_display_metadata(item: ToolTrace, data: dict) -> None:
+    paths = _string_list(data.get("affected_paths"))
+    if paths:
+        item.affected_paths = tuple(paths)
+    for field in ("command_preview", "url_preview", "host", "cwd", "method"):
+        value = str(data.get(field) or "")
+        if value:
+            setattr(item, field, value)
+    timeout_seconds = _optional_float(data.get("timeout_seconds"))
+    if timeout_seconds is not None:
+        item.timeout_seconds = timeout_seconds
+
+
+def _tool_summary(item: ToolTrace) -> str:
+    if item.command_preview:
+        parts = [f"命令: {item.command_preview}"]
+        if item.cwd:
+            parts.append(f"cwd {item.cwd}")
+        if item.timeout_seconds is not None:
+            parts.append(f"{item.timeout_seconds:g}s")
+        return " · ".join(parts)
+    if item.url_preview:
+        prefix = f"{item.method.upper()} " if item.method else "网络: "
+        target = item.url_preview
+        if item.host and item.host not in target:
+            target = f"{target} ({item.host})"
+        return prefix + target
+    if item.affected_paths:
+        paths = ", ".join(item.affected_paths[:3])
+        if len(item.affected_paths) > 3:
+            paths += f" 等 {len(item.affected_paths)} 个路径"
+        return f"路径: {paths}"
+    args = _parse_json_object(item.input_preview) or _parse_json_object(item.input_summary)
+    if args is not None:
+        summary = _known_tool_args_summary(item.name, args)
+        if summary:
+            return summary
+        return _generic_args_summary(args)
+    return item.input_preview or item.input_summary
+
+
+def _parse_json_object(text: str) -> dict | None:
+    value = text.strip()
+    if not (value.startswith("{") and value.endswith("}")):
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _known_tool_args_summary(tool_name: str, args: dict) -> str:
+    name = tool_name.lower()
+    if name.endswith("web_search") or name == "web_search":
+        query = str(args.get("query") or "").strip()
+        max_results = args.get("max_results")
+        parts = [f"搜索: {query}" if query else "搜索"]
+        if max_results not in (None, ""):
+            parts.append(f"{max_results} 条")
+        return " · ".join(parts)
+    if name.endswith("web_fetch") or name == "web_fetch":
+        url = str(args.get("url") or args.get("uri") or "").strip()
+        return f"网络: {url}" if url else ""
+    return ""
+
+
+def _generic_args_summary(args: dict) -> str:
+    for key in ("query", "url", "path", "file_path", "command", "cmd"):
+        value = args.get(key)
+        if value not in (None, ""):
+            return f"{_arg_label(key)}: {value}"
+    return ""
+
+
+def _arg_label(key: str) -> str:
+    return {
+        "query": "查询",
+        "url": "网络",
+        "path": "路径",
+        "file_path": "路径",
+        "command": "命令",
+        "cmd": "命令",
+    }.get(key, key)
