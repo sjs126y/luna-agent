@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from prompt_toolkit.formatted_text import to_plain_text
 
 from personal_agent.commands.runtime import CommandResult
 from personal_agent.tui.app import InlineTuiApp
@@ -75,6 +76,133 @@ def test_completer_offers_child_commands_without_placeholders():
     assert "/mode show" in texts
     assert "/mode set" in texts
     assert all("<mode>" not in text for text in texts)
+
+
+def test_completer_offers_argument_choices_from_registry(monkeypatch):
+    from prompt_toolkit.document import Document
+
+    def command_specs_as_dict(runtime):
+        return {
+            "commands": [
+                {
+                    "name": "mode",
+                    "summary": "查看或切换执行模式",
+                    "usage": "/mode [set <mode>]",
+                    "children": [
+                        {
+                            "name": "set",
+                            "summary": "切换执行模式",
+                            "usage": "/mode set <mode>",
+                            "arguments": [
+                                {
+                                    "name": "mode",
+                                    "kind": "choice",
+                                    "choices": [
+                                        {
+                                            "value": "Ask First",
+                                            "label": "Ask First",
+                                            "description": "执行前确认",
+                                        },
+                                        {
+                                            "value": "Full Auto",
+                                            "label": "Full Auto",
+                                            "description": "全自动",
+                                        },
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "plugin_commands": [],
+        }
+
+    monkeypatch.setattr(
+        "personal_agent.commands.registry.command_specs_as_dict",
+        command_specs_as_dict,
+    )
+    app = _app()
+    app.input_area.text = "/mode set "
+    assert [
+        (item.text, item.display_text, item.description)
+        for item in app.state.slash_items
+    ] == [
+        ("/mode set Ask First", "Ask First", "执行前确认"),
+        ("/mode set Full Auto", "Full Auto", "全自动"),
+    ]
+
+    completions = list(app.input_area.completer.get_completions(Document("/mode set A"), None))
+    assert [(item.text, to_plain_text(item.display)) for item in completions] == [
+        ("/mode set Ask First", "Ask First")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_argument_choices_refresh_slash_menu(monkeypatch):
+    def command_specs_as_dict(runtime):
+        return {
+            "commands": [
+                {
+                    "name": "tools",
+                    "summary": "查看可用工具",
+                    "usage": "/tools [show <name>]",
+                    "children": [
+                        {
+                            "name": "show",
+                            "summary": "查看工具详情",
+                            "usage": "/tools show <name>",
+                            "arguments": [
+                                {
+                                    "name": "name",
+                                    "kind": "dynamic",
+                                    "provider": "tools",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "plugin_commands": [],
+        }
+
+    calls: list[tuple[str, str, tuple[str, ...], str]] = []
+
+    async def slash_argument_choices(runtime, provider, *, command, args=(), query="", limit=20):
+        calls.append((provider, command, tuple(args), query))
+        await asyncio.sleep(0)
+        return [
+            {
+                "value": "read",
+                "label": "read",
+                "description": "Read files",
+                "append_space": False,
+            }
+        ]
+
+    monkeypatch.setattr(
+        "personal_agent.commands.registry.command_specs_as_dict",
+        command_specs_as_dict,
+    )
+    monkeypatch.setattr(
+        "personal_agent.commands.runtime.slash_argument_choices",
+        slash_argument_choices,
+    )
+
+    app = _app()
+    app.input_area.text = "/tools show r"
+    assert app.state.slash_items == ()
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert calls == [("tools", "tools", ("show",), "r")]
+    assert [
+        (item.text, item.display_text, item.description)
+        for item in app.state.slash_items
+    ] == [
+        ("/tools show read", "read", "Read files")
+    ]
 
 
 def test_expand_last_noop_when_empty():
@@ -420,6 +548,92 @@ async def test_command_continue_text_routes_through_inline_turn(monkeypatch):
     await app._submit("/python-expert skill message")
     assert app.runtime.sent == ["skill message"]
     assert any("skill message" in line for line in printed)
+
+
+@pytest.mark.asyncio
+async def test_tool_runs_recent_payload_formats_structured_output(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/tool-runs"
+        return CommandResult.reply(
+            "backend fallback text",
+            kind="tool_runs",
+            payload={
+                "action": "recent",
+                "scope": "session",
+                "session_key": "cli:default:local",
+                "items": [
+                    {
+                        "id": 7,
+                        "tool_name": "read",
+                        "status": "success",
+                        "duration": 0.125,
+                        "output_summary": "README contents",
+                    }
+                ],
+            },
+        )
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/tool-runs")
+
+    text = "\n".join(printed)
+    assert "Tool runs (cli:default:local)" in text
+    assert "read" in text
+    assert "success" in text
+    assert "/tool-runs show <id>" in text
+    assert "backend fallback text" not in text
+
+
+@pytest.mark.asyncio
+async def test_tool_run_detail_payload_sets_expandable_output(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/tool-runs show 7"
+        return CommandResult.reply(
+            "backend fallback text",
+            kind="tool_runs",
+            payload={
+                "action": "show",
+                "tool_run": {
+                    "id": 7,
+                    "tool_name": "read",
+                    "status": "success",
+                    "category": "read",
+                    "duration": 0.2,
+                    "session_key": "cli:default:local",
+                    "turn_id": "turn-1",
+                    "execution_mode": "standard",
+                    "permission_category": "read",
+                    "permission_decision": "allow",
+                    "input_summary": '{"path": "README.md"}',
+                    "output_summary": "short",
+                    "full_output": "line1\nline2",
+                },
+            },
+        )
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/tool-runs show 7")
+
+    text = "\n".join(printed)
+    assert "Tool Run #7" in text
+    assert "Ctrl+O" in text
+    assert app.state.last_expandable == ("tool run #7 read", "line1\nline2")
 
 
 def test_slash_mode_tracks_input_text():

@@ -191,7 +191,8 @@ def _slash_menu(state: UIState) -> str:
     for index, item in enumerate(state.slash_items[:_SLASH_MENU_LINES - 1]):
         marker = theme.sgr("›", theme.SLASH_MARK) if index == 0 else theme.sgr(" ", theme.SLASH_BORDER)
         description = f"  {theme.sgr(item.description, theme.SLASH_META)}" if item.description else ""
-        lines.append(f"  {marker} {theme.sgr(item.text, theme.SLASH_ITEM)}{description}")
+        label = item.display_text or item.text
+        lines.append(f"  {marker} {theme.sgr(label, theme.SLASH_ITEM)}{description}")
     return "\n".join(lines)
 
 

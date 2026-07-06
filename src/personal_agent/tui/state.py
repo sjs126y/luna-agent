@@ -75,6 +75,7 @@ class SlashMenuItem:
 
     text: str
     description: str = ""
+    display_text: str = ""
 
 
 @dataclass

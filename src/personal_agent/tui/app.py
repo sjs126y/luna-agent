@@ -40,6 +40,29 @@ class _SlashCommand(NamedTuple):
     text: str
     description: str = ""
     children: tuple["_SlashCommand", ...] = ()
+    arguments: tuple["_SlashArgument", ...] = ()
+
+
+class _SlashArgumentChoice(NamedTuple):
+    value: str
+    label: str = ""
+    description: str = ""
+    append_space: bool = False
+
+
+class _SlashArgument(NamedTuple):
+    name: str
+    kind: str
+    choices: tuple[_SlashArgumentChoice, ...] = ()
+    provider: str = ""
+    required: bool = True
+
+
+class _DynamicChoiceRequest(NamedTuple):
+    provider: str
+    command: str
+    args: tuple[str, ...]
+    query: str
 
 
 class _InlineSlashCompleter(Completer):
@@ -52,7 +75,7 @@ class _InlineSlashCompleter(Completer):
             yield Completion(
                 item.text,
                 start_position=-len(text),
-                display=item.text,
+                display=item.display_text or item.text,
                 display_meta=item.description,
             )
 
@@ -93,6 +116,24 @@ def _command_response_text(result) -> str:
     return str(result)
 
 
+def _command_kind(result) -> str:
+    value = getattr(result, "kind", "")
+    if value:
+        return str(value)
+    if isinstance(result, dict) and result.get("kind"):
+        return str(result["kind"])
+    return ""
+
+
+def _command_payload(result) -> dict | None:
+    value = getattr(result, "payload", None)
+    if isinstance(value, dict):
+        return value
+    if isinstance(result, dict) and isinstance(result.get("payload"), dict):
+        return result["payload"]
+    return None
+
+
 def _slash_command_from_dict(item: object) -> _SlashCommand | None:
     if not isinstance(item, dict):
         return None
@@ -107,7 +148,12 @@ def _slash_command_from_dict(item: object) -> _SlashCommand | None:
             for value in item.get("children", [])
         ) if child is not None
     )
-    return _SlashCommand(text=text, description=description, children=children)
+    return _SlashCommand(
+        text=text,
+        description=description,
+        children=children,
+        arguments=_slash_arguments_from_dict(item),
+    )
 
 
 def _slash_child_from_dict(parent: str, item: object) -> _SlashCommand | None:
@@ -120,7 +166,53 @@ def _slash_child_from_dict(parent: str, item: object) -> _SlashCommand | None:
         text = f"{parent} {name.lstrip('/')}"
     if not text:
         return None
-    return _SlashCommand(text=text, description=str(item.get("summary") or ""))
+    return _SlashCommand(
+        text=text,
+        description=str(item.get("summary") or ""),
+        arguments=_slash_arguments_from_dict(item),
+    )
+
+
+def _slash_arguments_from_dict(item: dict) -> tuple[_SlashArgument, ...]:
+    arguments: list[_SlashArgument] = []
+    for raw in item.get("arguments", []) or []:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        kind = str(raw.get("kind") or "").strip()
+        if not name or not kind:
+            continue
+        choices = tuple(
+            choice for choice in (
+                _slash_argument_choice_from_dict(value)
+                for value in raw.get("choices", [])
+            ) if choice is not None
+        )
+        arguments.append(_SlashArgument(
+            name=name,
+            kind=kind,
+            choices=choices,
+            provider=str(raw.get("provider") or ""),
+            required=bool(raw.get("required", True)),
+        ))
+    return tuple(arguments)
+
+
+def _slash_argument_choice_from_dict(item: object) -> _SlashArgumentChoice | None:
+    if isinstance(item, str):
+        value = item.strip()
+        return _SlashArgumentChoice(value=value, label=value) if value else None
+    if not isinstance(item, dict):
+        return None
+    value = str(item.get("value") or "").strip()
+    if not value:
+        return None
+    return _SlashArgumentChoice(
+        value=value,
+        label=str(item.get("label") or value),
+        description=str(item.get("description") or ""),
+        append_space=bool(item.get("append_space", False)),
+    )
 
 
 def _completion_text_from_usage(usage: str) -> str:
@@ -130,6 +222,115 @@ def _completion_text_from_usage(usage: str) -> str:
             break
         parts.append(token)
     return " ".join(parts)
+
+
+def _format_tool_runs_payload(payload: dict) -> tuple[str, tuple[str, str] | None]:
+    action = str(payload.get("action") or "recent")
+    if action == "summary":
+        return _format_tool_runs_summary(payload), None
+    if action == "show":
+        return _format_tool_run_detail(payload.get("tool_run") or {})
+    return _format_tool_runs_recent(payload), None
+
+
+def _format_tool_runs_recent(payload: dict) -> str:
+    items = [item for item in payload.get("items") or [] if isinstance(item, dict)]
+    scope = _tool_run_scope(payload)
+    if not items:
+        return f"Tool runs: none ({scope})"
+    lines = [
+        theme.sgr(f"Tool runs ({scope})", theme.EXPAND_HEADER),
+        theme.sgr("  id   tool          status      time   summary", theme.SLASH_META),
+    ]
+    for item in items:
+        run_id = _field(item, "id") or "-"
+        tool = _fit(_field(item, "tool_name") or "-", 12)
+        status = _fit(_field(item, "status") or "-", 10)
+        duration = _format_duration(item.get("duration"))
+        summary = _field(item, "output_summary") or _field(item, "error") or ""
+        lines.append(f"  {str(run_id).rjust(3)}  {tool}  {status}  {duration.rjust(5)}  {_fit(summary, 70)}")
+    lines.append(theme.sgr("  /tool-runs show <id>", theme.KEY) + theme.sgr(" opens detail", theme.HINT_LABEL))
+    return "\n".join(lines)
+
+
+def _format_tool_runs_summary(payload: dict) -> str:
+    scope = _tool_run_scope(payload)
+    lines = [
+        theme.sgr(f"Tool run summary ({scope})", theme.EXPAND_HEADER),
+        f"  inspected {int(payload.get('inspected') or 0)}"
+        f"   denied {int(payload.get('denied') or 0)}"
+        f"   failed {int(payload.get('failed') or 0)}"
+        f"   timeouts {int(payload.get('timeouts') or 0)}"
+        f"   truncated {int(payload.get('truncated') or 0)}",
+    ]
+    for label, key in (
+        ("tools", "tool_counts"),
+        ("status", "status_counts"),
+        ("category", "category_counts"),
+    ):
+        lines.append(f"  {label}: {_format_counts(payload.get(key))}")
+    return "\n".join(lines)
+
+
+def _format_tool_run_detail(item: dict) -> tuple[str, tuple[str, str] | None]:
+    if not isinstance(item, dict):
+        return "Tool run detail: missing", None
+    run_id = _field(item, "id") or "-"
+    name = _field(item, "tool_name") or "tool"
+    output = _field(item, "full_output") or _field(item, "output_summary")
+    lines = [
+        theme.sgr(f"Tool Run #{run_id}", theme.EXPAND_HEADER),
+        f"  tool      {name}",
+        f"  status    {_field(item, 'status') or '-'}",
+        f"  category  {_field(item, 'category') or '-'}",
+        f"  duration  {_format_duration(item.get('duration'))}",
+        f"  session   {_field(item, 'session_key') or '-'}",
+        f"  turn      {_field(item, 'turn_id') or '-'}",
+        f"  mode      {_field(item, 'execution_mode') or '-'}",
+        f"  permission {_field(item, 'permission_category') or '-'} / {_field(item, 'permission_decision') or '-'}",
+    ]
+    input_summary = _field(item, "input_summary")
+    if input_summary:
+        lines.append(f"  input     {_fit(input_summary, 120)}")
+    error = _field(item, "error")
+    if error:
+        lines.append(f"  error     {_fit(error, 120)}")
+    if output:
+        lines.append(f"  output    {_fit(output, 160)}")
+        lines.append(theme.sgr("  Ctrl+O", theme.KEY) + theme.sgr(" expand full output", theme.HINT_LABEL))
+    expandable = (f"tool run #{run_id} {name}", output) if output else None
+    return "\n".join(lines), expandable
+
+
+def _tool_run_scope(payload: dict) -> str:
+    if payload.get("scope") == "all":
+        return "all sessions"
+    return str(payload.get("session_key") or "current session")
+
+
+def _format_counts(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    return ", ".join(f"{key}={value[key]}" for key in sorted(value))
+
+
+def _format_duration(value: object) -> str:
+    try:
+        return f"{float(value or 0.0):.2f}s"
+    except (TypeError, ValueError):
+        return "0.00s"
+
+
+def _field(item: dict, name: str) -> str:
+    value = item.get(name)
+    return "" if value is None else str(value)
+
+
+def _fit(text: str, limit: int) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    return text[:max(0, limit - 1)] + "…"
 
 
 class InlineTuiApp:
@@ -154,6 +355,8 @@ class InlineTuiApp:
         self._turn_task: asyncio.Task | None = None
         self._last_expanded: tuple[str, str] | None = None
         self._confirm_future: asyncio.Future[str] | None = None
+        self._slash_choice_cache: dict[_DynamicChoiceRequest, tuple[_SlashArgumentChoice, ...]] = {}
+        self._slash_choice_tasks: dict[_DynamicChoiceRequest, asyncio.Task] = {}
         self._print_queue: asyncio.Queue[_PrintRequest] = asyncio.Queue()
         self._print_worker_task: asyncio.Task | None = None
         self.app: Application | None = None
@@ -202,16 +405,20 @@ class InlineTuiApp:
 
     def _slash_menu_items(self, text: str) -> tuple[SlashMenuItem, ...]:
         return tuple(
-            SlashMenuItem(text=item.text, description=item.description)
+            SlashMenuItem(
+                text=item.text,
+                description=item.description,
+                display_text=item.display_text,
+            )
             for item in self._slash_candidates(text)
         )
 
-    def _slash_candidates(self, text: str) -> tuple[_SlashCommand, ...]:
+    def _slash_candidates(self, text: str) -> tuple[SlashMenuItem, ...]:
         if not text.startswith("/") or "\n" in text:
             return ()
         query = text.strip()
         if query in ("", "/"):
-            return self._slash_commands
+            return self._command_menu_items(self._slash_commands)
 
         tokens = query.split()
         command_text = tokens[0] if tokens else query
@@ -221,11 +428,13 @@ class InlineTuiApp:
         if len(tokens) <= 1 and not trailing_space:
             matches = tuple(item for item in self._slash_commands if item.text.startswith(command_text))
             if command is not None and len(matches) == 1:
-                return command.children
-            return matches
+                if command.children:
+                    return self._command_menu_items(command.children)
+                return self._argument_menu_items(command, text, tokens, trailing_space)
+            return self._command_menu_items(matches)
 
         if command is None or not command.children:
-            return ()
+            return self._argument_menu_items(command, text, tokens, trailing_space) if command else ()
 
         prefix = f"{command_text} " if len(tokens) == 1 and trailing_space else query
         matches = tuple(item for item in command.children if item.text.startswith(prefix))
@@ -234,14 +443,146 @@ class InlineTuiApp:
             and matches[0].text == query
             and not matches[0].children
         ):
-            return ()
-        return matches
+            return self._argument_menu_items(matches[0], text, tokens, trailing_space)
+        if matches:
+            return self._command_menu_items(matches)
+        child = self._find_child_command(command, tokens)
+        return self._argument_menu_items(child, text, tokens, trailing_space) if child else ()
 
     def _find_slash_command(self, text: str) -> _SlashCommand | None:
         for item in self._slash_commands:
             if item.text == text:
                 return item
         return None
+
+    def _find_child_command(self, command: _SlashCommand, tokens: list[str]) -> _SlashCommand | None:
+        if len(tokens) < 2:
+            return None
+        child_text = " ".join(tokens[:2])
+        for item in command.children:
+            if item.text == child_text:
+                return item
+        return None
+
+    def _command_menu_items(self, commands: tuple[_SlashCommand, ...]) -> tuple[SlashMenuItem, ...]:
+        return tuple(
+            SlashMenuItem(text=item.text, description=item.description)
+            for item in commands
+        )
+
+    def _argument_menu_items(
+        self,
+        command: _SlashCommand,
+        text: str,
+        tokens: list[str],
+        trailing_space: bool,
+    ) -> tuple[SlashMenuItem, ...]:
+        if not command.arguments:
+            return ()
+        command_tokens = command.text.split()
+        if len(tokens) < len(command_tokens):
+            return ()
+        if tokens[:len(command_tokens)] != command_tokens:
+            return ()
+        arg_index = max(0, len(tokens) - len(command_tokens) - (0 if trailing_space else 1))
+        if arg_index >= len(command.arguments):
+            return ()
+        argument = command.arguments[arg_index]
+        prefix = "" if trailing_space or len(tokens) == len(command_tokens) else tokens[-1]
+        base = command.text if trailing_space or len(tokens) == len(command_tokens) else " ".join(tokens[:-1])
+        existing_args = tokens[len(command_tokens):]
+        if prefix and existing_args:
+            existing_args = existing_args[:-1]
+        choices = self._argument_choices(
+            argument,
+            command,
+            prefix=prefix,
+            existing_args=tuple(existing_args),
+        )
+        if not choices:
+            return ()
+        candidates: list[SlashMenuItem] = []
+        for choice in choices:
+            if prefix and not choice.value.lower().startswith(prefix.lower()):
+                continue
+            completed = f"{base} {choice.value}".strip()
+            if choice.append_space:
+                completed += " "
+            if completed == text.strip() and not choice.append_space:
+                continue
+            candidates.append(SlashMenuItem(
+                text=completed,
+                display_text=choice.label or choice.value,
+                description=choice.description,
+            ))
+        return tuple(candidates)
+
+    def _argument_choices(
+        self,
+        argument: _SlashArgument,
+        command: _SlashCommand,
+        *,
+        prefix: str,
+        existing_args: tuple[str, ...],
+    ) -> tuple[_SlashArgumentChoice, ...]:
+        if argument.kind == "choice":
+            return argument.choices
+        if argument.kind != "dynamic" or not argument.provider:
+            return ()
+        command_parts = command.text.lstrip("/").split()
+        if not command_parts:
+            return ()
+        request = _DynamicChoiceRequest(
+            provider=argument.provider,
+            command=command_parts[0],
+            args=tuple(command_parts[1:]) + existing_args,
+            query=prefix,
+        )
+        cached = self._slash_choice_cache.get(request)
+        if cached is not None:
+            return cached
+        self._ensure_dynamic_choice_task(request)
+        return ()
+
+    def _ensure_dynamic_choice_task(self, request: _DynamicChoiceRequest) -> None:
+        task = self._slash_choice_tasks.get(request)
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._slash_choice_tasks[request] = loop.create_task(self._load_dynamic_choices(request))
+
+    async def _load_dynamic_choices(self, request: _DynamicChoiceRequest) -> None:
+        try:
+            from personal_agent.commands.runtime import slash_argument_choices
+
+            raw_choices = await slash_argument_choices(
+                self.runtime,
+                request.provider,
+                command=request.command,
+                args=request.args,
+                query=request.query,
+                limit=20,
+            )
+            choices = tuple(
+                choice for choice in (
+                    _slash_argument_choice_from_dict(value)
+                    for value in raw_choices
+                ) if choice is not None
+            )
+            self._slash_choice_cache[request] = choices
+        except Exception:
+            self._slash_choice_cache[request] = ()
+        finally:
+            self._slash_choice_tasks.pop(request, None)
+        if self.state.slash_mode:
+            text = self.input_area.text
+            slash_items = self._slash_menu_items(text)
+            if self.state.slash_items != slash_items:
+                self.state.slash_items = slash_items
+                self._invalidate()
 
     # ── prompt_toolkit callbacks the renderer uses ──
     def _invalidate(self) -> None:
@@ -363,7 +704,7 @@ class InlineTuiApp:
                 result = await self._run_turn(continue_text)
                 await self._refresh_mode()
                 return result
-            response = _command_response_text(command_result)
+            response = self._command_output(command_result)
             if response:
                 await self._print_above(response)
             await self._refresh_mode()
@@ -388,6 +729,17 @@ class InlineTuiApp:
         if handler is None:
             return None
         return await handler(text)
+
+    def _command_output(self, result) -> str:
+        if _command_kind(result) == "tool_runs":
+            payload = _command_payload(result)
+            if payload and not payload.get("error"):
+                text, expandable = _format_tool_runs_payload(payload)
+                if expandable is not None:
+                    self.state.last_expandable = expandable
+                    self._invalidate()
+                return text
+        return _command_response_text(result)
 
     def _user_message_block(self, text: str) -> str:
         width = max(20, self._term_width())
