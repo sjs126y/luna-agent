@@ -123,6 +123,15 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["turns"]["stored"] == 0
         assert health["tool_truth"]["inspected"] == 0
         assert health["tool_runs"]["inspected"] == 0
+        assert health["commands"]["registry_version"] == 1
+        assert health["commands"]["has_tool_runs"] is True
+        assert health["commands"]["has_mode_arguments"] is True
+        assert health["commands"]["has_allow_arguments"] is True
+        assert set(health["commands"]["dynamic_providers"]) >= {"tools", "sessions"}
+        assert health["query"]["conversation_query_service"] is True
+        assert health["query"]["tool_runs_query"] is True
+        assert health["execution"]["mode"] == settings.execution_policy.mode
+        assert health["execution"]["label"] == settings.execution_policy.profile.label
         runtime.conversation_service.record_turn_report(
             "cli:default:local",
             type("Source", (), {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"})(),

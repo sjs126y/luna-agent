@@ -232,6 +232,8 @@ class AppRuntime:
             configured_count=len(self.settings.mcp_servers),
         )
         boot = self.boot_report.as_dict()
+        command_health = _command_health_snapshot(self)
+        query_health = _query_health_snapshot(self)
         return {
             "data_dir": str(self.data_dir),
             "db_open": getattr(self.db, "_conn", None) is not None,
@@ -247,6 +249,9 @@ class AppRuntime:
             "turns": self.conversation_service.turn_report_summary(),
             "tool_truth": self.conversation_service.tool_truth_summary(),
             "tool_runs": self.conversation_service.tool_run_memory_summary(),
+            "commands": command_health,
+            "query": query_health,
+            "execution": _execution_health_snapshot(self.settings),
             "plugins": len(self.plugin_manager.list_plugins()),
             "cached_agents": len(self.conversation_service.agent_cache),
             "closed": self.closed,
@@ -366,6 +371,95 @@ def _mcp_health_snapshot(
         "registered_tools": [],
         "servers": [],
     }
+
+
+def _command_health_snapshot(runtime: AppRuntime) -> dict[str, Any]:
+    from personal_agent.commands.registry import (
+        SLASH_COMMAND_REGISTRY_VERSION,
+        command_specs_as_dict,
+    )
+
+    registry = command_specs_as_dict(runtime)
+    commands = list(registry.get("commands") or [])
+    plugin_commands = list(registry.get("plugin_commands") or [])
+    argument_specs = _count_argument_specs(commands)
+    dynamic_providers = sorted(_dynamic_providers(commands))
+    command_names = {str(item.get("name") or "") for item in commands if isinstance(item, dict)}
+    return {
+        "registry_version": SLASH_COMMAND_REGISTRY_VERSION,
+        "core_commands": len(commands),
+        "plugin_commands": len(plugin_commands),
+        "argument_specs": argument_specs,
+        "dynamic_providers": dynamic_providers,
+        "has_tool_runs": "tool-runs" in command_names,
+        "has_mode_arguments": _command_has_arguments(commands, "mode", child="set"),
+        "has_allow_arguments": _command_has_arguments(commands, "allow"),
+    }
+
+
+def _query_health_snapshot(runtime: AppRuntime) -> dict[str, Any]:
+    query_service = getattr(runtime.conversation_service, "queries", None)
+    return {
+        "conversation_query_service": query_service is not None,
+        "tool_runs_query": all(
+            hasattr(query_service, name)
+            for name in ("recent_tool_runs", "tool_run_detail", "tool_run_summary")
+        ) if query_service is not None else False,
+    }
+
+
+def _execution_health_snapshot(settings: Settings) -> dict[str, Any]:
+    policy = settings.execution_policy
+    profile = policy.profile
+    return {
+        "mode": policy.mode,
+        "label": profile.label,
+        "isolation": policy.isolation,
+        "network": policy.network,
+        "permissions": dict(policy.permissions),
+    }
+
+
+def _count_argument_specs(commands: list[dict[str, Any]]) -> int:
+    count = 0
+    for item in commands:
+        if not isinstance(item, dict):
+            continue
+        count += len(item.get("arguments") or [])
+        count += _count_argument_specs(list(item.get("children") or []))
+    return count
+
+
+def _dynamic_providers(commands: list[dict[str, Any]]) -> set[str]:
+    providers: set[str] = set()
+    for item in commands:
+        if not isinstance(item, dict):
+            continue
+        for argument in item.get("arguments") or []:
+            if isinstance(argument, dict) and argument.get("kind") == "dynamic":
+                provider = str(argument.get("provider") or "")
+                if provider:
+                    providers.add(provider)
+        providers.update(_dynamic_providers(list(item.get("children") or [])))
+    return providers
+
+
+def _command_has_arguments(
+    commands: list[dict[str, Any]],
+    name: str,
+    *,
+    child: str = "",
+) -> bool:
+    for item in commands:
+        if not isinstance(item, dict) or item.get("name") != name:
+            continue
+        if child:
+            for child_item in item.get("children") or []:
+                if isinstance(child_item, dict) and child_item.get("name") == child:
+                    return bool(child_item.get("arguments"))
+            return False
+        return bool(item.get("arguments"))
+    return False
 
 
 async def start_mcp_manager(settings: Settings, plugin_manager: PluginManager):

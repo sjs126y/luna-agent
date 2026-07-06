@@ -45,6 +45,28 @@ schema = frontend_protocol_schema()
 - `event_protocol_schema()`
 - `ConversationEvent.as_dict()`
 
+## Doctor Diagnostics
+
+`personal-agent doctor` 和 `personal-agent doctor --section runtime --json` 会暴露当前后端能力摘要，供联调排查使用。
+
+runtime section 中与前端/工具联调相关的字段：
+
+- `commands.registry_version`
+- `commands.core_commands`
+- `commands.plugin_commands`
+- `commands.argument_specs`
+- `commands.dynamic_providers`
+- `commands.has_tool_runs`
+- `commands.has_mode_arguments`
+- `commands.has_allow_arguments`
+- `query.conversation_query_service`
+- `query.tool_runs_query`
+- `execution.mode`
+- `execution.label`
+- `execution.isolation`
+- `execution.network`
+- `execution.permissions`
+
 ## 2. Event Types
 
 ### `turn_start`

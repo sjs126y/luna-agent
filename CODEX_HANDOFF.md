@@ -107,6 +107,17 @@
   - `sessions`
 - 未知命令/子命令会尽量返回建议，但不破坏技能命令 fallback。
 
+### Doctor Runtime Diagnostics
+
+- `AppRuntime.health_snapshot()` 增加：
+  - `commands`
+  - `query`
+  - `execution`
+- `doctor` runtime 输出会展示：
+  - slash registry version / command counts / argument metadata / dynamic providers
+  - ConversationQueryService 和 tool-runs query 是否可用
+  - 当前 execution mode label / profile / isolation / permissions
+
 ## 当前约定
 
 - 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
@@ -121,13 +132,12 @@
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
+uv run pytest tests/test_runtime.py tests/test_cli.py -q
 uv run pytest -q
 ```
 
-最近一次后端相关结果：`55 passed`。
-全量 `uv run pytest -q` 当前被前端线新增的 `tests/test_tui_app.py::test_completer_offers_argument_choices_from_registry` 阻塞：
-测试按字符串比较 `Completion.display`，实际 prompt_toolkit 返回 `FormattedText([('', 'Ask First')])`。
+最近一次 doctor 相关结果：`46 passed`。
+最近一次全量结果：`703 passed`。
 
 ## 注意事项
 

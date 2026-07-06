@@ -958,6 +958,27 @@ def test_format_doctor_report_includes_summary_and_issues():
                 "timeouts": 0,
                 "truncated": 1,
             },
+            "commands": {
+                "registry_version": 1,
+                "core_commands": 15,
+                "plugin_commands": 2,
+                "argument_specs": 4,
+                "dynamic_providers": ["sessions", "tools"],
+                "has_tool_runs": True,
+                "has_mode_arguments": True,
+                "has_allow_arguments": True,
+            },
+            "query": {
+                "conversation_query_service": True,
+                "tool_runs_query": True,
+            },
+            "execution": {
+                "mode": "standard",
+                "label": "Ask First",
+                "isolation": "tool-enforced",
+                "network": "ask",
+                "permissions": {"write": "ask", "bash": "ask"},
+            },
         },
         "platforms": [{
             "key": "platforms/telegram",
@@ -1014,6 +1035,9 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "Turns: stored=2 last=failed duration=1.234s llm=1 tools=3 retries=1" in text
     assert "Tool Truth: inspected=2 with_tools=1 mismatches=1 denied=1" in text
     assert "Tool Runs: stored=3 denied=1 failed=0 truncated=1" in text
+    assert "Commands: registry=v1 core=15 plugins=2 arguments=4 providers=sessions, tools" in text
+    assert "Query: conversation=是 tool_runs=是" in text
+    assert "Execution: mode=standard label=Ask First isolation=tool-enforced" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text
@@ -1041,6 +1065,12 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "  stored: 3" in runtime_text
     assert "  status counts: denied=1, success=2" in runtime_text
     assert "  category counts: permission=1" in runtime_text
+    assert "Commands:" in runtime_text
+    assert "  /tool-runs: 是" in runtime_text
+    assert "Query:" in runtime_text
+    assert "  tool runs query: 是" in runtime_text
+    assert "Execution:" in runtime_text
+    assert "  label: Ask First" in runtime_text
 
 
 def _plugin_report(
