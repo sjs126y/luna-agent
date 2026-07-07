@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 12:35 CST
+更新时间：2026-07-07 12:50 CST
 
 ## 交接定位
 
@@ -34,6 +34,7 @@
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
 - Platform adapter base：平台消息基类和 media attachment v1 已打底，但平台线暂时不要继续激进推进，避免牵动底层架构。
 - Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
+- Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
 最近一次记录的全量测试结果：历史清理后 `708 passed`。
 
@@ -55,6 +56,7 @@
 - cache diagnostics hash 会对 data URL 做指纹化，不记录完整 base64。
 - `turn_start` 新增 `attachments_count`、`attachment_kinds`、`multimodal_diagnostics`，`AgentTurnReport` 同步记录。
 - `BACKEND_INTERFACE.md` 已同步多模态事件字段。
+- `BACKEND_INTERFACE.md` 已新增桌面端预留接口：请求结构、`AttachmentRef` 字段、前端职责边界、事件消费方式和 CLI 不承载附件上传的约定。
 
 已验证：
 

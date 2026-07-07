@@ -299,7 +299,81 @@
 - `was_compressed: boolean`
 - `context_overflow: boolean`
 
-## 3. Inline Tool Confirmation
+## 3. Desktop Multimodal Input Reserved Interface
+
+本节是给未来桌面端 / desktop-web 的预留接口说明。当前后端已经有内部结构化入口，但还没有正式 HTTP/WebSocket 外部服务；桌面端实现时应按这里的结构接入，不要走 CLI 文本输入模拟附件。
+
+后端内部入口：
+
+- `ConversationInput`
+- `AttachmentRef`
+- `ConversationService.run_turn_input(session_key, conversation_input)`
+- 事件返回仍然使用 `ConversationEvent.as_dict()`
+
+桌面端推荐请求结构：
+
+```json
+{
+  "session_key": "desktop:default:local",
+  "source": {
+    "platform": "desktop",
+    "user_id": "local",
+    "user_name": "Local User",
+    "chat_id": "default",
+    "chat_type": "dm"
+  },
+  "text": "帮我看看这张图",
+  "attachments": [
+    {
+      "id": "local-1",
+      "kind": "image",
+      "name": "screenshot.png",
+      "mime_type": "image/png",
+      "size": 123456,
+      "local_path": "/absolute/path/to/screenshot.png",
+      "url": "",
+      "platform_file_id": "",
+      "metadata": {}
+    }
+  ]
+}
+```
+
+`attachments[]` 字段语义：
+
+- `id: string`：前端生成的临时 id，单条消息内稳定即可。
+- `kind: string`：`image` / `audio` / `video` / `file`。
+- `name: string`：展示文件名。
+- `mime_type: string`：前端能判断就传；不能判断可留空，后端会尽量推断。
+- `size: integer`：字节数；可用于前端提前提示过大文件。
+- `local_path: string`：桌面端本机文件路径。后端会走 sandbox/path safety。
+- `url: string`：远程附件 URL。后端会走 URL safety；桌面端本地文件优先用 `local_path`。
+- `platform_file_id: string`：平台文件 id，桌面端通常不用。
+- `metadata: object`：可放前端内部信息，但后端不依赖。
+
+桌面端边界：
+
+- 前端负责选文件、展示附件 chip、发送 `text + attachments`。
+- 前端不负责判断 provider 是否支持图片。
+- 前端不负责把图片转 base64。
+- 前端不负责 OCR / ASR / 文件解析。
+- 前端不直接调用 provider / transport。
+- 后端根据 `multimodal.*` 配置和 provider 能力决定 `off` / `text` / `native` / `notice`。
+
+桌面端事件消费：
+
+- 发送后消费同一套 `ConversationEvent`。
+- 附件处理状态优先读 `turn_start.data.multimodal_diagnostics`。
+- 前端不应期待事件里出现图片 base64。
+- provider 拒绝图片时，后端会自动纯文本重试一次，并通过 `retry.category == "multimodal_fallback"` 暴露。
+
+CLI 说明：
+
+- CLI 默认仍是纯文本输入。
+- CLI 不建议开放图片 / 文件上传 UI。
+- 用户在 CLI 里输入本机路径时，应让 agent 通过文件工具读取，而不是把 CLI 输入模拟成 attachment。
+
+## 4. Inline Tool Confirmation
 
 前端可以在调用：
 
@@ -337,7 +411,7 @@ async def confirm_callback(decision) -> str:
 - `decision.available_actions`
 - `decision.input_preview`
 
-## 4. Execution Mode
+## 5. Execution Mode
 
 当前唯一用户入口是：
 
@@ -367,7 +441,7 @@ async def confirm_callback(decision) -> str:
 
 切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-## 5. Usage / Context Summary
+## 6. Usage / Context Summary
 
 `/usage` 返回人类可读文本，当前语义如下：
 
@@ -378,7 +452,7 @@ async def confirm_callback(decision) -> str:
 
 注意：`最近一轮工具执行` 不等于活跃 turn 内部计数；前端如需结构化历史工具明细，应优先使用 Tool Runs / Turn Reports。
 
-## 6. Tool Runs / Tool Truth
+## 7. Tool Runs / Tool Truth
 
 后端已持久化工具运行结果，供后续前端/desktop 查询使用。
 
@@ -401,7 +475,7 @@ async def confirm_callback(decision) -> str:
 - 是否需要 `full_output`。
 - 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-## 7. Turn Reports
+## 8. Turn Reports
 
 后端会把每轮 `AgentTurnReport` 持久化到 SQLite，作为 turn 级审计记录。它记录一轮对话的整体状态、LLM/cache usage、工具调用汇总、retry、错误、tool truth 等信息。
 
@@ -454,7 +528,7 @@ async def confirm_callback(decision) -> str:
 - `session_id` 用于精确归属当前物理 session。
 - `tool_runs_for_turn_report(report_id)` 会按 `session_key + turn_id` 返回该轮工具明细。
 
-## 8. Runtime / Doctor Cache Diagnostics
+## 9. Runtime / Doctor Cache Diagnostics
 
 `personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
 
@@ -498,7 +572,7 @@ async def confirm_callback(decision) -> str:
 - `last_cache_write_tokens: integer`
 - `last_cache_read_tokens: integer`
 
-## 9. Activity Runtime Interface
+## 10. Activity Runtime Interface
 
 后端已提供稳定 Activity 接口，用于前端展示“系统正在做什么”。Activity 覆盖：
 
@@ -583,7 +657,7 @@ Slash metadata：
 }
 ```
 
-## 10. Compatibility Notes
+## 11. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。
