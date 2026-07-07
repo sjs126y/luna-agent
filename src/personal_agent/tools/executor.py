@@ -48,6 +48,13 @@ class ToolExecutionResult:
     output_summary: str = ""
     attempts: int = 0
     output_truncated: bool = False
+    guard_stage: str = ""
+    reason_code: str = ""
+    permission_category: str = ""
+    permission_decision: str = ""
+    required_allow: str = ""
+    execution_mode: str = ""
+    grant_matched: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -209,6 +216,14 @@ async def execute_tool_call_result(
     )
 
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
+        if tool_decision is not None:
+            result.guard_stage = tool_decision.stage
+            result.reason_code = tool_decision.reason_code
+            result.permission_category = tool_decision.permission_category
+            result.permission_decision = tool_decision.permission_decision
+            result.required_allow = tool_decision.required_allow
+            result.execution_mode = tool_decision.execution_mode
+            result.grant_matched = tool_decision.grant_matched
         try:
             from personal_agent.tools.audit import audit_tool_result
 
@@ -229,13 +244,13 @@ async def execute_tool_call_result(
             output_summary=result.output_summary,
             full_output=result.content or result.error,
             output_truncated=result.output_truncated,
-            guard_stage=tool_decision.stage if tool_decision else "",
-            guard_reason_code=tool_decision.reason_code if tool_decision else "",
-            permission_category=tool_decision.permission_category if tool_decision else "",
-            permission_decision=tool_decision.permission_decision if tool_decision else "",
-            required_allow=tool_decision.required_allow if tool_decision else "",
-            execution_mode=tool_decision.execution_mode if tool_decision else "",
-            grant_matched=tool_decision.grant_matched if tool_decision else "",
+            guard_stage=result.guard_stage,
+            guard_reason_code=result.reason_code,
+            permission_category=result.permission_category,
+            permission_decision=result.permission_decision,
+            required_allow=result.required_allow,
+            execution_mode=result.execution_mode,
+            grant_matched=result.grant_matched,
             display_name=tool_decision.display_name if tool_decision else "",
             execution_mode_label=tool_decision.execution_mode_label if tool_decision else "",
             risk_level=tool_decision.risk_level if tool_decision else "",

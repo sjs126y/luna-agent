@@ -542,6 +542,8 @@ async def confirm_callback(decision) -> str:
 
 `/allow` 是 mode/config 策略上的临时 grant：只解锁最终权限决策为 `ask` 的类别，不能覆盖 `deny`。`standard / Ask First` 下 `network=ask`，因此 `/allow network` 可用于 `web_search` / `web_fetch`；`guarded / Read Only` 下 `network=deny`，后端会返回“不能覆盖”的文本提示。`/allow network` 不会打开 bash 内部的 `curl` / `wget` 等网络命令，bash 网络仍由 `sandbox.bash_allow_network` 控制。
 
+当一批工具调用全部因为 `permission_required` 被拒绝时，后端会结束当前 turn 并发送一条 `assistant_message` 提示需要 `/allow <category>` 后重试，避免模型在同一轮里反复调用未授权工具。对应 `tool_end` / Tool Runs / Turn Reports 仍会记录实际 denied 工具结果。
+
 ## 6. Usage / Context Summary
 
 `/usage` 返回人类可读文本，当前语义如下：

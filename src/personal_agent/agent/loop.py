@@ -367,7 +367,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
         if response.text:
             await emit_event(report_recorder, "assistant_message", response.text)
 
-        await execute_tool_calls(
+        tool_results = await execute_tool_calls(
             response.tool_calls,
             ctx.messages,
             agent=agent,
@@ -376,6 +376,15 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
             confirm=confirm,
         )
         just_executed_tools = True
+
+        permission_message = _permission_required_stop_message(tool_results)
+        if permission_message:
+            ctx.messages.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": permission_message}],
+            })
+            await emit_event(report_recorder, "assistant_message", permission_message)
+            break
 
         # ── iteration budget check ──
         agent._iteration_budget -= 1
@@ -608,3 +617,35 @@ def _context_usage_payload(budget) -> dict:
         "context_percent": budget.percent,
         "context_budget": budget.as_dict(),
     }
+
+
+def _permission_required_stop_message(tool_results: list) -> str:
+    if not tool_results or not all(_is_permission_required_denial(result) for result in tool_results):
+        return ""
+    categories = _permission_required_categories(tool_results)
+    if categories == ["network"]:
+        return "网络工具需要授权，本轮已停止。请发送 /allow network 后重试。"
+    if len(categories) == 1:
+        return f"工具需要授权，本轮已停止。请发送 /allow {categories[0]} 后重试。"
+    return f"多个工具需要授权，本轮已停止。请发送 /allow all 或分别授权：{', '.join(categories)}。"
+
+
+def _is_permission_required_denial(result) -> bool:
+    return (
+        getattr(result, "status", "") == "denied"
+        and getattr(result, "category", "") == "authorization"
+        and getattr(result, "reason_code", "") == "permission_required"
+    )
+
+
+def _permission_required_categories(tool_results: list) -> list[str]:
+    categories: list[str] = []
+    for result in tool_results:
+        category = str(
+            getattr(result, "required_allow", "")
+            or getattr(result, "permission_category", "")
+            or "tool"
+        )
+        if category and category not in categories:
+            categories.append(category)
+    return categories

@@ -337,8 +337,6 @@ async def test_turn_report_records_denied_tool_decision(provider):
             tool_calls=[{"id": "w1", "name": "danger", "input": {"value": "x"}}],
             usage={"input_tokens": 4, "output_tokens": 1},
         ),
-        NormalizedResponse(text="Done!", finish_reason="end_turn",
-                          usage={"input_tokens": 3, "output_tokens": 2}),
     ])
     agent = init_agent(transport, provider)
 
@@ -361,6 +359,8 @@ async def test_turn_report_records_denied_tool_decision(provider):
     result = await run_conversation(agent, ctx)
 
     item = result["turn_report"]["tools"]["items"][0]
+    assert transport.calls == 1
+    assert "/allow write" in result["final_response"]
     assert result["turn_report"]["tools"]["denied"] == 1
     assert item["tool_name"] == "danger"
     assert item["tool_use_id"] == "w1"
@@ -374,6 +374,61 @@ async def test_turn_report_records_denied_tool_decision(provider):
     assert truth["results_total"] == 1
     assert truth["status_counts"]["denied"] == 1
     assert truth["assistant_claim"]["claimed_but_no_tool_call"] is False
+
+
+@pytest.mark.asyncio
+async def test_permission_required_network_tool_stops_without_looping(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我先搜索一下。",
+            finish_reason="tool_use",
+            tool_calls=[{"id": "s1", "name": "web_search", "input": {"query": "GPT-5.5"}}],
+            usage={"input_tokens": 4, "output_tokens": 1},
+        ),
+        NormalizedResponse(
+            text="This should not be called",
+            finish_reason="end_turn",
+            usage={"input_tokens": 3, "output_tokens": 2},
+        ),
+    ])
+
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _search(query: str = "", max_results: int = 3):
+        return f"searched:{query}:{max_results}"
+
+    tool_registry.register(ToolEntry(
+        name="web_search",
+        description="Search",
+        schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        handler=_search,
+        permission_category="network",
+    ))
+    agent = init_agent(
+        transport,
+        provider,
+        execution_policy=ExecutionPolicy(
+            mode="trusted",
+            permissions={"default": "ask", "network": "ask"},
+        ),
+    )
+
+    ctx = await build_turn_context(agent, "试一下搜索")
+    result = await run_conversation(agent, ctx)
+
+    assert result["completed"] is True
+    assert transport.calls == 1
+    assert result["final_response"] == "网络工具需要授权，本轮已停止。请发送 /allow network 后重试。"
+    assert result["turn_report"]["llm"]["calls"] == 1
+    assert result["turn_report"]["tools"]["total"] == 1
+    assert result["turn_report"]["tools"]["denied"] == 1
+    item = result["turn_report"]["tools"]["items"][0]
+    assert item["tool_name"] == "web_search"
+    assert item["reason_code"] == "permission_required"
+    assert item["permission_category"] == "network"
+    assert item["required_allow"] == "network"
 
 
 @pytest.mark.asyncio

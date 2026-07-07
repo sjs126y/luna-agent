@@ -331,6 +331,30 @@ uv run pytest -q
 
 结果：聚焦 `43 passed`，全量 `781 passed`。
 
+## 已完成方向：权限拒绝工具循环止血
+
+状态：已完成实现并通过聚焦验证。
+
+背景：微信实测中，模型在网络工具未授权时连续调用 `web_search` 30 次，全部被 `permission_required` 拒绝，单轮持续约 268 秒并消耗大量 tokens。根因是 agent loop 将授权拒绝当作普通 tool result 继续喂给模型，模型反复尝试同一工具。
+
+已完成：
+
+- `ToolExecutionResult` 增加结构化 guard metadata：`guard_stage`, `reason_code`, `permission_category`, `permission_decision`, `required_allow`, `execution_mode`, `grant_matched`。
+- `run_conversation(...)` 在一批工具结果全部为 `permission_required` 授权拒绝时，直接结束当前 turn，并返回 `/allow <category>` 后重试的提示。
+- 网络工具未授权时会返回“网络工具需要授权，本轮已停止。请发送 /allow network 后重试。”，不再进入重复 tool-call 循环。
+- `BACKEND_INTERFACE.md` 已同步该行为：`tool_end` / Tool Runs / Turn Reports 仍记录 denied 工具结果，随后会有一条 `assistant_message` 结束本轮。
+- `tests/conftest.py` 增加 audit log 隔离，测试期间写入临时 `audit.log`，避免污染真实 `data/audit.log`。
+
+已验证：
+
+```bash
+uv run pytest tests/test_agent_loop.py tests/test_tool_pipeline.py tests/test_config_loader.py tests/test_config_registry.py tests/test_config_diagnostics.py tests/test_transport_cache.py -q
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
+
+结果：聚焦 `131 passed`，全量 `782 passed`。
+
 ## 后续可评估方向
 
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。

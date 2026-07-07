@@ -1586,6 +1586,12 @@ async def test_executor_writes_result_audit_for_denied_precheck_and_unknown_tool
     events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").strip().splitlines()]
     assert precheck.status == "denied"
     assert denied.status == "denied"
+    assert denied.guard_stage == "permission"
+    assert denied.reason_code == "permission_required"
+    assert denied.permission_category == "background"
+    assert denied.permission_decision == "ask"
+    assert denied.required_allow == "background"
+    assert denied.execution_mode == "standard"
     assert unknown.status == "error"
     assert [event["event"] for event in events] == [
         "tool_decision",
