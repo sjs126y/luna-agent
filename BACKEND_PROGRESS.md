@@ -41,7 +41,7 @@
 - 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
 - 前端 Codex 如果需要字段或接口，应通过 `FRONTEND_INTERFACE_REQUIREMENTS.md` 明确写出小需求。
 - `CLAUDE.md` 不处理。
-- 测试可能修改 `src/personal_agent/skills/builtin/.usage.json`，提交前要检查并恢复非意图改动。
+- Skill usage 运行数据写入 `data/skills/usage.json`，不再写入源码目录。
 
 ## 已完成方向：Provider / Transport Cache
 

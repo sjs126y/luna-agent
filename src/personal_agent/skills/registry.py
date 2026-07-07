@@ -29,6 +29,7 @@ MAX_SKILL_BYTES = 50_000
 class SkillRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, SkillEntry] = {}
+        self._usage_path = Path("data") / "skills" / "usage.json"
 
     def register(self, entry: SkillEntry) -> None:
         self._entries[entry.name] = entry
@@ -39,6 +40,13 @@ class SkillRegistry:
 
     def get(self, name: str) -> SkillEntry | None:
         return self._entries.get(name)
+
+    @property
+    def usage_path(self) -> Path:
+        return self._usage_path
+
+    def set_usage_path(self, path: Path | str) -> None:
+        self._usage_path = Path(path)
 
     def list(self) -> list[SkillEntry]:
         return list(self._entries.values())
@@ -100,7 +108,7 @@ class SkillRegistry:
 
     def _record_usage(self, name: str) -> None:
         """Increment usage counter for this skill."""
-        usage_path = SKILLS_DIR / ".usage.json"
+        usage_path = self._usage_path
         usage = {}
         if usage_path.exists():
             try:
@@ -112,6 +120,7 @@ class SkillRegistry:
         entry["last_used"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         usage[name] = entry
         try:
+            usage_path.parent.mkdir(parents=True, exist_ok=True)
             usage_path.write_text(json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass

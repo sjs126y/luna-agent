@@ -18,9 +18,15 @@ import pytest
 # ── Helpers ────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _ensure_builtin_skills_registered():
+def _ensure_builtin_skills_registered(tmp_path: Path):
     """Make sure builtin skills are registered (idempotent)."""
     import personal_agent.skills.builtin  # noqa: F401
+    from personal_agent.skills.registry import skill_registry
+
+    old_usage_path = skill_registry.usage_path
+    skill_registry.set_usage_path(tmp_path / "data" / "skills" / "usage.json")
+    yield
+    skill_registry.set_usage_path(old_usage_path)
 
 
 def _make_skill_content(size: int) -> str:
@@ -84,12 +90,15 @@ def test_duplicate_registration_overwrites():
 
 
 def test_load_valid_skill():
-    from personal_agent.skills.registry import skill_registry
+    from personal_agent.skills.registry import SKILLS_DIR, skill_registry
 
     content = skill_registry.load("python-expert")
     assert content is not None
     assert len(content) > 0
     assert "Python" in content or "python" in content
+    assert skill_registry.usage_path.exists()
+    assert skill_registry.usage_path.name == "usage.json"
+    assert not (SKILLS_DIR / ".usage.json").exists()
 
 
 def test_load_nonexistent_skill():

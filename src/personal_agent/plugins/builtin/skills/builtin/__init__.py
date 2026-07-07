@@ -3,7 +3,11 @@
 
 def register(ctx) -> None:
     from personal_agent.skills.entry import SkillEntry
-    from personal_agent.skills.registry import discover_skills
+    from personal_agent.skills.registry import discover_skills, skill_registry
+
+    data_dir = getattr(ctx.settings, "agent_data_dir", None)
+    if data_dir is not None:
+        skill_registry.set_usage_path(data_dir / "skills" / "usage.json")
 
     ctx.register_skill(SkillEntry(
         name="python-expert",
@@ -24,6 +28,5 @@ def register(ctx) -> None:
         triggers=["/shell", "/bash"],
     ))
 
-    data_dir = getattr(ctx.settings, "agent_data_dir", None)
     if data_dir is not None:
         discover_skills(data_dir / "skills", registrar=ctx)
