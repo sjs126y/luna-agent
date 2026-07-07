@@ -183,6 +183,8 @@ class Gateway:
         try:
             adapter = entry.factory(self.config, self.db)
             adapter.set_message_handler(self._handle_message)
+            if hasattr(adapter, "set_message_bypass_predicate"):
+                adapter.set_message_bypass_predicate(self._should_bypass_adapter_queue)
             if hasattr(adapter, "set_attachment_store"):
                 adapter.set_attachment_store(self._conversation_service.attachment_store)
             await adapter.connect()
@@ -245,6 +247,10 @@ class Gateway:
             return await self._handle_message_inner(event)
         finally:
             trace_id.reset(token)
+
+    def _should_bypass_adapter_queue(self, event) -> bool:
+        session_key = self._session_router.active_key(event.source)
+        return self._confirmations.get(session_key) is not None
 
     async def _handle_message_inner(self, event) -> str | None:
         if getattr(event, "envelope", None) is None and hasattr(event, "to_envelope"):

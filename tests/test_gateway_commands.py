@@ -523,6 +523,51 @@ async def test_gateway_async_confirmation_always_and_stop(gateway, monkeypatch):
     assert final == "answer:interrupted"
 
 
+@pytest.mark.asyncio
+async def test_platform_confirmation_reply_bypasses_same_session_queue(gateway, monkeypatch):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    adapter.set_message_handler(gateway._handle_message)
+    adapter.set_message_bypass_predicate(gateway._should_bypass_adapter_queue)
+    gateway._adapters.append(adapter)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    async def run_turn_input(session_key, user_input, *, confirm=None):
+        answer = await confirm(SimpleNamespace(
+            tool_name="web_search",
+            display_name="Web search",
+            permission_category="network",
+            input_preview="GPT-5.5",
+        ))
+        return ConversationTurnResult(
+            final_response=f"answer:{answer}",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    adapter.handle_message(_event("search", message_id="m1"))
+    await _wait_until(lambda: adapter.sent_contents and "需要授权工具调用" in adapter.sent_contents[0])
+
+    assert adapter.health_snapshot()["active_sessions"] == 1
+    assert gateway.health_snapshot()["pending_confirmation_count"] == 1
+
+    adapter.handle_message(_event("1", message_id="m2"))
+
+    await _wait_until(
+        lambda: "已允许一次，继续执行。" in adapter.sent_contents
+        and "answer:allow" in adapter.sent_contents,
+    )
+
+    assert adapter.health_snapshot()["pending_messages"] == 0
+    assert gateway.health_snapshot()["pending_confirmation_count"] == 0
+
+
 def test_gateway_health_snapshot_reports_runtime_state(gateway):
     gateway._run_state.begin("telegram:c1:u1", _event("hello").source)
     gateway._agent_cache["telegram:c1:u1"] = Agent()

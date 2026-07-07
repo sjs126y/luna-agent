@@ -419,6 +419,29 @@ uv run pytest -q
 
 结果：聚焦 `131 passed`，全量 `782 passed`。
 
+## 已完成方向：平台确认回复队列旁路
+
+状态：已完成实现并通过聚焦验证。
+
+背景：微信实测中，工具触发授权确认后回复 `1` 仍然没有放行。日志显示 `web_search` 的授权确认等待了约 `120s` 后超时拒绝，随后用户的 `1` 被当作普通聊天消息进入数据库。根因是平台适配器会串行处理同一会话消息：原消息在等待确认回复，而确认回复被排到原消息后面，形成等待死锁。
+
+已完成：
+
+- `BasePlatformAdapter` 新增窄口径 message bypass predicate，只在网关判断当前 session 存在 pending tool confirmation 时启用。
+- bypass 消息不占用普通 active session，不抢同一 chat lock，不影响普通同会话消息继续串行。
+- `Gateway` 在平台 adapter 启动时注入 pending-confirm 判断，确认回复 `1/2/3`、无效回复、`/stop` 都能及时进入网关处理。
+- 新增回归测试覆盖真实平台适配器路径：原消息等待确认时，同 session 的 `1` 不再进入 pending queue，而是直接放行当前工具调用。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_gateway_commands.py::test_platform_confirmation_reply_bypasses_same_session_queue tests/test_gateway_commands.py::test_gateway_async_confirmation_allows_once tests/test_gateway_commands.py::test_base_adapter_same_session_messages_are_serialized -q
+uv run pytest tests/test_gateway_commands.py -q
+```
+
+结果：聚焦 `3 passed`，gateway 命令测试 `38 passed`。
+
 ## 后续可评估方向
 
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。

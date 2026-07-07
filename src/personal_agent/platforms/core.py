@@ -136,6 +136,7 @@ class BasePlatformAdapter(ABC):
         self.db = db
         self._loop: asyncio.AbstractEventLoop | None = None
         self._message_handler: Callable[[MessageEvent], Awaitable[str | None]] | None = None
+        self._message_bypass_predicate: Callable[[MessageEvent], bool] | None = None
         self._active_sessions: dict[str, bool] = {}
         self._pending_messages: dict[str, list[PendingMessage]] = {}
         self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -199,6 +200,9 @@ class BasePlatformAdapter(ABC):
     def set_message_handler(self, handler: Callable[[MessageEvent], Awaitable[str | None]]) -> None:
         self._message_handler = handler
 
+    def set_message_bypass_predicate(self, predicate: Callable[[MessageEvent], bool] | None) -> None:
+        self._message_bypass_predicate = predicate
+
     def set_attachment_store(self, store: AttachmentStore) -> None:
         self._attachment_store = store
 
@@ -237,6 +241,9 @@ class BasePlatformAdapter(ABC):
             return
 
         session_key = self._make_session_key(event.source)
+        if self._should_bypass_queue(event):
+            asyncio.create_task(self._process_bypass_message_background(event, session_key))
+            return
         if session_key in self._active_sessions:
             queue = self._pending_messages.setdefault(session_key, [])
             queue.append(PendingMessage(event, queued_at=_now(), queued_monotonic=time.monotonic()))
@@ -280,6 +287,27 @@ class BasePlatformAdapter(ABC):
                     del self._pending_messages[session_key]
                 self._active_sessions[session_key] = True
                 asyncio.create_task(self._process_message_background(next_message.event, session_key))
+
+    async def _process_bypass_message_background(self, event: MessageEvent, session_key: str) -> None:
+        """Process a control reply while the normal session turn is waiting."""
+        try:
+            response = None
+            if self._message_handler:
+                response = await self._message_handler(event)
+                self._last_response_at = _now()
+            if response:
+                await self._send_with_retry(event.source.chat_id, response)
+        except Exception:
+            logger.exception("Bypass processing failed for session %s", session_key)
+
+    def _should_bypass_queue(self, event: MessageEvent) -> bool:
+        if self._message_bypass_predicate is None:
+            return False
+        try:
+            return bool(self._message_bypass_predicate(event))
+        except Exception:
+            logger.exception("Message bypass predicate failed")
+            return False
 
     async def _prepare_attachment_ref(
         self,
