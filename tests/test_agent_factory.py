@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from personal_agent.agent.factory import create_agent_runtime
+from personal_agent.agent.factory import _resolve_api_mode
 from personal_agent.agent.agent import _build_system_prompt, init_agent
 from personal_agent.config import Settings
 from personal_agent.llm.provider import ProviderProfile, provider_registry
@@ -20,6 +21,19 @@ class FakeTransport:
         return NormalizedResponse(text="ok", usage={"input_tokens": 1, "output_tokens": 1})
 
 
+def test_resolve_api_mode_prefers_settings_over_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_API_MODE", "chat_completions")
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[],
+        llm_provider="openai",
+        llm_base_url="https://api.ahooqq.cn",
+        llm_api_mode="codex_responses",
+    )
+
+    assert _resolve_api_mode(settings, "openai") == "codex_responses"
+
+
 @pytest.mark.asyncio
 async def test_create_agent_runtime_resolves_transport_and_compressor(tmp_path):
     transport_registry.register("test_mode", lambda provider: FakeTransport(provider))
@@ -28,6 +42,7 @@ async def test_create_agent_runtime_resolves_transport_and_compressor(tmp_path):
         plugins_dirs=[],
         llm_provider="deepseek",
         llm_base_url="https://example.test",
+        llm_api_mode="auto",
         llm_model="deepseek-chat",
         compression_threshold_ratio=0.42,
     )
@@ -55,6 +70,7 @@ async def test_create_agent_runtime_wires_plugin_hooks(tmp_path):
         plugins_dirs=[],
         llm_provider="deepseek",
         llm_base_url="https://example.test",
+        llm_api_mode="auto",
     )
 
     class PluginManager:
@@ -81,18 +97,19 @@ async def test_create_agent_runtime_wires_plugin_hooks(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_create_agent_runtime_supports_codex_responses_mode(tmp_path, monkeypatch):
+async def test_create_agent_runtime_supports_codex_responses_mode_from_settings(tmp_path, monkeypatch):
     from personal_agent.plugins.builtin.llm.builtin import register
     from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
 
     register(None)
-    monkeypatch.setenv("LLM_API_MODE", "codex_responses")
+    monkeypatch.delenv("LLM_API_MODE", raising=False)
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
         llm_provider="openai",
         llm_base_url="https://api.ahooqq.cn",
         llm_api_key="test",
+        llm_api_mode="codex_responses",
         llm_model="gpt-5.5",
     )
 

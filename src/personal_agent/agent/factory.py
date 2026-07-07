@@ -31,7 +31,7 @@ async def create_agent_runtime(
     """Resolve provider/transport/compressor and assemble an Agent."""
     provider_name = settings.llm_provider
     provider = provider_registry.get(provider_name, settings)
-    api_mode = provider_registry.detect_api_mode(settings.llm_base_url, provider_name)
+    api_mode = _resolve_api_mode(settings, provider_name)
     transport = transport_registry.get(api_mode, provider)
     logger.debug("Agent transport: provider=%s api_mode=%s", provider_name, api_mode)
 
@@ -71,6 +71,13 @@ async def create_agent_runtime(
     )
 
     return AgentRuntime(agent=agent, provider=provider, transport=transport)
+
+
+def _resolve_api_mode(settings, provider_name: str) -> str:
+    configured = str(getattr(settings, "llm_api_mode", "auto") or "auto").strip()
+    if configured and configured != "auto":
+        return configured
+    return provider_registry.detect_api_mode(settings.llm_base_url, provider_name)
 
 
 def _create_compressor(settings, provider: ProviderProfile, api_mode: str):
