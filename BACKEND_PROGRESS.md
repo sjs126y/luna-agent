@@ -119,7 +119,7 @@ uv run pytest -q
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest tests/test_activity.py tests/test_commands.py tests/test_conversation_command_runtime.py tests/test_cli_shell.py -q
+uv run pytest tests/test_activity.py tests/test_commands.py tests/test_conversation_command_runtime.py tests/test_tui_app.py -q
 ```
 
 结果：`49 passed`。
@@ -148,7 +148,7 @@ uv run pytest tests/test_activity.py tests/test_commands.py tests/test_conversat
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest tests/test_event_protocol.py tests/test_agent_loop.py tests/test_commands.py tests/test_conversation_service.py tests/test_cli_shell.py tests/test_tui_renderer.py tests/test_tui_layout.py -q
+uv run pytest tests/test_event_protocol.py tests/test_agent_loop.py tests/test_commands.py tests/test_conversation_service.py tests/test_tui_renderer.py tests/test_tui_layout.py -q
 uv run pytest -q
 ```
 

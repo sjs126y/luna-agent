@@ -17,7 +17,6 @@ from personal_agent.config_diagnostics import build_config_report, ensure_config
 from personal_agent.config_registry import effective_config_snapshot
 from personal_agent.context_budget import build_context_budget
 from personal_agent.cli_chat import run_cli_once_sync
-from personal_agent.cli_shell import ShellRenderOptions, run_cli_shell_sync
 from personal_agent.main import boot
 from personal_agent.plugins.core.manager import PluginManager
 
@@ -407,9 +406,7 @@ def chat(
     message: str = typer.Argument("", help="可选：只运行一轮消息后退出。"),
     once: str = typer.Option("", "--once", "-o", help="只运行一轮消息后退出。"),
     session: str = typer.Option("default", "--session", "-s", help="CLI 会话名。"),
-    ui: str = typer.Option("", "--ui", help="渲染器: inline (默认) | classic (历史兼容)。不传则读 config.yaml agent.ui。"),
-    verbose: bool = typer.Option(False, "--verbose", help="显示更详细的模型和工具事件。"),
-    quiet_events: bool = typer.Option(False, "--quiet-events", help="隐藏模型和工具事件，只显示对话与命令结果。"),
+    ui: str = typer.Option("", "--ui", help="渲染器: inline。classic UI 已移除；不传则读 config.yaml agent.ui。"),
 ) -> None:
     """Interactive multi-turn chat loop."""
     one_shot = once or message
@@ -427,14 +424,7 @@ def chat(
 
             run_inline_tui_sync(session_name=session)
         else:
-            run_cli_shell_sync(
-                session_name=session,
-                options=ShellRenderOptions(
-                    verbose=verbose,
-                    quiet_events=quiet_events,
-                    show_events=not quiet_events,
-                ),
-            )
+            _exit_error(f"不支持的 chat UI: {ui}。classic UI 已移除，请使用 inline。")
     except Exception as exc:
         _exit_error(f"CLI 运行失败: {exc}")
 

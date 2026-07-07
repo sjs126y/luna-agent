@@ -1,7 +1,7 @@
 """Renderer base: turn a ConversationEvent stream into semantic callbacks.
 
-Both the classic terminal renderer and the inline TUI renderer subclass this.
-The base only does ``event.type -> on_<type>`` dispatch; every callback defaults
+The inline TUI renderer subclasses this. The base only does
+``event.type -> on_<type>`` dispatch; every callback defaults
 to a no-op so a subclass overrides only the events it cares about. All gating /
 drawing decisions belong to the subclass, not here — this keeps the dispatch
 identical across renderers while leaving presentation fully to each one.

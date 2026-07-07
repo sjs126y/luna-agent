@@ -145,25 +145,17 @@ def test_chat_without_message_runs_inline_tui(monkeypatch):
         calls.append(session_name)
 
     monkeypatch.setattr("personal_agent.tui.app.run_inline_tui_sync", fake_inline)
-    result = runner.invoke(app, ["chat", "--session", "work", "--verbose"])
+    result = runner.invoke(app, ["chat", "--session", "work"])
 
     assert result.exit_code == 0
     assert calls == ["work"]
 
 
-def test_chat_ui_classic_runs_shell(monkeypatch):
-    calls = []
+def test_chat_ui_classic_is_removed():
+    result = runner.invoke(app, ["chat", "--ui", "classic"])
 
-    def fake_shell(*, session_name="default", options=None):
-        calls.append((session_name, options))
-
-    monkeypatch.setattr("personal_agent.cli.run_cli_shell_sync", fake_shell)
-    result = runner.invoke(app, ["chat", "--ui", "classic", "--quiet-events"])
-
-    assert result.exit_code == 0
-    assert calls[0][0] == "default"
-    assert calls[0][1].quiet_events is True
-    assert calls[0][1].show_events is False
+    assert result.exit_code == 1
+    assert "classic UI 已移除" in result.output
 
 
 def test_agents_list_show_clear_commands(monkeypatch):
