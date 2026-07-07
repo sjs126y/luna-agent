@@ -38,6 +38,8 @@ class GuardDecision:
     policy_decision: str = ""
     required_allow: str = ""
     grant_matched: str = ""
+    grant_scope: str = ""
+    grant_expires_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,9 @@ class ToolDecision:
     required_allow: str = ""
     message: str = ""
     grant_matched: str = ""
+    grant_scope: str = ""
+    grant_expires_at: float = 0.0
+    temporary_grant_ttl_seconds: int = 0
     display_name: str = ""
     execution_mode_label: str = ""
     risk_level: str = "low"
@@ -85,6 +90,9 @@ class ToolDecision:
             "required_allow": self.required_allow,
             "decision_message": self.message,
             "grant_matched": self.grant_matched,
+            "grant_scope": self.grant_scope,
+            "grant_expires_at": self.grant_expires_at,
+            "temporary_grant_ttl_seconds": self.temporary_grant_ttl_seconds,
             "display_name": self.display_name,
             "execution_mode_label": self.execution_mode_label,
             "risk_level": self.risk_level,
@@ -126,6 +134,8 @@ def evaluate_execution_guards(tc: dict, entry: Any, agent: Any) -> GuardDecision
         mode=permission.mode,
         policy_decision=permission.policy_decision,
         grant_matched=permission.grant_matched,
+        grant_scope=permission.grant_scope,
+        grant_expires_at=permission.grant_expires_at,
     )
 
 
@@ -144,6 +154,8 @@ def tool_decision_from_guard(tc: dict, guard: GuardDecision) -> ToolDecision:
         required_allow=guard.required_allow,
         message=guard.message,
         grant_matched=guard.grant_matched,
+        grant_scope=guard.grant_scope,
+        grant_expires_at=guard.grant_expires_at,
         **display,
     )
 
@@ -335,7 +347,7 @@ def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDe
 
     from personal_agent.permissions import matching_permission_grant
 
-    grant_matched, _grant_scope, _expires_at = matching_permission_grant(agent, category)
+    grant_matched, grant_scope, expires_at = matching_permission_grant(agent, category)
 
     if decision == "ask" and not grant_matched:
         return GuardDecision(
@@ -356,6 +368,8 @@ def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDe
         mode=mode,
         policy_decision=decision,
         grant_matched=grant_matched,
+        grant_scope=grant_scope,
+        grant_expires_at=expires_at,
     )
 
 

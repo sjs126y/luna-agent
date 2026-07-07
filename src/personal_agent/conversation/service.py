@@ -855,6 +855,9 @@ def _tool_runs_from_events(
             "required_allow": str(data.get("required_allow") or ""),
             "execution_mode": str(data.get("execution_mode") or ""),
             "grant_matched": str(data.get("grant_matched") or ""),
+            "grant_scope": str(data.get("grant_scope") or ""),
+            "grant_expires_at": _as_float(data.get("grant_expires_at")),
+            "temporary_grant_ttl_seconds": int(_as_float(data.get("temporary_grant_ttl_seconds"))),
             "created_at": created_at,
         })
     return runs

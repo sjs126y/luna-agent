@@ -216,6 +216,9 @@
 - `required_allow: string`
 - `decision_message: string`
 - `grant_matched: string`
+- `grant_scope: string` — `turn` 或 `temporary`
+- `grant_expires_at: number` — temporary grant 的 Unix 过期时间，非限时授权为 `0`
+- `temporary_grant_ttl_seconds: integer`
 - `display_name: string`，给 UI 直接展示的工具名
 - `execution_mode_label: string`，给 UI 直接展示的模式名，如 `Ask First`
 - `risk_level: string`，`low` / `medium` / `high`
@@ -547,6 +550,7 @@ async def confirm_callback(decision) -> str:
 - `/deny <category>`：撤销当前 agent/session 的某类限时授权。
 - `/deny all`：撤销全部限时授权。
 - `/permissions` payload 新增 `temporary_grants`、`turn_grants`、`temporary_grant_ttl_seconds`，每个临时授权包含 `category`、`expires_at`、`expires_at_iso`。
+- `tool_decision` / `tool_end` / Turn Report / Tool Runs 现在都会透出 `grant_scope`、`grant_expires_at`、`temporary_grant_ttl_seconds`，用于解释工具为什么被放行以及限时授权何时失效。
 
 Gateway 异步确认：
 

@@ -482,6 +482,9 @@ async def test_temporary_network_grant_survives_turn_reset(provider):
     item = result["turn_report"]["tools"]["items"][0]
     assert item["status"] == "success"
     assert item["grant_matched"] == "network"
+    assert item["grant_scope"] == "temporary"
+    assert item["grant_expires_at"] > 0
+    assert item["temporary_grant_ttl_seconds"] == 24 * 60 * 60
     assert item["required_allow"] == ""
 
 

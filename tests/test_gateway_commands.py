@@ -1010,7 +1010,9 @@ async def test_gateway_allow_and_stop_apply_to_cached_agents(gateway):
 
     assert "已授权 write" in allowed
     assert stopped == "已停止。"
-    assert all("write" in agent._destructive_allowed for agent in gateway._agent_cache.values())
+    assert "write" in gateway._agent_cache["telegram:c1:u1"]._destructive_allowed
+    assert "write" in gateway._agent_cache["telegram:c1:u1"]._temporary_grants
+    assert "write" not in gateway._agent_cache["telegram:work:u1"]._destructive_allowed
     assert all(agent._interrupt_requested for agent in gateway._agent_cache.values())
 
 

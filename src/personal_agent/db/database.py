@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS tool_runs (
     required_allow      TEXT DEFAULT '',
     execution_mode      TEXT DEFAULT '',
     grant_matched       TEXT DEFAULT '',
+    grant_scope         TEXT DEFAULT '',
+    grant_expires_at    REAL DEFAULT 0,
+    temporary_grant_ttl_seconds INTEGER DEFAULT 0,
     created_at          REAL NOT NULL
 );
 
@@ -114,8 +117,20 @@ class Database:
         self._conn = await aiosqlite.connect(str(self._path))
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
+        await self._ensure_tool_run_columns()
         await self._conn.commit()
         logger.info("Database initialized at %s", self._path)
+
+    async def _ensure_tool_run_columns(self) -> None:
+        rows = await self._conn.execute("PRAGMA table_info(tool_runs)")
+        columns = {row["name"] async for row in rows}
+        for name, ddl in {
+            "grant_scope": "ALTER TABLE tool_runs ADD COLUMN grant_scope TEXT DEFAULT ''",
+            "grant_expires_at": "ALTER TABLE tool_runs ADD COLUMN grant_expires_at REAL DEFAULT 0",
+            "temporary_grant_ttl_seconds": "ALTER TABLE tool_runs ADD COLUMN temporary_grant_ttl_seconds INTEGER DEFAULT 0",
+        }.items():
+            if name not in columns:
+                await self._conn.execute(ddl)
 
     async def close(self) -> None:
         if self._conn:
@@ -321,6 +336,9 @@ class Database:
                 str(run.get("required_allow") or ""),
                 str(run.get("execution_mode") or ""),
                 str(run.get("grant_matched") or ""),
+                str(run.get("grant_scope") or ""),
+                _as_float(run.get("grant_expires_at")),
+                int(_as_float(run.get("temporary_grant_ttl_seconds"))),
                 _as_float(run.get("created_at")) or time.time(),
             )
             for run in runs
@@ -332,8 +350,9 @@ class Database:
                     status, category, duration, input_summary, output_summary,
                     full_output, output_truncated, error, guard_stage, reason_code,
                     permission_category, permission_decision, required_allow,
-                    execution_mode, grant_matched, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    execution_mode, grant_matched, grant_scope, grant_expires_at,
+                    temporary_grant_ttl_seconds, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 rows,
             )
             await self._conn.commit()
@@ -543,6 +562,9 @@ def _tool_run_row(row) -> dict[str, Any]:
         "required_allow": str(row["required_allow"] or ""),
         "execution_mode": str(row["execution_mode"] or ""),
         "grant_matched": str(row["grant_matched"] or ""),
+        "grant_scope": str(row["grant_scope"] or ""),
+        "grant_expires_at": float(row["grant_expires_at"] or 0.0),
+        "temporary_grant_ttl_seconds": int(row["temporary_grant_ttl_seconds"] or 0),
         "created_at": float(row["created_at"] or 0.0),
     }
 

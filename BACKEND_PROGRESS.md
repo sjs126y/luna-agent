@@ -70,6 +70,28 @@ uv run pytest tests/test_gateway_commands.py::test_gateway_async_confirmation_al
 ```
 
 结果：聚焦 `4 passed`。
+
+## 2026-07-07：权限确认可观测性 v3
+
+状态：已完成 v3 实现并通过聚焦验证。
+
+已完成：
+
+- `tool_decision` / `tool_end` 追加 `grant_scope`、`grant_expires_at`、`temporary_grant_ttl_seconds`。
+- Turn Report 工具条目和 tool truth 同步记录授权 scope / 过期时间 / TTL。
+- Tool Runs SQLite 表新增兼容迁移列：`grant_scope`、`grant_expires_at`、`temporary_grant_ttl_seconds`。
+- `ConversationQueryService` 和 `/tool-runs` 查询会返回新增授权字段。
+- `BACKEND_INTERFACE.md` 已同步前端可消费字段。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_agent_loop.py::test_temporary_network_grant_survives_turn_reset tests/test_database.py::test_tool_runs_roundtrip_and_summary tests/test_conversation_service.py::test_run_turn_persists_tool_runs_from_events tests/test_event_protocol.py -q
+uv run pytest -q
+```
+
+结果：聚焦 `11 passed`，全量 `785 passed`。
 - Usage / context：`llm_start` / `llm_end` 已区分“最近一次 API token 消耗”和“当前上下文占用估算”；`/usage` 已修正工具计数文案，避免把活跃 turn 内部计数显示成会话统计。
 - Tool protocol prompt：系统提示已加入稳定工具调用规则，要求需要工具时必须发出 tool call，避免只用文字声称已调用工具；未加入正则 retry 或额外控制流。
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
