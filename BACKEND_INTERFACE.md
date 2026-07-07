@@ -360,6 +360,8 @@
 - 前端不直接调用 provider / transport。
 - 后端根据 `multimodal.*` 配置和 provider 能力决定 `off` / `text` / `native` / `notice`。
 - 后端根据 `attachments.*` 配置决定平台附件是否下载和缓存；provider 不参与下载决策。
+- 文本类、PDF、docx 附件在 `text` 或 `auto -> text` 模式下会由后端抽取文本并加入本轮上下文。
+- 文本抽取受 `multimodal.text_extract_max_chars` 和 `multimodal.text_extract_pdf_max_pages` 限制，超出会截断。
 
 桌面端事件消费：
 
@@ -393,7 +395,8 @@ CLI 说明：
 - 不保证所有 OneBot 实现都支持同一组文件下载 API。
 - 不保证缺少微信 `cdn_url` / `encrypt_query_param` / `aes_key` 的媒体可以下载。
 - 不保证下载失败的附件可以继续进入原生多模态处理。
-- 不做 OCR / ASR / 文件文本提取。
+- 不做 OCR / ASR / 视频抽帧。
+- 不保证除文本类、PDF、docx 之外的文件可被文本抽取。
 - 不负责判断 provider 是否支持原生多模态。
 
 `metadata.attachment_resolve` 常见结构：
@@ -421,6 +424,10 @@ CLI 说明：
 - `platform_download_unavailable`
 - `unsafe_url`
 - `size_exceeded`
+- `unsupported_file_type`
+- `text_extract_unavailable`
+- `text_extract_failed`
+- `empty_description`
 
 ## 4. Inline Tool Confirmation
 

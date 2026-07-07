@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 16:00 CST
+更新时间：2026-07-07 16:29 CST
 
 ## 交接定位
 
@@ -35,11 +35,12 @@
 - Platform adapter base：平台消息基类、media attachment v1 和授权后附件准备链路已打底；QQ/微信真实下载器 v1 已补，Feishu/Telegram 可后续补。
 - Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`。
 - Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
+- Multimodal text extraction v1：`text` / `auto -> text` 模式下已支持文本类、PDF、docx 附件抽取，结果进入本轮模型上下文；OCR / ASR / 视频仍留后续。
 - Platform attachment resolve v1：新增 `attachments.*` 配置、adapter 基类 `prepare_inbound_attachments()` / `download_attachment()` 扩展点、`DownloadedAttachment` 入库结构；Gateway 在授权通过且命令未被消费后触发 adapter 准备附件，provider 不参与下载决策。
 - Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
-最近一次记录的全量测试结果：`734 passed`。
+最近一次记录的全量测试结果：`739 passed`。
 
 ## 已完成方向：Multimodal Input v1-v4
 
@@ -57,6 +58,8 @@
 - provider 拒绝图片输入时，agent loop 会移除 image blocks 并纯文本重试一次。
 - token/context 估算对图片使用固定 token 估值，不按 base64 字符串长度计算。
 - cache diagnostics hash 会对 data URL 做指纹化，不记录完整 base64。
+- `MultiAttachmentProcessor` 默认文本化能力已支持文本类、PDF、docx 附件，并通过 `multimodal.text_extract_max_chars` / `multimodal.text_extract_pdf_max_pages` 控制上下文注入上限。
+- 修复附件 resolve 失败时 `effective_mode` 未赋值导致的异常，失败现在会稳定转成 notice/diagnostics。
 - `turn_start` 新增 `attachments_count`、`attachment_kinds`、`multimodal_diagnostics`，`AgentTurnReport` 同步记录。
 - `BACKEND_INTERFACE.md` 已同步多模态事件字段。
 - `BACKEND_INTERFACE.md` 已新增桌面端预留接口：请求结构、`AttachmentRef` 字段、前端职责边界、事件消费方式和 CLI 不承载附件上传的约定。
@@ -69,7 +72,7 @@ uv run pytest tests/test_attachment_store.py tests/test_multimodal_processor.py 
 uv run pytest -q
 ```
 
-结果：目标测试 `52 passed`；全量 `719 passed`。
+结果：多模态/配置/文档目标回归 `63 passed`；全量 `739 passed`。
 
 ## 已完成方向：Platform Adapter Attachments v1
 

@@ -20,6 +20,8 @@ def _settings(**overrides):
         "multimodal_video_mode": "off",
         "multimodal_file_mode": "auto",
         "multimodal_native_fallback": "notice",
+        "multimodal_text_extract_max_chars": 12000,
+        "multimodal_text_extract_pdf_max_pages": 20,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -142,9 +144,9 @@ async def test_provider_unsupported_does_not_block_local_resolution(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_text_mode_falls_back_to_notice_when_describer_missing(tmp_path):
+async def test_text_mode_extracts_plain_text_file(tmp_path):
     source = tmp_path / "note.txt"
-    source.write_text("hello", encoding="utf-8")
+    source.write_text("hello from attachment", encoding="utf-8")
     init_sandbox([tmp_path], [])
     processor = MultiAttachmentProcessor(
         settings=_settings(multimodal_file_mode="text"),
@@ -160,8 +162,143 @@ async def test_text_mode_falls_back_to_notice_when_describer_missing(tmp_path):
     )
 
     assert result.attachments[0].effective_mode == "text"
-    assert result.attachments[0].reason == "describer_unavailable"
-    assert "当前没有可用的文本化能力" in result.content_blocks[-1]["text"]
+    assert result.attachments[0].status == "processed"
+    assert result.attachments[0].reason == "described"
+    assert "附件 note.txt 内容" in result.content_blocks[-1]["text"]
+    assert "hello from attachment" in result.content_blocks[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_text_mode_truncates_long_file(tmp_path):
+    source = tmp_path / "app.log"
+    source.write_text("abcdef" * 20, encoding="utf-8")
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(
+            multimodal_file_mode="text",
+            multimodal_text_extract_max_chars=30,
+        ),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read",
+            attachments=[AttachmentRef(id="f1", kind="file", name="app.log", local_path=str(source))],
+        ),
+        provider=_provider(),
+    )
+
+    text = result.content_blocks[-1]["text"]
+    assert result.attachments[0].status == "processed"
+    assert "已截断，最多 30 字符" in text
+    assert len(text.split("：\n", 1)[1]) <= 30
+
+
+@pytest.mark.asyncio
+async def test_text_mode_extracts_pdf(tmp_path):
+    import fitz
+
+    source = tmp_path / "report.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "pdf attachment text")
+    doc.save(str(source))
+    doc.close()
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_file_mode="text"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read",
+            attachments=[AttachmentRef(id="f1", kind="file", name="report.pdf", local_path=str(source))],
+        ),
+        provider=_provider(),
+    )
+
+    assert result.attachments[0].status == "processed"
+    assert "附件 report.pdf 文本摘录" in result.content_blocks[-1]["text"]
+    assert "pdf attachment text" in result.content_blocks[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_text_mode_extracts_docx(tmp_path):
+    from docx import Document
+
+    source = tmp_path / "report.docx"
+    doc = Document()
+    doc.add_paragraph("docx attachment text")
+    doc.save(str(source))
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_file_mode="text"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read",
+            attachments=[AttachmentRef(id="f1", kind="file", name="report.docx", local_path=str(source))],
+        ),
+        provider=_provider(),
+    )
+
+    assert result.attachments[0].status == "processed"
+    assert "附件 report.docx 文本摘录" in result.content_blocks[-1]["text"]
+    assert "docx attachment text" in result.content_blocks[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_text_mode_unsupported_binary_file_returns_notice(tmp_path):
+    source = tmp_path / "blob.bin"
+    source.write_bytes(b"\x00\x01\x02\x03")
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_file_mode="text"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read",
+            attachments=[AttachmentRef(id="f1", kind="file", name="blob.bin", local_path=str(source))],
+        ),
+        provider=_provider(),
+    )
+
+    assert result.attachments[0].effective_mode == "text"
+    assert result.attachments[0].status == "unsupported"
+    assert result.attachments[0].reason == "unsupported_file_type"
+    assert "当前不支持该文件类型的文本抽取" in result.content_blocks[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_store_resolution_error_returns_notice(tmp_path):
+    from personal_agent.attachments.store import AttachmentStoreError
+
+    class Store:
+        def resolve(self, ref):
+            raise AttachmentStoreError("file_not_found")
+
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_file_mode="text"),
+        attachment_store=Store(),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read",
+            attachments=[AttachmentRef(id="f1", kind="file", name="missing.txt", local_path=str(tmp_path / "missing.txt"))],
+        ),
+        provider=_provider(),
+    )
+
+    assert result.attachments[0].status == "failed"
+    assert result.attachments[0].reason == "file_not_found"
+    assert result.diagnostics["failed_count"] == 1
 
 
 @pytest.mark.asyncio

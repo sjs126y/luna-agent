@@ -389,6 +389,8 @@ def _multimodal_fields() -> tuple[ConfigField, ...]:
         _yaml_field("multimodal.video_mode", "multimodal_video_mode", "off", "str", "multimodal", "Video processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
         _yaml_field("multimodal.file_mode", "multimodal_file_mode", "auto", "str", "multimodal", "File processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
         _yaml_field("multimodal.native_fallback", "multimodal_native_fallback", "notice", "str", "multimodal", "Fallback when native multimodal input is unavailable.", choices=MULTIMODAL_NATIVE_FALLBACKS),
+        _yaml_field("multimodal.text_extract_max_chars", "multimodal_text_extract_max_chars", 12000, "int", "multimodal", "Maximum extracted attachment text characters.", minimum=1),
+        _yaml_field("multimodal.text_extract_pdf_max_pages", "multimodal_text_extract_pdf_max_pages", 20, "int", "multimodal", "Maximum PDF pages to extract from an attachment.", minimum=1),
     )
 
 

@@ -51,6 +51,8 @@ multimodal:
   video_mode: "off"                # 视频：auto | text | off；默认关闭，避免误下载大文件
   file_mode: "auto"                # 文件：auto | text | off；当前无解析器时会降级提示
   native_fallback: "notice"        # 原生多模态不可用时：notice（提示）| text（尝试文本化）
+  text_extract_max_chars: 12000     # 文本/PDF/docx 附件最多注入的字符数，超出会截断
+  text_extract_pdf_max_pages: 20    # PDF 附件最多抽取页数，避免大文件污染上下文
 
 attachments:
   resolve_inbound: true            # 授权通过后，平台入口是否尝试把附件本地化

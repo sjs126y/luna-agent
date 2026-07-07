@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from personal_agent.attachments.store import AttachmentStore, AttachmentStoreError, ResolvedAttachment
+from personal_agent.attachments.text_extract import AttachmentTextExtractError, extract_attachment_text
 from personal_agent.conversation.input import ConversationInput
 from personal_agent.models.messages import AttachmentRef
 from personal_agent.text_safety import clean_text
@@ -71,7 +72,42 @@ class NullAttachmentTextDescriber:
 
 
 class AttachmentDescribeUnavailable(RuntimeError):
-    pass
+    def __init__(self, reason: str = "describer_unavailable", detail: str = "") -> None:
+        self.reason = reason
+        self.detail = detail
+        super().__init__(detail or reason)
+
+
+class LocalAttachmentTextDescriber:
+    def __init__(self, settings) -> None:
+        self.settings = settings
+
+    async def describe(self, resolved: ResolvedAttachment, ref: AttachmentRef) -> str:
+        if not resolved.local_path:
+            raise AttachmentDescribeUnavailable("attachment_not_resolved")
+        max_chars = int(getattr(self.settings, "multimodal_text_extract_max_chars", 12000) or 12000)
+        pdf_max_pages = int(getattr(self.settings, "multimodal_text_extract_pdf_max_pages", 20) or 20)
+        try:
+            extracted = extract_attachment_text(
+                resolved.local_path,
+                mime_type=resolved.mime_type,
+                name=resolved.name or ref.name,
+                max_chars=max_chars,
+                pdf_max_pages=pdf_max_pages,
+            )
+        except AttachmentTextExtractError as exc:
+            raise AttachmentDescribeUnavailable(exc.reason, exc.detail) from exc
+        except Exception as exc:
+            raise AttachmentDescribeUnavailable("text_extract_failed", f"{type(exc).__name__}: {exc}") from exc
+
+        label = resolved.name or ref.name or resolved.local_path or resolved.id
+        if extracted.truncated:
+            header = f"附件 {label} 内容摘录（已截断，最多 {max_chars} 字符）："
+        elif extracted.source_type in {"pdf", "docx"}:
+            header = f"附件 {label} 文本摘录："
+        else:
+            header = f"附件 {label} 内容："
+        return f"{header}\n{extracted.text}"
 
 
 class MultiAttachmentProcessor:
@@ -84,7 +120,7 @@ class MultiAttachmentProcessor:
     ) -> None:
         self.settings = settings
         self.attachment_store = attachment_store
-        self.text_describer = text_describer or NullAttachmentTextDescriber()
+        self.text_describer = text_describer or LocalAttachmentTextDescriber(settings)
 
     async def resolve(
         self,
@@ -152,6 +188,13 @@ class MultiAttachmentProcessor:
                 error=str(prepared_status.get("error") or ""),
             )
 
+        effective_mode = _effective_mode(
+            configured_mode,
+            kind=kind,
+            provider=provider,
+            settings=self.settings,
+        )
+
         store = self.attachment_store
         if store is None:
             return _notice(ref, attachment_id, kind, configured_mode, "notice", "failed",
@@ -180,13 +223,6 @@ class MultiAttachmentProcessor:
                 "resolve_failed",
                 error=f"{type(exc).__name__}: {exc}",
             )
-
-        effective_mode = _effective_mode(
-            configured_mode,
-            kind=kind,
-            provider=provider,
-            settings=self.settings,
-        )
         if effective_mode == "notice":
             return _notice(
                 ref,
@@ -241,6 +277,19 @@ class MultiAttachmentProcessor:
     ) -> ProcessedAttachment:
         try:
             summary = await self.text_describer.describe(resolved, ref)
+        except AttachmentDescribeUnavailable as exc:
+            reason = exc.reason or "describer_unavailable"
+            return _notice(
+                ref,
+                resolved.id,
+                resolved.kind,
+                configured_mode,
+                "text",
+                "unsupported" if reason in {"unsupported_file_type", "describer_unavailable"} else "failed",
+                reason,
+                error=exc.detail or str(exc),
+                resolved=resolved,
+            )
         except Exception as exc:
             return _notice(
                 ref,
@@ -364,6 +413,10 @@ def _notice_text(kind: str, label: str, reason: str) -> str:
         "platform_download_disabled": "当前配置关闭了平台文件下载。",
         "provider_not_supported": "当前 provider 不支持原生处理，且没有可用的文本化能力。",
         "describer_unavailable": "当前没有可用的文本化能力。",
+        "text_extract_unavailable": "当前文本抽取能力不可用。",
+        "text_extract_failed": "附件文本抽取失败。",
+        "unsupported_file_type": "当前不支持该文件类型的文本抽取。",
+        "empty_description": "附件没有可抽取的文本内容。",
         "path_not_allowed": "本地路径不在允许范围内。",
         "unsafe_url": "附件 URL 未通过安全检查。",
         "size_exceeded": "附件超过大小限制。",

@@ -67,6 +67,8 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "video_mode",
         "file_mode",
         "native_fallback",
+        "text_extract_max_chars",
+        "text_extract_pdf_max_pages",
     },
     "plugins": {"dirs", "enabled", "disabled"},
     "profiles": None,
