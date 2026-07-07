@@ -550,8 +550,9 @@ async def confirm_callback(decision) -> str:
 - `ConversationService` 每个 turn 分配 `turn_id`，并在 turn 生命周期内登记 active turn。
 - `/steer` 会进入当前 session 的 `SteerManager` 队列，绑定当前 active `turn_id`。
 - agent loop 在下一次循环边界消费队列，并追加一条 user message：
-  - 第一行固定为 `[运行中用户补充/修正]`
-  - 后续为用户修正文本，多条会编号合并。
+  - 第一行固定为 `[高优先级运行中用户指令]`
+  - 后续会说明这些内容是用户在当前任务执行过程中追加的最新指令，优先级高于本轮较早请求。
+  - 最后写入用户最新指令；多条会编号合并。
 - 如果修正在 LLM 调用期间到达，最晚会在该次调用返回后、下一次模型调用前生效。
 - turn 结束后未消费的 steer 会标记为 `expired`，不会污染下一轮。
 - 单 session pending steer 默认最多 10 条；文本会限制长度，避免上下文污染。

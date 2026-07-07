@@ -552,10 +552,16 @@ async def _consume_steer(ctx, steer, session_key: str, sink) -> bool:
 
 
 def _format_steer_message(signals) -> str:
-    lines = ["[运行中用户补充/修正]"]
+    lines = [
+        "[高优先级运行中用户指令]",
+        "以下内容是用户在当前任务执行过程中追加的最新指令，优先级高于本轮较早的用户请求。",
+        "请立即根据这条最新指令调整接下来的回答和工具使用；如果它要求停止、返回结果或改变方向，应优先服从。",
+        "用户最新指令：",
+    ]
     if len(signals) == 1:
         lines.append(str(signals[0].text or "").strip())
     else:
+        lines[2] = "请立即根据这些最新指令调整接下来的回答和工具使用；如果它们要求停止、返回结果或改变方向，应优先服从。"
         for index, signal in enumerate(signals, 1):
             lines.append(f"{index}. {str(signal.text or '').strip()}")
     return "\n".join(line for line in lines if line)
