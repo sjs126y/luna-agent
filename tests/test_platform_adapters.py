@@ -612,6 +612,35 @@ async def test_wechat_download_attachment_decrypts_cdn_media(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
+async def test_wechat_download_attachment_requires_key_before_download(tmp_path: Path, monkeypatch):
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.platforms import AttachmentDownloadError
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+
+    async def fake_download_url_bytes(url, *, kind):  # pragma: no cover - should not run
+        raise AssertionError("download should not run without decrypt key")
+
+    monkeypatch.setattr(adapter, "_download_url_bytes", fake_download_url_bytes)
+
+    with pytest.raises(AttachmentDownloadError) as exc_info:
+        await adapter.download_attachment(
+            AttachmentRef(
+                id="w-key",
+                kind="image",
+                metadata={
+                    "wechat_media": {
+                        "encrypt_query_param": "encrypted-param",
+                    }
+                },
+            )
+        )
+
+    assert exc_info.value.reason == "decrypt_key_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_wechat_prepare_encrypted_url_uses_platform_downloader(tmp_path: Path, monkeypatch):
     from personal_agent.attachments import AttachmentStore, DownloadedAttachment
     from personal_agent.models.messages import AttachmentRef
@@ -644,6 +673,48 @@ async def test_wechat_prepare_encrypted_url_uses_platform_downloader(tmp_path: P
                     "cdn_url": "https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=encrypted-param",
                     "aes_key": base64.b64encode(b"0123456789abcdef").decode(),
                     "media_id": "encrypted-param",
+                }
+            },
+        ),
+        source=None,
+    )
+
+    assert calls == [("", "encrypted-param")]
+    assert prepared.local_path
+    assert prepared.metadata["attachment_resolve"]["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_wechat_prepare_top_level_encrypted_param_uses_platform_downloader(tmp_path: Path, monkeypatch):
+    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))
+    calls = []
+
+    async def fake_download_attachment(ref, source=None):
+        calls.append((ref.url, ref.platform_file_id))
+        return DownloadedAttachment(
+            data=b"\x89PNG\r\n\x1a\npayload",
+            kind="image",
+            name="photo.png",
+            mime_type="image/png",
+            platform_file_id=ref.platform_file_id,
+        )
+
+    monkeypatch.setattr(adapter, "download_attachment", fake_download_attachment)
+
+    prepared = await adapter._prepare_attachment_ref(
+        AttachmentRef(
+            id="w3",
+            kind="image",
+            name="photo.png",
+            metadata={
+                "wechat_media": {
+                    "encrypt_query_param": "encrypted-param",
+                    "aes_key": base64.b64encode(b"0123456789abcdef").decode(),
                 }
             },
         ),

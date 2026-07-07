@@ -200,11 +200,13 @@ class WeChatAdapter(BasePlatformAdapter):
         if not url:
             raise AttachmentDownloadError("platform_download_unavailable", "wechat_download_url_unavailable")
         encrypted = _wechat_is_encrypted(data)
-        content, mime_type = await self._download_url_bytes(url, kind=ref.kind)
+        key = b""
         if encrypted:
             key = _wechat_aes_key(data)
             if not key:
                 raise AttachmentDownloadError("decrypt_key_unavailable")
+        content, mime_type = await self._download_url_bytes(url, kind=ref.kind)
+        if encrypted:
             content = _decrypt_wechat_payload(content, key)
         return DownloadedAttachment(
             data=content,
@@ -561,12 +563,9 @@ def _media_payload(item: dict, kind: str) -> dict:
 def _with_wechat_media_fields(data: dict) -> dict:
     payload = dict(data or {})
     media = payload.get("media")
+    encrypted_param = _first_present(payload, "encrypt_query_param", "encrypted_query_param")
     if isinstance(media, dict):
-        encrypted_param = _first_present(media, "encrypt_query_param", "encrypted_query_param")
-        if encrypted_param and not payload.get("cdn_url") and not payload.get("url"):
-            payload["cdn_url"] = _wechat_cdn_url(encrypted_param)
-        if encrypted_param and not payload.get("file_id") and not payload.get("media_id"):
-            payload["media_id"] = encrypted_param
+        encrypted_param = encrypted_param or _first_present(media, "encrypt_query_param", "encrypted_query_param")
         for source, target in (
             ("aes_key", "aes_key"),
             ("aeskey", "aes_key"),
@@ -580,6 +579,10 @@ def _with_wechat_media_fields(data: dict) -> dict:
             value = media.get(source)
             if value and not payload.get(target):
                 payload[target] = value
+    if encrypted_param and not payload.get("cdn_url") and not payload.get("url"):
+        payload["cdn_url"] = _wechat_cdn_url(encrypted_param)
+    if encrypted_param and not payload.get("file_id") and not payload.get("media_id"):
+        payload["media_id"] = encrypted_param
     return payload
 
 
@@ -626,8 +629,12 @@ def _wechat_platform_file_id(ref: AttachmentRef) -> str:
 def _wechat_is_encrypted(data: dict[str, Any]) -> bool:
     if _first_present(data, "aes_key", "aeskey"):
         return True
+    if _first_present(data, "encrypt_query_param", "encrypted_query_param"):
+        return True
     media = data.get("media")
     if isinstance(media, dict) and _first_present(media, "aes_key", "aeskey"):
+        return True
+    if isinstance(media, dict) and _first_present(media, "encrypt_query_param", "encrypted_query_param"):
         return True
     encrypt_type = str(data.get("encrypt_type") or data.get("encryptType") or "")
     return encrypt_type not in {"", "0", "none", "false", "False"}

@@ -518,6 +518,7 @@ def _notice_text(kind: str, label: str, reason: str) -> str:
         "image_text_provider_not_supported": "配置的图片文本化 provider 不支持图片输入。",
         "image_text_failed": "图片文本化失败。",
         "image_text_empty": "图片文本化没有返回有效内容。",
+        "decrypt_key_unavailable": "微信加密图片缺少解密 key，无法本地化。",
         "ocr_endpoint_unavailable": "本地 OCR 服务不可用。",
         "ocr_request_failed": "本地 OCR 请求失败。",
         "ocr_empty": "本地 OCR 没有返回有效文字。",
@@ -560,18 +561,48 @@ def _diagnostics(items: list[ProcessedAttachment], *, settings) -> dict[str, Any
     status_counts: dict[str, int] = {}
     mode_counts: dict[str, int] = {}
     kind_counts: dict[str, int] = {}
+    reason_counts: dict[str, int] = {}
     for item in items:
         status_counts[item.status] = status_counts.get(item.status, 0) + 1
         mode_counts[item.effective_mode] = mode_counts.get(item.effective_mode, 0) + 1
         kind_counts[item.kind] = kind_counts.get(item.kind, 0) + 1
+        if item.reason:
+            reason_counts[item.reason] = reason_counts.get(item.reason, 0) + 1
     return {
         "enabled": bool(getattr(settings, "multimodal_enabled", True)),
         "attachments_count": len(items),
         "attachment_kinds": sorted(kind_counts),
         "status_counts": dict(sorted(status_counts.items())),
         "effective_modes": dict(sorted(mode_counts.items())),
+        "reason_counts": dict(sorted(reason_counts.items())),
         "resolved_count": sum(1 for item in items if item.resolved is not None),
         "native_count": sum(1 for item in items if item.effective_mode == "native"),
         "notice_count": sum(1 for item in items if item.notice_text),
         "failed_count": sum(1 for item in items if item.status == "failed"),
+        "items": [_diagnostic_item(item) for item in items],
+    }
+
+
+def _diagnostic_item(item: ProcessedAttachment) -> dict[str, Any]:
+    ref = item.ref
+    resolved = item.resolved
+    name = (resolved.name if resolved else "") or (ref.name if ref else "") or item.id
+    mime_type = (resolved.mime_type if resolved else "") or (ref.mime_type if ref else "")
+    size = (resolved.size if resolved else 0) or (ref.size if ref else 0)
+    return {
+        "id": item.id,
+        "kind": item.kind,
+        "name": name,
+        "mime_type": mime_type,
+        "size": size,
+        "configured_mode": item.configured_mode,
+        "effective_mode": item.effective_mode,
+        "status": item.status,
+        "reason": item.reason,
+        "has_notice": bool(item.notice_text),
+        "resolved": resolved is not None,
+        "native": item.effective_mode == "native",
+        "has_local_path": bool(resolved and resolved.local_path),
+        "has_url": bool(ref and ref.url),
+        "has_platform_file_id": bool(ref and ref.platform_file_id),
     }

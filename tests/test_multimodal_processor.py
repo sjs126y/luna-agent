@@ -318,6 +318,43 @@ async def test_store_resolution_error_returns_notice(tmp_path):
     assert result.attachments[0].status == "failed"
     assert result.attachments[0].reason == "file_not_found"
     assert result.diagnostics["failed_count"] == 1
+    assert result.diagnostics["reason_counts"] == {"file_not_found": 1}
+    assert result.diagnostics["items"][0]["reason"] == "file_not_found"
+    assert result.diagnostics["items"][0]["name"] == "missing.txt"
+    assert result.diagnostics["items"][0]["has_local_path"] is False
+
+
+@pytest.mark.asyncio
+async def test_decrypt_key_unavailable_returns_clear_notice(tmp_path):
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_image_mode="auto"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="describe",
+            attachments=[
+                AttachmentRef(
+                    id="w1",
+                    kind="image",
+                    name="wechat.jpg",
+                    metadata={
+                        "attachment_resolve": {
+                            "status": "failed",
+                            "reason": "decrypt_key_unavailable",
+                        }
+                    },
+                )
+            ],
+        ),
+        provider=_provider(),
+    )
+
+    assert result.attachments[0].status == "failed"
+    assert result.attachments[0].reason == "decrypt_key_unavailable"
+    assert "微信加密图片缺少解密 key" in result.content_blocks[-1]["text"]
+    assert result.diagnostics["reason_counts"] == {"decrypt_key_unavailable": 1}
 
 
 @pytest.mark.asyncio

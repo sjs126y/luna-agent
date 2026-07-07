@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 17:14 CST
+更新时间：2026-07-07 18:05 CST
 
 ## 交接定位
 
@@ -41,9 +41,12 @@
 - Image text fallback v2.3：新增本地 OCR HTTP describer，支持 `GET /health` + `POST /ocr` 协议，OCR 结果复用同一套图片文本化缓存；主项目不引入 OCR 重依赖。
 - Platform attachment resolve v1：新增 `attachments.*` 配置、adapter 基类 `prepare_inbound_attachments()` / `download_attachment()` 扩展点、`DownloadedAttachment` 入库结构；Gateway 在授权通过且命令未被消费后触发 adapter 准备附件，provider 不参与下载决策。
 - Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
+- Multimodal attachment diagnostics：`turn_start.multimodal_diagnostics` 已补充失败 reason 聚合和每个附件的安全摘要，前端可直接展示单个附件为何失败。
+- WeChat encrypted media hardening：微信顶层或嵌套 `encrypt_query_param/encrypted_query_param` 均会进入平台下载链路；缺少 `aes_key` 时稳定返回 `decrypt_key_unavailable`，不再只给泛化失败提示。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
-最近一次记录的全量测试结果：`754 passed`。
+最近一次记录的全量测试结果：`757 passed`。
+最近一次聚焦验证：`tests/test_multimodal_processor.py tests/test_platform_adapters.py`，`52 passed`。
 
 ## 已完成方向：Multimodal Input v1-v4
 

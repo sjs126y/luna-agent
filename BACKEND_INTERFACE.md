@@ -54,10 +54,30 @@
 - `attachment_kinds: list[string]`
 - `status_counts: object`
 - `effective_modes: object`
+- `reason_counts: object`
 - `resolved_count: integer`
 - `native_count: integer`
 - `notice_count: integer`
 - `failed_count: integer`
+- `items: list[object]`
+
+`multimodal_diagnostics.items[]` 是安全摘要，不包含图片 base64、完整 URL 或后端缓存路径。常见字段：
+
+- `id: string`
+- `kind: string`
+- `name: string`
+- `mime_type: string`
+- `size: integer`
+- `configured_mode: string`
+- `effective_mode: string`
+- `status: string`
+- `reason: string`
+- `has_notice: boolean`
+- `resolved: boolean`
+- `native: boolean`
+- `has_local_path: boolean`
+- `has_url: boolean`
+- `has_platform_file_id: boolean`
 
 说明：后端不会在事件或 transcript 中返回图片 base64。前端只需要展示附件数量、类型和降级/失败摘要；具体附件缓存路径属于后端内部实现。
 
@@ -391,6 +411,7 @@ CLI 说明：
 - 本地化状态会写入 `AttachmentRef.metadata.attachment_resolve`。
 - QQ adapter 已支持 OneBot 风格的 `get_image` / `get_record` / `get_file` / `get_group_file_url` 下载候选。
 - WeChat adapter 已支持 iLink CDN 加密媒体下载，会使用 `aes_key` 解密后再进入缓存。
+- WeChat adapter 会识别顶层或嵌套的 `encrypt_query_param` / `encrypted_query_param`，缺少 `aes_key` 时会稳定返回 `decrypt_key_unavailable`。
 
 平台 adapter 当前不保证：
 
