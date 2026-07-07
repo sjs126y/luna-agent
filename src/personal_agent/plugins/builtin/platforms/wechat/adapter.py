@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import logging
+import mimetypes
 import secrets
 import struct
 import time
@@ -16,17 +17,22 @@ import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 
+from personal_agent.attachments import DownloadedAttachment
+from personal_agent.attachments.store import DEFAULT_MAX_BYTES
 from personal_agent.platforms.core import (
+    AttachmentDownloadError,
     BasePlatformAdapter,
     ChatInfo,
     PlatformCapabilities,
     SendResult,
 )
 from personal_agent.platforms.attachments import attachment_part
-from personal_agent.models.messages import MessageEnvelope, MessageEvent, MessagePart, SessionSource
+from personal_agent.models.messages import AttachmentRef, MessageEnvelope, MessageEvent, MessagePart, SessionSource
+from personal_agent.tools.url_safety import check_url
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +170,81 @@ class WeChatAdapter(BasePlatformAdapter):
 
     async def get_chat_info(self, chat_id: str) -> ChatInfo:
         return ChatInfo(chat_id=chat_id, chat_type="dm")
+
+    async def _prepare_attachment_ref(
+        self,
+        ref: AttachmentRef,
+        source: SessionSource | None,
+    ) -> AttachmentRef:
+        if _should_use_wechat_downloader(ref):
+            ref = AttachmentRef(
+                id=ref.id,
+                kind=ref.kind,
+                name=ref.name,
+                mime_type=ref.mime_type,
+                size=ref.size,
+                url="",
+                platform_file_id=ref.platform_file_id or _wechat_platform_file_id(ref),
+                local_path=ref.local_path,
+                metadata=dict(ref.metadata),
+            )
+        return await super()._prepare_attachment_ref(ref, source)
+
+    async def download_attachment(
+        self,
+        ref: AttachmentRef,
+        source: SessionSource | None = None,
+    ) -> DownloadedAttachment:
+        data = _wechat_data(ref)
+        url = _wechat_download_url(data)
+        if not url:
+            raise AttachmentDownloadError("platform_download_unavailable", "wechat_download_url_unavailable")
+        encrypted = _wechat_is_encrypted(data)
+        content, mime_type = await self._download_url_bytes(url, kind=ref.kind)
+        if encrypted:
+            key = _wechat_aes_key(data)
+            if not key:
+                raise AttachmentDownloadError("decrypt_key_unavailable")
+            content = _decrypt_wechat_payload(content, key)
+        return DownloadedAttachment(
+            data=content,
+            kind=_media_kind_from_ref(ref),
+            name=_wechat_download_name(ref, data),
+            mime_type=ref.mime_type or data.get("mime_type") or data.get("mime") or mime_type,
+            source_url=url,
+            platform_file_id=ref.platform_file_id or _wechat_platform_file_id(ref),
+            metadata={
+                "wechat_download": {
+                    "encrypted": encrypted,
+                    "source_url": url,
+                    "file_id": ref.platform_file_id or _wechat_platform_file_id(ref),
+                }
+            },
+        )
+
+    async def _download_url_bytes(self, url: str, *, kind: str) -> tuple[bytes, str]:
+        safety_error = check_url(url)
+        if safety_error:
+            raise AttachmentDownloadError("unsafe_url", safety_error)
+        limit = int(DEFAULT_MAX_BYTES.get(_media_kind_from_value(kind), DEFAULT_MAX_BYTES["file"]))
+        close_session = False
+        session = self._send_session or self._poll_session
+        if session is None:
+            timeout = aiohttp.ClientTimeout(total=API_TIMEOUT_MS / 1000)
+            session = aiohttp.ClientSession(trust_env=True, timeout=timeout)
+            close_session = True
+        try:
+            async with session.get(url) as resp:
+                if not resp.ok:
+                    raise AttachmentDownloadError("download_failed", f"WeChat media HTTP {resp.status}")
+                content = await resp.content.read(limit + 1)
+                if len(content) > limit:
+                    raise AttachmentDownloadError("size_exceeded")
+                mime_type = str(resp.headers.get("Content-Type") or "").split(";", 1)[0]
+                return content, mime_type
+        finally:
+            if close_session:
+                await session.close()
 
     # ── typing indicator ──────────────────────────────
 
@@ -408,8 +489,8 @@ def _media_summary(item: dict) -> str:
 
 def _media_part(item: dict) -> MessagePart:
     itype = item.get("type") or item.get("msg_type")
-    kind = _media_kind(itype)
-    data = _media_payload(item, kind)
+    kind = _media_kind(itype, item)
+    data = _with_wechat_media_fields(_media_payload(item, kind))
     detail = _first_present(
         data,
         "file_name",
@@ -435,7 +516,18 @@ def _media_part(item: dict) -> MessagePart:
     )
 
 
-def _media_kind(itype) -> str:
+def _media_kind(itype, item: dict | None = None) -> str:
+    if isinstance(item, dict):
+        if isinstance(item.get("image_item"), dict):
+            return "image"
+        if isinstance(item.get("voice_item"), dict) or isinstance(item.get("audio_item"), dict):
+            return "audio"
+        if isinstance(item.get("video_item"), dict):
+            return "video"
+        if isinstance(item.get("file_item"), dict):
+            return "file"
+        if isinstance(item.get("media_item"), dict):
+            return "file"
     mapping = {
         2: "image",
         3: "audio",
@@ -466,12 +558,166 @@ def _media_payload(item: dict, kind: str) -> dict:
     return item
 
 
+def _with_wechat_media_fields(data: dict) -> dict:
+    payload = dict(data or {})
+    media = payload.get("media")
+    if isinstance(media, dict):
+        encrypted_param = _first_present(media, "encrypt_query_param", "encrypted_query_param")
+        if encrypted_param and not payload.get("cdn_url") and not payload.get("url"):
+            payload["cdn_url"] = _wechat_cdn_url(encrypted_param)
+        if encrypted_param and not payload.get("file_id") and not payload.get("media_id"):
+            payload["media_id"] = encrypted_param
+        for source, target in (
+            ("aes_key", "aes_key"),
+            ("aeskey", "aes_key"),
+            ("file_size", "file_size"),
+            ("size", "size"),
+            ("file_name", "file_name"),
+            ("filename", "filename"),
+            ("name", "name"),
+            ("md5", "md5"),
+        ):
+            value = media.get(source)
+            if value and not payload.get(target):
+                payload[target] = value
+    return payload
+
+
+def _wechat_cdn_url(encrypted_query_param: str) -> str:
+    return (
+        "https://novac2c.cdn.weixin.qq.com/c2c/download"
+        f"?encrypted_query_param={quote(str(encrypted_query_param), safe='')}"
+    )
+
+
 def _first_present(data: dict, *keys: str) -> str:
     for key in keys:
         value = data.get(key)
         if value:
             return str(value)
     return ""
+
+
+def _wechat_data(ref: AttachmentRef) -> dict[str, Any]:
+    metadata = dict(ref.metadata or {})
+    value = metadata.get("wechat_media")
+    if isinstance(value, dict):
+        return _with_wechat_media_fields(value)
+    return {}
+
+
+def _should_use_wechat_downloader(ref: AttachmentRef) -> bool:
+    data = _wechat_data(ref)
+    return bool(_wechat_is_encrypted(data) and _wechat_download_url(data))
+
+
+def _wechat_download_url(data: dict[str, Any]) -> str:
+    return _first_present(data, "download_url", "url", "cdn_url")
+
+
+def _wechat_platform_file_id(ref: AttachmentRef) -> str:
+    data = _wechat_data(ref)
+    return (
+        ref.platform_file_id
+        or _first_present(data, "file_id", "media_id", "encrypt_query_param", "encrypted_query_param")
+    )
+
+
+def _wechat_is_encrypted(data: dict[str, Any]) -> bool:
+    if _first_present(data, "aes_key", "aeskey"):
+        return True
+    media = data.get("media")
+    if isinstance(media, dict) and _first_present(media, "aes_key", "aeskey"):
+        return True
+    encrypt_type = str(data.get("encrypt_type") or data.get("encryptType") or "")
+    return encrypt_type not in {"", "0", "none", "false", "False"}
+
+
+def _wechat_aes_key(data: dict[str, Any]) -> bytes:
+    value = _first_present(data, "aes_key", "aeskey")
+    media = data.get("media")
+    if not value and isinstance(media, dict):
+        value = _first_present(media, "aes_key", "aeskey")
+    if not value:
+        return b""
+    raw_value = value.strip()
+    try:
+        decoded = base64.b64decode(raw_value)
+    except Exception:
+        decoded = b""
+    if len(decoded) == 16:
+        return decoded
+    if len(decoded) == 32 and _is_hex_bytes(decoded):
+        return bytes.fromhex(decoded.decode("ascii"))
+    if len(raw_value) == 32 and _is_hex_text(raw_value):
+        return bytes.fromhex(raw_value)
+    if len(raw_value.encode("utf-8")) == 16:
+        return raw_value.encode("utf-8")
+    raise AttachmentDownloadError("decrypt_key_invalid")
+
+
+def _decrypt_wechat_payload(data: bytes, key: bytes) -> bytes:
+    try:
+        from Crypto.Cipher import AES
+    except Exception as exc:
+        raise AttachmentDownloadError("decrypt_unavailable", f"{type(exc).__name__}: {exc}") from exc
+    if len(key) != 16:
+        raise AttachmentDownloadError("decrypt_key_invalid")
+    if len(data) % 16 != 0:
+        raise AttachmentDownloadError("decrypt_payload_invalid")
+    decrypted = AES.new(key, AES.MODE_ECB).decrypt(data)
+    return _pkcs7_unpad(decrypted)
+
+
+def _pkcs7_unpad(data: bytes) -> bytes:
+    if not data:
+        raise AttachmentDownloadError("decrypt_payload_invalid")
+    pad = data[-1]
+    if pad < 1 or pad > 16:
+        raise AttachmentDownloadError("decrypt_payload_invalid")
+    if data[-pad:] != bytes([pad]) * pad:
+        raise AttachmentDownloadError("decrypt_payload_invalid")
+    return data[:-pad]
+
+
+def _is_hex_bytes(value: bytes) -> bool:
+    try:
+        return _is_hex_text(value.decode("ascii"))
+    except UnicodeDecodeError:
+        return False
+
+
+def _is_hex_text(value: str) -> bool:
+    return all(char in "0123456789abcdefABCDEF" for char in value)
+
+
+def _media_kind_from_ref(ref: AttachmentRef) -> str:
+    return _media_kind_from_value(ref.kind)
+
+
+def _media_kind_from_value(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"image", "photo", "picture", "img"}:
+        return "image"
+    if normalized in {"voice", "record", "audio", "sound"}:
+        return "audio"
+    if normalized in {"video", "movie"}:
+        return "video"
+    return "file"
+
+
+def _wechat_download_name(ref: AttachmentRef, data: dict[str, Any]) -> str:
+    value = (
+        ref.name
+        or _first_present(data, "file_name", "filename", "name")
+        or Path(_wechat_download_url(data)).name
+        or ref.platform_file_id
+        or "attachment"
+    )
+    if Path(value).suffix:
+        return value
+    extension = mimetypes.guess_extension(ref.mime_type or str(data.get("mime_type") or "")) or ""
+    return f"{value}{extension}"
 
 
 # ── QR Helpers ──────────────────────────────────────

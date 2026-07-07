@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import base64
 import hashlib
 import hmac
 import json
@@ -530,3 +531,125 @@ async def test_qq_webhook_signature_is_checked(tmp_path: Path, monkeypatch):
     assert await adapter.handle_webhook_payload(payload, signature="bad") is False
     assert await adapter.handle_webhook_payload(payload, signature=signature) is True
     assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_qq_download_attachment_uses_onebot_media_endpoint(tmp_path: Path, monkeypatch):
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path), db=None)
+    adapter._session = object()
+    calls = []
+
+    async def fake_post_json(endpoint, payload):
+        calls.append((endpoint, payload))
+        return {"status": "ok", "data": {"file": "https://example.test/voice.amr"}}
+
+    async def fake_read_download_target(target, **kwargs):
+        return b"voice", target, "audio/amr"
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+    monkeypatch.setattr(adapter, "_read_download_target", fake_read_download_target)
+
+    downloaded = await adapter.download_attachment(
+        AttachmentRef(
+            id="q1",
+            kind="audio",
+            name="voice.amr",
+            platform_file_id="voice.amr",
+            metadata={"onebot_data": {"file": "voice.amr"}},
+        )
+    )
+
+    assert calls[0] == ("get_record", {"file": "voice.amr"})
+    assert downloaded.data == b"voice"
+    assert downloaded.kind == "audio"
+    assert downloaded.mime_type == "audio/amr"
+    assert downloaded.source_url == "https://example.test/voice.amr"
+
+
+@pytest.mark.asyncio
+async def test_wechat_download_attachment_decrypts_cdn_media(tmp_path: Path, monkeypatch):
+    from Crypto.Cipher import AES
+
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    key = b"0123456789abcdef"
+    plaintext = b"image-payload"
+    pad = 16 - (len(plaintext) % 16)
+    encrypted = AES.new(key, AES.MODE_ECB).encrypt(plaintext + bytes([pad]) * pad)
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+
+    async def fake_download_url_bytes(url, *, kind):
+        return encrypted, "application/octet-stream"
+
+    monkeypatch.setattr(adapter, "_download_url_bytes", fake_download_url_bytes)
+
+    downloaded = await adapter.download_attachment(
+        AttachmentRef(
+            id="w1",
+            kind="image",
+            name="photo.png",
+            metadata={
+                "wechat_media": {
+                    "file_name": "photo.png",
+                    "media": {
+                        "encrypt_query_param": "encrypted-param",
+                        "aes_key": base64.b64encode(key).decode(),
+                    },
+                }
+            },
+        )
+    )
+
+    assert downloaded.data == plaintext
+    assert downloaded.name == "photo.png"
+    assert downloaded.source_url.startswith("https://novac2c.cdn.weixin.qq.com/c2c/download")
+    assert downloaded.platform_file_id == "encrypted-param"
+    assert downloaded.metadata["wechat_download"]["encrypted"] is True
+
+
+@pytest.mark.asyncio
+async def test_wechat_prepare_encrypted_url_uses_platform_downloader(tmp_path: Path, monkeypatch):
+    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))
+    calls = []
+
+    async def fake_download_attachment(ref, source=None):
+        calls.append((ref.url, ref.platform_file_id))
+        return DownloadedAttachment(
+            data=b"\x89PNG\r\n\x1a\npayload",
+            kind="image",
+            name="photo.png",
+            mime_type="image/png",
+            platform_file_id=ref.platform_file_id,
+        )
+
+    monkeypatch.setattr(adapter, "download_attachment", fake_download_attachment)
+
+    prepared = await adapter._prepare_attachment_ref(
+        AttachmentRef(
+            id="w2",
+            kind="image",
+            name="photo.png",
+            url="https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=encrypted-param",
+            metadata={
+                "wechat_media": {
+                    "cdn_url": "https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=encrypted-param",
+                    "aes_key": base64.b64encode(b"0123456789abcdef").decode(),
+                    "media_id": "encrypted-param",
+                }
+            },
+        ),
+        source=None,
+    )
+
+    assert calls == [("", "encrypted-param")]
+    assert prepared.local_path
+    assert prepared.metadata["attachment_resolve"]["status"] == "resolved"

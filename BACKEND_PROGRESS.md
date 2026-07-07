@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 15:44 CST
+更新时间：2026-07-07 16:00 CST
 
 ## 交接定位
 
@@ -32,13 +32,14 @@
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
-- Platform adapter base：平台消息基类、media attachment v1 和授权后附件准备链路已打底；平台真实下载器可以按平台逐步补。
-- Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`，真实平台 file_id 下载器仍需逐步实现。
+- Platform adapter base：平台消息基类、media attachment v1 和授权后附件准备链路已打底；QQ/微信真实下载器 v1 已补，Feishu/Telegram 可后续补。
+- Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`。
 - Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
 - Platform attachment resolve v1：新增 `attachments.*` 配置、adapter 基类 `prepare_inbound_attachments()` / `download_attachment()` 扩展点、`DownloadedAttachment` 入库结构；Gateway 在授权通过且命令未被消费后触发 adapter 准备附件，provider 不参与下载决策。
+- Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
-最近一次记录的全量测试结果：`731 passed`。
+最近一次记录的全量测试结果：`734 passed`。
 
 ## 已完成方向：Multimodal Input v1-v4
 
@@ -122,6 +123,35 @@ uv run pytest -q
 - QQ / WeChat 真实 `download_attachment()` 实现。
 - Feishu / Telegram 真实下载器可在 QQ / WeChat 后补。
 - OCR / ASR / 文件文本提取仍属于后续 multimodal describer / 工具层，不在平台下载链路内。
+
+## 已完成方向：Platform Downloader v1
+
+状态：已完成 QQ / WeChat 下载器首版实现。
+
+已完成：
+
+- QQ adapter 覆盖 `download_attachment()`，按附件类型尝试 OneBot 风格 `get_image`、`get_record`、`get_file`，群文件额外尝试 `get_group_file_url`。
+- QQ 下载器支持 OneBot 返回 URL、file URI、本机绝对路径或 base64 inline 内容，统一转换为 `DownloadedAttachment` 后交给 `AttachmentStore`。
+- WeChat adapter 对带 `aes_key` / `encrypt_query_param` 的 iLink CDN 媒体优先走平台下载器，避免通用 URL 缓存加密内容。
+- WeChat 下载器支持 AES-ECB + PKCS7 解密，解密后的 bytes 再进入统一附件缓存。
+- adapter 自己下载 URL 时复用 URL safety 检查和附件大小上限。
+- `BACKEND_INTERFACE.md` 已同步 QQ / WeChat 下载能力和剩余平台边界。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent tests/test_platform_adapters.py
+uv run pytest tests/test_platform_adapters.py tests/test_platforms_core.py tests/test_gateway_commands.py tests/test_attachment_store.py tests/test_multimodal_processor.py tests/test_docs.py -q
+uv run pytest -q
+```
+
+结果：目标测试 `76 passed`；全量 `734 passed`。
+
+剩余：
+
+- Feishu / Telegram 真实 `download_attachment()`。
+- QQ 不同 OneBot 实现的文件下载 API 仍需结合真实服务验证。
+- 微信缺少 `cdn_url` / `encrypt_query_param` / `aes_key` 的媒体仍会稳定失败。
 
 ## 当前分工约定
 

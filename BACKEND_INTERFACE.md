@@ -379,15 +379,19 @@ CLI 说明：
 - Telegram / Feishu / QQ / WeChat 会尽量把平台图片、音频、视频、文件解析为 `AttachmentRef`。
 - `kind` 会统一到 `image` / `audio` / `video` / `file`。
 - 能拿到的 `name` / `mime_type` / `size` / `url` / `platform_file_id` 会保留。
-- 平台原始附件字段会放入 attachment metadata，供未来下载器复用。
+- 平台原始附件字段会放入 attachment metadata，供平台下载器复用。
 - Gateway 授权通过且命令未被内部消费后，会调用来源 adapter 的附件准备方法。
 - 如果配置允许，平台 adapter 会尝试把 `url` / `platform_file_id` 本地化到 `data/attachments/`。
 - 本地化成功后，后端会把 `AttachmentRef.local_path` 更新为缓存文件路径。
 - 本地化状态会写入 `AttachmentRef.metadata.attachment_resolve`。
+- QQ adapter 已支持 OneBot 风格的 `get_image` / `get_record` / `get_file` / `get_group_file_url` 下载候选。
+- WeChat adapter 已支持 iLink CDN 加密媒体下载，会使用 `aes_key` 解密后再进入缓存。
 
 平台 adapter 当前不保证：
 
-- 不保证所有平台的 `platform_file_id` 都已经实现真实下载器。
+- 不保证 Feishu / Telegram 的 `platform_file_id` 已经实现真实下载器。
+- 不保证所有 OneBot 实现都支持同一组文件下载 API。
+- 不保证缺少微信 `cdn_url` / `encrypt_query_param` / `aes_key` 的媒体可以下载。
 - 不保证下载失败的附件可以继续进入原生多模态处理。
 - 不做 OCR / ASR / 文件文本提取。
 - 不负责判断 provider 是否支持原生多模态。
