@@ -25,6 +25,8 @@ LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
 ```
 
+`LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。Codex/Ahoo 这类 Responses 中转站通常使用根 `LLM_BASE_URL`，并显式设置 `LLM_API_MODE=codex_responses`。
+
 平台字段按需填写：
 
 ```dotenv

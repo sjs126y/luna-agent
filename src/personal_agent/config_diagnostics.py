@@ -109,7 +109,7 @@ PROVIDER_REQUIRED_ENV = {
 }
 
 VALID_LLM_PROVIDERS = set(PROVIDER_REQUIRED_ENV)
-VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages"}
+VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages", "responses", "codex_responses"}
 VALID_COMPRESSION_ENGINES = {"compressor", "simple", "none", "off", "disabled"}
 VALID_MEMORY_PROVIDERS = {"file"}
 VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "embedding"}

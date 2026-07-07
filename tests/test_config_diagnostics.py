@@ -333,6 +333,31 @@ sandbox:
     assert report["warnings"] == []
 
 
+def test_config_report_accepts_codex_responses_api_mode(tmp_path):
+    (tmp_path / "data" / "system").mkdir(parents=True)
+    (tmp_path / ".env").write_text(
+        "\n".join([
+            "LLM_PROVIDER=openai",
+            "LLM_API_KEY=test",
+            "LLM_BASE_URL=https://api.ahooqq.cn",
+            "LLM_MODEL=gpt-5.5",
+            "LLM_API_MODE=codex_responses",
+        ]),
+        encoding="utf-8",
+    )
+    (tmp_path / "config.yaml").write_text(
+        "storage:\n  data_dir: ./data\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert report["ok"] is True
+    assert not any("LLM_API_MODE 不支持" in error for error in report["errors"])
+    assert report["errors"] == []
+    assert report["warnings"] == []
+
+
 def test_config_report_warns_about_windows_paths_and_does_not_create_them(tmp_path):
     (tmp_path / "config.yaml").write_text(
         r"""

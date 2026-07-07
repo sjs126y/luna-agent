@@ -28,7 +28,6 @@ async def test_create_agent_runtime_resolves_transport_and_compressor(tmp_path):
         plugins_dirs=[],
         llm_provider="deepseek",
         llm_base_url="https://example.test",
-        llm_api_mode="test_mode",
         llm_model="deepseek-chat",
         compression_threshold_ratio=0.42,
     )
@@ -79,6 +78,28 @@ async def test_create_agent_runtime_wires_plugin_hooks(tmp_path):
     assert runtime.agent.hooks.on_after_llm_call
     assert runtime.agent.hooks.on_before_tool_exec
     assert runtime.agent.hooks.on_after_tool_exec
+
+
+@pytest.mark.asyncio
+async def test_create_agent_runtime_supports_codex_responses_mode(tmp_path, monkeypatch):
+    from personal_agent.plugins.builtin.llm.builtin import register
+    from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
+
+    register(None)
+    monkeypatch.setenv("LLM_API_MODE", "codex_responses")
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[],
+        llm_provider="openai",
+        llm_base_url="https://api.ahooqq.cn",
+        llm_api_key="test",
+        llm_model="gpt-5.5",
+    )
+
+    runtime = await create_agent_runtime(settings)
+
+    assert isinstance(runtime.transport, CodexResponsesTransport)
+    assert runtime.provider.base_url == "https://api.ahooqq.cn"
 
 
 def test_system_prompt_includes_tool_protocol_before_tool_list():

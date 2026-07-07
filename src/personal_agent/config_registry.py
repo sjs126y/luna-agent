@@ -243,7 +243,7 @@ class ConfigRegistry:
 
 EXECUTION_MODES = ("guarded", "standard", "trusted", "sovereign")
 LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter")
-LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions")
+LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 IMAGE_TEXT_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 COMPRESSION_ENGINES = ("compressor", "disabled", "none", "off", "simple")
 MEMORY_PROVIDERS = ("file",)
@@ -316,7 +316,7 @@ def _llm_fields() -> tuple[ConfigField, ...]:
         _env_field("LLM_API_KEY", "llm_api_key", "", "str", "llm", "LLM API key.", sensitive=True),
         _env_field("LLM_BASE_URL", "llm_base_url", "", "str", "llm", "LLM base URL."),
         _env_field("LLM_MODEL", "llm_model", "deepseek-chat", "str", "llm", "LLM model name."),
-        _env_field("LLM_API_MODE", "llm_api_mode", "auto", "str", "llm", "LLM API compatibility mode."),
+        _env_field("LLM_API_MODE", "llm_api_mode", "auto", "str", "llm", "LLM API compatibility mode.", choices=LLM_API_MODES),
         _env_field("LLM_MAX_TOKENS", "llm_max_tokens", 4096, "int", "llm", "Maximum LLM output tokens.", minimum=1),
     )
 

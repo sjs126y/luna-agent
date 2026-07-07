@@ -94,7 +94,7 @@ class ProviderRegistry:
 
     @staticmethod
     def detect_api_mode(base_url: str, provider_name: str) -> str:
-        """Infer api_mode from base_url. Returns 'anthropic_messages' | 'chat_completions'."""
+        """Infer api_mode from base_url; explicit LLM_API_MODE wins."""
         import os
         explicit = os.getenv("LLM_API_MODE", "auto")
         if explicit != "auto":
