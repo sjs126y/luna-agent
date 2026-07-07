@@ -194,7 +194,7 @@ python -m compileall -q src/personal_agent
 uv run pytest -q
 ```
 
-当前主分支最近一次前后端合并后全量结果：`746 passed`。
+当前历史清理分支最近一次全量结果：`708 passed`。
 
 ## 技术栈
 

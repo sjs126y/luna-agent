@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 10:25 CST
+更新时间：2026-07-07 10:55 CST
 
 ## 交接定位
 
@@ -33,7 +33,7 @@
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
 - Platform adapter base：平台消息基类和 media attachment v1 已打底，但平台线暂时不要继续激进推进，避免牵动底层架构。
 
-最近一次记录的全量测试结果：前后端合并后 `746 passed`。
+最近一次记录的全量测试结果：历史清理后 `708 passed`。
 
 ## 当前分工约定
 
@@ -65,6 +65,27 @@ uv run pytest -q
 ```
 
 结果：`68 passed`，全量 `667 passed`。
+
+## 已完成方向：历史入口与运行数据清理
+
+状态：已完成并提交。
+
+已完成：
+
+- 新增 `config.yaml.example` 作为可发布模板，当前 `config.yaml` 保留本机路径配置。
+- `personal-agent chat` 默认启动 inline TUI；`--simple` 旧 REPL 和 classic `TerminalRenderer` 已移除。
+- `python -m personal_agent` 统一转发 Typer CLI，不再维护 `--cli` / `--ingest` / `--wechat-login` 旧参数分发。
+- 微信登录迁移为 `personal-agent wechat-login`；文件记忆导入迁移为 `personal-agent memory ingest <path>`。
+- Skill usage 运行数据迁到 `data/skills/usage.json`，源码目录不再跟踪 `.usage.json`。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
+
+结果：全量 `708 passed`。
 
 ## 已完成方向：Turn Report 持久化
 

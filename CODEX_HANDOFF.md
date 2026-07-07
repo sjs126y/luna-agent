@@ -1,12 +1,13 @@
 # Codex 交接记录
 
-更新时间：2026-07-07 01:31 CST
+更新时间：2026-07-07 10:55 CST
 
 ## 当前状态
 
-- 当前主分支：`main`
+- 当前工作分支：`feature/legacy-cleanup`
 - 后端分支 `feature/backend-provider-cache` 已合入主分支。
 - 前端分支 `feature/frontend-tui-polish` 已合入主分支。
+- 历史清理分支已完成入口收敛：inline TUI 是唯一正式交互终端 UI，classic/simple 已移除。
 - 最近主分支合并提交：
   - `e6ccb98 Merge branch 'feature/backend-provider-cache'`
   - `73d0f24 [codex] merge frontend tui polish`
@@ -17,7 +18,7 @@ python -m compileall -q src/personal_agent
 uv run pytest -q
 ```
 
-结果：后端合并后 `685 passed`；前后端都合并后 `746 passed`。
+结果：前后端合并后 `746 passed`；历史清理后 `708 passed`。
 
 ## 文档入口
 
@@ -51,6 +52,7 @@ uv run pytest -q
 - **Usage / context**：`llm_start` / `llm_end` 区分最近一次 API token 消耗与当前上下文占用估算；`/usage` 已修正工具计数语义。
 - **Tool protocol prompt**：系统提示已加入稳定工具调用规则，降低模型只用文字声称调用工具的概率。
 - **Doctor/runtime diagnostics**：runtime health 已能展示 commands、query、execution、activity、provider cache、turn reports、tool truth 等摘要。
+- **历史入口清理**：`python -m personal_agent` 统一转发 Typer CLI；`wechat-login` 和 `memory ingest` 已迁到正式命令；skill usage 状态写入 `data/skills/usage.json`。
 
 ## 前端完成项
 
@@ -61,15 +63,16 @@ uv run pytest -q
 - **Tool trace / tool runs**：实时 `tool_start/tool_decision/tool_end` 和历史 `/tool-runs` 已消费结构化字段，并支持 `Ctrl+O` 展开完整输出。
 - **Activity UI**：`/activity` 消费 `kind="activity"` payload，展示 gateway、sub agents、background processes 的总览、列表和详情。
 - **前端状态消费**：`UIState` 保留 context budget、cache usage、activity summary 等结构化状态，便于后续做面板或详情页。
+- **入口收敛**：`personal-agent chat` 默认启动 inline TUI；classic `TerminalRenderer` 和 `--simple` 旧 REPL 已移除。
 
 ## 当前约定
 
 - 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
 - 前端提出后端需求时，应写入 `FRONTEND_INTERFACE_REQUIREMENTS.md`，优先是字段/小接口级别。
-- 后端线不主动重做 TUI 交互；前端线不直接改后端 runtime 架构，除非用户明确要求。
+- inline TUI 是正式交互终端 UI；`--once` 保留为脚本/单轮入口。
 - 每次工作结束要更新自己负责的进度文件。
 - 提交信息继续使用 `[codex]` 前缀。
-- 测试可能修改 `src/personal_agent/skills/builtin/.usage.json`，提交前必须恢复。
+- 运行数据写入 `data/`；源码目录不再跟踪 skill usage 状态。
 
 ## 后续建议
 

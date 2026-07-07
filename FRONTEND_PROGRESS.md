@@ -1,6 +1,6 @@
 # Frontend Progress
 
-更新时间：2026-07-07 10:25 CST
+更新时间：2026-07-07 10:55 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -17,6 +17,7 @@
 ### Inline TUI 主体
 
 - 已有 inline TUI 输入区、状态行、上下文 meter、流式回复预览、工具运行活跃区。
+- `personal-agent chat` 默认启动 inline TUI；classic `TerminalRenderer` 和 `--simple` 旧 REPL 已移除。
 - 用户消息已增加底色/左侧强调，提高和助手输出的对比度；多行历史消息每行都会保持左侧蓝色强调条。
 - 输入框已有低调背景和左侧提示符；多行输入/折行会保持同一左侧蓝色强调条；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
 - 状态栏显示当前执行模式、模型、真正的 context usage，以及最近一轮模型 input/output token。
@@ -126,6 +127,13 @@
 - 多工具结果列表 / Ctrl+O 选择展开：用户感兴趣，但之前尝试失败过，暂缓，不作为当前优先项。
 
 ## 最近完成
+
+### 2026-07-07 10:55 CST
+
+- 收敛聊天入口：inline TUI 成为唯一正式交互终端 UI。
+- 删除 classic `TerminalRenderer`、`CliShell` 和对应测试；删除 `--simple` 旧 REPL。
+- 保留 `personal-agent chat --once` 作为脚本/单轮入口。
+- 全量验证结果：`708 passed`。
 
 ### 2026-07-06 20:40 CST
 
