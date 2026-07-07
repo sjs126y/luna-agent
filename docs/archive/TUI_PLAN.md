@@ -1,5 +1,7 @@
 # TUI 重做规划 (CC/Codex 风格行内滚动)
 
+> 归档说明：本文是 inline TUI 落地前的历史实施计划，仅供背景参考；当前权威状态以 `FRONTEND_PROGRESS.md`、`BACKEND_INTERFACE.md` 和 `src/personal_agent/tui/README.md` 为准。
+
 > 交付对象:执行此计划的模型 (Opus 4.6 / GPT-5.5)。
 > 本文假定你**没读过**这个仓库,所有关键事实都写在文里。动手前请通读一遍,并按「Phase 0」先做技术验证。
 

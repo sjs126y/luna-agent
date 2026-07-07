@@ -1,12 +1,12 @@
 # Backend Progress
 
-更新时间：2026-07-07 00:58 CST
+更新时间：2026-07-07 10:25 CST
 
 ## 交接定位
 
 这个文档只记录后端线进度，给后续接手后端的 Codex 使用。前端 TUI / desktop / prompt_toolkit 真实终端问题交给前端线处理；后端线只负责事件、接口、agent runtime、工具执行、权限、配置、平台适配、provider / transport 等基础能力。
 
-当前工作分支：`feature/backend-provider-cache`
+当前工作分支：`feature/legacy-cleanup`
 
 权威接口文档：
 
@@ -16,7 +16,7 @@
 
 ## 当前后端状态
 
-后端主干能力已经比较完整，最近已完成并验证的方向包括：
+后端主干能力已经比较完整；`feature/backend-provider-cache` 已合并回主分支，当前分支用于清理历史遗留和收敛 CLI/TUI 入口。最近已完成并验证的方向包括：
 
 - Execution Mode v3：四档模式已经稳定，对应权限、沙箱、工具类别和确认行为。
 - Tool execution / permission pipeline：工具执行门控已经统一到 executor 路径，权限只负责自己的决策层，不再和其他阻断逻辑混在一起。
@@ -33,14 +33,13 @@
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
 - Platform adapter base：平台消息基类和 media attachment v1 已打底，但平台线暂时不要继续激进推进，避免牵动底层架构。
 
-最近一次记录的全量测试结果：turn report 阶段 `668 passed`。
+最近一次记录的全量测试结果：前后端合并后 `746 passed`。
 
 ## 当前分工约定
 
-- 后端 Codex 不主动改 `src/personal_agent/tui/`。
-- 如用户明确要求修后端事件字段的本地 TUI/CLI 消费，可做最小兼容改动，并同步接口文档。
-- 前端 Codex 如果需要字段或接口，应通过 `FRONTEND_INTERFACE_REQUIREMENTS.md` 明确写出小需求。
+- 历史清理分支允许同时整理前后端遗留，但代码行为变更仍需按版本拆分提交。
 - 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
+- 前端 Codex 如果需要字段或接口，应通过 `FRONTEND_INTERFACE_REQUIREMENTS.md` 明确写出小需求。
 - `CLAUDE.md` 不处理。
 - 测试可能修改 `src/personal_agent/skills/builtin/.usage.json`，提交前要检查并恢复非意图改动。
 

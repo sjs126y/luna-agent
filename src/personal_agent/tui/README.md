@@ -9,7 +9,7 @@ CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `doc
 - `InlineRenderer` 只消费事件并更新 `UIState`；定稿内容通过 app 的 `print_above` 回调进入 scrollback。
 - 快捷键：`Enter` 发送、`Ctrl+J` 换行、`Ctrl+O` 展开最近长输出、`Ctrl+C` 停止或清空、`Shift+Tab` 循环执行模式。
 - slash 命令仍走 runtime 后端命令入口；TUI 不重新实现命令逻辑。
-- inline tool confirmation 的前端等待/按键路径已存在；后端如果暴露 `confirm=` 回调，app 会自动传入。
+- inline tool confirmation 已接入后端 `confirm=` 回调，app 会传入 `confirm_tool` 并消费结构化确认字段。
 
 ## 前端协作边界
 

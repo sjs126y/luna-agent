@@ -1,6 +1,6 @@
 # Frontend Interface Requirements
 
-更新时间：2026-07-06 23:02 CST
+更新时间：2026-07-07 10:25 CST
 
 本文给后端线使用，只记录 inline TUI / future desktop-web 前端仍需要后端配合或需要继续固化的接口事项。已经完成并被前端消费的需求不再保留在待办区，避免重复实现或误判优先级。
 
@@ -19,9 +19,11 @@
 - 动态参数候选入口：`slash_argument_choices(...)`，当前 provider 为 `tools` 和 `sessions`。
 - Tool Runs 查询入口：`ConversationQueryService` 和 `/tool-runs [recent|summary|show <id>]`，返回 `CommandResult.kind="tool_runs"` 与结构化 payload。
 
-## 当前活跃需求
+## 已实现 / 归档需求
 
-### P1：Activity 稳定结构化接口
+Activity Runtime 已由后端实现，并已被 inline TUI 消费。当前权威接口以 `BACKEND_INTERFACE.md` 的 Activity Runtime 章节为准；本节保留为需求来源和字段背景，不再表示待实现事项。
+
+### P1：Activity 稳定结构化接口（已实现）
 
 目标：inline TUI / future desktop-web 需要一个长期稳定的 Activity 接口，覆盖宏观总览和具体对象详情。这个接口不应只是临时 doctor 字段，而应成为后续一段时间内前端展示“系统正在做什么”的稳定数据契约。
 
@@ -167,7 +169,7 @@ Activity 覆盖三个层级不同的运行对象：
   "status": "running",
   "command": "uv run pytest -q",
   "command_preview": "uv run pytest -q",
-  "cwd": "/home/sujinsheng/projects/Personal-Agent-backend",
+  "cwd": "<workspace>",
   "started_at": "2026-07-06T22:10:00Z",
   "finished_at": "",
   "duration_seconds": 23.1,
