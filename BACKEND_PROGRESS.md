@@ -43,6 +43,7 @@
 - Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
 - Multimodal attachment diagnostics：`turn_start.multimodal_diagnostics` 已补充失败 reason 聚合和每个附件的安全摘要，前端可直接展示单个附件为何失败。
 - WeChat encrypted media hardening：微信顶层或嵌套 `encrypt_query_param/encrypted_query_param` 均会进入平台下载链路；缺少 `aes_key` 时稳定返回 `decrypt_key_unavailable`，不再只给泛化失败提示。
+- Image text protocol override：新增 `multimodal.image_text_api_mode` / `IMAGE_TEXT_API_MODE`，支持 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`；Anthropic 模型经 OpenAI-compatible 中转站调用时可显式设为 `chat_completions`，Codex/Ahoo 这类 Responses 中转站建议设为 `codex_responses`。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
 最近一次记录的全量测试结果：`757 passed`。

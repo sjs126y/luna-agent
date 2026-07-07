@@ -20,6 +20,7 @@ def test_config_loader_uses_defaults(tmp_path):
     assert snapshot.attr_values["multimodal_image_text_cache"] is True
     assert snapshot.attr_values["multimodal_image_text_max_chars"] == 6000
     assert snapshot.attr_values["multimodal_image_text_provider"] == ""
+    assert snapshot.attr_values["multimodal_image_text_api_mode"] == "auto"
     assert snapshot.attr_values["multimodal_image_text_api_key"] == ""
     assert snapshot.attr_values["multimodal_ocr_endpoint"] == ""
     assert snapshot.attr_values["multimodal_ocr_timeout_seconds"] == 20
@@ -32,7 +33,7 @@ def test_config_loader_resolves_env_yaml_and_overrides(tmp_path):
     from personal_agent.config_loader import ConfigLoader
 
     (tmp_path / ".env").write_text(
-        "LLM_PROVIDER=openai\nLLM_MAX_TOKENS=2048\nIMAGE_TEXT_API_KEY=vision-key\n",
+        "LLM_PROVIDER=openai\nLLM_MAX_TOKENS=2048\nIMAGE_TEXT_API_KEY=vision-key\nIMAGE_TEXT_API_MODE=codex_responses\n",
         encoding="utf-8",
     )
     (tmp_path / "config.yaml").write_text(
@@ -51,6 +52,7 @@ multimodal:
   image_text_cache: false
   image_text_max_chars: 2048
   image_text_provider: openai
+  image_text_api_mode: chat_completions
   image_text_model: gpt-4o-mini
   ocr_endpoint: http://127.0.0.1:7788
   ocr_timeout_seconds: 5
@@ -80,6 +82,7 @@ plugins:
     assert snapshot.attr_values["multimodal_image_text_cache"] is False
     assert snapshot.attr_values["multimodal_image_text_max_chars"] == 2048
     assert snapshot.attr_values["multimodal_image_text_provider"] == "openai"
+    assert snapshot.attr_values["multimodal_image_text_api_mode"] == "codex_responses"
     assert snapshot.attr_values["multimodal_image_text_model"] == "gpt-4o-mini"
     assert snapshot.attr_values["multimodal_image_text_api_key"] == "vision-key"
     assert snapshot.attr_values["multimodal_ocr_endpoint"] == "http://127.0.0.1:7788"

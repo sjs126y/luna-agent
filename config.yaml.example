@@ -57,6 +57,7 @@ multimodal:
   image_text_cache: true            # 是否缓存图片文本化结果，后续 vision/OCR 会复用
   image_text_max_chars: 6000        # 图片文本化结果最多注入的字符数
   image_text_provider: ""           # 可选视觉辅助 provider，例如 openai / anthropic；密钥用 .env 的 IMAGE_TEXT_API_KEY
+  image_text_api_mode: "auto"        # 视觉辅助 API 协议：auto | chat_completions | anthropic_messages | responses | codex_responses；Codex/Ahoo 这类中转站通常填根 base_url 并设 codex_responses
   image_text_model: ""              # 可选视觉辅助模型，留空使用 provider 默认或主模型
   image_text_prompt: ""             # 可选自定义提示词，留空使用内置“提取文字并描述图片”
   ocr_endpoint: ""                  # 可选本地 OCR HTTP 服务，例如 http://127.0.0.1:7788

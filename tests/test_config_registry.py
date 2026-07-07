@@ -144,6 +144,13 @@ def test_config_registry_schema_is_stable():
     assert fields["multimodal.image_text_cache"]["value_type"] == "bool"
     assert fields["multimodal.image_text_provider"]["choices"][0] == ""
     assert set(fields["multimodal.image_text_provider"]["choices"]) == {"", "deepseek", "openai", "anthropic", "openrouter"}
+    assert fields["multimodal.image_text_api_mode"]["choices"] == [
+        "anthropic_messages",
+        "auto",
+        "chat_completions",
+        "codex_responses",
+        "responses",
+    ]
     assert fields["IMAGE_TEXT_API_KEY"]["sensitive"] is True
     assert fields["multimodal.ocr_timeout_seconds"]["minimum"] == 1
     assert fields["multimodal.ocr_language"]["value_type"] == "str"

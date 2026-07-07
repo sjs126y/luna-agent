@@ -123,7 +123,14 @@ async def _call_with_retry(
                     if response.status_code >= 400:
                         raise StreamError(f"HTTP {response.status_code}: {response.text[:500]}")
 
-                    yield response.json()
+                    try:
+                        yield response.json()
+                    except json.JSONDecodeError as exc:
+                        content_type = response.headers.get("content-type", "")
+                        preview = response.text[:500]
+                        raise StreamError(
+                            f"Non-JSON response from LLM API: content-type={content_type!r} body={preview!r}"
+                        ) from exc
                     return  # non-streaming request completed successfully
 
         except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
@@ -180,6 +187,23 @@ async def call_chat_completions(
 ) -> AsyncIterator[dict[str, Any]]:
     """POST to OpenAI /v1/chat/completions with retry."""
     url = f"{base_url.rstrip('/')}/chat/completions"
+    body = {**body, "stream": stream}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        **(extra_headers or {}),
+    }
+    async for event in _call_with_retry(url, headers, body, timeout=timeout, stream=stream):
+        yield event
+
+
+async def call_openai_responses(
+    base_url: str, api_key: str, body: dict, *,
+    timeout: float = 120.0, stream: bool = True,
+    extra_headers: dict[str, str] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """POST to OpenAI Responses API with retry."""
+    url = f"{base_url.rstrip('/')}/responses"
     body = {**body, "stream": stream}
     headers = {
         "Authorization": f"Bearer {api_key}",

@@ -244,6 +244,7 @@ class ConfigRegistry:
 EXECUTION_MODES = ("guarded", "standard", "trusted", "sovereign")
 LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter")
 LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions")
+IMAGE_TEXT_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 COMPRESSION_ENGINES = ("compressor", "disabled", "none", "off", "simple")
 MEMORY_PROVIDERS = ("file",)
 EXTERNAL_MEMORY_PROVIDERS = ("embedding", "none")
@@ -396,6 +397,7 @@ def _multimodal_fields() -> tuple[ConfigField, ...]:
         _yaml_field("multimodal.image_text_cache", "multimodal_image_text_cache", True, "bool", "multimodal", "Cache image-to-text fallback results."),
         _yaml_field("multimodal.image_text_max_chars", "multimodal_image_text_max_chars", 6000, "int", "multimodal", "Maximum image-to-text characters injected into context.", minimum=1),
         _yaml_field("multimodal.image_text_provider", "multimodal_image_text_provider", "", "str", "multimodal", "Vision provider used for image-to-text fallback.", choices=("", *LLM_PROVIDERS)),
+        _mixed_field("multimodal.image_text_api_mode", "multimodal_image_text_api_mode", "auto", "str", "multimodal", "Vision provider API compatibility mode.", choices=IMAGE_TEXT_API_MODES, env_key="IMAGE_TEXT_API_MODE", yaml_path="multimodal.image_text_api_mode"),
         _yaml_field("multimodal.image_text_model", "multimodal_image_text_model", "", "str", "multimodal", "Vision model used for image-to-text fallback."),
         _yaml_field("multimodal.image_text_prompt", "multimodal_image_text_prompt", "", "str", "multimodal", "Custom image-to-text prompt."),
         _yaml_field("multimodal.ocr_endpoint", "multimodal_ocr_endpoint", "", "str", "multimodal", "Local OCR HTTP service endpoint."),

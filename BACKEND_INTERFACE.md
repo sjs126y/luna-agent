@@ -383,6 +383,7 @@
 - 文本类、PDF、docx 附件在 `text` 或 `auto -> text` 模式下会由后端抽取文本并加入本轮上下文。
 - 文本抽取受 `multimodal.text_extract_max_chars` 和 `multimodal.text_extract_pdf_max_pages` 限制，超出会截断。
 - 图片在 `text` fallback 模式下会进入统一图片文本化链路；配置 `multimodal.image_text_provider` 后可调用辅助 vision provider 生成文本描述。
+- `multimodal.image_text_api_mode` 可控制图片文本化使用的 API 协议：`auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。`anthropic + auto` 会按 Anthropic Messages 请求，base URL 会按 `{base}/messages` 调用，例如 `https://api.deepseek.com/anthropic` -> `/anthropic/messages`；OpenAI-compatible 中转站应显式使用 `chat_completions`；Codex/Ahoo 这类 Responses 中转站建议显式使用 `codex_responses`，base URL 通常填根地址，例如 `https://api.ahooqq.cn`，后端会请求 `{base}/responses`。`codex_responses` 是 `responses` 的语义别名，底层 wire format 相同。
 - vision fallback 的 API key / base URL 使用 `.env` 的 `IMAGE_TEXT_API_KEY` / `IMAGE_TEXT_BASE_URL`；前端不参与模型调用。
 - 配置 `multimodal.ocr_endpoint` 后，后端可调用本地 OCR HTTP 服务；OCR 引擎不内置在主项目中。
 
