@@ -16,6 +16,9 @@ def test_config_loader_uses_defaults(tmp_path):
     assert snapshot.attr_values["agent_data_dir"] == Path("./data")
     assert snapshot.attr_values["multimodal_text_extract_max_chars"] == 12000
     assert snapshot.attr_values["multimodal_text_extract_pdf_max_pages"] == 20
+    assert snapshot.attr_values["multimodal_image_text_mode"] == "auto"
+    assert snapshot.attr_values["multimodal_image_text_cache"] is True
+    assert snapshot.attr_values["multimodal_image_text_max_chars"] == 6000
     assert snapshot.sources["LLM_PROVIDER"] == "default"
     assert snapshot.source_counts["default"] == snapshot.field_count
 
@@ -39,6 +42,9 @@ attachments:
 multimodal:
   text_extract_max_chars: 4096
   text_extract_pdf_max_pages: 3
+  image_text_mode: "off"
+  image_text_cache: false
+  image_text_max_chars: 2048
 sandbox:
   roots: ./data,./workspace
   bash_allow_network: yes
@@ -60,6 +66,9 @@ plugins:
     assert snapshot.attr_values["attachments_download_platform_files"] is False
     assert snapshot.attr_values["multimodal_text_extract_max_chars"] == 4096
     assert snapshot.attr_values["multimodal_text_extract_pdf_max_pages"] == 3
+    assert snapshot.attr_values["multimodal_image_text_mode"] == "off"
+    assert snapshot.attr_values["multimodal_image_text_cache"] is False
+    assert snapshot.attr_values["multimodal_image_text_max_chars"] == 2048
     assert snapshot.attr_values["sandbox_roots"] == [Path("./data"), Path("./workspace")]
     assert snapshot.attr_values["bash_allow_network"] is True
     assert snapshot.attr_values["plugins_dirs"] == [Path("./plugins"), Path("./more-plugins")]

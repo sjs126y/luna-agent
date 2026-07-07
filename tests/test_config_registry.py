@@ -140,6 +140,8 @@ def test_config_registry_schema_is_stable():
     assert fields["attachments.resolve_inbound"]["value_type"] == "bool"
     assert fields["multimodal.text_extract_max_chars"]["value_type"] == "int"
     assert fields["multimodal.text_extract_pdf_max_pages"]["minimum"] == 1
+    assert fields["multimodal.image_text_mode"]["choices"] == ["auto", "vision", "ocr", "off"]
+    assert fields["multimodal.image_text_cache"]["value_type"] == "bool"
     assert fields["profiles"]["env_key"] == "PROFILES"
     assert fields["profiles"]["yaml_path"] == "profiles"
     assert fields["execution.mode"]["choices"] == ["guarded", "standard", "trusted", "sovereign"]

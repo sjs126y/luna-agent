@@ -36,6 +36,7 @@
 - Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`。
 - Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
 - Multimodal text extraction v1：`text` / `auto -> text` 模式下已支持文本类、PDF、docx 附件抽取，结果进入本轮模型上下文；OCR / ASR / 视频仍留后续。
+- Image text fallback v2.1：新增图片文本化抽象、默认 null describer 和 `data/attachments/derived/` 缓存 helper；图片 text fallback 已有稳定 notice 与可注入扩展点。
 - Platform attachment resolve v1：新增 `attachments.*` 配置、adapter 基类 `prepare_inbound_attachments()` / `download_attachment()` 扩展点、`DownloadedAttachment` 入库结构；Gateway 在授权通过且命令未被消费后触发 adapter 准备附件，provider 不参与下载决策。
 - Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
@@ -59,6 +60,7 @@
 - token/context 估算对图片使用固定 token 估值，不按 base64 字符串长度计算。
 - cache diagnostics hash 会对 data URL 做指纹化，不记录完整 base64。
 - `MultiAttachmentProcessor` 默认文本化能力已支持文本类、PDF、docx 附件，并通过 `multimodal.text_extract_max_chars` / `multimodal.text_extract_pdf_max_pages` 控制上下文注入上限。
+- `MultiAttachmentProcessor` 已预留 `ImageTextDescriber` 扩展点，图片 text fallback 可走 vision/OCR 描述器；v2.1 默认没有真实图片理解能力。
 - 修复附件 resolve 失败时 `effective_mode` 未赋值导致的异常，失败现在会稳定转成 notice/diagnostics。
 - `turn_start` 新增 `attachments_count`、`attachment_kinds`、`multimodal_diagnostics`，`AgentTurnReport` 同步记录。
 - `BACKEND_INTERFACE.md` 已同步多模态事件字段。

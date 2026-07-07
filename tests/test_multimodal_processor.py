@@ -9,6 +9,7 @@ from personal_agent.attachments import AttachmentStore
 from personal_agent.conversation.input import ConversationInput
 from personal_agent.models.messages import AttachmentRef
 from personal_agent.multimodal import MultiAttachmentProcessor
+from personal_agent.multimodal.image_text import ImageTextCache, ImageTextDescription
 from personal_agent.tools.sandbox import init_sandbox
 
 
@@ -22,6 +23,9 @@ def _settings(**overrides):
         "multimodal_native_fallback": "notice",
         "multimodal_text_extract_max_chars": 12000,
         "multimodal_text_extract_pdf_max_pages": 20,
+        "multimodal_image_text_mode": "auto",
+        "multimodal_image_text_cache": True,
+        "multimodal_image_text_max_chars": 6000,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -322,3 +326,143 @@ async def test_native_image_respects_provider_mime_capability(tmp_path):
     assert result.attachments[0].status == "unsupported"
     assert result.attachments[0].reason == "mime_type_not_supported"
     assert not any(block.get("type") == "image_url" for block in result.content_blocks)
+
+
+@pytest.mark.asyncio
+async def test_image_text_mode_uses_injected_describer(tmp_path):
+    class Describer:
+        def __init__(self):
+            self.called = False
+
+        async def describe(self, resolved, ref):
+            self.called = True
+            return ImageTextDescription(text="visible image text", method="fake", provider="test")
+
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    describer = Describer()
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_image_mode="text"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+        image_text_describer=describer,
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read image",
+            attachments=[AttachmentRef(id="a1", kind="image", name="image.png", local_path=str(source))],
+        ),
+        provider=_provider(supports_image=True),
+    )
+
+    assert describer.called is True
+    assert result.attachments[0].status == "processed"
+    assert result.attachments[0].reason == "image_text_described"
+    assert "visible image text" in result.content_blocks[-1]["text"]
+    assert "方法：fake" in result.content_blocks[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_image_text_mode_defaults_to_notice_without_describer(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_image_mode="text"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read image",
+            attachments=[AttachmentRef(id="a1", kind="image", name="image.png", local_path=str(source))],
+        ),
+        provider=_provider(supports_image=True),
+    )
+
+    assert result.attachments[0].status == "unsupported"
+    assert result.attachments[0].reason == "image_text_describer_unavailable"
+    assert "当前没有可用的图片文本化能力" in result.content_blocks[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_image_text_mode_off_returns_notice(tmp_path):
+    class Describer:
+        async def describe(self, resolved, ref):  # pragma: no cover - should never run
+            raise AssertionError("describer should not be called")
+
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_image_mode="text", multimodal_image_text_mode="off"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+        image_text_describer=Describer(),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read image",
+            attachments=[AttachmentRef(id="a1", kind="image", name="image.png", local_path=str(source))],
+        ),
+        provider=_provider(supports_image=True),
+    )
+
+    assert result.attachments[0].status == "skipped"
+    assert result.attachments[0].reason == "image_text_disabled"
+
+
+@pytest.mark.asyncio
+async def test_native_image_does_not_call_image_text_describer(tmp_path):
+    class Describer:
+        async def describe(self, resolved, ref):  # pragma: no cover - should never run
+            raise AssertionError("describer should not be called")
+
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_image_mode="auto"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+        image_text_describer=Describer(),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read image",
+            attachments=[AttachmentRef(id="a1", kind="image", name="image.png", local_path=str(source))],
+        ),
+        provider=_provider(supports_image=True),
+    )
+
+    assert result.attachments[0].effective_mode == "native"
+
+
+def test_image_text_cache_round_trips_by_identity(tmp_path):
+    cache = ImageTextCache(tmp_path / "derived")
+    first = ImageTextDescription(
+        text="cached text",
+        method="vision",
+        provider="openai",
+        model="vision-a",
+        prompt_version=1,
+        metadata={"x": 1},
+    )
+
+    cache.put(first, sha256="abc", source_mime_type="image/png")
+
+    assert cache.get(
+        sha256="abc",
+        method="vision",
+        provider="openai",
+        model="vision-a",
+        prompt_version=1,
+    ).text == "cached text"
+    assert cache.get(
+        sha256="abc",
+        method="vision",
+        provider="openai",
+        model="vision-b",
+        prompt_version=1,
+    ) is None

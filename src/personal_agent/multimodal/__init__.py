@@ -5,5 +5,12 @@ from personal_agent.multimodal.processor import (
     ProcessedAttachment,
     ResolvedConversationInput,
 )
+from personal_agent.multimodal.image_text import ImageTextDescription, ImageTextDescriber
 
-__all__ = ["MultiAttachmentProcessor", "ProcessedAttachment", "ResolvedConversationInput"]
+__all__ = [
+    "ImageTextDescriber",
+    "ImageTextDescription",
+    "MultiAttachmentProcessor",
+    "ProcessedAttachment",
+    "ResolvedConversationInput",
+]

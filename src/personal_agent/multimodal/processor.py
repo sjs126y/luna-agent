@@ -11,6 +11,11 @@ from personal_agent.attachments.store import AttachmentStore, AttachmentStoreErr
 from personal_agent.attachments.text_extract import AttachmentTextExtractError, extract_attachment_text
 from personal_agent.conversation.input import ConversationInput
 from personal_agent.models.messages import AttachmentRef
+from personal_agent.multimodal.image_text import (
+    ImageTextDescribeUnavailable,
+    ImageTextDescriber,
+    NullImageTextDescriber,
+)
 from personal_agent.text_safety import clean_text
 
 
@@ -117,10 +122,12 @@ class MultiAttachmentProcessor:
         settings,
         attachment_store: AttachmentStore | None = None,
         text_describer: AttachmentTextDescriber | None = None,
+        image_text_describer: ImageTextDescriber | None = None,
     ) -> None:
         self.settings = settings
         self.attachment_store = attachment_store
         self.text_describer = text_describer or LocalAttachmentTextDescriber(settings)
+        self.image_text_describer = image_text_describer or NullImageTextDescriber()
 
     async def resolve(
         self,
@@ -235,6 +242,8 @@ class MultiAttachmentProcessor:
                 resolved=resolved,
             )
 
+        if effective_mode == "text" and kind == "image":
+            return await self._describe_image_text(ref, resolved, configured_mode=configured_mode)
         if effective_mode == "text":
             return await self._describe_text(ref, resolved, configured_mode=configured_mode)
         if effective_mode == "native":
@@ -267,6 +276,94 @@ class MultiAttachmentProcessor:
 
         return _notice(ref, attachment_id, kind, configured_mode, effective_mode, "unsupported",
                        "unsupported_mode")
+
+    async def _describe_image_text(
+        self,
+        ref: AttachmentRef,
+        resolved: ResolvedAttachment,
+        *,
+        configured_mode: str,
+    ) -> ProcessedAttachment:
+        image_text_mode = str(getattr(self.settings, "multimodal_image_text_mode", "auto") or "auto").lower()
+        if image_text_mode == "off":
+            return _notice(
+                ref,
+                resolved.id,
+                "image",
+                configured_mode,
+                "text",
+                "skipped",
+                "image_text_disabled",
+                resolved=resolved,
+            )
+        try:
+            description = await self.image_text_describer.describe(resolved, ref)
+        except ImageTextDescribeUnavailable as exc:
+            return _notice(
+                ref,
+                resolved.id,
+                "image",
+                configured_mode,
+                "text",
+                "unsupported" if exc.reason == "image_text_describer_unavailable" else "failed",
+                exc.reason or "image_text_describer_unavailable",
+                error=exc.detail or str(exc),
+                resolved=resolved,
+            )
+        except Exception as exc:
+            return _notice(
+                ref,
+                resolved.id,
+                "image",
+                configured_mode,
+                "text",
+                "failed",
+                "image_text_failed",
+                error=f"{type(exc).__name__}: {exc}",
+                resolved=resolved,
+            )
+        text = clean_text(description.text or "")
+        max_chars = int(getattr(self.settings, "multimodal_image_text_max_chars", 6000) or 6000)
+        truncated = len(text) > max_chars
+        if truncated:
+            text = text[:max_chars].rstrip()
+        if not text:
+            return _notice(
+                ref,
+                resolved.id,
+                "image",
+                configured_mode,
+                "text",
+                "failed",
+                "image_text_empty",
+                resolved=resolved,
+            )
+        label = resolved.name or ref.name or resolved.local_path or resolved.id
+        header = f"附件 {label} 图片文本化结果"
+        if description.method and description.method != "unknown":
+            header += f"（方法：{description.method}）"
+        if truncated:
+            header += f"（已截断，最多 {max_chars} 字符）"
+        summary = f"{header}：\n{text}"
+        return ProcessedAttachment(
+            id=resolved.id,
+            kind="image",
+            configured_mode=configured_mode,
+            effective_mode="text",
+            status="processed",
+            reason="image_text_described",
+            summary_text=summary,
+            ref=ref,
+            resolved=resolved,
+            metadata={
+                "method": description.method,
+                "provider": description.provider,
+                "model": description.model,
+                "cached": description.cached,
+                "confidence": description.confidence,
+                **dict(description.metadata),
+            },
+        )
 
     async def _describe_text(
         self,
@@ -413,6 +510,10 @@ def _notice_text(kind: str, label: str, reason: str) -> str:
         "platform_download_disabled": "当前配置关闭了平台文件下载。",
         "provider_not_supported": "当前 provider 不支持原生处理，且没有可用的文本化能力。",
         "describer_unavailable": "当前没有可用的文本化能力。",
+        "image_text_disabled": "当前配置关闭了图片文本化。",
+        "image_text_describer_unavailable": "当前没有可用的图片文本化能力。",
+        "image_text_failed": "图片文本化失败。",
+        "image_text_empty": "图片文本化没有返回有效内容。",
         "text_extract_unavailable": "当前文本抽取能力不可用。",
         "text_extract_failed": "附件文本抽取失败。",
         "unsupported_file_type": "当前不支持该文件类型的文本抽取。",

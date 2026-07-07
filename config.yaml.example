@@ -53,6 +53,9 @@ multimodal:
   native_fallback: "notice"        # 原生多模态不可用时：notice（提示）| text（尝试文本化）
   text_extract_max_chars: 12000     # 文本/PDF/docx 附件最多注入的字符数，超出会截断
   text_extract_pdf_max_pages: 20    # PDF 附件最多抽取页数，避免大文件污染上下文
+  image_text_mode: "auto"           # 图片文本化：auto | vision | ocr | off；当前默认只预留链路
+  image_text_cache: true            # 是否缓存图片文本化结果，后续 vision/OCR 会复用
+  image_text_max_chars: 6000        # 图片文本化结果最多注入的字符数
 
 attachments:
   resolve_inbound: true            # 授权通过后，平台入口是否尝试把附件本地化

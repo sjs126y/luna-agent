@@ -250,6 +250,7 @@ EXTERNAL_MEMORY_PROVIDERS = ("embedding", "none")
 MULTIMODAL_MODES = ("auto", "native", "text", "off")
 MULTIMODAL_NON_NATIVE_MODES = ("auto", "text", "off")
 MULTIMODAL_NATIVE_FALLBACKS = ("notice", "text")
+IMAGE_TEXT_MODES = ("auto", "vision", "ocr", "off")
 
 
 def _field(
@@ -391,6 +392,9 @@ def _multimodal_fields() -> tuple[ConfigField, ...]:
         _yaml_field("multimodal.native_fallback", "multimodal_native_fallback", "notice", "str", "multimodal", "Fallback when native multimodal input is unavailable.", choices=MULTIMODAL_NATIVE_FALLBACKS),
         _yaml_field("multimodal.text_extract_max_chars", "multimodal_text_extract_max_chars", 12000, "int", "multimodal", "Maximum extracted attachment text characters.", minimum=1),
         _yaml_field("multimodal.text_extract_pdf_max_pages", "multimodal_text_extract_pdf_max_pages", 20, "int", "multimodal", "Maximum PDF pages to extract from an attachment.", minimum=1),
+        _yaml_field("multimodal.image_text_mode", "multimodal_image_text_mode", "auto", "str", "multimodal", "Image-to-text fallback mode.", choices=IMAGE_TEXT_MODES),
+        _yaml_field("multimodal.image_text_cache", "multimodal_image_text_cache", True, "bool", "multimodal", "Cache image-to-text fallback results."),
+        _yaml_field("multimodal.image_text_max_chars", "multimodal_image_text_max_chars", 6000, "int", "multimodal", "Maximum image-to-text characters injected into context.", minimum=1),
     )
 
 
