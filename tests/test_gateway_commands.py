@@ -15,9 +15,9 @@ from personal_agent.gateway.gateway import Gateway
 from personal_agent.gateway.state import PlatformRuntime
 from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
-from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+from personal_agent.models.messages import MessageEvent, MessagePart, PlatformCapabilities, SessionSource
 from personal_agent.plugins.models import CommandEntry
-from personal_agent.conversation import ConversationTurnResult
+from personal_agent.conversation import EMPTY_FINAL_RESPONSE_MESSAGE, ConversationTurnResult
 
 
 class Memory(MemoryProvider):
@@ -726,6 +726,18 @@ async def test_base_adapter_format_send_error_strips_formatting_and_retries(gate
 
 
 @pytest.mark.asyncio
+async def test_base_adapter_splits_outbound_text_by_platform_limit(gateway):
+    adapter = TinyLimitAdapter(gateway.config, gateway.db)
+
+    await adapter._send_with_retry("chat", "abcdefghijklmnop", max_retries=0)
+
+    assert adapter.sent_contents == ["abcde", "fghij", "klmno", "p"]
+    health = adapter.health_snapshot()
+    assert health["send_stats"]["sent_count"] == 4
+    assert health["send_stats"]["failed_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_base_adapter_timeout_send_error_does_not_retry(gateway):
     adapter = SequenceSendAdapter(gateway.config, gateway.db, [
         SendResult(success=False, error="request timeout"),
@@ -1008,6 +1020,10 @@ class RecordingAdapter(FakeAdapter):
         self.sleep_delays.append(delay)
 
 
+class TinyLimitAdapter(RecordingAdapter):
+    capabilities = PlatformCapabilities(text=True, max_text_length=5)
+
+
 class TypingFailAdapter(RecordingAdapter):
     async def _send_typing(self, chat_id: str) -> None:
         raise RuntimeError("typing boom")
@@ -1059,6 +1075,26 @@ async def test_gateway_allow_and_stop_apply_to_cached_agents(gateway):
     assert "write" in gateway._agent_cache["telegram:c1:u1"]._temporary_grants
     assert "write" not in gateway._agent_cache["telegram:work:u1"]._destructive_allowed
     assert all(agent._interrupt_requested for agent in gateway._agent_cache.values())
+
+
+@pytest.mark.asyncio
+async def test_gateway_empty_final_response_uses_clear_message(gateway, monkeypatch):
+    async def run_turn_input(session_key, user_input, *, confirm=None):
+        return ConversationTurnResult(
+            final_response="",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
+
+    assert result == EMPTY_FINAL_RESPONSE_MESSAGE
 
 
 @pytest.mark.asyncio

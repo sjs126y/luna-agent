@@ -308,6 +308,28 @@ async def test_wechat_send_splits_long_text(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_wechat_send_splits_long_code_fence(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter._send_session = object()
+    calls = []
+
+    async def fake_api(path, payload, session, timeout_ms):
+        calls.append(payload["msg"]["item_list"][0]["text_item"]["text"])
+        return {"ret": 0, "errcode": 0}
+
+    monkeypatch.setattr(adapter, "_api", fake_api)
+    content = "```\n" + ("a" * 4500) + "\n```"
+
+    result = await adapter.send("wx-user", content)
+
+    assert result.success is True
+    assert len(calls) >= 3
+    assert all(len(item) <= adapter.MAX_MESSAGE_LENGTH for item in calls)
+
+
+@pytest.mark.asyncio
 async def test_wechat_send_includes_cached_context_token(tmp_path: Path, monkeypatch):
     from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 

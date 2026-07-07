@@ -442,6 +442,30 @@ uv run pytest tests/test_gateway_commands.py -q
 
 结果：聚焦 `3 passed`，gateway 命令测试 `38 passed`。
 
+## 已完成方向：平台长回复发送保护
+
+状态：已完成实现并通过聚焦验证。
+
+背景：平台消息长度有限，模型一次回复过长时，平台可能发送失败；同时 gateway/CLI 对空 `final_response` 的兜底是 `...`，用户侧很难判断是模型空回复、发送失败，还是内容被截断。
+
+已完成：
+
+- `BasePlatformAdapter._send_with_retry(...)` 按平台 `capabilities.max_text_length` 自动拆分长文本后逐段发送，普通平台不配置长度时保持原行为。
+- 新增通用 `split_text_for_platform(...)`，会在必要时硬切长行，保证每段不超过平台限制。
+- WeChat adapter 复用通用分片逻辑，不再因为“保留代码块”让超长代码块单段超过 2000 字符。
+- Conversation service 新增统一空回复兜底文案；gateway 和 CLI 不再把空回复显示成 `...`。
+- 新增回归测试覆盖平台基类分片、微信超长代码块分片、gateway 空 final 响应。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_gateway_commands.py::test_base_adapter_splits_outbound_text_by_platform_limit tests/test_gateway_commands.py::test_gateway_empty_final_response_uses_clear_message tests/test_gateway_commands.py::test_base_adapter_format_send_error_strips_formatting_and_retries tests/test_platform_adapters.py::test_wechat_send_splits_long_text tests/test_platform_adapters.py::test_wechat_send_splits_long_code_fence -q
+uv run pytest tests/test_gateway_commands.py tests/test_platform_adapters.py -q
+```
+
+结果：聚焦 `5 passed`，gateway/platform 测试 `69 passed`。
+
 ## 后续可评估方向
 
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。

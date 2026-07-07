@@ -384,6 +384,12 @@ class BasePlatformAdapter(ABC):
 
     async def _send_with_retry(self, chat_id: str, content: str, max_retries: int | None = None) -> None:
         max_retries = self._send_max_retries if max_retries is None else max_retries
+        for chunk in split_text_for_platform(content, self._max_outbound_text_length()):
+            sent = await self._send_chunk_with_retry(chat_id, chunk, max_retries=max_retries)
+            if not sent:
+                return
+
+    async def _send_chunk_with_retry(self, chat_id: str, content: str, *, max_retries: int) -> bool:
         message = OutboundMessage.text(content)
         for attempt in range(max_retries + 1):
             try:
@@ -394,7 +400,7 @@ class BasePlatformAdapter(ABC):
                     self._send_stats.sent_count += 1
                     self._send_stats.last_success_at = _now()
                     self._send_stats.last_error = ""
-                    return
+                    return True
 
                 error_lower = (result.error or "").lower()
                 self._last_send_error = result.error or "send failed"
@@ -403,7 +409,7 @@ class BasePlatformAdapter(ABC):
                 if "timeout" in error_lower or "timed out" in error_lower:
                     self._record_send_failure(result.error or "timeout")
                     logger.error("Send timed out (attempt %d): %s", attempt + 1, result.error)
-                    return
+                    return False
 
                 if attempt < max_retries:
                     self._send_stats.retry_count += 1
@@ -418,12 +424,13 @@ class BasePlatformAdapter(ABC):
                 else:
                     self._record_send_failure(result.error or "send failed")
                     logger.error("Send failed after %d retries: %s", max_retries, result.error)
+                    return False
 
             except asyncio.TimeoutError:
                 self._last_send_error = "timeout"
                 self._record_send_failure("timeout")
                 logger.error("Send timeout (attempt %d) — not retrying", attempt + 1)
-                return
+                return False
             except Exception as exc:
                 error_msg = str(exc).lower()
                 self._last_send_error = f"{type(exc).__name__}: {exc}"
@@ -431,18 +438,26 @@ class BasePlatformAdapter(ABC):
                 if "timeout" in error_msg or "timed out" in error_msg:
                     self._record_send_failure(self._last_send_error)
                     logger.error("Send timeout exception (attempt %d)", attempt + 1)
-                    return
+                    return False
                 if attempt < max_retries:
                     self._send_stats.retry_count += 1
                     logger.warning("Send exception (attempt %d/%d): %s", attempt + 1, max_retries, exc)
                     await self._sleep_before_retry(self._send_retry_delay(attempt, error_msg))
                 else:
                     self._record_send_failure(self._last_send_error)
+                    return False
+        return False
 
     # ── helpers ───────────────────────────────────────
 
     def _make_session_key(self, source) -> str:
         return f"{source.platform}:{source.chat_id}:{source.user_id}"
+
+    def _max_outbound_text_length(self) -> int:
+        try:
+            return int(getattr(self.capabilities, "max_text_length", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _message_dedupe_key(self, event: MessageEvent) -> str:
         message_id = str(event.message_id or "").strip()
@@ -559,6 +574,43 @@ def _strip_formatting(text: str) -> str:
     text = re.sub(r'`(.+?)`', r'\1', text)
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
     return text
+
+
+def split_text_for_platform(text: str, limit: int) -> list[str]:
+    """Split outbound text to fit platform message limits."""
+    value = str(text or "")
+    try:
+        max_chars = int(limit)
+    except (TypeError, ValueError):
+        max_chars = 0
+    if max_chars <= 0 or len(value) <= max_chars:
+        return [value]
+
+    chunks: list[str] = []
+    current = ""
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            chunks.append(current)
+            current = ""
+
+    for line in value.splitlines(keepends=True):
+        remaining_line = line
+        while remaining_line:
+            room = max_chars - len(current)
+            if room <= 0:
+                flush()
+                room = max_chars
+            if len(remaining_line) <= room:
+                current += remaining_line
+                break
+            current += remaining_line[:room]
+            remaining_line = remaining_line[room:]
+            flush()
+
+    flush()
+    return chunks or [value[:max_chars]]
 
 
 def _now() -> str:

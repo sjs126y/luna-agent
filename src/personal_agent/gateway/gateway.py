@@ -10,7 +10,11 @@ from collections import OrderedDict
 from personal_agent.platforms.core import platform_registry
 from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
-from personal_agent.conversation import ConversationCommandRuntime, ConversationService
+from personal_agent.conversation import (
+    EMPTY_FINAL_RESPONSE_MESSAGE,
+    ConversationCommandRuntime,
+    ConversationService,
+)
 from personal_agent.gateway.confirmations import PendingConfirmationManager
 from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
@@ -350,7 +354,7 @@ class Gateway:
             final_response=final,
         )
 
-        return final or "..."
+        return final or EMPTY_FINAL_RESPONSE_MESSAGE
 
     def _confirm_callback(self, event, session_key: str):
         async def _confirm(decision):

@@ -18,6 +18,7 @@ from personal_agent.models.messages import SessionSource
 from personal_agent.multimodal.processor import MultiAttachmentProcessor
 
 TURN_REPORT_HISTORY_LIMIT = 50
+EMPTY_FINAL_RESPONSE_MESSAGE = "抱歉，模型没有返回可发送内容，请重试或让我用更短的格式回答。"
 
 
 @dataclass
@@ -963,7 +964,7 @@ def _final_response_for_status(status: str, final_response: Any, error: str = ""
         return "抱歉，本轮上下文超出限制，未能完成处理。"
     if status == "failed":
         return f"抱歉，本轮处理出错了：{error}" if error else "抱歉，本轮处理出错了。"
-    return ""
+    return EMPTY_FINAL_RESPONSE_MESSAGE
 
 
 def _accepts_event_sink(func: Any) -> bool:

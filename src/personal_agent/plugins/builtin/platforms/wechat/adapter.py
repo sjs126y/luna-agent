@@ -29,6 +29,7 @@ from personal_agent.platforms.core import (
     ChatInfo,
     PlatformCapabilities,
     SendResult,
+    split_text_for_platform,
 )
 from personal_agent.platforms.attachments import attachment_part
 from personal_agent.models.messages import AttachmentRef, MessageEnvelope, MessageEvent, MessagePart, SessionSource
@@ -265,25 +266,8 @@ class WeChatAdapter(BasePlatformAdapter):
     # ── text chunking ─────────────────────────────────
 
     def _split_text(self, text: str) -> list[str]:
-        """Split long text at paragraph boundaries, keeping code fences intact."""
-        if len(text) <= self.MAX_MESSAGE_LENGTH:
-            return [text]
-        chunks = []
-        current = ""
-        in_fence = False
-        for line in text.split("\n"):
-            line = line.rstrip()
-            if line.startswith("```"):
-                in_fence = not in_fence
-            if len(current) + len(line) >= self.MAX_MESSAGE_LENGTH and not in_fence:
-                if current:
-                    chunks.append(current.strip())
-                current = line
-            else:
-                current = (current + "\n" + line).strip() if current else line
-        if current:
-            chunks.append(current.strip())
-        return chunks if chunks else [text[:self.MAX_MESSAGE_LENGTH]]
+        """Split long text so every chunk fits the WeChat send limit."""
+        return split_text_for_platform(text, self.MAX_MESSAGE_LENGTH)
 
     async def send_chunked(self, chat_id: str, content: str) -> None:
         """Send content, splitting if needed."""
