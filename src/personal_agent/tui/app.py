@@ -78,6 +78,16 @@ def _decision_field(decision, name: str) -> str:
     return str(getattr(decision, name, "") or "")
 
 
+def _decision_int(decision, name: str) -> int:
+    if decision is None:
+        return 0
+    value = decision.get(name) if isinstance(decision, dict) else getattr(decision, name, 0)
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _decision_list(decision, name: str) -> list[str]:
     value = decision.get(name) if isinstance(decision, dict) else getattr(decision, name, None)
     if isinstance(value, (list, tuple)):
@@ -87,11 +97,17 @@ def _decision_list(decision, name: str) -> list[str]:
     return []
 
 
-def _confirm_actions(available: tuple[str, ...], default_action: str) -> tuple[ConfirmAction, ...]:
+def _confirm_actions(
+    available: tuple[str, ...],
+    default_action: str,
+    *,
+    temporary_grant_ttl_seconds: int = 0,
+) -> tuple[ConfirmAction, ...]:
+    always_label = _always_label(temporary_grant_ttl_seconds)
     specs = {
         "allow_once": ("Allow once", "allow", "A"),
         "deny": ("Deny", "deny", "Esc"),
-        "allow_always": ("Always", "always", "Shift+A"),
+        "allow_always": (always_label, "always", "Shift+A"),
     }
     actions: list[ConfirmAction] = []
     for action_id in ("allow_once", "deny", "allow_always"):
@@ -112,6 +128,18 @@ def _confirm_actions(available: tuple[str, ...], default_action: str) -> tuple[C
     if not actions:
         actions.append(ConfirmAction(id="deny", label="Deny", result="deny", shortcut="Esc"))
     return tuple(actions)
+
+
+def _always_label(seconds: int) -> str:
+    if seconds <= 0:
+        return "Always"
+    hours = seconds / 3600
+    if hours >= 1 and float(hours).is_integer():
+        return f"Always {int(hours)}h"
+    if hours >= 1:
+        return f"Always {hours:.1f}h"
+    minutes = max(1, round(seconds / 60))
+    return f"Always {minutes}m"
 
 
 def _default_confirm_action_index(actions: tuple[ConfirmAction, ...]) -> int:
@@ -373,9 +401,11 @@ def _format_activity_gateway(payload: dict) -> list[str]:
         platform = _field(item, "platform") or "-"
         status = _field(item, "status") or "-"
         stop = " stop" if item.get("stop_requested") else ""
+        steer = _int_or_zero(item.get("pending_steers"))
+        steer_text = f"  steer {steer}" if steer else ""
         lines.append(
             f"    {_activity_dot(item)} {_fit(name, 28)}  {status}{stop}  "
-            f"{_format_activity_seconds(item.get('duration_seconds'))}  {platform}"
+            f"{_format_activity_seconds(item.get('duration_seconds'))}  {platform}{steer_text}"
         )
     return lines
 
@@ -448,6 +478,12 @@ def _format_activity_detail(payload: dict) -> tuple[str, tuple[str, str] | None]
         lines.append(f"  finished {_field(item, 'finished_at')}")
     if item.get("stop_requested"):
         lines.append("  stop     requested")
+    active_turn_id = _field(item, "active_turn_id")
+    if active_turn_id:
+        lines.append(f"  active   {active_turn_id}")
+    pending_steers = _int_or_zero(item.get("pending_steers"))
+    if pending_steers:
+        lines.append(f"  steer    {pending_steers} pending")
     if item.get("role"):
         lines.append(f"  role     {_field(item, 'role')}")
     if item.get("platform"):
@@ -523,6 +559,13 @@ def _format_activity_seconds(value: object) -> str:
         return f"{minutes}m {rest:02d}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes:02d}m"
+
+
+def _int_or_zero(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _activity_dot(item: dict) -> str:
@@ -1178,6 +1221,10 @@ class InlineTuiApp:
                 self.app.exit()
             return
         if self._turn_task and not self._turn_task.done():
+            if command_text.startswith("/steer "):
+                self.input_area.text = ""
+                asyncio.ensure_future(self._submit(command_text))
+                return
             return  # keep the draft intact while a turn is already running
         self.input_area.text = ""
         self._turn_task = asyncio.ensure_future(self._submit(text))
@@ -1225,6 +1272,26 @@ class InlineTuiApp:
         def _(event) -> None:
             self._move_confirm_action(1)
 
+        @kb.add("up", filter=Condition(lambda: self._confirm_future is not None), eager=True)
+        def _(event) -> None:
+            self._move_confirm_action(-1)
+
+        @kb.add("down", filter=Condition(lambda: self._confirm_future is not None), eager=True)
+        def _(event) -> None:
+            self._move_confirm_action(1)
+
+        @kb.add("1", filter=Condition(lambda: self._confirm_future is not None), eager=True)
+        def _(event) -> None:
+            self._resolve_confirm_index(0)
+
+        @kb.add("2", filter=Condition(lambda: self._confirm_future is not None), eager=True)
+        def _(event) -> None:
+            self._resolve_confirm_index(1)
+
+        @kb.add("3", filter=Condition(lambda: self._confirm_future is not None), eager=True)
+        def _(event) -> None:
+            self._resolve_confirm_index(2)
+
         @kb.add("escape", filter=Condition(lambda: self._confirm_future is None), eager=True)
         def _(event) -> None:
             if self.state.slash_mode:
@@ -1243,11 +1310,19 @@ class InlineTuiApp:
                 return
             self._on_enter()
 
-        @kb.add("up", filter=Condition(lambda: self.state.has_slash_menu()), eager=True)
+        @kb.add(
+            "up",
+            filter=Condition(lambda: self._confirm_future is None and self.state.has_slash_menu()),
+            eager=True,
+        )
         def _(event) -> None:
             self._move_slash_selection(-1)
 
-        @kb.add("down", filter=Condition(lambda: self.state.has_slash_menu()), eager=True)
+        @kb.add(
+            "down",
+            filter=Condition(lambda: self._confirm_future is None and self.state.has_slash_menu()),
+            eager=True,
+        )
         def _(event) -> None:
             self._move_slash_selection(1)
 
@@ -1340,8 +1415,13 @@ class InlineTuiApp:
         process_label = _decision_field(decision, "process_label")
         if paths and not (command_preview or url_preview):
             preview = (preview + " · " if preview else "") + ", ".join(paths[:3])
+        ttl_seconds = _decision_int(decision, "temporary_grant_ttl_seconds")
 
-        actions = _confirm_actions(actions, default_action)
+        actions = _confirm_actions(
+            actions,
+            default_action,
+            temporary_grant_ttl_seconds=ttl_seconds,
+        )
 
         return ConfirmPrompt(
             title="需要确认",
@@ -1376,6 +1456,14 @@ class InlineTuiApp:
         if prompt is None or not prompt.actions:
             return
         index = max(0, min(prompt.selected_action, len(prompt.actions) - 1))
+        self._resolve_confirm(prompt.actions[index].result)
+
+    def _resolve_confirm_index(self, index: int) -> None:
+        prompt = self.state.pending_confirm
+        if prompt is None or not prompt.actions:
+            return
+        if index < 0 or index >= len(prompt.actions):
+            return
         self._resolve_confirm(prompt.actions[index].result)
 
     def _move_confirm_action(self, delta: int) -> None:

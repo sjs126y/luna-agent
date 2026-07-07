@@ -488,8 +488,10 @@ def test_confirm_prompt_default_allow_selects_allow_once():
         "tool_name": "bash",
         "default_action": "allow",
         "available_actions": ["allow_once", "deny", "allow_always"],
+        "temporary_grant_ttl_seconds": 6 * 3600,
     })
     assert [action.id for action in prompt.actions] == ["allow_once", "deny", "allow_always"]
+    assert prompt.actions[2].label == "Always 6h"
     assert prompt.selected_action == 0
     assert prompt.actions[0].is_default is True
 
@@ -537,6 +539,21 @@ async def test_confirm_enter_resolves_selected_action():
     assert await fut == "deny"
 
 
+@pytest.mark.asyncio
+async def test_confirm_number_resolves_indexed_action():
+    app = _app()
+    fut = asyncio.get_running_loop().create_future()
+    app._confirm_future = fut
+    app.state.pending_confirm = app._build_confirm_prompt({
+        "tool_name": "bash",
+        "available_actions": ["allow_once", "deny", "allow_always"],
+    })
+
+    app._resolve_confirm_index(2)
+
+    assert await fut == "always"
+
+
 def test_runtime_accepts_confirm_detection():
     app = _app()
     # fake runtime's run_message_events is (text, event_sink=None): no confirm
@@ -565,6 +582,29 @@ def test_enter_keeps_draft_while_turn_running():
     app.input_area.text = "next question"
     app._on_enter()
     assert app.input_area.text == "next question"
+
+
+@pytest.mark.asyncio
+async def test_enter_allows_steer_while_turn_running():
+    app = _app()
+    submitted: list[str] = []
+
+    class _RunningTask:
+        def done(self) -> bool:
+            return False
+
+    async def submit(text: str):
+        submitted.append(text)
+
+    app._turn_task = _RunningTask()  # type: ignore[assignment]
+    app._submit = submit  # type: ignore[method-assign]
+    app.input_area.text = "/steer 回答短一点"
+
+    app._on_enter()
+    await asyncio.sleep(0)
+
+    assert app.input_area.text == ""
+    assert submitted == ["/steer 回答短一点"]
 
 
 @pytest.mark.asyncio
@@ -736,6 +776,8 @@ async def test_activity_payload_formats_overview_and_updates_badge(monkeypatch):
                             "platform": "telegram",
                             "status": "running",
                             "duration_seconds": 72,
+                            "active_turn_id": "turn-1",
+                            "pending_steers": 2,
                         }
                     ]
                 },
@@ -783,6 +825,7 @@ async def test_activity_payload_formats_overview_and_updates_badge(monkeypatch):
     assert "Gateway" in text
     assert "Sub agents" in text
     assert "Processes" in text
+    assert "steer 2" in text
     assert "reviewer" in text
     assert "uv run pytest -q" in text
     assert "backend fallback text" not in text
@@ -830,6 +873,46 @@ async def test_activity_process_detail_sets_expandable_output(monkeypatch):
     assert "uv run pytest -q" in text
     assert "Ctrl+O" in text
     assert app.state.last_expandable == ("Activity background_process 3", "stdout\ntests passed")
+
+
+@pytest.mark.asyncio
+async def test_activity_gateway_detail_shows_steer_state(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/activity gateway telegram:c1:u1"
+        return CommandResult.structured(
+            "backend fallback text",
+            kind="activity",
+            payload={
+                "kind": "gateway_agent",
+                "id": "telegram:c1:u1",
+                "gateway_run": {
+                    "id": "telegram:c1:u1",
+                    "session_key": "telegram:c1:u1",
+                    "platform": "telegram",
+                    "status": "running",
+                    "duration_seconds": 72,
+                    "started_at": "2026-07-08T10:00:00Z",
+                    "active_turn_id": "turn-1",
+                    "pending_steers": 2,
+                },
+            },
+        )
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/activity gateway telegram:c1:u1")
+
+    text = "\n".join(printed)
+    assert "Activity gateway_agent telegram:c1:u1" in text
+    assert "active   turn-1" in text
+    assert "steer    2 pending" in text
 
 
 def test_slash_mode_tracks_input_text():

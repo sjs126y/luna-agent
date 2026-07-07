@@ -1,16 +1,16 @@
 # Frontend Progress
 
-更新时间：2026-07-07 10:55 CST
+更新时间：2026-07-08 03:00 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
 ## 当前分支与范围
 
-- 当前分支：`feature/legacy-cleanup`
+- 当前分支：`feature/desktop-frontend`
 - 前端主要范围：`src/personal_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`
-- 注意：前端分支和后端分支已合并回主线；当前清理分支会统一收敛历史入口和文档状态。
+- 注意：当前分支从后端最新提交 `bef89e4` 新开，前端只处理 CLI/TUI/desktop-web 侧内容；后端接口权威仍是 `BACKEND_INTERFACE.md`。
 
 ## 已完成进度
 
@@ -21,7 +21,7 @@
 - 用户消息已增加底色/左侧强调，提高和助手输出的对比度；多行历史消息每行都会保持左侧蓝色强调条。
 - 输入框已有低调背景和左侧提示符；多行输入/折行会保持同一左侧蓝色强调条；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
 - 状态栏显示当前执行模式、模型、真正的 context usage，以及最近一轮模型 input/output token。
-- 顶部 context meter 优先读 `llm_end.data.context_used_tokens`、`context_window`、`context_percent`；不会再用 `input_tokens + output_tokens` 伪装成上下文占用。
+- 顶部 context meter 优先读 `llm_start` / `llm_end` 的 `context_used_tokens`、`context_window`、`context_percent`；不会再用 `input_tokens + output_tokens` 伪装成上下文占用。
 - `input_tokens` / `output_tokens` 只作为最近一轮模型消耗显示，例如 `↓213 | ↑34`。
 - cache usage 和 activity 不再放在顶部 meter line；它们保留为结构化状态/详情数据。
 
@@ -79,7 +79,7 @@
 - `/activity` 已接入 `CommandResult.kind == "activity"` payload。
 - TUI 会把 activity payload 渲染成结构化面板：
   - 顶部 summary：active 总数、attention、最长运行、Gateway / 子 agent / 后台进程数量。
-  - `Gateway` 列表：session、platform、status、duration、stop/attention 状态。
+  - `Gateway` 列表：session、platform、status、duration、stop/attention 状态、pending steer 数量。
   - `Sub agents` 列表：role、run id、status、duration、quota token、tool counts、task preview。
   - `Processes` 列表：pid/status/duration/command/cwd。
 - `/activity processes <id>` 等详情 payload 会显示单个对象详情；进程详情里的 stdout/stderr、子 agent result 会接到 `Ctrl+O` 展开。
@@ -91,11 +91,13 @@
 - 前端已实现 `confirm_tool(decision)` 回调。
 - 已消费后端确认字段：`display_name`、`execution_mode_label`、`risk_level`、`risk_summary`、`default_action`、`available_actions`、`input_preview`、`affected_paths`、`command_preview`、`url_preview` 等。
 - Confirm 面板现在是可选择 action row：
-  - `Left/Right` 在动作间移动。
+  - `Up/Down` 在纵向动作列表中移动。
   - `Enter` 执行当前选中动作。
   - 快捷键保留为辅助：`a` / `y` allow once，`Esc` / `n` deny，`Shift+A` always。
-- 面板已压缩成短标签风格：`Risk`、`Cmd`、`Path`、`URL`、`Process`、`Input`。
+- 面板已压缩成短标签风格：`Risk`、`Cmd`、`Path`、`URL`、`Process`、`Input`；动作区改为纵向编号列表，形如 `1> Allow once`、`2> Deny`、`3> Always 24h`。
 - 仅展示 `available_actions` 允许的动作；`default_action` 只影响初始选中项和默认标记，`none` 时不标默认动作。
+- `allow_always` 会按后端 `temporary_grant_ttl_seconds` 显示 TTL，例如 `Always 24h`。
+- `1/2/3` 可直接选择对应 confirm action；`Enter` 执行当前 `›` 选中项，`Left/Right` 仍保留为兼容辅助移动。
 
 ## 已接后端能力
 
@@ -110,7 +112,8 @@
 - Tool Runs 查询：`/tool-runs ...` + `kind="tool_runs"` payload
 - Activity Runtime 查询：`/activity ...` + `kind="activity"` payload
 - Tool confirmation fields
-- LLM context fields：`context_used_tokens`、`context_remaining_tokens`、`context_percent`、`context_budget`
+- Runtime steer 事件：`steer_consumed`
+- LLM context fields：`llm_start` / `llm_end` 的 `context_used_tokens`、`context_remaining_tokens`、`context_percent`、`context_budget`
 - LLM turn usage fields：`input_tokens`、`output_tokens`
 - LLM cache usage fields：`cache_hit_tokens`、`cache_miss_tokens`、`cache_write_tokens`、`cache_read_tokens`、`cache_hit_rate`（当前不在顶部常驻展示）
 - `retry` / `stop` / `error` 增强字段
@@ -127,6 +130,24 @@
 - 多工具结果列表 / Ctrl+O 选择展开：用户感兴趣，但之前尝试失败过，暂缓，不作为当前优先项。
 
 ## 最近完成
+
+### 2026-07-08 02:20 CST
+
+- 接入后端 Runtime Steer 消费事件：`steer_consumed` 会在 scrollback 打印轻量 `steer applied` 提示，表示修正已真正注入当前 turn。
+- 修复运行中无法发送 `/steer <text>` 的问题：普通输入仍会保留草稿，只有 `/steer` 会在 turn running 时走 slash command 通道提交。
+- `llm_start` 现在会提前刷新 model/context meter；`input_tokens` / `output_tokens` 仍只由 `llm_end` 更新，保持“最近一轮实际模型消耗”的语义。
+- `/activity` gateway overview 会显示 `steer N`；gateway detail 会显示 `active_turn_id` 和 `pending_steers`。
+- 调整 confirm 面板视觉：去掉背景色块和横向 action row，改为无大面积底色的纵向编号列表；`Up/Down` 是主要移动方式，`Enter` 执行当前选中项，`1/2/3` 可直接选择；`allow_always` 文案按后端临时授权 TTL 显示。
+
+已验证：
+
+```bash
+uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
+PYTHONPYCACHEPREFIX=/tmp/personal-agent-pycache python -m compileall -q src/personal_agent/tui
+git diff --check
+```
+
+结果：`92 passed`。普通 `python -m compileall -q src/personal_agent/tui` 在当前 worktree 会因为已有 `__pycache__` 写入报 `Read-only file system`，已用 `PYTHONPYCACHEPREFIX=/tmp/personal-agent-pycache` 完成等价语法验证。
 
 ### 2026-07-07 10:55 CST
 
