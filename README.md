@@ -73,11 +73,7 @@ uv run personal-agent doctor
 uv run personal-agent chat
 ```
 
-使用 inline TUI：
-
-```bash
-uv run personal-agent chat --ui inline
-```
+`personal-agent chat` 默认启动 inline TUI；也可以用 `--ui inline` 显式指定。
 
 单轮调用：
 

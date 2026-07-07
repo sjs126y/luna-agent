@@ -4,7 +4,7 @@ CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `doc
 
 ## 当前状态
 
-- 通过 `personal-agent chat --ui inline` 启用；默认仍是 classic UI。
+- `personal-agent chat` 默认启用 inline TUI；`--ui inline` 可显式指定。
 - `InlineTuiApp` 负责 prompt_toolkit 应用、输入框、快捷键、历史、命令补全和打印队列。
 - `InlineRenderer` 只消费事件并更新 `UIState`；定稿内容通过 app 的 `print_above` 回调进入 scrollback。
 - 快捷键：`Enter` 发送、`Ctrl+J` 换行、`Ctrl+O` 展开最近长输出、`Ctrl+C` 停止或清空、`Shift+Tab` 循环执行模式。

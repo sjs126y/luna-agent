@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 from dataclasses import dataclass
-from typing import Callable
 
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
@@ -16,8 +14,6 @@ from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import SessionSource
 from personal_agent.conversation import ConversationCommandRuntime, ConversationService
 from personal_agent.runtime import AppRuntime, create_app_runtime
-
-logger = logging.getLogger(__name__)
 
 CLI_SYSTEM_PROMPT = (
     "你是一个智能助手。优先使用工具获取实时信息和执行操作，不要凭记忆编造。用中文回复。"
@@ -85,31 +81,6 @@ class CliChatRuntime(ConversationCommandRuntime):
         if command_result is not None:
             return command_result
         return await self.run_message(text)
-
-    async def repl(
-        self,
-        *,
-        input_fn: Callable[[str], str] = input,
-        output_fn: Callable[[str], None] = print,
-    ) -> None:
-        output_fn(f"Personal Agent CLI。当前会话: {self.session_key}。输入 exit/quit 或空行退出，/help 查看命令。")
-        while True:
-            try:
-                text = input_fn(f"{self.session_key} >>> ")
-            except (EOFError, KeyboardInterrupt):
-                output_fn("")
-                break
-            text = text.strip()
-            if not text or text.lower() in {"exit", "quit"}:
-                break
-            try:
-                response = await self.run_once(text)
-            except Exception as exc:
-                logger.exception("CLI turn failed")
-                output_fn(f"错误: 本轮对话失败: {exc}")
-                continue
-            if response:
-                output_fn(response)
 
     async def run_message(self, text: str) -> str:
         assert self.conversation_service is not None
@@ -204,24 +175,11 @@ async def run_cli_once(message: str, *, session_name: str = "default") -> str:
         await runtime.close()
 
 
-async def run_cli_repl(*, session_name: str = "default") -> None:
-    runtime = await create_cli_runtime(session_name=session_name)
-    try:
-        await runtime.repl()
-    finally:
-        await runtime.close()
-
-
 def run_cli_once_sync(message: str, *, session_name: str = "default") -> None:
     _configure_stdout()
     result = asyncio.run(run_cli_once(message, session_name=session_name))
     if result:
         print(result)
-
-
-def run_cli_repl_sync(*, session_name: str = "default") -> None:
-    _configure_stdout()
-    asyncio.run(run_cli_repl(session_name=session_name))
 
 
 def _configure_stdout() -> None:

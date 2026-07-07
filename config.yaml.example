@@ -2,7 +2,7 @@
 # Copy to config.yaml for local use. API keys / base URLs / secrets go in .env.
 
 agent:
-  ui: "classic"                   # classic | inline
+  ui: "inline"                    # inline | classic
   max_iterations: 30
   max_tool_calls_per_turn: 20
 
