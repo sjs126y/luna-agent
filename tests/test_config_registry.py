@@ -142,6 +142,9 @@ def test_config_registry_schema_is_stable():
     assert fields["multimodal.text_extract_pdf_max_pages"]["minimum"] == 1
     assert fields["multimodal.image_text_mode"]["choices"] == ["auto", "vision", "ocr", "off"]
     assert fields["multimodal.image_text_cache"]["value_type"] == "bool"
+    assert fields["multimodal.image_text_provider"]["choices"][0] == ""
+    assert set(fields["multimodal.image_text_provider"]["choices"]) == {"", "deepseek", "openai", "anthropic", "openrouter"}
+    assert fields["IMAGE_TEXT_API_KEY"]["sensitive"] is True
     assert fields["profiles"]["env_key"] == "PROFILES"
     assert fields["profiles"]["yaml_path"] == "profiles"
     assert fields["execution.mode"]["choices"] == ["guarded", "standard", "trusted", "sovereign"]

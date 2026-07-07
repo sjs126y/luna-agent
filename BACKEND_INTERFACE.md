@@ -362,7 +362,8 @@
 - 后端根据 `attachments.*` 配置决定平台附件是否下载和缓存；provider 不参与下载决策。
 - 文本类、PDF、docx 附件在 `text` 或 `auto -> text` 模式下会由后端抽取文本并加入本轮上下文。
 - 文本抽取受 `multimodal.text_extract_max_chars` 和 `multimodal.text_extract_pdf_max_pages` 限制，超出会截断。
-- 图片在 `text` fallback 模式下会进入统一图片文本化链路；默认未配置 vision/OCR 时只返回稳定 notice。
+- 图片在 `text` fallback 模式下会进入统一图片文本化链路；配置 `multimodal.image_text_provider` 后可调用辅助 vision provider 生成文本描述。
+- vision fallback 的 API key / base URL 使用 `.env` 的 `IMAGE_TEXT_API_KEY` / `IMAGE_TEXT_BASE_URL`；前端不参与模型调用。
 
 桌面端事件消费：
 
@@ -431,6 +432,7 @@ CLI 说明：
 - `empty_description`
 - `image_text_disabled`
 - `image_text_describer_unavailable`
+- `image_text_provider_not_supported`
 - `image_text_failed`
 - `image_text_empty`
 

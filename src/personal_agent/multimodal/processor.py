@@ -14,7 +14,7 @@ from personal_agent.models.messages import AttachmentRef
 from personal_agent.multimodal.image_text import (
     ImageTextDescribeUnavailable,
     ImageTextDescriber,
-    NullImageTextDescriber,
+    build_default_image_text_describer,
 )
 from personal_agent.text_safety import clean_text
 
@@ -127,7 +127,10 @@ class MultiAttachmentProcessor:
         self.settings = settings
         self.attachment_store = attachment_store
         self.text_describer = text_describer or LocalAttachmentTextDescriber(settings)
-        self.image_text_describer = image_text_describer or NullImageTextDescriber()
+        self.image_text_describer = image_text_describer or build_default_image_text_describer(
+            settings,
+            attachment_store,
+        )
 
     async def resolve(
         self,
@@ -512,6 +515,7 @@ def _notice_text(kind: str, label: str, reason: str) -> str:
         "describer_unavailable": "当前没有可用的文本化能力。",
         "image_text_disabled": "当前配置关闭了图片文本化。",
         "image_text_describer_unavailable": "当前没有可用的图片文本化能力。",
+        "image_text_provider_not_supported": "配置的图片文本化 provider 不支持图片输入。",
         "image_text_failed": "图片文本化失败。",
         "image_text_empty": "图片文本化没有返回有效内容。",
         "text_extract_unavailable": "当前文本抽取能力不可用。",

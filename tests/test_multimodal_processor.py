@@ -9,7 +9,12 @@ from personal_agent.attachments import AttachmentStore
 from personal_agent.conversation.input import ConversationInput
 from personal_agent.models.messages import AttachmentRef
 from personal_agent.multimodal import MultiAttachmentProcessor
-from personal_agent.multimodal.image_text import ImageTextCache, ImageTextDescription
+from personal_agent.multimodal.image_text import (
+    ImageTextCache,
+    ImageTextDescribeUnavailable,
+    ImageTextDescription,
+    VisionImageTextDescriber,
+)
 from personal_agent.tools.sandbox import init_sandbox
 
 
@@ -26,6 +31,11 @@ def _settings(**overrides):
         "multimodal_image_text_mode": "auto",
         "multimodal_image_text_cache": True,
         "multimodal_image_text_max_chars": 6000,
+        "multimodal_image_text_provider": "",
+        "multimodal_image_text_model": "",
+        "multimodal_image_text_prompt": "",
+        "multimodal_image_text_base_url": "",
+        "multimodal_image_text_api_key": "k",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -466,3 +476,111 @@ def test_image_text_cache_round_trips_by_identity(tmp_path):
         model="vision-b",
         prompt_version=1,
     ) is None
+
+
+@pytest.mark.asyncio
+async def test_vision_image_text_describer_calls_provider_and_caches(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    resolved = AttachmentStore(tmp_path / "cache").store_local_path(
+        str(source),
+        ref=AttachmentRef(id="a1", kind="image", name="image.png"),
+    )
+    calls = []
+
+    async def call_fn(provider, transport, messages, max_tokens):
+        calls.append((provider.name, provider.model, messages, max_tokens))
+        return "vision text"
+
+    describer = VisionImageTextDescriber(
+        _settings(
+            multimodal_image_text_provider="openai",
+            multimodal_image_text_model="gpt-4o-mini",
+            multimodal_image_text_base_url="https://api.openai.test/v1",
+            multimodal_image_text_api_key="k",
+        ),
+        cache=ImageTextCache(tmp_path / "derived"),
+        call_fn=call_fn,
+    )
+
+    first = await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+    second = await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+
+    assert first.text == "vision text"
+    assert second.text == "vision text"
+    assert second.cached is True
+    assert len(calls) == 1
+    assert calls[0][0] == "openai"
+    assert calls[0][1] == "gpt-4o-mini"
+    assert calls[0][2][0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_vision_image_text_describer_requires_configured_provider(tmp_path):
+    describer = VisionImageTextDescriber(_settings())
+
+    with pytest.raises(ImageTextDescribeUnavailable) as exc:
+        await describer.describe(
+            resolved=type("Resolved", (), {
+                "local_path": str(tmp_path / "missing.png"),
+                "sha256": "",
+                "mime_type": "image/png",
+            })(),
+            ref=AttachmentRef(id="a1", kind="image", name="missing.png"),
+        )
+
+    assert exc.value.reason == "image_text_describer_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_vision_image_text_describer_rejects_non_image_provider(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    resolved = AttachmentStore(tmp_path / "cache").store_local_path(
+        str(source),
+        ref=AttachmentRef(id="a1", kind="image", name="image.png"),
+    )
+    describer = VisionImageTextDescriber(
+        _settings(
+            multimodal_image_text_provider="deepseek",
+            multimodal_image_text_model="deepseek-chat",
+        ),
+    )
+
+    with pytest.raises(ImageTextDescribeUnavailable) as exc:
+        await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+
+    assert exc.value.reason == "image_text_provider_not_supported"
+
+
+@pytest.mark.asyncio
+async def test_image_text_processor_truncates_vision_result(tmp_path):
+    class Describer:
+        async def describe(self, resolved, ref):
+            return ImageTextDescription(text="abcdef" * 20, method="vision")
+
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(
+            multimodal_image_mode="text",
+            multimodal_image_text_max_chars=24,
+        ),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+        image_text_describer=Describer(),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="read image",
+            attachments=[AttachmentRef(id="a1", kind="image", name="image.png", local_path=str(source))],
+        ),
+        provider=_provider(supports_image=True),
+    )
+
+    text = result.content_blocks[-1]["text"]
+    assert "已截断，最多 24 字符" in text
+    assert len(text.split("：\n", 1)[1]) <= 24

@@ -395,6 +395,11 @@ def _multimodal_fields() -> tuple[ConfigField, ...]:
         _yaml_field("multimodal.image_text_mode", "multimodal_image_text_mode", "auto", "str", "multimodal", "Image-to-text fallback mode.", choices=IMAGE_TEXT_MODES),
         _yaml_field("multimodal.image_text_cache", "multimodal_image_text_cache", True, "bool", "multimodal", "Cache image-to-text fallback results."),
         _yaml_field("multimodal.image_text_max_chars", "multimodal_image_text_max_chars", 6000, "int", "multimodal", "Maximum image-to-text characters injected into context.", minimum=1),
+        _yaml_field("multimodal.image_text_provider", "multimodal_image_text_provider", "", "str", "multimodal", "Vision provider used for image-to-text fallback.", choices=("", *LLM_PROVIDERS)),
+        _yaml_field("multimodal.image_text_model", "multimodal_image_text_model", "", "str", "multimodal", "Vision model used for image-to-text fallback."),
+        _yaml_field("multimodal.image_text_prompt", "multimodal_image_text_prompt", "", "str", "multimodal", "Custom image-to-text prompt."),
+        _env_field("IMAGE_TEXT_BASE_URL", "multimodal_image_text_base_url", "", "str", "multimodal", "Vision fallback base URL."),
+        _env_field("IMAGE_TEXT_API_KEY", "multimodal_image_text_api_key", "", "str", "multimodal", "Vision fallback API key.", sensitive=True),
     )
 
 
