@@ -13,7 +13,9 @@ from personal_agent.multimodal.image_text import (
     ImageTextCache,
     ImageTextDescribeUnavailable,
     ImageTextDescription,
+    LocalOcrImageTextDescriber,
     VisionImageTextDescriber,
+    build_default_image_text_describer,
 )
 from personal_agent.tools.sandbox import init_sandbox
 
@@ -36,6 +38,9 @@ def _settings(**overrides):
         "multimodal_image_text_prompt": "",
         "multimodal_image_text_base_url": "",
         "multimodal_image_text_api_key": "k",
+        "multimodal_ocr_endpoint": "",
+        "multimodal_ocr_timeout_seconds": 20,
+        "multimodal_ocr_language": "auto",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -584,3 +589,143 @@ async def test_image_text_processor_truncates_vision_result(tmp_path):
     text = result.content_blocks[-1]["text"]
     assert "已截断，最多 24 字符" in text
     assert len(text.split("：\n", 1)[1]) <= 24
+
+
+@pytest.mark.asyncio
+async def test_local_ocr_image_text_describer_calls_service_and_caches(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    resolved = AttachmentStore(tmp_path / "cache").store_local_path(
+        str(source),
+        ref=AttachmentRef(id="a1", kind="image", name="image.png"),
+    )
+    calls = []
+
+    async def http_fn(method, url, payload, timeout):
+        calls.append((method, url, payload, timeout))
+        if method == "GET":
+            return {"ok": True, "engine": "fakeocr"}
+        return {
+            "ok": True,
+            "text": "ocr text",
+            "confidence": 0.9,
+            "engine": "fakeocr",
+            "blocks": [{"text": "ocr text", "confidence": 0.9, "bbox": [0, 0, 10, 10]}],
+        }
+
+    describer = LocalOcrImageTextDescriber(
+        _settings(multimodal_ocr_endpoint="http://127.0.0.1:7788"),
+        cache=ImageTextCache(tmp_path / "derived"),
+        http_fn=http_fn,
+    )
+
+    first = await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+    second = await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+
+    assert first.text == "ocr text"
+    assert second.cached is True
+    assert len(calls) == 2
+    assert calls[0][0] == "GET"
+    assert calls[1][0] == "POST"
+    assert calls[1][2]["image_path"].endswith(".png")
+    assert Path(calls[1][2]["image_path"]).is_absolute()
+    assert calls[1][2]["language"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_local_ocr_image_text_describer_handles_failed_response(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    resolved = AttachmentStore(tmp_path / "cache").store_local_path(
+        str(source),
+        ref=AttachmentRef(id="a1", kind="image", name="image.png"),
+    )
+
+    async def http_fn(method, url, payload, timeout):
+        return {"ok": True} if method == "GET" else {"ok": False, "error": "unsupported_image"}
+
+    describer = LocalOcrImageTextDescriber(
+        _settings(multimodal_ocr_endpoint="http://127.0.0.1:7788"),
+        http_fn=http_fn,
+    )
+
+    with pytest.raises(ImageTextDescribeUnavailable) as exc:
+        await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+
+    assert exc.value.reason == "ocr_request_failed"
+
+
+@pytest.mark.asyncio
+async def test_local_ocr_image_text_describer_handles_empty_text(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    resolved = AttachmentStore(tmp_path / "cache").store_local_path(
+        str(source),
+        ref=AttachmentRef(id="a1", kind="image", name="image.png"),
+    )
+
+    async def http_fn(method, url, payload, timeout):
+        return {"ok": True} if method == "GET" else {"ok": True, "text": ""}
+
+    describer = LocalOcrImageTextDescriber(
+        _settings(multimodal_ocr_endpoint="http://127.0.0.1:7788"),
+        http_fn=http_fn,
+    )
+
+    with pytest.raises(ImageTextDescribeUnavailable) as exc:
+        await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+
+    assert exc.value.reason == "ocr_empty"
+
+
+@pytest.mark.asyncio
+async def test_local_ocr_image_text_describer_handles_invalid_response(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    resolved = AttachmentStore(tmp_path / "cache").store_local_path(
+        str(source),
+        ref=AttachmentRef(id="a1", kind="image", name="image.png"),
+    )
+
+    async def http_fn(method, url, payload, timeout):
+        return "bad"
+
+    describer = LocalOcrImageTextDescriber(
+        _settings(multimodal_ocr_endpoint="http://127.0.0.1:7788"),
+        http_fn=http_fn,
+    )
+
+    with pytest.raises(ImageTextDescribeUnavailable) as exc:
+        await describer.describe(resolved, AttachmentRef(id="a1", kind="image", name="image.png"))
+
+    assert exc.value.reason == "ocr_response_invalid"
+
+
+def test_default_image_text_describer_auto_uses_ocr_without_vision(tmp_path):
+    describer = build_default_image_text_describer(
+        _settings(
+            multimodal_image_text_mode="auto",
+            multimodal_image_text_provider="",
+            multimodal_ocr_endpoint="http://127.0.0.1:7788",
+        ),
+        AttachmentStore(tmp_path / "cache"),
+    )
+
+    assert isinstance(describer, LocalOcrImageTextDescriber)
+
+
+def test_default_image_text_describer_vision_mode_does_not_use_ocr(tmp_path):
+    describer = build_default_image_text_describer(
+        _settings(
+            multimodal_image_text_mode="vision",
+            multimodal_image_text_provider="",
+            multimodal_ocr_endpoint="http://127.0.0.1:7788",
+        ),
+        AttachmentStore(tmp_path / "cache"),
+    )
+
+    assert not isinstance(describer, LocalOcrImageTextDescriber)

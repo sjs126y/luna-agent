@@ -364,6 +364,7 @@
 - 文本抽取受 `multimodal.text_extract_max_chars` 和 `multimodal.text_extract_pdf_max_pages` 限制，超出会截断。
 - 图片在 `text` fallback 模式下会进入统一图片文本化链路；配置 `multimodal.image_text_provider` 后可调用辅助 vision provider 生成文本描述。
 - vision fallback 的 API key / base URL 使用 `.env` 的 `IMAGE_TEXT_API_KEY` / `IMAGE_TEXT_BASE_URL`；前端不参与模型调用。
+- 配置 `multimodal.ocr_endpoint` 后，后端可调用本地 OCR HTTP 服务；OCR 引擎不内置在主项目中。
 
 桌面端事件消费：
 
@@ -435,6 +436,17 @@ CLI 说明：
 - `image_text_provider_not_supported`
 - `image_text_failed`
 - `image_text_empty`
+- `ocr_endpoint_unavailable`
+- `ocr_request_failed`
+- `ocr_empty`
+- `ocr_response_invalid`
+
+可选本地 OCR 服务协议：
+
+- `GET /health` 返回 `{"ok": true, "engine": "paddleocr"}`。
+- `POST /ocr` 请求体为 `{"image_path": "...", "mime_type": "image/png", "language": "auto"}`。
+- `POST /ocr` 成功返回 `{"ok": true, "text": "...", "confidence": 0.92, "blocks": [], "engine": "paddleocr"}`。
+- OCR 服务由用户本地部署，后端只调用 HTTP 接口，不内置 OCR 引擎依赖。
 
 ## 4. Inline Tool Confirmation
 

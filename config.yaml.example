@@ -59,6 +59,9 @@ multimodal:
   image_text_provider: ""           # 可选视觉辅助 provider，例如 openai / anthropic；密钥用 .env 的 IMAGE_TEXT_API_KEY
   image_text_model: ""              # 可选视觉辅助模型，留空使用 provider 默认或主模型
   image_text_prompt: ""             # 可选自定义提示词，留空使用内置“提取文字并描述图片”
+  ocr_endpoint: ""                  # 可选本地 OCR HTTP 服务，例如 http://127.0.0.1:7788
+  ocr_timeout_seconds: 20           # OCR 服务请求超时秒数
+  ocr_language: "auto"              # OCR 语言提示，具体支持取决于本地 OCR 服务
 
 attachments:
   resolve_inbound: true            # 授权通过后，平台入口是否尝试把附件本地化

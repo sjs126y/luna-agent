@@ -21,6 +21,9 @@ def test_config_loader_uses_defaults(tmp_path):
     assert snapshot.attr_values["multimodal_image_text_max_chars"] == 6000
     assert snapshot.attr_values["multimodal_image_text_provider"] == ""
     assert snapshot.attr_values["multimodal_image_text_api_key"] == ""
+    assert snapshot.attr_values["multimodal_ocr_endpoint"] == ""
+    assert snapshot.attr_values["multimodal_ocr_timeout_seconds"] == 20
+    assert snapshot.attr_values["multimodal_ocr_language"] == "auto"
     assert snapshot.sources["LLM_PROVIDER"] == "default"
     assert snapshot.source_counts["default"] == snapshot.field_count
 
@@ -49,6 +52,9 @@ multimodal:
   image_text_max_chars: 2048
   image_text_provider: openai
   image_text_model: gpt-4o-mini
+  ocr_endpoint: http://127.0.0.1:7788
+  ocr_timeout_seconds: 5
+  ocr_language: zh
 sandbox:
   roots: ./data,./workspace
   bash_allow_network: yes
@@ -76,6 +82,9 @@ plugins:
     assert snapshot.attr_values["multimodal_image_text_provider"] == "openai"
     assert snapshot.attr_values["multimodal_image_text_model"] == "gpt-4o-mini"
     assert snapshot.attr_values["multimodal_image_text_api_key"] == "vision-key"
+    assert snapshot.attr_values["multimodal_ocr_endpoint"] == "http://127.0.0.1:7788"
+    assert snapshot.attr_values["multimodal_ocr_timeout_seconds"] == 5
+    assert snapshot.attr_values["multimodal_ocr_language"] == "zh"
     assert snapshot.attr_values["sandbox_roots"] == [Path("./data"), Path("./workspace")]
     assert snapshot.attr_values["bash_allow_network"] is True
     assert snapshot.attr_values["plugins_dirs"] == [Path("./plugins"), Path("./more-plugins")]

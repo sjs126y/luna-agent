@@ -13,6 +13,8 @@ import time
 from typing import Any, Protocol
 from types import SimpleNamespace
 
+import httpx
+
 from personal_agent.attachments.store import ResolvedAttachment
 from personal_agent.llm.provider import ProviderProfile, provider_registry
 from personal_agent.llm.transport_registry import transport_registry
@@ -23,6 +25,7 @@ from personal_agent.text_safety import clean_text
 VISION_PROMPT_VERSION = 1
 DEFAULT_VISION_PROMPT = "请提取图片中的可见文字，并简要描述图片内容。不要编造看不到的信息。"
 VisionCallFn = Callable[[ProviderProfile, Any, list[dict], int], Awaitable[str]]
+OcrHttpFn = Callable[[str, str, dict[str, Any] | None, float], Awaitable[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,106 @@ class VisionImageTextDescriber:
         if self.cache is not None and resolved.sha256:
             self.cache.put(description, sha256=resolved.sha256, source_mime_type=resolved.mime_type)
         return description
+
+
+class LocalOcrImageTextDescriber:
+    def __init__(
+        self,
+        settings,
+        *,
+        cache: ImageTextCache | None = None,
+        http_fn: OcrHttpFn | None = None,
+    ) -> None:
+        self.settings = settings
+        self.cache = cache
+        self.http_fn = http_fn
+
+    async def describe(self, resolved: ResolvedAttachment, ref: AttachmentRef) -> ImageTextDescription:
+        endpoint = str(getattr(self.settings, "multimodal_ocr_endpoint", "") or "").strip()
+        if not endpoint:
+            raise ImageTextDescribeUnavailable("ocr_endpoint_unavailable")
+        timeout = float(getattr(self.settings, "multimodal_ocr_timeout_seconds", 20) or 20)
+        language = str(getattr(self.settings, "multimodal_ocr_language", "auto") or "auto")
+        provider = "local_http"
+        model = endpoint.rstrip("/")
+        if self.cache is not None and resolved.sha256:
+            cached = self.cache.get(
+                sha256=resolved.sha256,
+                method="ocr",
+                provider=provider,
+                model=model,
+                prompt_version=1,
+            )
+            if cached is not None:
+                return cached
+
+        path = Path(resolved.local_path)
+        if not path.exists() or not path.is_file():
+            raise ImageTextDescribeUnavailable("file_not_found")
+
+        health = await self._request("GET", _join_url(endpoint, "/health"), None, timeout)
+        if not bool(health.get("ok", False)):
+            raise ImageTextDescribeUnavailable("ocr_endpoint_unavailable", str(health.get("error") or "health_failed"))
+        payload = {
+            "image_path": str(path.resolve()),
+            "mime_type": resolved.mime_type or "application/octet-stream",
+            "language": language,
+        }
+        data = await self._request("POST", _join_url(endpoint, "/ocr"), payload, timeout)
+        if not isinstance(data, dict):
+            raise ImageTextDescribeUnavailable("ocr_response_invalid")
+        if not bool(data.get("ok", False)):
+            raise ImageTextDescribeUnavailable("ocr_request_failed", str(data.get("error") or "ocr_failed"))
+        text = clean_text(str(data.get("text") or ""))
+        if not text:
+            raise ImageTextDescribeUnavailable("ocr_empty")
+        description = ImageTextDescription(
+            text=text,
+            method="ocr",
+            provider=provider,
+            model=model,
+            prompt_version=1,
+            confidence=str(data.get("confidence") or "unknown"),
+            cached=False,
+            metadata={
+                "engine": str(data.get("engine") or health.get("engine") or ""),
+                "blocks": data.get("blocks") if isinstance(data.get("blocks"), list) else [],
+            },
+        )
+        if self.cache is not None and resolved.sha256:
+            self.cache.put(description, sha256=resolved.sha256, source_mime_type=resolved.mime_type)
+        return description
+
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, Any] | None,
+        timeout: float,
+    ) -> dict[str, Any]:
+        try:
+            if self.http_fn is not None:
+                data = await self.http_fn(method, url, payload, timeout)
+                if not isinstance(data, dict):
+                    raise ImageTextDescribeUnavailable("ocr_response_invalid")
+                return data
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
+                if method == "GET":
+                    response = await client.get(url)
+                else:
+                    response = await client.post(url, json=payload or {})
+                if response.status_code >= 400:
+                    raise ImageTextDescribeUnavailable("ocr_request_failed", response.text[:200])
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise ImageTextDescribeUnavailable("ocr_response_invalid")
+                return data
+        except ImageTextDescribeUnavailable:
+            raise
+        except httpx.RequestError as exc:
+            raise ImageTextDescribeUnavailable("ocr_endpoint_unavailable", str(exc)) from exc
+        except Exception as exc:
+            raise ImageTextDescribeUnavailable("ocr_request_failed", f"{type(exc).__name__}: {exc}") from exc
 
 
 class ImageTextCache:
@@ -262,6 +365,11 @@ def build_default_image_text_describer(settings, attachment_store=None) -> Image
     provider = str(getattr(settings, "multimodal_image_text_provider", "") or "").strip()
     if mode in {"auto", "vision"} and provider:
         return VisionImageTextDescriber(settings, cache=cache)
+    endpoint = str(getattr(settings, "multimodal_ocr_endpoint", "") or "").strip()
+    if mode == "ocr" and endpoint:
+        return LocalOcrImageTextDescriber(settings, cache=cache)
+    if mode == "auto" and endpoint:
+        return LocalOcrImageTextDescriber(settings, cache=cache)
     return NullImageTextDescriber()
 
 
@@ -323,3 +431,7 @@ def _default_model(provider_name: str) -> str:
     if provider_name == "anthropic":
         return "claude-3-5-haiku-latest"
     return ""
+
+
+def _join_url(base: str, path: str) -> str:
+    return f"{base.rstrip('/')}/{path.lstrip('/')}"

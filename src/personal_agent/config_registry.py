@@ -398,6 +398,9 @@ def _multimodal_fields() -> tuple[ConfigField, ...]:
         _yaml_field("multimodal.image_text_provider", "multimodal_image_text_provider", "", "str", "multimodal", "Vision provider used for image-to-text fallback.", choices=("", *LLM_PROVIDERS)),
         _yaml_field("multimodal.image_text_model", "multimodal_image_text_model", "", "str", "multimodal", "Vision model used for image-to-text fallback."),
         _yaml_field("multimodal.image_text_prompt", "multimodal_image_text_prompt", "", "str", "multimodal", "Custom image-to-text prompt."),
+        _yaml_field("multimodal.ocr_endpoint", "multimodal_ocr_endpoint", "", "str", "multimodal", "Local OCR HTTP service endpoint."),
+        _yaml_field("multimodal.ocr_timeout_seconds", "multimodal_ocr_timeout_seconds", 20, "int", "multimodal", "Local OCR HTTP timeout in seconds.", minimum=1),
+        _yaml_field("multimodal.ocr_language", "multimodal_ocr_language", "auto", "str", "multimodal", "Local OCR language hint."),
         _env_field("IMAGE_TEXT_BASE_URL", "multimodal_image_text_base_url", "", "str", "multimodal", "Vision fallback base URL."),
         _env_field("IMAGE_TEXT_API_KEY", "multimodal_image_text_api_key", "", "str", "multimodal", "Vision fallback API key.", sensitive=True),
     )
