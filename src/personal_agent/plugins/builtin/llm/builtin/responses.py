@@ -85,8 +85,9 @@ class OpenAIResponsesTransport(BaseTransport):
                     raw_usage.update(response.get("usage") or {})
                     model = str(response.get("model") or model)
                     finish_reason = str(response.get("status") or finish_reason)
-                    if not text_parts:
-                        text_parts.append(_responses_output_text(response))
+                    chunk = _collect_response_output(response, tool_call_deltas)
+                    if chunk and not text_parts:
+                        text_parts.append(chunk)
                 continue
 
             if etype == "response.failed":
@@ -94,8 +95,9 @@ class OpenAIResponsesTransport(BaseTransport):
                 raise RuntimeError(f"Responses API failed: {error}")
 
             if event.get("output"):
-                if not text_parts:
-                    text_parts.append(_responses_output_text(event))
+                chunk = _collect_response_output(event, tool_call_deltas)
+                if chunk and not text_parts:
+                    text_parts.append(chunk)
                 finish_reason = str(event.get("status") or finish_reason)
                 continue
 
@@ -106,7 +108,7 @@ class OpenAIResponsesTransport(BaseTransport):
             text="".join(text_parts),
             tool_calls=tool_calls,
             usage=self.normalize_usage(raw_usage),
-            finish_reason=finish_reason or ("tool_calls" if tool_calls else "stop"),
+            finish_reason="tool_calls" if tool_calls else (finish_reason or "stop"),
             stop_reason=finish_reason,
             model=model,
         )
@@ -210,16 +212,36 @@ def _text_part_type(role: str) -> str:
 
 
 def _responses_output_text(response: dict) -> str:
+    return _collect_response_output(response, {})
+
+
+def _collect_response_output(response: dict, tool_call_deltas: dict[int, dict]) -> str:
     parts: list[str] = []
-    for item in response.get("output") or []:
+    for idx, item in enumerate(response.get("output") or []):
         if not isinstance(item, dict):
             continue
-        for block in item.get("content") or []:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") in {"output_text", "text"}:
-                parts.append(str(block.get("text") or ""))
+        itype = str(item.get("type") or "")
+        if itype == "function_call":
+            _collect_full_function_call(idx, item, tool_call_deltas)
+            continue
+        if itype in {"message", "output_message"}:
+            for block in item.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") in {"output_text", "text"}:
+                    parts.append(str(block.get("text") or ""))
     return "".join(parts)
+
+
+def _collect_full_function_call(idx: int, item: dict, tool_call_deltas: dict[int, dict]) -> None:
+    entry = tool_call_deltas.setdefault(idx, {"id": "", "name": "", "arguments_json": ""})
+    entry["id"] = str(item.get("call_id") or item.get("id") or entry["id"])
+    entry["name"] = str(item.get("name") or entry["name"])
+    arguments = item.get("arguments")
+    if isinstance(arguments, dict):
+        entry["arguments_json"] = json.dumps(arguments, ensure_ascii=False)
+    elif arguments is not None:
+        entry["arguments_json"] = str(arguments)
 
 
 def _collect_tool_call_delta(event: dict, tool_call_deltas: dict[int, dict]) -> None:

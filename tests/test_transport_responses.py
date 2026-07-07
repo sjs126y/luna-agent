@@ -98,3 +98,68 @@ async def test_responses_transport_parses_output_content_blocks():
     response = await transport.parse_stream(events())
 
     assert response.text == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_responses_transport_parses_non_stream_function_call():
+    transport = OpenAIResponsesTransport(_provider())
+
+    async def events():
+        yield {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "web_search",
+                    "arguments": "{\"query\":\"gpt5.5\",\"max_results\":3}",
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 4},
+        }
+
+    response = await transport.parse_stream(events())
+
+    assert response.text == ""
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls == [
+        {
+            "id": "call_1",
+            "name": "web_search",
+            "input": {"query": "gpt5.5", "max_results": 3},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_responses_transport_parses_completed_event_function_call():
+    transport = OpenAIResponsesTransport(_provider())
+
+    async def events():
+        yield {
+            "type": "response.completed",
+            "response": {
+                "model": "gpt-test",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_2",
+                        "name": "read",
+                        "arguments": {"path": "CLAUDE.md"},
+                    }
+                ],
+            },
+        }
+
+    response = await transport.parse_stream(events())
+
+    assert response.model == "gpt-test"
+    assert response.tool_calls == [
+        {
+            "id": "call_2",
+            "name": "read",
+            "input": {"path": "CLAUDE.md"},
+        }
+    ]

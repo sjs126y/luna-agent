@@ -12,7 +12,8 @@ def test_execution_policy_defaults_to_standard():
     assert policy.permission_for("read") == "allow"
     assert policy.permission_for("write") == "ask"
     assert policy.permission_for("bash") == "ask"
-    assert policy.network == "deny"
+    assert policy.permission_for("network") == "ask"
+    assert policy.network == "ask"
     assert policy.isolation == "tool-enforced"
     assert policy.profile is not None
     assert policy.profile.label == "Standard"
@@ -97,6 +98,66 @@ def test_execution_policy_accepts_flat_permission_overrides():
         "background": "allow",
         "network": "ask",
     }
+
+
+def test_execution_policy_config_override_can_still_deny_standard_network():
+    from personal_agent.execution import resolve_execution_policy
+
+    policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="standard",
+        bash_allow_network=False,
+        execution_policy_overrides={"tool_permissions": {"network": "deny"}},
+    ))
+
+    assert policy.permission_for("network") == "deny"
+
+
+def test_network_grant_only_unlocks_ask_permissions():
+    from personal_agent.execution import resolve_execution_policy
+    from personal_agent.tools.execution_guard import evaluate_execution_guards
+
+    entry = SimpleNamespace(
+        precheck=None,
+        is_destructive=True,
+        check_fn=None,
+        permission_category="network",
+    )
+    tool_call = {"name": "web_search", "id": "search-1", "input": {"query": "news"}}
+
+    standard_agent = SimpleNamespace(
+        _execution_policy=resolve_execution_policy(SimpleNamespace(
+            execution_mode="standard",
+            bash_allow_network=False,
+        )),
+        _destructive_allowed=set(),
+        _tool_calls_this_turn=0,
+        _max_tool_calls_per_turn=20,
+        _destructive_calls_this_turn=0,
+        _max_destructive_per_turn=3,
+    )
+    denied_without_grant = evaluate_execution_guards(tool_call, entry, standard_agent)
+    standard_agent._destructive_allowed.add("network")
+    allowed_with_grant = evaluate_execution_guards(tool_call, entry, standard_agent)
+
+    guarded_agent = SimpleNamespace(
+        _execution_policy=resolve_execution_policy(SimpleNamespace(
+            execution_mode="guarded",
+            bash_allow_network=False,
+        )),
+        _destructive_allowed={"network"},
+        _tool_calls_this_turn=0,
+        _max_tool_calls_per_turn=20,
+        _destructive_calls_this_turn=0,
+        _max_destructive_per_turn=3,
+    )
+    guarded_denied = evaluate_execution_guards(tool_call, entry, guarded_agent)
+
+    assert denied_without_grant.allowed is False
+    assert denied_without_grant.reason_code == "permission_required"
+    assert allowed_with_grant.allowed is True
+    assert allowed_with_grant.grant_matched == "network"
+    assert guarded_denied.allowed is False
+    assert guarded_denied.reason_code == "permission_denied"
 
 
 def test_execution_policy_accepts_nested_permission_overrides():

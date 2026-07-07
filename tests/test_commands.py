@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from personal_agent.commands.registry import command_specs_as_dict
@@ -11,6 +13,7 @@ from personal_agent.commands.runtime import (
     slash_argument_choices,
 )
 from personal_agent.config import Settings
+from personal_agent.execution import resolve_execution_policy
 from personal_agent.models.messages import SessionSource
 from personal_agent.plugins.models import CommandEntry
 
@@ -324,6 +327,31 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
     result = await handle_slash_command(runtime, "/memory doctor")
     assert "Memory 诊断" in result.response
+
+
+@pytest.mark.asyncio
+async def test_allow_network_follows_execution_mode_policy(tmp_path):
+    runtime = Runtime(tmp_path)
+    runtime.agent._execution_policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="standard",
+        bash_allow_network=False,
+    ))
+
+    result = await handle_slash_command(runtime, "/allow network")
+
+    assert "已授权 network" in result.response
+    assert "network" in runtime.agent._destructive_allowed
+
+    runtime = Runtime(tmp_path)
+    runtime.agent._execution_policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="guarded",
+        bash_allow_network=False,
+    ))
+
+    result = await handle_slash_command(runtime, "/allow network")
+
+    assert "不能覆盖" in result.response
+    assert "network" not in runtime.agent._destructive_allowed
 
 
 @pytest.mark.asyncio

@@ -450,12 +450,68 @@ async def _allow(runtime: CommandRuntime, category: str) -> str:
     valid = {"write", "bash", "background", "network", "destructive", "default", "all"}
     if category not in valid:
         return f"用法: /allow [write|bash|background|network|destructive|all]，当前有效类别: {', '.join(sorted(valid))}"
+    agent = _runtime_cached_agent(runtime)
+    policy = getattr(agent, "_execution_policy", None) if agent is not None else getattr(runtime.settings, "execution_policy", None)
+    denied = _allow_denied_categories(policy, category)
+    if category != "all" and denied:
+        return _allow_denied_message(policy, category)
+    if category == "all" and len(denied) == len(_ALLOW_ALL_CATEGORIES):
+        return _allow_denied_message(policy, category)
+
     custom = await _call_optional(runtime, "allow_category", category)
+    warning = _allow_warning(denied)
     if custom is not None:
-        return str(custom)
-    agent = await runtime.get_agent()
+        response = str(custom)
+        return f"{response}\n{warning}" if warning else response
+    if agent is None:
+        agent = await runtime.get_agent()
     agent._destructive_allowed.add(category)
-    return f"已授权 {category} 操作，本轮对话内有效。"
+    response = f"已授权 {category} 操作，本轮对话内有效。"
+    return f"{response}\n{warning}" if warning else response
+
+
+_ALLOW_ALL_CATEGORIES = ("write", "bash", "background", "network", "destructive", "default")
+
+
+def _runtime_cached_agent(runtime: CommandRuntime):
+    agent = getattr(runtime, "agent", None)
+    if agent is not None:
+        return agent
+    service = getattr(runtime, "conversation_service", None)
+    if service is not None and hasattr(service, "get_cached_agent"):
+        try:
+            return service.get_cached_agent(runtime.session_key)
+        except Exception:
+            return None
+    return None
+
+
+def _allow_denied_categories(policy, category: str) -> list[str]:
+    categories = _ALLOW_ALL_CATEGORIES if category == "all" else (category,)
+    if policy is None:
+        return []
+    denied: list[str] = []
+    for item in categories:
+        try:
+            decision = str(policy.permission_for(item))
+        except Exception:
+            decision = ""
+        if decision == "deny":
+            denied.append(item)
+    return denied
+
+
+def _allow_denied_message(policy, category: str) -> str:
+    mode = current_mode_from_policy(policy)
+    if category == "all":
+        return f"当前模式 {mode} 禁止这些权限类别，/allow all 不能覆盖。请切换模式或修改 config.yaml 的 execution.policy。"
+    return f"当前模式 {mode} 禁止 {category}，/allow 不能覆盖。请切换模式或修改 config.yaml 的 execution.policy。"
+
+
+def _allow_warning(denied: list[str]) -> str:
+    if not denied:
+        return ""
+    return f"注意：当前模式仍禁止 {', '.join(denied)}，/allow 不能覆盖。"
 
 
 def current_mode(agent) -> str:

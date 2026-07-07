@@ -115,7 +115,7 @@ auth:
 | mode | UI 名称 | 行为 |
 | --- | --- | --- |
 | `guarded` | Read Only | 只允许读和搜索，写入、bash、后台任务、网络和破坏性操作拒绝 |
-| `standard` | Ask First | 日常模式，读和搜索允许，写入、bash、后台任务和破坏性操作需要确认，网络默认拒绝 |
+| `standard` | Ask First | 日常模式，读和搜索允许，写入、bash、后台任务、网络和破坏性操作需要确认 |
 | `trusted` | Edit Freely | 信任本地项目，写入和 bash 允许，后台任务、网络和破坏性操作仍需确认 |
 | `sovereign` | Full Auto | sandbox 内大多数工具直接允许，破坏性操作仍需确认 |
 
@@ -159,7 +159,7 @@ allow, ask, deny
 | `file_max_write_bytes` | `file_write` 单次最大写入字节数 |
 | `audit_enabled` | 是否记录工具审计日志到 `data/audit.log` |
 
-注意：`guarded` 模式下网络始终拒绝；其他模式下 `bash_allow_network: true` 才会放开 bash 网络命令。
+注意：`/allow` 只解锁当前 mode/config 最终策略为 `ask` 的权限类别，不能覆盖 `deny`。`standard` 下普通网络工具为 `ask`，可用 `/allow network` 解锁 `web_search` / `web_fetch`；`guarded` 下 network 仍为 `deny`。`bash_allow_network: true` 只控制 bash 内部的 `curl` / `wget` / `pip` 等网络命令，不会被 `/allow network` 自动打开。
 
 ## 多模态配置
 

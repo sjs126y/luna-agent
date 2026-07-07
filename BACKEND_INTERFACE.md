@@ -539,6 +539,8 @@ async def confirm_callback(decision) -> str:
 
 切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
+`/allow` 是 mode/config 策略上的临时 grant：只解锁最终权限决策为 `ask` 的类别，不能覆盖 `deny`。`standard / Ask First` 下 `network=ask`，因此 `/allow network` 可用于 `web_search` / `web_fetch`；`guarded / Read Only` 下 `network=deny`，后端会返回“不能覆盖”的文本提示。`/allow network` 不会打开 bash 内部的 `curl` / `wget` 等网络命令，bash 网络仍由 `sandbox.bash_allow_network` 控制。
+
 ## 6. Usage / Context Summary
 
 `/usage` 返回人类可读文本，当前语义如下：
