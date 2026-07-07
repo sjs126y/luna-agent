@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections import OrderedDict
 
@@ -10,6 +11,7 @@ from personal_agent.platforms.core import platform_registry
 from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation import ConversationCommandRuntime, ConversationService
+from personal_agent.gateway.confirmations import PendingConfirmationManager
 from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.gateway.state import GatewayRunState, PlatformRuntime
@@ -63,6 +65,7 @@ class Gateway:
         self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
         self._session_router = GatewaySessionRouter()
         self._session_override = self._session_router.overrides
+        self._confirmations = PendingConfirmationManager()
         self._cron_scheduler = None
         self.hooks = Hooks()
         self.plugin_manager = plugin_manager
@@ -155,6 +158,7 @@ class Gateway:
             "platform_message_dedupe_max_size": getattr(self.config, "platform_message_dedupe_max_size", 1024),
             "platform_send_max_retries": getattr(self.config, "platform_send_max_retries", 2),
         }
+        data.update(self._confirmations.snapshot() or {})
         data.update(run_health)
         return data
 
@@ -270,12 +274,17 @@ class Gateway:
             if allowed and response is not None:
                 return response
 
-        # 3. Command detection
+        # 3. Command detection. /stop must be able to cancel pending confirms.
         if event.text.startswith("/"):
             cmd_result = await self._handle_command(event, session_key)
             if cmd_result is not None:
                 return cmd_result
             # cmd_result is None → continue to agent (skill injection, etc.)
+
+        # 3.5. Pending async tool confirmation replies bypass busy handling.
+        consumed, confirm_response = self._confirmations.resolve_message(session_key, event.text)
+        if consumed:
+            return confirm_response
 
         # 4. Busy check
         if self._run_state.is_running(session_key):
@@ -301,12 +310,20 @@ class Gateway:
         event = await self._prepare_inbound_attachments(event)
         envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
         if envelope is not None:
-            turn = await self._conversation_service.run_turn_input(
+            turn = await _call_with_optional_confirm(
+                self._conversation_service.run_turn_input,
                 session_key,
                 ConversationInput.from_envelope(envelope),
+                confirm=self._confirm_callback(event, session_key),
             )
         else:
-            turn = await self._conversation_service.run_turn(session_key, event.source, event.text)
+            turn = await _call_with_optional_confirm(
+                self._conversation_service.run_turn,
+                session_key,
+                event.source,
+                event.text,
+                confirm=self._confirm_callback(event, session_key),
+            )
 
         # Hook: on_before_send
         final = turn.final_response
@@ -328,6 +345,30 @@ class Gateway:
         )
 
         return final or "..."
+
+    def _confirm_callback(self, event, session_key: str):
+        async def _confirm(decision):
+            adapter = self._adapter_for_source(event.source)
+            if adapter is None:
+                return "deny"
+
+            async def send(prompt: str) -> bool:
+                try:
+                    result = await adapter.send(event.source.chat_id, prompt)
+                except Exception:
+                    logger.exception("Failed to send tool confirmation prompt")
+                    return False
+                return bool(getattr(result, "success", False))
+
+            return await self._confirmations.request(
+                session_key=session_key,
+                source=event.source,
+                decision=decision,
+                settings=self.config,
+                send=send,
+            )
+
+        return _confirm
 
     async def _prepare_inbound_attachments(self, event):
         adapter = self._adapter_for_source(event.source)
@@ -429,6 +470,9 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
             await self.gateway._conversation_service.ensure_session(base_key, self.event.source)
         return f"会话已删除: {target_key}\n当前会话: {self._session_key}"
 
+    async def pending_confirmation_status(self) -> dict | None:
+        return self.gateway._confirmations.snapshot(self.session_key)
+
     def plugin_command_kwargs(self, args: str) -> dict:
         return {
             "event": self.event,
@@ -438,8 +482,23 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
         }
 
     async def stop_agents(self) -> str:
+        self.gateway._confirmations.cancel(None)
         self.gateway._run_state.request_stop(self._session_key)
         return await super().stop_agents()
 
     def session_list_current_key(self) -> str:
         return self.gateway._session_router.current_for_list(self.event.source)
+
+
+async def _call_with_optional_confirm(func, *args, confirm=None):
+    try:
+        signature = inspect.signature(func)
+        accepts_confirm = (
+            "confirm" in signature.parameters
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        )
+    except (TypeError, ValueError):
+        accepts_confirm = True
+    if accepts_confirm:
+        return await func(*args, confirm=confirm)
+    return await func(*args)

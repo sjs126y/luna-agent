@@ -49,6 +49,27 @@ uv run pytest tests/test_commands.py::test_shared_command_core_session_usage_exp
 ```
 
 结果：聚焦 `5 passed`。
+
+## 2026-07-07：Gateway 异步工具确认 v2
+
+状态：已完成 v2 实现并通过聚焦验证。
+
+已完成：
+
+- Gateway 平台遇到工具权限 `ask` 时会发送确认消息：`1 允许一次 / 2 拒绝 / 3 24小时允许`。
+- pending confirm 回复会绕过 busy check，不进入普通 agent turn。
+- `/stop` 会取消 pending confirm，并中断等待中的工具确认。
+- `Gateway.health_snapshot()` 暴露 `pending_confirmations` / `pending_confirmation_count`。
+- `/permissions` 可返回当前 session 的 `pending_confirmation`。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_gateway_commands.py::test_gateway_async_confirmation_allows_once tests/test_gateway_commands.py::test_gateway_async_confirmation_always_and_stop tests/test_gateway_commands.py::test_gateway_regular_message_uses_active_session_key tests/test_gateway_commands.py::test_gateway_passes_attachments_as_conversation_input -q
+```
+
+结果：聚焦 `4 passed`。
 - Usage / context：`llm_start` / `llm_end` 已区分“最近一次 API token 消耗”和“当前上下文占用估算”；`/usage` 已修正工具计数文案，避免把活跃 turn 内部计数显示成会话统计。
 - Tool protocol prompt：系统提示已加入稳定工具调用规则，要求需要工具时必须发出 tool call，避免只用文字声称已调用工具；未加入正则 retry 或额外控制流。
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。

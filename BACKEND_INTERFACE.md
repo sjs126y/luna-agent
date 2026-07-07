@@ -548,6 +548,14 @@ async def confirm_callback(decision) -> str:
 - `/deny all`：撤销全部限时授权。
 - `/permissions` payload 新增 `temporary_grants`、`turn_grants`、`temporary_grant_ttl_seconds`，每个临时授权包含 `category`、`expires_at`、`expires_at_iso`。
 
+Gateway 异步确认：
+
+- 微信/QQ/飞书/Telegram 等 gateway 平台遇到 `permission_required + ask` 时，会发送确认文本，不再立即 denied。
+- 用户回复 `1` = 允许一次，`2` = 拒绝，`3` = 按 `permissions.temporary_grant_ttl_hours` 限时允许。
+- pending confirm 期间，非 `1/2/3` 普通文本会被消费并提示 `请回复 1、2 或 3；发送 /stop 可取消。`
+- `/stop` 会取消 pending confirm，并让等待中的工具确认返回 `interrupted`。
+- `Gateway.health_snapshot()` 新增 `pending_confirmations` 与 `pending_confirmation_count`；`/permissions` payload 的 `pending_confirmation` 会返回当前 session 的 pending 状态。
+
 当一批工具调用全部因为 `permission_required` 被拒绝时，后端会结束当前 turn 并发送一条 `assistant_message` 提示需要 `/allow <category>` 后重试，避免模型在同一轮里反复调用未授权工具。对应 `tool_end` / Tool Runs / Turn Reports 仍会记录实际 denied 工具结果。
 
 ## 6. Usage / Context Summary

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -429,6 +430,97 @@ async def test_gateway_passes_attachments_as_conversation_input(gateway, monkeyp
     assert result == "ok"
     assert captured["input"].attachments[0].kind == "image"
     assert captured["input"].attachments[0].url == "https://example.test/a.png"
+
+
+@pytest.mark.asyncio
+async def test_gateway_async_confirmation_allows_once(gateway, monkeypatch):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    answers = []
+
+    async def run_turn_input(session_key, user_input, *, confirm=None):
+        answer = await confirm(SimpleNamespace(
+            tool_name="web_search",
+            display_name="Web search",
+            permission_category="network",
+            input_preview="GPT-5.5",
+            risk_summary="May access the network.",
+        ))
+        answers.append(answer)
+        return ConversationTurnResult(
+            final_response=f"answer:{answer}",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    task = asyncio.create_task(gateway._handle_message_inner(_event("search")))
+    await _wait_until(lambda: adapter.sent_contents)
+
+    assert "需要授权工具调用" in adapter.sent_contents[0]
+    assert "回复 1 允许一次 / 2 拒绝 / 3 24小时允许" in adapter.sent_contents[0]
+    assert gateway.health_snapshot()["pending_confirmation_count"] == 1
+
+    invalid = await gateway._handle_message_inner(_event("hello"))
+    ack = await gateway._handle_message_inner(_event("1"))
+    final = await asyncio.wait_for(task, timeout=1)
+
+    assert invalid == "请回复 1、2 或 3；发送 /stop 可取消。"
+    assert ack == "已允许一次，继续执行。"
+    assert final == "answer:allow"
+    assert answers == ["allow"]
+    assert gateway.health_snapshot()["pending_confirmation_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_gateway_async_confirmation_always_and_stop(gateway, monkeypatch):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    async def run_turn_input(session_key, user_input, *, confirm=None):
+        answer = await confirm(SimpleNamespace(
+            tool_name="bash",
+            display_name="Shell command",
+            permission_category="bash",
+            input_preview="date",
+        ))
+        return ConversationTurnResult(
+            final_response=f"answer:{answer}",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    task = asyncio.create_task(gateway._handle_message_inner(_event("run")))
+    await _wait_until(lambda: adapter.sent_contents)
+    ack = await gateway._handle_message_inner(_event("3"))
+    final = await asyncio.wait_for(task, timeout=1)
+
+    assert ack == "已允许，24小时内同类工具不再询问。"
+    assert final == "answer:always"
+
+    task = asyncio.create_task(gateway._handle_message_inner(_event("run again")))
+    await _wait_until(lambda: len(adapter.sent_contents) == 2)
+    stopped = await gateway._handle_message_inner(_event("/stop"))
+    final = await asyncio.wait_for(task, timeout=1)
+
+    assert stopped == "已停止。"
+    assert final == "answer:interrupted"
 
 
 def test_gateway_health_snapshot_reports_runtime_state(gateway):
