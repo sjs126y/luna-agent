@@ -8,7 +8,8 @@ from personal_agent.agent.loop import run_conversation
 from personal_agent.agent.retry import RetryState
 from personal_agent.models.messages import NormalizedResponse
 from personal_agent.llm.provider import ProviderProfile
-from personal_agent.conversation.events import ConversationEventSink
+from personal_agent.conversation.events import ConversationEventSink, EventRecorder
+from personal_agent.conversation.steer import SteerManager
 
 
 class MockTransport:
@@ -17,8 +18,10 @@ class MockTransport:
     def __init__(self, responses: list[NormalizedResponse]):
         self.responses = responses
         self.calls = 0
+        self.call_messages = []
 
     async def call(self, messages, system_prompt="", tools=None, max_tokens=4096, stream=False):
+        self.call_messages.append(messages)
         if self.calls >= len(self.responses):
             return NormalizedResponse(text="done", finish_reason="end_turn")
         resp = self.responses[self.calls]
@@ -61,6 +64,24 @@ class PlanProbeTransport(MockTransport):
         request_plan=None,
     ):
         self.request_plan = request_plan
+        return await super().call(messages, system_prompt, tools, max_tokens, stream)
+
+
+class SteerAddingTransport(MockTransport):
+    def __init__(
+        self,
+        responses: list[NormalizedResponse],
+        *,
+        manager: SteerManager,
+        session_key: str,
+    ):
+        super().__init__(responses)
+        self.manager = manager
+        self.session_key = session_key
+
+    async def call(self, messages, system_prompt="", tools=None, max_tokens=4096, stream=False):
+        if self.calls == 0:
+            self.manager.add(self.session_key, None, "请按新的补充重新回答")
         return await super().call(messages, system_prompt, tools, max_tokens, stream)
 
 
@@ -139,6 +160,79 @@ async def test_simple_response(provider):
     assert recorder.events[2].data["context_remaining_tokens"] >= 0
     assert recorder.events[2].data["context_budget"]["used"] == recorder.events[2].data["context_used_tokens"]
     assert recorder.events[3].message == "Hello!"
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_consumes_pending_steer_before_llm_call(provider):
+    recorder = EventRecorder()
+    transport = MockTransport([
+        NormalizedResponse(text="收到", finish_reason="end_turn"),
+    ])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi", turn_id="turn-1")
+    steer = SteerManager()
+    steer.begin_turn("cli:default:local", "turn-1")
+    signal = steer.add("cli:default:local", None, "回答更短")
+
+    result = await run_conversation(
+        agent,
+        ctx,
+        event_sink=recorder,
+        steer=steer,
+        session_key="cli:default:local",
+    )
+
+    assert result["completed"] is True
+    assert signal.status == "consumed"
+    first_call_text = _user_text(transport.call_messages[0])
+    assert "[运行中用户补充/修正]" in first_call_text
+    assert "回答更短" in first_call_text
+    assert [event.type for event in recorder.events][:3] == [
+        "turn_start",
+        "steer_consumed",
+        "llm_start",
+    ]
+    assert result["turn_report"]["steer"]["consumed"] == 1
+    assert result["turn_report"]["steer"]["consumed_ids"] == [signal.id]
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_applies_steer_received_during_final_response(provider):
+    steer = SteerManager()
+    steer.begin_turn("cli:default:local", "turn-1")
+    transport = SteerAddingTransport(
+        [
+            NormalizedResponse(text="旧答案", finish_reason="end_turn"),
+            NormalizedResponse(text="新答案", finish_reason="end_turn"),
+        ],
+        manager=steer,
+        session_key="cli:default:local",
+    )
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi", turn_id="turn-1")
+
+    result = await run_conversation(
+        agent,
+        ctx,
+        steer=steer,
+        session_key="cli:default:local",
+    )
+
+    assert result["final_response"] == "新答案"
+    assert transport.calls == 2
+    second_call_text = _user_text(transport.call_messages[1])
+    assert "请按新的补充重新回答" in second_call_text
+    assert [message["role"] for message in result["messages"][-3:]] == ["assistant", "user", "assistant"]
+
+
+def _user_text(messages: list[dict]) -> str:
+    return "\n".join(
+        str(block.get("text") or "")
+        for message in messages
+        if message.get("role") == "user"
+        for block in (message.get("content") or [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
 
 
 @pytest.mark.asyncio
@@ -337,8 +431,6 @@ async def test_turn_report_records_denied_tool_decision(provider):
             tool_calls=[{"id": "w1", "name": "danger", "input": {"value": "x"}}],
             usage={"input_tokens": 4, "output_tokens": 1},
         ),
-        NormalizedResponse(text="Done!", finish_reason="end_turn",
-                          usage={"input_tokens": 3, "output_tokens": 2}),
     ])
     agent = init_agent(transport, provider)
 
@@ -361,6 +453,8 @@ async def test_turn_report_records_denied_tool_decision(provider):
     result = await run_conversation(agent, ctx)
 
     item = result["turn_report"]["tools"]["items"][0]
+    assert transport.calls == 1
+    assert "/allow write" in result["final_response"]
     assert result["turn_report"]["tools"]["denied"] == 1
     assert item["tool_name"] == "danger"
     assert item["tool_use_id"] == "w1"
@@ -374,6 +468,118 @@ async def test_turn_report_records_denied_tool_decision(provider):
     assert truth["results_total"] == 1
     assert truth["status_counts"]["denied"] == 1
     assert truth["assistant_claim"]["claimed_but_no_tool_call"] is False
+
+
+@pytest.mark.asyncio
+async def test_permission_required_network_tool_stops_without_looping(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我先搜索一下。",
+            finish_reason="tool_use",
+            tool_calls=[{"id": "s1", "name": "web_search", "input": {"query": "GPT-5.5"}}],
+            usage={"input_tokens": 4, "output_tokens": 1},
+        ),
+        NormalizedResponse(
+            text="This should not be called",
+            finish_reason="end_turn",
+            usage={"input_tokens": 3, "output_tokens": 2},
+        ),
+    ])
+
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _search(query: str = "", max_results: int = 3):
+        return f"searched:{query}:{max_results}"
+
+    tool_registry.register(ToolEntry(
+        name="web_search",
+        description="Search",
+        schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        handler=_search,
+        permission_category="network",
+    ))
+    agent = init_agent(
+        transport,
+        provider,
+        execution_policy=ExecutionPolicy(
+            mode="trusted",
+            permissions={"default": "ask", "network": "ask"},
+        ),
+    )
+
+    ctx = await build_turn_context(agent, "试一下搜索")
+    result = await run_conversation(agent, ctx)
+
+    assert result["completed"] is True
+    assert transport.calls == 1
+    assert result["final_response"] == "网络工具需要授权，本轮已停止。请发送 /allow network 后重试。"
+    assert result["turn_report"]["llm"]["calls"] == 1
+    assert result["turn_report"]["tools"]["total"] == 1
+    assert result["turn_report"]["tools"]["denied"] == 1
+    item = result["turn_report"]["tools"]["items"][0]
+    assert item["tool_name"] == "web_search"
+    assert item["reason_code"] == "permission_required"
+    assert item["permission_category"] == "network"
+
+
+@pytest.mark.asyncio
+async def test_temporary_network_grant_survives_turn_reset(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我先搜索一下。",
+            finish_reason="tool_use",
+            tool_calls=[{"id": "s1", "name": "web_search", "input": {"query": "GPT-5.5"}}],
+            usage={"input_tokens": 4, "output_tokens": 1},
+        ),
+        NormalizedResponse(
+            text="搜索完成。",
+            finish_reason="end_turn",
+            usage={"input_tokens": 3, "output_tokens": 2},
+        ),
+    ])
+
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.permissions import add_temporary_grant
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _search(query: str = "", max_results: int = 3):
+        return f"searched:{query}:{max_results}"
+
+    tool_registry.register(ToolEntry(
+        name="web_search",
+        description="Search",
+        schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        handler=_search,
+        permission_category="network",
+    ))
+    agent = init_agent(
+        transport,
+        provider,
+        execution_policy=ExecutionPolicy(
+            mode="trusted",
+            permissions={"default": "ask", "network": "ask"},
+        ),
+    )
+    agent._destructive_allowed.add("network")
+    add_temporary_grant(agent, "network", ttl_seconds=3600)
+
+    ctx = await build_turn_context(agent, "试一下搜索")
+    assert "network" not in agent._destructive_allowed
+    result = await run_conversation(agent, ctx)
+
+    assert result["completed"] is True
+    assert result["final_response"] == "搜索完成。"
+    assert transport.calls == 2
+    item = result["turn_report"]["tools"]["items"][0]
+    assert item["status"] == "success"
+    assert item["grant_matched"] == "network"
+    assert item["grant_scope"] == "temporary"
+    assert item["grant_expires_at"] > 0
+    assert item["temporary_grant_ttl_seconds"] == 24 * 60 * 60
+    assert item["required_allow"] == ""
 
 
 @pytest.mark.asyncio

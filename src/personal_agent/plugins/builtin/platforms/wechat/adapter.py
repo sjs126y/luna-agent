@@ -29,6 +29,7 @@ from personal_agent.platforms.core import (
     ChatInfo,
     PlatformCapabilities,
     SendResult,
+    split_text_for_platform,
 )
 from personal_agent.platforms.attachments import attachment_part
 from personal_agent.models.messages import AttachmentRef, MessageEnvelope, MessageEvent, MessagePart, SessionSource
@@ -239,9 +240,7 @@ class WeChatAdapter(BasePlatformAdapter):
             async with session.get(url) as resp:
                 if not resp.ok:
                     raise AttachmentDownloadError("download_failed", f"WeChat media HTTP {resp.status}")
-                content = await resp.content.read(limit + 1)
-                if len(content) > limit:
-                    raise AttachmentDownloadError("size_exceeded")
+                content = await _read_limited_response(resp, limit)
                 mime_type = str(resp.headers.get("Content-Type") or "").split(";", 1)[0]
                 return content, mime_type
         finally:
@@ -267,25 +266,8 @@ class WeChatAdapter(BasePlatformAdapter):
     # ── text chunking ─────────────────────────────────
 
     def _split_text(self, text: str) -> list[str]:
-        """Split long text at paragraph boundaries, keeping code fences intact."""
-        if len(text) <= self.MAX_MESSAGE_LENGTH:
-            return [text]
-        chunks = []
-        current = ""
-        in_fence = False
-        for line in text.split("\n"):
-            line = line.rstrip()
-            if line.startswith("```"):
-                in_fence = not in_fence
-            if len(current) + len(line) >= self.MAX_MESSAGE_LENGTH and not in_fence:
-                if current:
-                    chunks.append(current.strip())
-                current = line
-            else:
-                current = (current + "\n" + line).strip() if current else line
-        if current:
-            chunks.append(current.strip())
-        return chunks if chunks else [text[:self.MAX_MESSAGE_LENGTH]]
+        """Split long text so every chunk fits the WeChat send limit."""
+        return split_text_for_platform(text, self.MAX_MESSAGE_LENGTH)
 
     async def send_chunked(self, chat_id: str, content: str) -> None:
         """Send content, splitting if needed."""
@@ -641,10 +623,10 @@ def _wechat_is_encrypted(data: dict[str, Any]) -> bool:
 
 
 def _wechat_aes_key(data: dict[str, Any]) -> bytes:
-    value = _first_present(data, "aes_key", "aeskey")
+    value = _first_present(data, "aeskey", "aes_key")
     media = data.get("media")
     if not value and isinstance(media, dict):
-        value = _first_present(media, "aes_key", "aeskey")
+        value = _first_present(media, "aeskey", "aes_key")
     if not value:
         return b""
     raw_value = value.strip()
@@ -673,17 +655,26 @@ def _decrypt_wechat_payload(data: bytes, key: bytes) -> bytes:
     if len(data) % 16 != 0:
         raise AttachmentDownloadError("decrypt_payload_invalid")
     decrypted = AES.new(key, AES.MODE_ECB).decrypt(data)
-    return _pkcs7_unpad(decrypted)
+    return _strip_pkcs7_padding(decrypted)
 
 
-def _pkcs7_unpad(data: bytes) -> bytes:
+async def _read_limited_response(resp, limit: int) -> bytes:
+    chunks = bytearray()
+    async for chunk in resp.content.iter_chunked(64 * 1024):
+        chunks.extend(chunk)
+        if len(chunks) > limit:
+            raise AttachmentDownloadError("size_exceeded")
+    return bytes(chunks)
+
+
+def _strip_pkcs7_padding(data: bytes) -> bytes:
     if not data:
         raise AttachmentDownloadError("decrypt_payload_invalid")
     pad = data[-1]
     if pad < 1 or pad > 16:
-        raise AttachmentDownloadError("decrypt_payload_invalid")
+        return data
     if data[-pad:] != bytes([pad]) * pad:
-        raise AttachmentDownloadError("decrypt_payload_invalid")
+        return data
     return data[:-pad]
 
 

@@ -9,7 +9,7 @@ import json
 import logging
 import shutil
 import time as _time_module
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -48,6 +48,16 @@ class ToolExecutionResult:
     output_summary: str = ""
     attempts: int = 0
     output_truncated: bool = False
+    guard_stage: str = ""
+    reason_code: str = ""
+    permission_category: str = ""
+    permission_decision: str = ""
+    required_allow: str = ""
+    execution_mode: str = ""
+    grant_matched: str = ""
+    grant_scope: str = ""
+    grant_expires_at: float = 0.0
+    temporary_grant_ttl_seconds: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -209,6 +219,17 @@ async def execute_tool_call_result(
     )
 
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
+        if tool_decision is not None:
+            result.guard_stage = tool_decision.stage
+            result.reason_code = tool_decision.reason_code
+            result.permission_category = tool_decision.permission_category
+            result.permission_decision = tool_decision.permission_decision
+            result.required_allow = tool_decision.required_allow
+            result.execution_mode = tool_decision.execution_mode
+            result.grant_matched = tool_decision.grant_matched
+            result.grant_scope = tool_decision.grant_scope
+            result.grant_expires_at = tool_decision.grant_expires_at
+            result.temporary_grant_ttl_seconds = tool_decision.temporary_grant_ttl_seconds
         try:
             from personal_agent.tools.audit import audit_tool_result
 
@@ -229,13 +250,16 @@ async def execute_tool_call_result(
             output_summary=result.output_summary,
             full_output=result.content or result.error,
             output_truncated=result.output_truncated,
-            guard_stage=tool_decision.stage if tool_decision else "",
-            guard_reason_code=tool_decision.reason_code if tool_decision else "",
-            permission_category=tool_decision.permission_category if tool_decision else "",
-            permission_decision=tool_decision.permission_decision if tool_decision else "",
-            required_allow=tool_decision.required_allow if tool_decision else "",
-            execution_mode=tool_decision.execution_mode if tool_decision else "",
-            grant_matched=tool_decision.grant_matched if tool_decision else "",
+            guard_stage=result.guard_stage,
+            guard_reason_code=result.reason_code,
+            permission_category=result.permission_category,
+            permission_decision=result.permission_decision,
+            required_allow=result.required_allow,
+            execution_mode=result.execution_mode,
+            grant_matched=result.grant_matched,
+            grant_scope=result.grant_scope,
+            grant_expires_at=result.grant_expires_at,
+            temporary_grant_ttl_seconds=result.temporary_grant_ttl_seconds,
             display_name=tool_decision.display_name if tool_decision else "",
             execution_mode_label=tool_decision.execution_mode_label if tool_decision else "",
             risk_level=tool_decision.risk_level if tool_decision else "",
@@ -286,7 +310,7 @@ async def execute_tool_call_result(
             error=f"{type(exc).__name__}: {exc}",
             started=started,
         ))
-    tool_decision = tool_decision_from_guard(tc, guard_decision)
+    tool_decision = _with_agent_grant_metadata(tool_decision_from_guard(tc, guard_decision), agent)
     if _needs_tool_confirm(tool_decision) and confirm is not None:
         answer = await _confirm_tool_decision(confirm, tool_decision, agent=agent)
         if answer == "interrupted":
@@ -317,7 +341,7 @@ async def execute_tool_call_result(
             finally:
                 if answer == "allow":
                     _remove_confirm_grants(agent, added_grants)
-            tool_decision = tool_decision_from_guard(tc, guard_decision)
+            tool_decision = _with_agent_grant_metadata(tool_decision_from_guard(tc, guard_decision), agent)
     await _emit_tool_decision(event_sink, tool_decision)
     if not guard_decision.allowed:
         return await _finish(_result(
@@ -484,8 +508,10 @@ def _would_need_permission_confirm(tc: dict, entry: Any, agent: Any = None) -> b
             decision = policy.permission_for("destructive")
     if decision != "ask":
         return False
-    grants = getattr(agent, "_destructive_allowed", set())
-    return "all" not in grants and category not in grants
+    from personal_agent.permissions import matching_permission_grant
+
+    grant, _scope, _expires_at = matching_permission_grant(agent, category)
+    return not grant
 
 
 async def _confirm_tool_decision(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> str:
@@ -528,38 +554,39 @@ def _agent_interrupt_requested(agent: Any) -> bool:
     return bool(getattr(agent, "_interrupt_requested", False)) if agent is not None else False
 
 
+def _with_agent_grant_metadata(decision: ToolDecision, agent: Any) -> ToolDecision:
+    if agent is None:
+        return decision
+    ttl = int(getattr(agent, "_permission_temporary_grant_ttl_seconds", 0) or 0)
+    if not ttl:
+        return decision
+    return replace(decision, temporary_grant_ttl_seconds=ttl)
+
+
 def _add_confirm_grants(agent: Any, decision: ToolDecision, *, persist: bool) -> set[str]:
     if agent is None:
         return set()
-    grants = getattr(agent, "_destructive_allowed", None)
-    if grants is None:
-        grants = set()
-        try:
-            agent._destructive_allowed = grants
-        except Exception:
-            return set()
     category = str(decision.permission_category or "")
     required = str(decision.required_allow or "")
     tokens = {item for item in (required, category) if item}
-    added: set[str] = set()
-    for token in tokens:
-        if token not in grants:
-            grants.add(token)
-            added.add(token)
-    return set() if persist else added
+    if persist:
+        from personal_agent.permissions import add_temporary_grant, add_turn_grants
+
+        for token in tokens:
+            add_temporary_grant(agent, token)
+        add_turn_grants(agent, *tokens)
+        return set()
+    from personal_agent.permissions import add_turn_grants
+
+    return add_turn_grants(agent, *tokens)
 
 
 def _remove_confirm_grants(agent: Any, added: set[str]) -> None:
     if not added or agent is None:
         return
-    grants = getattr(agent, "_destructive_allowed", None)
-    if grants is None:
-        return
-    for token in added:
-        try:
-            grants.discard(token)
-        except AttributeError:
-            return
+    from personal_agent.permissions import remove_turn_grants
+
+    remove_turn_grants(agent, added)
 
 
 async def _emit_tool_decision(event_sink: Any, decision: ToolDecision) -> None:

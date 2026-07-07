@@ -31,7 +31,7 @@ async def create_agent_runtime(
     """Resolve provider/transport/compressor and assemble an Agent."""
     provider_name = settings.llm_provider
     provider = provider_registry.get(provider_name, settings)
-    api_mode = provider_registry.detect_api_mode(settings.llm_base_url, provider_name)
+    api_mode = _resolve_api_mode(settings, provider_name)
     transport = transport_registry.get(api_mode, provider)
     logger.debug("Agent transport: provider=%s api_mode=%s", provider_name, api_mode)
 
@@ -47,6 +47,8 @@ async def create_agent_runtime(
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
         execution_policy=getattr(settings, "execution_policy", None),
+        permission_temporary_grant_ttl_seconds=int(getattr(settings, "permission_temporary_grant_ttl_hours", 24) * 60 * 60),
+        permission_confirm_timeout_seconds=int(getattr(settings, "permission_confirm_timeout_seconds", 120)),
     )
 
     if plugin_manager is not None:
@@ -71,6 +73,13 @@ async def create_agent_runtime(
     )
 
     return AgentRuntime(agent=agent, provider=provider, transport=transport)
+
+
+def _resolve_api_mode(settings, provider_name: str) -> str:
+    configured = str(getattr(settings, "llm_api_mode", "auto") or "auto").strip()
+    if configured and configured != "auto":
+        return configured
+    return provider_registry.detect_api_mode(settings.llm_base_url, provider_name)
 
 
 def _create_compressor(settings, provider: ProviderProfile, api_mode: str):

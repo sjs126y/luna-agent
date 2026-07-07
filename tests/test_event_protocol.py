@@ -74,6 +74,14 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert retry_fields["max_attempts"]["type"] == "integer"
     assert retry_fields["recoverable"]["type"] == "boolean"
 
+    steer_fields = {
+        field["name"]: field
+        for field in schema["events"]["steer_consumed"]["fields"]
+    }
+    assert steer_fields["count"]["type"] == "integer"
+    assert steer_fields["steer_ids"]["type"] == "list[string]"
+    assert steer_fields["text_preview"]["type"] == "string"
+
     stop_fields = {
         field["name"]: field
         for field in schema["events"]["stop"]["fields"]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from personal_agent.commands.registry import command_specs_as_dict
@@ -11,6 +13,7 @@ from personal_agent.commands.runtime import (
     slash_argument_choices,
 )
 from personal_agent.config import Settings
+from personal_agent.execution import resolve_execution_policy
 from personal_agent.models.messages import SessionSource
 from personal_agent.plugins.models import CommandEntry
 
@@ -95,6 +98,8 @@ class Runtime:
         self.deleted = None
         self.exported = False
         self.memory_deleted = None
+        self.running = False
+        self.steers = []
         self.tool_runs = [
             {
                 "id": 1,
@@ -248,6 +253,15 @@ class Runtime:
     async def clear_agent(self):
         self.clear_called = True
 
+    async def is_session_running(self) -> bool:
+        return self.running
+
+    async def add_steer(self, text: str) -> str:
+        if not self.running:
+            return "当前没有运行中的任务可修正。"
+        self.steers.append(text)
+        return f"已收到，会在当前任务下一步应用。（test-steer）"
+
     def plugin_command_kwargs(self, args: str):
         return {
             "args": args,
@@ -302,6 +316,15 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
     result = await handle_slash_command(runtime, "/allow write")
     assert "已授权 write" in result.response
     assert "write" in runtime.agent._destructive_allowed
+    assert runtime.agent._temporary_grants["write"] > 0
+
+    result = await handle_slash_command(runtime, "/permissions")
+    assert "临时授权 TTL" in result.response
+    assert result.payload["temporary_grants"][0]["category"] == "write"
+
+    result = await handle_slash_command(runtime, "/deny write")
+    assert "已撤销 write" in result.response
+    assert "write" not in runtime.agent._temporary_grants
 
     result = await handle_slash_command(runtime, "/memory list")
     assert result.handled
@@ -324,6 +347,32 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
     result = await handle_slash_command(runtime, "/memory doctor")
     assert "Memory 诊断" in result.response
+
+
+@pytest.mark.asyncio
+async def test_allow_network_follows_execution_mode_policy(tmp_path):
+    runtime = Runtime(tmp_path)
+    runtime.agent._execution_policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="standard",
+        bash_allow_network=False,
+    ))
+
+    result = await handle_slash_command(runtime, "/allow network")
+
+    assert "已授权 network" in result.response
+    assert "network" in runtime.agent._destructive_allowed
+    assert "network" in runtime.agent._temporary_grants
+
+    runtime = Runtime(tmp_path)
+    runtime.agent._execution_policy = resolve_execution_policy(SimpleNamespace(
+        execution_mode="guarded",
+        bash_allow_network=False,
+    ))
+
+    result = await handle_slash_command(runtime, "/allow network")
+
+    assert "不能覆盖" in result.response
+    assert "network" not in runtime.agent._destructive_allowed
 
 
 @pytest.mark.asyncio
@@ -462,6 +511,25 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     assert result.handled
     assert result.error
     assert "/permissions" in result.suggestions
+
+
+@pytest.mark.asyncio
+async def test_steer_command_delegates_to_runtime(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/steer")
+    assert result.handled
+    assert "用法" in result.response
+
+    result = await handle_slash_command(runtime, "/steer 回答短一点")
+    assert result.response == "当前没有运行中的任务可修正。"
+    assert runtime.steers == []
+
+    runtime.running = True
+    result = await handle_slash_command(runtime, "/steer 回答短一点")
+
+    assert "已收到" in result.response
+    assert runtime.steers == ["回答短一点"]
 
 
 @pytest.mark.asyncio

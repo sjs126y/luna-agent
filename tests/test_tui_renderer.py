@@ -83,6 +83,55 @@ async def test_llm_end_updates_status_fields():
 
 
 @pytest.mark.asyncio
+async def test_llm_start_updates_context_without_turn_tokens():
+    r, _, _ = _make()
+    r.state.input_tokens = 99
+    r.state.output_tokens = 42
+
+    await r.emit(ConversationEvent("llm_start", data={
+        "model": "deepseek-v4-flash",
+        "context_window": 1_000_000,
+        "context_used_tokens": 12_000,
+        "context_remaining_tokens": 988_000,
+        "context_percent": 1.2,
+        "context_budget": {"used": 12_000, "context_limit": 1_000_000},
+    }))
+
+    assert r.state.model == "deepseek-v4-flash"
+    assert r.state.context_window == 1_000_000
+    assert r.state.context_used_tokens == 12_000
+    assert r.state.context_remaining_tokens == 988_000
+    assert r.state.context_percent == 1.2
+    assert r.state.context_budget == {"used": 12_000, "context_limit": 1_000_000}
+    assert r.state.input_tokens == 99
+    assert r.state.output_tokens == 42
+
+
+@pytest.mark.asyncio
+async def test_steer_consumed_prints_lightweight_notice():
+    r, printed, _ = _make()
+
+    await r.emit(ConversationEvent("steer_consumed", data={
+        "count": 2,
+        "steer_ids": ["st_1", "st_2"],
+        "text_preview": "回答短一点",
+    }))
+
+    text = "\n".join(printed)
+    assert "steer applied x2" in text
+    assert "回答短一点" in text
+
+
+@pytest.mark.asyncio
+async def test_steer_consumed_handles_empty_preview():
+    r, printed, _ = _make()
+
+    await r.emit(ConversationEvent("steer_consumed", data={"count": 1}))
+
+    assert "steer applied" in "\n".join(printed)
+
+
+@pytest.mark.asyncio
 async def test_tool_lifecycle_and_expandable():
     r, printed, _ = _make()
     await r.emit(ConversationEvent("tool_start", data={

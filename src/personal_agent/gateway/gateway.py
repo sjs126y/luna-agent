@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections import OrderedDict
 
 from personal_agent.platforms.core import platform_registry
 from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
-from personal_agent.conversation import ConversationCommandRuntime, ConversationService
+from personal_agent.conversation import (
+    EMPTY_FINAL_RESPONSE_MESSAGE,
+    ConversationCommandRuntime,
+    ConversationService,
+)
+from personal_agent.gateway.confirmations import PendingConfirmationManager
 from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.gateway.state import GatewayRunState, PlatformRuntime
@@ -63,6 +69,7 @@ class Gateway:
         self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
         self._session_router = GatewaySessionRouter()
         self._session_override = self._session_router.overrides
+        self._confirmations = PendingConfirmationManager()
         self._cron_scheduler = None
         self.hooks = Hooks()
         self.plugin_manager = plugin_manager
@@ -136,11 +143,19 @@ class Gateway:
         await self._shutdown_event.wait()
 
     def health_snapshot(self) -> dict:
+        steer_snapshot = self._conversation_service.steer_snapshot()
         platforms = [
             self._platforms[key].snapshot()
             for key in sorted(self._platforms)
         ]
         run_health = self._run_state.snapshot()
+        for run in run_health.get("running_agent_runs", []):
+            if not isinstance(run, dict):
+                continue
+            session_key = str(run.get("session_key") or "")
+            session_steer = self._conversation_service.steer_snapshot(session_key)
+            run["active_turn_id"] = session_steer.get("active_turn_id", "")
+            run["pending_steers"] = int(session_steer.get("pending_count") or 0)
         data = {
             "started": self._started,
             "adapter_count": len(self._adapters),
@@ -154,7 +169,11 @@ class Gateway:
             "platform_chat_locks_maxsize": getattr(self.config, "platform_chat_locks_maxsize", 64),
             "platform_message_dedupe_max_size": getattr(self.config, "platform_message_dedupe_max_size", 1024),
             "platform_send_max_retries": getattr(self.config, "platform_send_max_retries", 2),
+            "steer": steer_snapshot,
+            "pending_steer_count": int(steer_snapshot.get("pending_steer_count") or 0),
+            "active_steer_sessions": list(steer_snapshot.get("active_steer_sessions") or []),
         }
+        data.update(self._confirmations.snapshot() or {})
         data.update(run_health)
         return data
 
@@ -179,6 +198,8 @@ class Gateway:
         try:
             adapter = entry.factory(self.config, self.db)
             adapter.set_message_handler(self._handle_message)
+            if hasattr(adapter, "set_message_bypass_predicate"):
+                adapter.set_message_bypass_predicate(self._should_bypass_adapter_queue)
             if hasattr(adapter, "set_attachment_store"):
                 adapter.set_attachment_store(self._conversation_service.attachment_store)
             await adapter.connect()
@@ -242,6 +263,15 @@ class Gateway:
         finally:
             trace_id.reset(token)
 
+    def _should_bypass_adapter_queue(self, event) -> bool:
+        session_key = self._session_router.active_key(event.source)
+        if self._confirmations.get(session_key) is not None:
+            return True
+        if not self._run_state.is_running(session_key):
+            return False
+        text = str(getattr(event, "text", "") or "").strip()
+        return text.startswith("/steer") or text.startswith("/stop")
+
     async def _handle_message_inner(self, event) -> str | None:
         if getattr(event, "envelope", None) is None and hasattr(event, "to_envelope"):
             event.to_envelope()
@@ -270,12 +300,17 @@ class Gateway:
             if allowed and response is not None:
                 return response
 
-        # 3. Command detection
+        # 3. Command detection. /stop must be able to cancel pending confirms.
         if event.text.startswith("/"):
             cmd_result = await self._handle_command(event, session_key)
             if cmd_result is not None:
                 return cmd_result
             # cmd_result is None → continue to agent (skill injection, etc.)
+
+        # 3.5. Pending async tool confirmation replies bypass busy handling.
+        consumed, confirm_response = self._confirmations.resolve_message(session_key, event.text)
+        if consumed:
+            return confirm_response
 
         # 4. Busy check
         if self._run_state.is_running(session_key):
@@ -301,12 +336,20 @@ class Gateway:
         event = await self._prepare_inbound_attachments(event)
         envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
         if envelope is not None:
-            turn = await self._conversation_service.run_turn_input(
+            turn = await _call_with_optional_confirm(
+                self._conversation_service.run_turn_input,
                 session_key,
                 ConversationInput.from_envelope(envelope),
+                confirm=self._confirm_callback(event, session_key),
             )
         else:
-            turn = await self._conversation_service.run_turn(session_key, event.source, event.text)
+            turn = await _call_with_optional_confirm(
+                self._conversation_service.run_turn,
+                session_key,
+                event.source,
+                event.text,
+                confirm=self._confirm_callback(event, session_key),
+            )
 
         # Hook: on_before_send
         final = turn.final_response
@@ -327,7 +370,31 @@ class Gateway:
             final_response=final,
         )
 
-        return final or "..."
+        return final or EMPTY_FINAL_RESPONSE_MESSAGE
+
+    def _confirm_callback(self, event, session_key: str):
+        async def _confirm(decision):
+            adapter = self._adapter_for_source(event.source)
+            if adapter is None:
+                return "deny"
+
+            async def send(prompt: str) -> bool:
+                try:
+                    result = await adapter.send(event.source.chat_id, prompt)
+                except Exception:
+                    logger.exception("Failed to send tool confirmation prompt")
+                    return False
+                return bool(getattr(result, "success", False))
+
+            return await self._confirmations.request(
+                session_key=session_key,
+                source=event.source,
+                decision=decision,
+                settings=self.config,
+                send=send,
+            )
+
+        return _confirm
 
     async def _prepare_inbound_attachments(self, event):
         adapter = self._adapter_for_source(event.source)
@@ -429,6 +496,12 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
             await self.gateway._conversation_service.ensure_session(base_key, self.event.source)
         return f"会话已删除: {target_key}\n当前会话: {self._session_key}"
 
+    async def pending_confirmation_status(self) -> dict | None:
+        return self.gateway._confirmations.snapshot(self.session_key)
+
+    async def is_session_running(self) -> bool:
+        return self.gateway._run_state.is_running(self._session_key)
+
     def plugin_command_kwargs(self, args: str) -> dict:
         return {
             "event": self.event,
@@ -438,8 +511,23 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
         }
 
     async def stop_agents(self) -> str:
+        self.gateway._confirmations.cancel(None)
         self.gateway._run_state.request_stop(self._session_key)
         return await super().stop_agents()
 
     def session_list_current_key(self) -> str:
         return self.gateway._session_router.current_for_list(self.event.source)
+
+
+async def _call_with_optional_confirm(func, *args, confirm=None):
+    try:
+        signature = inspect.signature(func)
+        accepts_confirm = (
+            "confirm" in signature.parameters
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        )
+    except (TypeError, ValueError):
+        accepts_confirm = True
+    if accepts_confirm:
+        return await func(*args, confirm=confirm)
+    return await func(*args)

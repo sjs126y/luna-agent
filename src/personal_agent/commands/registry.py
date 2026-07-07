@@ -108,6 +108,11 @@ _SESSION_NAME_ARGUMENT = CommandArgumentSpec(
     required=False,
 )
 
+_STEER_TEXT_ARGUMENT = CommandArgumentSpec(
+    name="text",
+    kind="text",
+)
+
 _ACTIVITY_SCOPE_ARGUMENT = CommandArgumentSpec(
     name="scope",
     kind="choice",
@@ -172,8 +177,17 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("export", "导出当前会话 JSONL", "/export", category="session"),
     CommandSpec(
         "allow",
-        "授权本轮工具权限",
+        "限时授权工具权限",
         "/allow [write|bash|background|network|destructive|all]",
+        category="execution",
+        mutates_state=True,
+        requires_agent=True,
+        arguments=(_ALLOW_ARGUMENT,),
+    ),
+    CommandSpec(
+        "deny",
+        "撤销限时工具授权",
+        "/deny [write|bash|background|network|destructive|all]",
         category="execution",
         mutates_state=True,
         requires_agent=True,
@@ -211,6 +225,14 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec("stop", "停止当前处理", "/stop", category="runtime", mutates_state=True, requires_agent=True),
+    CommandSpec(
+        "steer",
+        "运行中修正当前任务",
+        "/steer <text>",
+        category="runtime",
+        mutates_state=True,
+        arguments=(_STEER_TEXT_ARGUMENT,),
+    ),
     CommandSpec(
         "agents",
         "查看子 agent 运行记录",

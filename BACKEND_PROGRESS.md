@@ -1,12 +1,12 @@
 # Backend Progress
 
-更新时间：2026-07-07 18:05 CST
+更新时间：2026-07-08 01:31 CST
 
 ## 交接定位
 
 这个文档只记录后端线进度，给后续接手后端的 Codex 使用。前端 TUI / desktop / prompt_toolkit 真实终端问题交给前端线处理；后端线只负责事件、接口、agent runtime、工具执行、权限、配置、平台适配、provider / transport 等基础能力。
 
-当前工作分支：`feature/backend-next`
+当前工作分支：`feature/desktop-app-backend`
 
 权威接口文档：
 
@@ -19,6 +19,7 @@
 后端主干能力已经比较完整；`feature/backend-provider-cache` 和历史清理分支已合并回主分支，当前分支用于继续后端收敛。最近已完成并验证的方向包括：
 
 - Execution Mode v3：四档模式已经稳定，对应权限、沙箱、工具类别和确认行为。
+- Permission mode cleanup：`standard / Ask First` 下普通网络工具调整为 `ask`，`/allow network` 可解锁 `web_search` / `web_fetch`；`/allow` 只对 `ask` 生效，遇到 `deny` 会明确提示不能覆盖，bash 网络仍由 `sandbox.bash_allow_network` 单独控制。
 - Execution / Sandbox 配置开放：`execution.policy.tool_permissions`、`sandbox.*` 已在 example、配置文档、init 模板和 doctor 重点字段中显式展示；未新增 per-tool 权限、timeout 或关闭硬安全边界的配置。
 - Tool execution / permission pipeline：工具执行门控已经统一到 executor 路径，权限只负责自己的决策层，不再和其他阻断逻辑混在一起。
 - Tool decision metadata：`tool_decision` / `tool_end` 已带前端确认 UI 所需字段，包括展示名、风险摘要、默认动作、可选动作、路径/命令/URL 预览等。
@@ -27,6 +28,71 @@
 - Tool runs：工具执行结果已持久化，并提供 `/tool-runs` 与 `ConversationQueryService` 查询。
 - Turn reports：每轮 `AgentTurnReport` 已进入持久化审计链路，可和 tool runs 通过 `turn_id/session_key` 关联。
 - Activity runtime：已提供统一结构化接口，覆盖子 agent、后台进程和 gateway agent，并支持 `/activity`、结构化 `CommandResult.kind="activity"`、runtime/query API、slash metadata 和动态候选。
+- Runtime steer：新增 `/steer <text>` 运行中修正机制，gateway 平台可旁路同会话队列入队，agent loop 下一步消费并重答；health、activity、turn report 和事件协议已同步。
+
+## 2026-07-07：权限限时授权 v1
+
+状态：已完成 v1 实现并通过聚焦验证。
+
+已完成：
+
+- `/allow <category>` 改为写入限时临时授权，默认 24 小时；下一条普通消息不会再被 turn reset 清掉。
+- CLI/TUI confirm 的 `always` 改为写入同一套限时授权；`allow once` 仍只本轮有效。
+- 新增 `/deny <category>` / `/deny all` 撤销限时授权。
+- `/permissions` 增加 `temporary_grants`、`turn_grants`、`temporary_grant_ttl_seconds`。
+- 新增配置 `permissions.temporary_grant_ttl_hours` 和 `permissions.confirm_timeout_seconds`，并同步配置示例和文档。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_commands.py::test_shared_command_core_session_usage_export_and_allow tests/test_commands.py::test_allow_network_follows_execution_mode_policy tests/test_tool_pipeline.py::test_tool_confirm_always_persists_grant_for_later_tool_calls tests/test_agent_loop.py::test_permission_required_network_tool_stops_without_looping tests/test_agent_loop.py::test_temporary_network_grant_survives_turn_reset -q
+```
+
+结果：聚焦 `5 passed`。
+
+## 2026-07-07：Gateway 异步工具确认 v2
+
+状态：已完成 v2 实现并通过聚焦验证。
+
+已完成：
+
+- Gateway 平台遇到工具权限 `ask` 时会发送确认消息：`1 允许一次 / 2 拒绝 / 3 24小时允许`。
+- pending confirm 回复会绕过 busy check，不进入普通 agent turn。
+- `/stop` 会取消 pending confirm，并中断等待中的工具确认。
+- `Gateway.health_snapshot()` 暴露 `pending_confirmations` / `pending_confirmation_count`。
+- `/permissions` 可返回当前 session 的 `pending_confirmation`。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_gateway_commands.py::test_gateway_async_confirmation_allows_once tests/test_gateway_commands.py::test_gateway_async_confirmation_always_and_stop tests/test_gateway_commands.py::test_gateway_regular_message_uses_active_session_key tests/test_gateway_commands.py::test_gateway_passes_attachments_as_conversation_input -q
+```
+
+结果：聚焦 `4 passed`。
+
+## 2026-07-07：权限确认可观测性 v3
+
+状态：已完成 v3 实现并通过聚焦验证。
+
+已完成：
+
+- `tool_decision` / `tool_end` 追加 `grant_scope`、`grant_expires_at`、`temporary_grant_ttl_seconds`。
+- Turn Report 工具条目和 tool truth 同步记录授权 scope / 过期时间 / TTL。
+- Tool Runs SQLite 表新增兼容迁移列：`grant_scope`、`grant_expires_at`、`temporary_grant_ttl_seconds`。
+- `ConversationQueryService` 和 `/tool-runs` 查询会返回新增授权字段。
+- `BACKEND_INTERFACE.md` 已同步前端可消费字段。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_agent_loop.py::test_temporary_network_grant_survives_turn_reset tests/test_database.py::test_tool_runs_roundtrip_and_summary tests/test_conversation_service.py::test_run_turn_persists_tool_runs_from_events tests/test_event_protocol.py -q
+uv run pytest -q
+```
+
+结果：聚焦 `11 passed`，全量 `785 passed`。
 - Usage / context：`llm_start` / `llm_end` 已区分“最近一次 API token 消耗”和“当前上下文占用估算”；`/usage` 已修正工具计数文案，避免把活跃 turn 内部计数显示成会话统计。
 - Tool protocol prompt：系统提示已加入稳定工具调用规则，要求需要工具时必须发出 tool call，避免只用文字声称已调用工具；未加入正则 retry 或额外控制流。
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
@@ -43,6 +109,8 @@
 - Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
 - Multimodal attachment diagnostics：`turn_start.multimodal_diagnostics` 已补充失败 reason 聚合和每个附件的安全摘要，前端可直接展示单个附件为何失败。
 - WeChat encrypted media hardening：微信顶层或嵌套 `encrypt_query_param/encrypted_query_param` 均会进入平台下载链路；缺少 `aes_key` 时稳定返回 `decrypt_key_unavailable`，不再只给泛化失败提示。
+- Image text protocol override：新增 `multimodal.image_text_api_mode` / `IMAGE_TEXT_API_MODE`，支持 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`；Anthropic 模型经 OpenAI-compatible 中转站调用时可显式设为 `chat_completions`，Codex/Ahoo 这类 Responses 中转站建议设为 `codex_responses`。
+- Main LLM Responses mode：主 Agent 的 `LLM_API_MODE` 正式开放 `responses` / `codex_responses`，`doctor`、配置 schema、agent runtime 测试已覆盖 Codex/Ahoo 中转站模式。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
 最近一次记录的全量测试结果：`757 passed`。
@@ -303,6 +371,130 @@ uv run pytest -q
 
 结果：聚焦 `108 passed`，全量 `684 passed`。
 
+## 已完成方向：LLM 上下文窗口显式配置
+
+状态：已完成实现并通过全量验证。
+
+背景：中转站自定义模型名（例如 `gpt-5.5`）无法被 `_detect_context_window(...)` 准确识别时，后端会回退到默认 `64000`，导致前端 context meter、`/usage` 和 turn report 显示的上下文窗口偏小。
+
+已完成：
+
+- 新增 `LLM_CONTEXT_WINDOW` / `llm.context_window` 配置，默认 `0` 表示继续按模型名自动推断；正整数会覆盖推断结果。
+- `ProviderProfile.context_window` 创建时优先读取显式配置，DeepSeek/OpenAI/Anthropic/OpenRouter 统一生效。
+- `build_context_budget(...)` 和 `personal-agent tokens session` 会使用显式上下文窗口。
+- `doctor` / config diagnostics 增加 `LLM_CONTEXT_WINDOW` 校验和 env 报告字段。
+- `config.yaml.example`、`.env.example`、`docs/configuration.md`、`BACKEND_INTERFACE.md` 已同步该配置含义和前端可见影响。
+- `llm` 顶层不再整体视为废弃；仅旧的 `llm.provider` / `llm.model` / `llm.api_key` 等字段继续给迁移提示，`llm.context_window` 合法。
+
+已验证：
+
+```bash
+uv run pytest tests/test_config_loader.py tests/test_config_registry.py tests/test_config_diagnostics.py tests/test_transport_cache.py -q
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
+
+结果：聚焦 `43 passed`，全量 `781 passed`。
+
+## 已完成方向：权限拒绝工具循环止血
+
+状态：已完成实现并通过聚焦验证。
+
+背景：微信实测中，模型在网络工具未授权时连续调用 `web_search` 30 次，全部被 `permission_required` 拒绝，单轮持续约 268 秒并消耗大量 tokens。根因是 agent loop 将授权拒绝当作普通 tool result 继续喂给模型，模型反复尝试同一工具。
+
+已完成：
+
+- `ToolExecutionResult` 增加结构化 guard metadata：`guard_stage`, `reason_code`, `permission_category`, `permission_decision`, `required_allow`, `execution_mode`, `grant_matched`。
+- `run_conversation(...)` 在一批工具结果全部为 `permission_required` 授权拒绝时，直接结束当前 turn，并返回 `/allow <category>` 后重试的提示。
+- 网络工具未授权时会返回“网络工具需要授权，本轮已停止。请发送 /allow network 后重试。”，不再进入重复 tool-call 循环。
+- `BACKEND_INTERFACE.md` 已同步该行为：`tool_end` / Tool Runs / Turn Reports 仍记录 denied 工具结果，随后会有一条 `assistant_message` 结束本轮。
+- `tests/conftest.py` 增加 audit log 隔离，测试期间写入临时 `audit.log`，避免污染真实 `data/audit.log`。
+
+已验证：
+
+```bash
+uv run pytest tests/test_agent_loop.py tests/test_tool_pipeline.py tests/test_config_loader.py tests/test_config_registry.py tests/test_config_diagnostics.py tests/test_transport_cache.py -q
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
+
+结果：聚焦 `131 passed`，全量 `782 passed`。
+
+## 已完成方向：平台确认回复队列旁路
+
+状态：已完成实现并通过聚焦验证。
+
+背景：微信实测中，工具触发授权确认后回复 `1` 仍然没有放行。日志显示 `web_search` 的授权确认等待了约 `120s` 后超时拒绝，随后用户的 `1` 被当作普通聊天消息进入数据库。根因是平台适配器会串行处理同一会话消息：原消息在等待确认回复，而确认回复被排到原消息后面，形成等待死锁。
+
+已完成：
+
+- `BasePlatformAdapter` 新增窄口径 message bypass predicate，只在网关判断当前 session 存在 pending tool confirmation 时启用。
+- bypass 消息不占用普通 active session，不抢同一 chat lock，不影响普通同会话消息继续串行。
+- `Gateway` 在平台 adapter 启动时注入 pending-confirm 判断，确认回复 `1/2/3`、无效回复、`/stop` 都能及时进入网关处理。
+- 新增回归测试覆盖真实平台适配器路径：原消息等待确认时，同 session 的 `1` 不再进入 pending queue，而是直接放行当前工具调用。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_gateway_commands.py::test_platform_confirmation_reply_bypasses_same_session_queue tests/test_gateway_commands.py::test_gateway_async_confirmation_allows_once tests/test_gateway_commands.py::test_base_adapter_same_session_messages_are_serialized -q
+uv run pytest tests/test_gateway_commands.py -q
+```
+
+结果：聚焦 `3 passed`，gateway 命令测试 `38 passed`。
+
+## 已完成方向：平台长回复发送保护
+
+状态：已完成实现并通过聚焦验证。
+
+背景：平台消息长度有限，模型一次回复过长时，平台可能发送失败；同时 gateway/CLI 对空 `final_response` 的兜底是 `...`，用户侧很难判断是模型空回复、发送失败，还是内容被截断。
+
+已完成：
+
+- `BasePlatformAdapter._send_with_retry(...)` 按平台 `capabilities.max_text_length` 自动拆分长文本后逐段发送，普通平台不配置长度时保持原行为。
+- 新增通用 `split_text_for_platform(...)`，会在必要时硬切长行，保证每段不超过平台限制。
+- WeChat adapter 复用通用分片逻辑，不再因为“保留代码块”让超长代码块单段超过 2000 字符。
+- Conversation service 新增统一空回复兜底文案；gateway 和 CLI 不再把空回复显示成 `...`。
+- 新增回归测试覆盖平台基类分片、微信超长代码块分片、gateway 空 final 响应。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_gateway_commands.py::test_base_adapter_splits_outbound_text_by_platform_limit tests/test_gateway_commands.py::test_gateway_empty_final_response_uses_clear_message tests/test_gateway_commands.py::test_base_adapter_format_send_error_strips_formatting_and_retries tests/test_platform_adapters.py::test_wechat_send_splits_long_text tests/test_platform_adapters.py::test_wechat_send_splits_long_code_fence -q
+uv run pytest tests/test_gateway_commands.py tests/test_platform_adapters.py -q
+```
+
+结果：聚焦 `5 passed`，gateway/platform 测试 `69 passed`。
+
+## 2026-07-08：Runtime Steer v1-v3
+
+状态：已完成实现并通过聚焦验证。
+
+背景：用户在 gateway/CLI 长任务运行中，希望能补充“回答短一点”“先停一下这个方向”等修正，而不是只能等待本轮完成或用 `/stop` 中断。平台 adapter 原本会把同会话后续消息排队，普通文本也无法安全区分是新 turn 还是运行中修正。
+
+已完成：
+
+- 新增 `SteerManager` / `SteerSignal`，按 `session_key + turn_id` 管理运行中修正，支持 pending、consumed、expired 状态。
+- `ConversationService` 每轮分配稳定 `turn_id`，登记 active turn，并向 `run_conversation(...)` 传入 steer manager。
+- agent loop 在循环边界消费 steer，追加 `[运行中用户补充/修正]` user message；如果修正在 LLM 最终答案返回时到达，会保留旧 assistant 文本后注入修正并继续下一次 LLM 调用。
+- 新增 slash command `/steer <text>`，非运行中会返回明确提示，运行中会返回 `st_xxx` 回执。
+- Gateway busy 期间允许 `/steer` 像确认回复一样旁路 adapter 队列；普通 busy 文本仍然不会进入当前 turn。
+- `Gateway.health_snapshot()` 新增 `pending_steer_count`、`active_steer_sessions`、`steer`，并在 `running_agent_runs[]` 暴露 `active_turn_id` / `pending_steers`。
+- `ConversationEventType` 新增 `steer_consumed`；`AgentTurnReport.report.steer` 记录本轮 received / consumed / expired / pending 和安全文本预览。
+- `/activity gateway` item 同步 `active_turn_id` / `pending_steers`，前端可在运行列表展示。
+- `BACKEND_INTERFACE.md` 已新增 Runtime Steer 合约，前端只需按文档接 slash command / health / event，不需要后端改 TUI 交互。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_conversation_steer.py tests/test_agent_loop.py tests/test_conversation_service.py tests/test_commands.py tests/test_gateway_commands.py tests/test_event_protocol.py -q
+uv run pytest -q
+```
+
+结果：聚焦 `110 passed`，全量 `798 passed`。
+
 ## 后续可评估方向
 
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。
@@ -313,8 +505,7 @@ uv run pytest -q
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest tests/test_agent_factory.py tests/test_agent_loop.py tests/test_transport_cache.py tests/test_context_budget.py -q
 uv run pytest -q
 ```
 
-结果：聚焦 `29 passed`，全量 `685 passed`。
+结果：全量 `798 passed`。

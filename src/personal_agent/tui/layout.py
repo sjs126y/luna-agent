@@ -251,33 +251,36 @@ def _slash_menu(state: UIState) -> str:
 def _confirm_lines(confirm) -> list[str]:
     accent = theme.risk_style(confirm.risk_level)
     lines = [
-        theme.sgr("╭ confirm", theme.CONFIRM_BORDER)
-        + "  "
+        theme.sgr("▌ confirm", theme.CONFIRM_BORDER)
+        + " "
         + theme.sgr(confirm.display_name, accent),
     ]
     if confirm.risk_summary:
-        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{theme.sgr('Risk ', accent)}{theme.sgr(confirm.risk_summary, theme.CONFIRM_TEXT)}")
+        lines.append(
+            f"{theme.sgr('  Risk ', accent)}"
+            f"{theme.sgr(confirm.risk_summary, theme.CONFIRM_TEXT)}"
+        )
     lines.extend(_confirm_detail_lines(confirm))
-    action_row = _confirm_action_row(confirm)
-    if action_row:
-        lines.append(f"{theme.sgr('│ ', theme.CONFIRM_BORDER)}{action_row}")
-    lines.append(theme.sgr("╰", theme.CONFIRM_BORDER))
+    action_lines = _confirm_action_lines(confirm)
+    if action_lines:
+        lines.extend(action_lines)
+        lines.append(theme.sgr("  Enter select · ↑/↓ · 1/2/3 quick", theme.CONFIRM_DIM))
     return lines
 
 
-def _confirm_action_row(confirm) -> str:
+def _confirm_action_lines(confirm) -> list[str]:
     if not confirm.actions:
-        return ""
-    parts: list[str] = []
+        return []
+    lines: list[str] = []
     selected = max(0, min(confirm.selected_action, len(confirm.actions) - 1))
     for index, action in enumerate(confirm.actions):
-        prefix = "Enter " if index == selected else ""
+        marker = "›" if index == selected else " "
+        number = f"{index + 1}>"
         suffix = " *" if action.is_default else ""
-        label = f" {prefix}{action.label}{suffix} "
+        label = f"  {marker} {number} {action.label}{suffix}"
         style = theme.CONFIRM_ACTION_SELECTED if index == selected else theme.CONFIRM_ACTION
-        parts.append(theme.sgr(f"[{label}]", style))
-    hints = theme.sgr("  ←/→ select", theme.CONFIRM_DIM)
-    return "  ".join(parts) + hints
+        lines.append(theme.sgr(label, style))
+    return lines
 
 
 def _confirm_detail_lines(confirm) -> list[str]:
@@ -303,7 +306,6 @@ def _confirm_detail_lines(confirm) -> list[str]:
 
 def _confirm_detail(label: str, value: str) -> str:
     return (
-        theme.sgr("│ ", theme.CONFIRM_BORDER)
-        + theme.sgr(f"{label} ", theme.CONFIRM_DIM)
+        theme.sgr(f"  {label} ", theme.CONFIRM_DIM)
         + theme.sgr(value, theme.CONFIRM_TEXT)
     )

@@ -130,6 +130,9 @@ def _normalize_tool_run(item: dict[str, Any]) -> dict[str, Any]:
         "required_allow": str(item.get("required_allow") or ""),
         "execution_mode": str(item.get("execution_mode") or ""),
         "grant_matched": str(item.get("grant_matched") or ""),
+        "grant_scope": str(item.get("grant_scope") or ""),
+        "grant_expires_at": float(item.get("grant_expires_at") or 0.0),
+        "temporary_grant_ttl_seconds": int(float(item.get("temporary_grant_ttl_seconds") or 0)),
         "created_at": float(item.get("created_at") or 0.0),
     }
 

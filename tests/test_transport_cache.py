@@ -17,6 +17,7 @@ def _settings(provider: str, model: str = "m"):
         llm_api_key="k",
         llm_model=model,
         llm_max_tokens=4096,
+        llm_context_window=0,
     )
 
 
@@ -33,6 +34,21 @@ def test_builtin_provider_cache_capabilities():
     assert deepseek.cache_usage_fields["cache_hit_tokens"] == "prompt_cache_hit_tokens"
     assert openai.cache_usage_fields["cache_hit_tokens"] == "prompt_tokens_details.cached_tokens"
     assert openrouter.cache_strategy == "prefix"
+
+
+def test_provider_context_window_uses_configured_override():
+    settings = _settings("openai", "gpt-5.5")
+    settings.llm_context_window = 1_000_000
+
+    provider = provider_registry.get("openai", settings)
+
+    assert provider.context_window == 1_000_000
+
+
+def test_provider_context_window_falls_back_to_model_detection():
+    provider = provider_registry.get("openai", _settings("openai", "gpt-5.5"))
+
+    assert provider.context_window == 64_000
 
 
 def test_anthropic_usage_normalizes_cache_fields():

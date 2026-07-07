@@ -519,6 +519,7 @@ def _notice_text(kind: str, label: str, reason: str) -> str:
         "image_text_failed": "图片文本化失败。",
         "image_text_empty": "图片文本化没有返回有效内容。",
         "decrypt_key_unavailable": "微信加密图片缺少解密 key，无法本地化。",
+        "decrypt_payload_invalid": "微信加密图片解密失败，可能是平台返回的解密 key 或加密内容不匹配。",
         "ocr_endpoint_unavailable": "本地 OCR 服务不可用。",
         "ocr_request_failed": "本地 OCR 请求失败。",
         "ocr_empty": "本地 OCR 没有返回有效文字。",
@@ -605,4 +606,12 @@ def _diagnostic_item(item: ProcessedAttachment) -> dict[str, Any]:
         "has_local_path": bool(resolved and resolved.local_path),
         "has_url": bool(ref and ref.url),
         "has_platform_file_id": bool(ref and ref.platform_file_id),
+        "error": _truncate_error(item.error),
     }
+
+
+def _truncate_error(value: str, limit: int = 300) -> str:
+    text = clean_text(value or "")
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."

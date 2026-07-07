@@ -10,14 +10,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 import time
 from typing import Any
+import uuid
 
 from personal_agent.attachments import AttachmentStore
 from personal_agent.conversation.events import ConversationEvent, EventRecorder, emit_event
 from personal_agent.conversation.input import ConversationInput, ensure_conversation_input
+from personal_agent.conversation.steer import SteerManager, SteerSignal
 from personal_agent.models.messages import SessionSource
 from personal_agent.multimodal.processor import MultiAttachmentProcessor
 
 TURN_REPORT_HISTORY_LIMIT = 50
+EMPTY_FINAL_RESPONSE_MESSAGE = "抱歉，模型没有返回可发送内容，请重试或让我用更短的格式回答。"
 
 
 @dataclass
@@ -70,6 +73,7 @@ class ConversationService:
             settings=settings,
             attachment_store=self.attachment_store,
         )
+        self.steer_manager = SteerManager()
         from personal_agent.conversation.query import ConversationQueryService
 
         self.queries = ConversationQueryService(self)
@@ -126,6 +130,8 @@ class ConversationService:
         current_id = self.resolve_session_id(session.session_id)
         history = await self.session_store.load_history(current_id)
         previous_count = len(history)
+        turn_id = f"{uuid.uuid4().hex[:8]}"
+        self.steer_manager.begin_turn(session_key, turn_id)
 
         from personal_agent.agent.context import build_turn_context
         from personal_agent.agent.loop import run_conversation
@@ -138,15 +144,21 @@ class ConversationService:
                 provider=getattr(agent, "_provider", None),
             )
             ctx_input = resolved_input if user_input.attachments else resolved_input.text
-            ctx = await build_turn_context(agent, ctx_input, history)
-            if _accepts_event_sink(run_conversation) and _accepts_confirm(run_conversation):
-                result = await run_conversation(agent, ctx, event_sink=recorder, confirm=confirm)
-            elif _accepts_event_sink(run_conversation):
-                result = await run_conversation(agent, ctx, event_sink=recorder)
-            elif _accepts_confirm(run_conversation):
-                result = await run_conversation(agent, ctx, confirm=confirm)
+            if _accepts_turn_id(build_turn_context):
+                ctx = await build_turn_context(agent, ctx_input, history, turn_id=turn_id)
             else:
-                result = await run_conversation(agent, ctx)
+                ctx = await build_turn_context(agent, ctx_input, history)
+                if not str(getattr(ctx, "turn_id", "") or ""):
+                    setattr(ctx, "turn_id", turn_id)
+            kwargs = {}
+            if _accepts_event_sink(run_conversation):
+                kwargs["event_sink"] = recorder
+            if _accepts_confirm(run_conversation):
+                kwargs["confirm"] = confirm
+            if _accepts_steer(run_conversation):
+                kwargs["steer"] = self.steer_manager
+                kwargs["session_key"] = session_key
+            result = await run_conversation(agent, ctx, **kwargs)
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             final = f"抱歉，本轮处理出错了：{exc}"
@@ -166,6 +178,15 @@ class ConversationService:
                 "status": "failed",
                 "error": error,
             }
+        finally:
+            self.steer_manager.end_turn(session_key, turn_id)
+
+        if isinstance(result, dict):
+            report = dict(result.get("turn_report") or {})
+            steer_summary = self.steer_manager.turn_summary(session_key, turn_id)
+            if report or int(steer_summary.get("received") or 0):
+                report["steer"] = steer_summary
+                result["turn_report"] = report
 
         completed = bool(result.get("completed"))
         context_overflow = bool(result.get("context_overflow"))
@@ -232,6 +253,12 @@ class ConversationService:
             events=list(recorder.events),
             turn_report=turn_report,
         )
+
+    def add_steer(self, session_key: str, source, text: str) -> SteerSignal:
+        return self.steer_manager.add(session_key, source, text)
+
+    def steer_snapshot(self, session_key: str | None = None) -> dict[str, Any]:
+        return self.steer_manager.snapshot(session_key)
 
     def record_turn_report(self, session_key: str, source, report: dict[str, Any]) -> None:
         if not report:
@@ -855,6 +882,9 @@ def _tool_runs_from_events(
             "required_allow": str(data.get("required_allow") or ""),
             "execution_mode": str(data.get("execution_mode") or ""),
             "grant_matched": str(data.get("grant_matched") or ""),
+            "grant_scope": str(data.get("grant_scope") or ""),
+            "grant_expires_at": _as_float(data.get("grant_expires_at")),
+            "temporary_grant_ttl_seconds": int(_as_float(data.get("temporary_grant_ttl_seconds"))),
             "created_at": created_at,
         })
     return runs
@@ -960,7 +990,7 @@ def _final_response_for_status(status: str, final_response: Any, error: str = ""
         return "抱歉，本轮上下文超出限制，未能完成处理。"
     if status == "failed":
         return f"抱歉，本轮处理出错了：{error}" if error else "抱歉，本轮处理出错了。"
-    return ""
+    return EMPTY_FINAL_RESPONSE_MESSAGE
 
 
 def _accepts_event_sink(func: Any) -> bool:
@@ -980,6 +1010,28 @@ def _accepts_confirm(func: Any) -> bool:
     except (TypeError, ValueError):
         return True
     return "confirm" in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in params.values()
+    )
+
+
+def _accepts_steer(func: Any) -> bool:
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return True
+    return "steer" in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in params.values()
+    )
+
+
+def _accepts_turn_id(func: Any) -> bool:
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return True
+    return "turn_id" in params or any(
         param.kind is inspect.Parameter.VAR_KEYWORD
         for param in params.values()
     )

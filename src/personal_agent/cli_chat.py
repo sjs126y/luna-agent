@@ -12,7 +12,11 @@ from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import SessionSource
-from personal_agent.conversation import ConversationCommandRuntime, ConversationService
+from personal_agent.conversation import (
+    EMPTY_FINAL_RESPONSE_MESSAGE,
+    ConversationCommandRuntime,
+    ConversationService,
+)
 from personal_agent.runtime import AppRuntime, create_app_runtime
 
 CLI_SYSTEM_PROMPT = (
@@ -85,7 +89,7 @@ class CliChatRuntime(ConversationCommandRuntime):
     async def run_message(self, text: str) -> str:
         assert self.conversation_service is not None
         result = await self.conversation_service.run_turn(self.session_key, self.source, text)
-        return result.final_response or "..."
+        return result.final_response or EMPTY_FINAL_RESPONSE_MESSAGE
 
     async def run_message_events(self, text: str, *, event_sink=None, confirm=None):
         assert self.conversation_service is not None

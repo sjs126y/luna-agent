@@ -54,6 +54,7 @@ class InlineRenderer(Renderer):
     async def on_llm_start(self, event: ConversationEvent) -> None:
         self._llm_started_at = time.monotonic()
         self.state.status_message = "thinking…"
+        self._apply_llm_context_state(event.data)
         self._invalidate()
 
     async def on_assistant_delta(self, event: ConversationEvent) -> None:
@@ -87,24 +88,7 @@ class InlineRenderer(Renderer):
         self.state.input_tokens = int(data.get("input_tokens", 0) or 0)
         self.state.output_tokens = int(data.get("output_tokens", 0) or 0)
         self.state.api_calls = int(data.get("api_calls", 0) or self.state.api_calls)
-        model = str(data.get("model") or "")
-        if model:
-            self.state.model = model
-        ctx = int(data.get("context_window", 0) or 0)
-        if ctx:
-            self.state.context_window = ctx
-        context_used = int(data.get("context_used_tokens", 0) or 0)
-        if context_used:
-            self.state.context_used_tokens = context_used
-        context_remaining = int(data.get("context_remaining_tokens", 0) or 0)
-        if context_remaining:
-            self.state.context_remaining_tokens = context_remaining
-        context_percent = float(data.get("context_percent", 0.0) or 0.0)
-        if context_percent:
-            self.state.context_percent = context_percent
-        context_budget = data.get("context_budget")
-        if isinstance(context_budget, dict):
-            self.state.context_budget = dict(context_budget)
+        self._apply_llm_context_state(data)
         self.state.cache_hit_tokens = _optional_int(data.get("cache_hit_tokens"))
         self.state.cache_miss_tokens = _optional_int(data.get("cache_miss_tokens"))
         self.state.cache_write_tokens = _optional_int(data.get("cache_write_tokens"))
@@ -240,6 +224,16 @@ class InlineRenderer(Renderer):
         suffix = f" · {pre} -> {post}" if pre is not None and post is not None else ""
         await self._print_above(render_plain(theme.sgr(f"  ◇ {text}{suffix}", theme.NOTICE), width=self.width))
 
+    async def on_steer_consumed(self, event: ConversationEvent) -> None:
+        count = int(event.data.get("count", 0) or 0)
+        preview = str(event.data.get("text_preview") or "").strip()
+        suffix = f" x{count}" if count > 1 else ""
+        text = f"steer applied{suffix}"
+        if preview:
+            text = f"{text} · {preview}"
+        await self._print_above(render_plain(theme.sgr(f"  ◇ {text}", theme.NOTICE), width=self.width))
+        self._invalidate()
+
     async def on_stop(self, event: ConversationEvent) -> None:
         data = event.data
         text = event.message or str(data.get("message") or "已停止")
@@ -279,6 +273,26 @@ class InlineRenderer(Renderer):
         self._invalidate()
 
     # ── helpers ──────────────────────────────────────────
+    def _apply_llm_context_state(self, data: dict) -> None:
+        model = str(data.get("model") or "")
+        if model:
+            self.state.model = model
+        ctx = int(data.get("context_window", 0) or 0)
+        if ctx:
+            self.state.context_window = ctx
+        context_used = int(data.get("context_used_tokens", 0) or 0)
+        if context_used:
+            self.state.context_used_tokens = context_used
+        context_remaining = int(data.get("context_remaining_tokens", 0) or 0)
+        if context_remaining:
+            self.state.context_remaining_tokens = context_remaining
+        context_percent = float(data.get("context_percent", 0.0) or 0.0)
+        if context_percent:
+            self.state.context_percent = context_percent
+        context_budget = data.get("context_budget")
+        if isinstance(context_budget, dict):
+            self.state.context_budget = dict(context_budget)
+
     def _tool_line(self, item: ToolTrace) -> str:
         ok = item.status in ("success", "ok", "")
         mark = theme.sgr("✓", theme.TOOL_OK) if ok else theme.sgr("✗", theme.TOOL_ERR)

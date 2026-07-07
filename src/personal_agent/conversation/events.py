@@ -19,6 +19,7 @@ ConversationEventType = Literal[
     "tool_end",
     "retry",
     "compression",
+    "steer_consumed",
     "stop",
     "error",
     "turn_end",
@@ -157,6 +158,9 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("required_allow", "string", "Grant category that would allow this action."),
             EventFieldSpec("decision_message", "string", "Human-readable decision detail."),
             EventFieldSpec("grant_matched", "string", "Grant that matched, such as all/write."),
+            EventFieldSpec("grant_scope", "string", "Grant scope: turn or temporary."),
+            EventFieldSpec("grant_expires_at", "number", "Unix timestamp for temporary grant expiry."),
+            EventFieldSpec("temporary_grant_ttl_seconds", "integer", "Configured temporary grant TTL."),
             EventFieldSpec("display_name", "string", "User-facing tool label."),
             EventFieldSpec("execution_mode_label", "string", "User-facing execution mode label."),
             EventFieldSpec("risk_level", "string", "low/medium/high display risk."),
@@ -196,6 +200,9 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("required_allow", "string", "Required grant from the related decision."),
             EventFieldSpec("execution_mode", "string", "Execution mode from the related decision."),
             EventFieldSpec("grant_matched", "string", "Grant matched from the related decision."),
+            EventFieldSpec("grant_scope", "string", "Grant scope from the related decision."),
+            EventFieldSpec("grant_expires_at", "number", "Temporary grant expiry timestamp when available."),
+            EventFieldSpec("temporary_grant_ttl_seconds", "integer", "Configured temporary grant TTL."),
             EventFieldSpec("display_name", "string", "User-facing tool label."),
             EventFieldSpec("execution_mode_label", "string", "User-facing execution mode label."),
             EventFieldSpec("risk_level", "string", "low/medium/high display risk."),
@@ -232,6 +239,15 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
         fields=(
             EventFieldSpec("pre_message_count", "integer", "Message count before compression."),
             EventFieldSpec("post_message_count", "integer", "Message count after compression."),
+        ),
+    ),
+    "steer_consumed": EventSchema(
+        "steer_consumed",
+        "Pending steer messages were injected into the active turn context.",
+        fields=(
+            EventFieldSpec("count", "integer", "Number of steer signals consumed."),
+            EventFieldSpec("steer_ids", "list[string]", "Consumed steer ids."),
+            EventFieldSpec("text_preview", "string", "Compact combined steer text preview."),
         ),
     ),
     "stop": EventSchema(

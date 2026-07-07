@@ -64,6 +64,9 @@ class TurnToolReport:
     required_allow: str = ""
     execution_mode: str = ""
     grant_matched: str = ""
+    grant_scope: str = ""
+    grant_expires_at: float = 0.0
+    temporary_grant_ttl_seconds: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,6 +103,7 @@ class AgentTurnReport:
     multimodal_diagnostics: dict[str, Any] = field(default_factory=dict)
     llm: TurnLlmReport = field(default_factory=TurnLlmReport)
     retries: list[TurnRetryReport] = field(default_factory=list)
+    steer: dict[str, Any] = field(default_factory=dict)
     event_counts: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -174,6 +178,8 @@ class AgentTurnReport:
         elif event.type == "assistant_message":
             self._record_assistant_claim(event.message)
             self.final_response_summary = _summarize(event.message)
+        elif event.type == "steer_consumed":
+            self._apply_steer_consumed(data)
         elif event.type == "stop":
             self.status = "stopped"
             self.completed = False
@@ -236,6 +242,7 @@ class AgentTurnReport:
             },
             "tool_truth": tool_truth,
             "retries": [retry.as_dict() for retry in self.retries],
+            "steer": dict(self.steer),
             "event_counts": dict(sorted(self.event_counts.items())),
         }
 
@@ -249,6 +256,9 @@ class AgentTurnReport:
         item.required_allow = str(data.get("required_allow") or "")
         item.execution_mode = str(data.get("execution_mode") or "")
         item.grant_matched = str(data.get("grant_matched") or "")
+        item.grant_scope = str(data.get("grant_scope") or "")
+        item.grant_expires_at = _as_float(data.get("grant_expires_at"))
+        item.temporary_grant_ttl_seconds = int(_as_float(data.get("temporary_grant_ttl_seconds")))
 
     def _apply_tool_end(self, data: dict[str, Any]) -> None:
         tool_use_id = str(data.get("tool_use_id") or data.get("tool_name") or "tool")
@@ -266,6 +276,9 @@ class AgentTurnReport:
         item.required_allow = str(data.get("required_allow") or item.required_allow)
         item.execution_mode = str(data.get("execution_mode") or item.execution_mode)
         item.grant_matched = str(data.get("grant_matched") or item.grant_matched)
+        item.grant_scope = str(data.get("grant_scope") or item.grant_scope)
+        item.grant_expires_at = _as_float(data.get("grant_expires_at") or item.grant_expires_at)
+        item.temporary_grant_ttl_seconds = int(_as_float(data.get("temporary_grant_ttl_seconds") or item.temporary_grant_ttl_seconds))
 
     def _apply_turn_end(self, data: dict[str, Any]) -> None:
         status = str(data.get("status") or "")
@@ -279,6 +292,17 @@ class AgentTurnReport:
             self.should_review_memory = bool(data.get("should_review_memory"))
         if data.get("context_overflow"):
             self.status = "context_overflow"
+
+    def _apply_steer_consumed(self, data: dict[str, Any]) -> None:
+        steer = dict(self.steer or {})
+        steer["consumed"] = int(steer.get("consumed") or 0) + _as_int(data.get("count"))
+        ids = list(steer.get("consumed_ids") or [])
+        ids.extend(str(item) for item in data.get("steer_ids") or [])
+        steer["consumed_ids"] = ids
+        preview = str(data.get("text_preview") or "")
+        if preview:
+            steer["last_text_preview"] = preview
+        self.steer = steer
 
     def _tool(self, tool_use_id: str, tool_name: str) -> TurnToolReport:
         item = self._tool_items.get(tool_use_id)
@@ -391,6 +415,10 @@ def _truth_tool_item(item: TurnToolReport) -> dict[str, Any]:
         "reason_code": item.reason_code,
         "required_allow": item.required_allow,
         "execution_mode": item.execution_mode,
+        "grant_matched": item.grant_matched,
+        "grant_scope": item.grant_scope,
+        "grant_expires_at": item.grant_expires_at,
+        "temporary_grant_ttl_seconds": item.temporary_grant_ttl_seconds,
     }
 
 

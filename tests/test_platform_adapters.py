@@ -308,6 +308,28 @@ async def test_wechat_send_splits_long_text(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_wechat_send_splits_long_code_fence(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter._send_session = object()
+    calls = []
+
+    async def fake_api(path, payload, session, timeout_ms):
+        calls.append(payload["msg"]["item_list"][0]["text_item"]["text"])
+        return {"ret": 0, "errcode": 0}
+
+    monkeypatch.setattr(adapter, "_api", fake_api)
+    content = "```\n" + ("a" * 4500) + "\n```"
+
+    result = await adapter.send("wx-user", content)
+
+    assert result.success is True
+    assert len(calls) >= 3
+    assert all(len(item) <= adapter.MAX_MESSAGE_LENGTH for item in calls)
+
+
+@pytest.mark.asyncio
 async def test_wechat_send_includes_cached_context_token(tmp_path: Path, monkeypatch):
     from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
@@ -609,6 +631,114 @@ async def test_wechat_download_attachment_decrypts_cdn_media(tmp_path: Path, mon
     assert downloaded.source_url.startswith("https://novac2c.cdn.weixin.qq.com/c2c/download")
     assert downloaded.platform_file_id == "encrypted-param"
     assert downloaded.metadata["wechat_download"]["encrypted"] is True
+
+
+@pytest.mark.asyncio
+async def test_wechat_download_prefers_top_level_aeskey(tmp_path: Path, monkeypatch):
+    from Crypto.Cipher import AES
+
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    key = b"0123456789abcdef"
+    wrong_key = b"abcdef0123456789"
+    plaintext = b"image-payload"
+    pad = 16 - (len(plaintext) % 16)
+    encrypted = AES.new(key, AES.MODE_ECB).encrypt(plaintext + bytes([pad]) * pad)
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+
+    async def fake_download_url_bytes(url, *, kind):
+        return encrypted, "application/octet-stream"
+
+    monkeypatch.setattr(adapter, "_download_url_bytes", fake_download_url_bytes)
+
+    downloaded = await adapter.download_attachment(
+        AttachmentRef(
+            id="w-top-key",
+            kind="image",
+            name="photo.png",
+            metadata={
+                "wechat_media": {
+                    "file_name": "photo.png",
+                    "aeskey": base64.b64encode(key).decode(),
+                    "media": {
+                        "encrypt_query_param": "encrypted-param",
+                        "aes_key": base64.b64encode(wrong_key).decode(),
+                    },
+                }
+            },
+        )
+    )
+
+    assert downloaded.data == plaintext
+
+
+@pytest.mark.asyncio
+async def test_wechat_download_accepts_unpadded_encrypted_media(tmp_path: Path, monkeypatch):
+    from Crypto.Cipher import AES
+
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    key = b"0123456789abcdef"
+    plaintext = b"\x89PNG\r\n\x1a\npayload!"
+    assert len(plaintext) % 16 == 0
+    encrypted = AES.new(key, AES.MODE_ECB).encrypt(plaintext)
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+
+    async def fake_download_url_bytes(url, *, kind):
+        return encrypted, "application/octet-stream"
+
+    monkeypatch.setattr(adapter, "_download_url_bytes", fake_download_url_bytes)
+
+    downloaded = await adapter.download_attachment(
+        AttachmentRef(
+            id="w-unpadded",
+            kind="image",
+            metadata={
+                "wechat_media": {
+                    "encrypt_query_param": "encrypted-param",
+                    "aeskey": base64.b64encode(key).decode(),
+                }
+            },
+        )
+    )
+
+    assert downloaded.data == plaintext
+
+
+@pytest.mark.asyncio
+async def test_wechat_download_reads_all_response_chunks(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    class Content:
+        async def iter_chunked(self, size):
+            yield b"a" * 3
+            yield b"b" * 5
+            yield b"c" * 7
+
+    class Response:
+        ok = True
+        content = Content()
+        headers = {"Content-Type": "image/jpeg"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class Session:
+        def get(self, url):
+            return Response()
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter._send_session = Session()
+
+    data, mime_type = await adapter._download_url_bytes("https://example.com/image.jpg", kind="image")
+
+    assert data == b"aaa" + b"bbbbb" + b"ccccccc"
+    assert mime_type == "image/jpeg"
 
 
 @pytest.mark.asyncio

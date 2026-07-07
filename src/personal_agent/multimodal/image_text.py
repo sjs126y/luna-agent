@@ -379,6 +379,7 @@ def _vision_provider(settings, provider_name: str) -> ProviderProfile:
     api_key = str(getattr(settings, "multimodal_image_text_api_key", "") or "")
     if not base_url:
         base_url = _default_base_url(provider_name) or str(getattr(settings, "llm_base_url", "") or "")
+    base_url = _normalize_vision_base_url(provider_name, base_url, settings)
     if not api_key:
         api_key = str(getattr(settings, "llm_api_key", "") or "")
     if not model:
@@ -393,17 +394,56 @@ def _vision_provider(settings, provider_name: str) -> ProviderProfile:
 
 
 def _vision_transport(provider: ProviderProfile, settings) -> Any:
-    api_mode = provider_registry.detect_api_mode(provider.base_url, provider.name)
+    api_mode = _vision_api_mode(provider, settings)
     try:
         return transport_registry.get(api_mode, provider)
     except KeyError:
-        if api_mode == "anthropic_messages":
-            from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+        return _fallback_vision_transport(api_mode, provider)
 
-            return AnthropicMessagesTransport(provider)
-        from personal_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
 
-        return ChatCompletionsTransport(provider)
+def _vision_api_mode(provider: ProviderProfile, settings) -> str:
+    configured = _configured_vision_api_mode(settings)
+    if configured and configured != "auto":
+        return configured
+    if provider.name == "anthropic":
+        return "anthropic_messages"
+    return provider_registry.detect_api_mode(provider.base_url, provider.name)
+
+
+def _normalize_vision_base_url(provider_name: str, base_url: str, settings) -> str:
+    if provider_name != "anthropic":
+        return base_url
+    if _configured_vision_api_mode(settings) in {"chat_completions", "responses", "codex_responses"}:
+        return base_url
+    base = base_url.rstrip("/")
+    lower = base.lower()
+    if "api.anthropic.com" in lower or lower.endswith("/anthropic") or "/anthropic/" in lower:
+        return base
+    if lower.endswith("/v1"):
+        return f"{base[:-3]}/anthropic"
+    return f"{base}/anthropic"
+
+
+def _configured_vision_api_mode(settings) -> str:
+    return str(getattr(settings, "multimodal_image_text_api_mode", "auto") or "auto").strip()
+
+
+def _fallback_vision_transport(api_mode: str, provider: ProviderProfile) -> Any:
+    if api_mode == "anthropic_messages":
+        from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+
+        return AnthropicMessagesTransport(provider)
+    if api_mode == "responses":
+        from personal_agent.plugins.builtin.llm.builtin.responses import OpenAIResponsesTransport
+
+        return OpenAIResponsesTransport(provider)
+    if api_mode == "codex_responses":
+        from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
+
+        return CodexResponsesTransport(provider)
+    from personal_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
+
+    return ChatCompletionsTransport(provider)
 
 
 def _data_url(resolved: ResolvedAttachment) -> str:

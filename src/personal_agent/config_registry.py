@@ -243,7 +243,8 @@ class ConfigRegistry:
 
 EXECUTION_MODES = ("guarded", "standard", "trusted", "sovereign")
 LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter")
-LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions")
+LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
+IMAGE_TEXT_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 COMPRESSION_ENGINES = ("compressor", "disabled", "none", "off", "simple")
 MEMORY_PROVIDERS = ("file",)
 EXTERNAL_MEMORY_PROVIDERS = ("embedding", "none")
@@ -309,14 +310,50 @@ def _execution_fields() -> tuple[ConfigField, ...]:
     )
 
 
+def _permission_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field(
+            "permissions.temporary_grant_ttl_hours",
+            "permission_temporary_grant_ttl_hours",
+            24,
+            "int",
+            "permissions",
+            "Temporary permission grant TTL in hours.",
+            minimum=1,
+            maximum=168,
+        ),
+        _yaml_field(
+            "permissions.confirm_timeout_seconds",
+            "permission_confirm_timeout_seconds",
+            120,
+            "int",
+            "permissions",
+            "Gateway async tool confirmation timeout in seconds.",
+            minimum=10,
+            maximum=600,
+        ),
+    )
+
+
 def _llm_fields() -> tuple[ConfigField, ...]:
     return (
         _env_field("LLM_PROVIDER", "llm_provider", "deepseek", "str", "llm", "LLM provider.", choices=LLM_PROVIDERS),
         _env_field("LLM_API_KEY", "llm_api_key", "", "str", "llm", "LLM API key.", sensitive=True),
         _env_field("LLM_BASE_URL", "llm_base_url", "", "str", "llm", "LLM base URL."),
         _env_field("LLM_MODEL", "llm_model", "deepseek-chat", "str", "llm", "LLM model name."),
-        _env_field("LLM_API_MODE", "llm_api_mode", "auto", "str", "llm", "LLM API compatibility mode."),
+        _env_field("LLM_API_MODE", "llm_api_mode", "auto", "str", "llm", "LLM API compatibility mode.", choices=LLM_API_MODES),
         _env_field("LLM_MAX_TOKENS", "llm_max_tokens", 4096, "int", "llm", "Maximum LLM output tokens.", minimum=1),
+        _mixed_field(
+            "llm.context_window",
+            "llm_context_window",
+            0,
+            "int",
+            "llm",
+            "Model context window override. 0 means auto-detect from model name.",
+            minimum=0,
+            env_key="LLM_CONTEXT_WINDOW",
+            yaml_path="llm.context_window",
+        ),
     )
 
 
@@ -396,6 +433,7 @@ def _multimodal_fields() -> tuple[ConfigField, ...]:
         _yaml_field("multimodal.image_text_cache", "multimodal_image_text_cache", True, "bool", "multimodal", "Cache image-to-text fallback results."),
         _yaml_field("multimodal.image_text_max_chars", "multimodal_image_text_max_chars", 6000, "int", "multimodal", "Maximum image-to-text characters injected into context.", minimum=1),
         _yaml_field("multimodal.image_text_provider", "multimodal_image_text_provider", "", "str", "multimodal", "Vision provider used for image-to-text fallback.", choices=("", *LLM_PROVIDERS)),
+        _mixed_field("multimodal.image_text_api_mode", "multimodal_image_text_api_mode", "auto", "str", "multimodal", "Vision provider API compatibility mode.", choices=IMAGE_TEXT_API_MODES, env_key="IMAGE_TEXT_API_MODE", yaml_path="multimodal.image_text_api_mode"),
         _yaml_field("multimodal.image_text_model", "multimodal_image_text_model", "", "str", "multimodal", "Vision model used for image-to-text fallback."),
         _yaml_field("multimodal.image_text_prompt", "multimodal_image_text_prompt", "", "str", "multimodal", "Custom image-to-text prompt."),
         _yaml_field("multimodal.ocr_endpoint", "multimodal_ocr_endpoint", "", "str", "multimodal", "Local OCR HTTP service endpoint."),
@@ -482,6 +520,7 @@ def _profile_fields() -> tuple[ConfigField, ...]:
 CONFIG_FIELDS: tuple[ConfigField, ...] = (
     *_execution_fields(),
     *_llm_fields(),
+    *_permission_fields(),
     *_platform_env_fields(),
     *_agent_fields(),
     *_storage_fields(),

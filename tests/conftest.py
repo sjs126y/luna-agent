@@ -11,6 +11,20 @@ from personal_agent.db.database import Database
 
 
 @pytest.fixture
+def isolate_audit_log(tmp_path):
+    from personal_agent.tools.audit import set_audit_path
+
+    set_audit_path(tmp_path / "audit.log")
+    yield
+    set_audit_path(Path("./data/audit.log"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_audit_log(isolate_audit_log):
+    yield
+
+
+@pytest.fixture
 def temp_db_path():
     with tempfile.TemporaryDirectory() as td:
         yield Path(td) / "test.db"

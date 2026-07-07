@@ -23,7 +23,12 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 ```
+
+`LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。Codex/Ahoo 这类 Responses 中转站通常使用根 `LLM_BASE_URL`，并显式设置 `LLM_API_MODE=codex_responses`。
+
+`LLM_CONTEXT_WINDOW=0` 表示按模型名自动推断上下文窗口；使用中转站自定义模型名时可以填真实窗口大小，例如 `1000000`。同一配置也可以写在 `config.yaml` 的 `llm.context_window`，优先级是 `.env` 高于 `config.yaml`。
 
 平台字段按需填写：
 
@@ -46,6 +51,9 @@ execution:
   mode: standard
   policy:
     tool_permissions: {}
+
+llm:
+  context_window: 0
 
 storage:
   data_dir: ./data
@@ -113,7 +121,7 @@ auth:
 | mode | UI 名称 | 行为 |
 | --- | --- | --- |
 | `guarded` | Read Only | 只允许读和搜索，写入、bash、后台任务、网络和破坏性操作拒绝 |
-| `standard` | Ask First | 日常模式，读和搜索允许，写入、bash、后台任务和破坏性操作需要确认，网络默认拒绝 |
+| `standard` | Ask First | 日常模式，读和搜索允许，写入、bash、后台任务、网络和破坏性操作需要确认 |
 | `trusted` | Edit Freely | 信任本地项目，写入和 bash 允许，后台任务、网络和破坏性操作仍需确认 |
 | `sovereign` | Full Auto | sandbox 内大多数工具直接允许，破坏性操作仍需确认 |
 
@@ -157,7 +165,17 @@ allow, ask, deny
 | `file_max_write_bytes` | `file_write` 单次最大写入字节数 |
 | `audit_enabled` | 是否记录工具审计日志到 `data/audit.log` |
 
-注意：`guarded` 模式下网络始终拒绝；其他模式下 `bash_allow_network: true` 才会放开 bash 网络命令。
+`/allow` 只解锁当前 mode/config 最终策略为 `ask` 的权限类别，不能覆盖 `deny`。`standard` 下普通网络工具为 `ask`，可用 `/allow network` 解锁 `web_search` / `web_fetch`；`guarded` 下 network 仍为 `deny`。`bash_allow_network: true` 只控制 bash 内部的 `curl` / `wget` / `pip` 等网络命令，不会被 `/allow network` 自动打开。
+
+临时授权由 `permissions` 控制：
+
+```yaml
+permissions:
+  temporary_grant_ttl_hours: 24
+  confirm_timeout_seconds: 120
+```
+
+`/allow <category>` 和确认框里的 `Always 24h` 会写入当前运行时的限时授权，默认 24 小时后过期；`/deny <category>` 可撤销，`/deny all` 撤销全部。服务重启后这些运行时授权不会持久化。
 
 ## 多模态配置
 
@@ -171,6 +189,8 @@ allow, ask, deny
 | `video_mode` | 视频处理方式：`auto` / `text` / `off` |
 | `file_mode` | 文件处理方式：`auto` / `text` / `off` |
 | `native_fallback` | provider 不支持原生多模态时的降级方式：`notice` / `text` |
+| `image_text_provider` | 图片文本化辅助 provider，例如 `openai` / `anthropic` |
+| `image_text_api_mode` | 图片文本化 API 协议：`auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`；`anthropic + auto` 会使用 Anthropic Messages，base URL 会按 `{base}/messages` 调用，例如 `https://api.deepseek.com/anthropic` -> `/anthropic/messages`；OpenAI-compatible 中转站可显式设为 `chat_completions`，Codex/Ahoo 这类 Responses 中转站建议设为 `codex_responses` 并使用根 base URL |
 
 `off` 不会触发下载和缓存；`text` 会尝试文本化，当前没有可用解析能力时会降级成模型可见提示；`native` 目前用于支持图片输入的 provider。DeepSeek/OpenRouter 默认不启用原生图片，OpenAI/Anthropic 会按各自 transport 转换图片格式。
 

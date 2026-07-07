@@ -1,6 +1,6 @@
 # Backend Interface Contract
 
-更新时间：2026-07-07
+更新时间：2026-07-08
 
 本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
 
@@ -89,6 +89,22 @@
 
 - `pre_message_count: integer`
 - `post_message_count: integer`
+
+### `steer_consumed`
+
+运行中用户修正已被注入当前 turn 上下文。
+
+常见字段：
+
+- `count: integer`
+- `steer_ids: list[string]`
+- `text_preview: string`
+
+语义：
+
+- 该事件只表示 agent loop 已消费 `/steer` 入队内容，并把它作为新的 user message 追加到当前 turn。
+- 用户刚发送 `/steer` 时，前端会先拿到 slash command 的文本回执；真正影响模型上下文时才会看到 `steer_consumed`。
+- 如果修正在一次 LLM 最终答案返回时到达，后端会先保留那次 assistant 文本，再注入修正并继续下一次 LLM 调用，让模型按新要求重答。
 
 ### `llm_start`
 
@@ -216,6 +232,9 @@
 - `required_allow: string`
 - `decision_message: string`
 - `grant_matched: string`
+- `grant_scope: string` — `turn` 或 `temporary`
+- `grant_expires_at: number` — temporary grant 的 Unix 过期时间，非限时授权为 `0`
+- `temporary_grant_ttl_seconds: integer`
 - `display_name: string`，给 UI 直接展示的工具名
 - `execution_mode_label: string`，给 UI 直接展示的模式名，如 `Ask First`
 - `risk_level: string`，`low` / `medium` / `high`
@@ -383,6 +402,9 @@
 - 文本类、PDF、docx 附件在 `text` 或 `auto -> text` 模式下会由后端抽取文本并加入本轮上下文。
 - 文本抽取受 `multimodal.text_extract_max_chars` 和 `multimodal.text_extract_pdf_max_pages` 限制，超出会截断。
 - 图片在 `text` fallback 模式下会进入统一图片文本化链路；配置 `multimodal.image_text_provider` 后可调用辅助 vision provider 生成文本描述。
+- `multimodal.image_text_api_mode` 可控制图片文本化使用的 API 协议：`auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。`anthropic + auto` 会按 Anthropic Messages 请求，base URL 会按 `{base}/messages` 调用，例如 `https://api.deepseek.com/anthropic` -> `/anthropic/messages`；OpenAI-compatible 中转站应显式使用 `chat_completions`；Codex/Ahoo 这类 Responses 中转站建议显式使用 `codex_responses`，base URL 通常填根地址，例如 `https://api.ahooqq.cn`，后端会请求 `{base}/responses`。`codex_responses` 是 `responses` 的语义别名，底层 wire format 相同。
+- 主 Agent 的 `LLM_API_MODE` 也支持 `responses` / `codex_responses`。使用 Codex/Ahoo 这类中转站时，推荐 `.env` 设为 `LLM_PROVIDER=openai`、`LLM_BASE_URL=https://api.ahooqq.cn`、`LLM_API_MODE=codex_responses`、`LLM_MODEL=<目标模型>`；`doctor` 会接受该配置。
+- 主 Agent 的上下文窗口可通过 `.env` 的 `LLM_CONTEXT_WINDOW` 或 `config.yaml` 的 `llm.context_window` 显式配置；默认 `0` 表示按模型名自动推断。该值会影响 `llm_end.context_window`、`context_budget.context_limit`、`/usage` 上下文估算和 turn report 里的 context 字段。`.env` 优先级高于 `config.yaml`，中转站自定义模型名可填真实窗口，例如 `1000000`。
 - vision fallback 的 API key / base URL 使用 `.env` 的 `IMAGE_TEXT_API_KEY` / `IMAGE_TEXT_BASE_URL`；前端不参与模型调用。
 - 配置 `multimodal.ocr_endpoint` 后，后端可调用本地 OCR HTTP 服务；OCR 引擎不内置在主项目中。
 
@@ -489,7 +511,7 @@ async def confirm_callback(decision) -> str:
 - 只在 `permission_required + ask` 时调用 `confirm`。
 - `"allow"`：本次临时放行，执行后撤销临时 grant。
 - `"deny"`：不执行工具，返回 denied 工具结果。
-- `"always"`：放行，并加入当前 agent 的 `_destructive_allowed`，本轮后续同类工具不再询问。
+- `"always"`：放行，并加入当前 agent/session 的限时临时授权，默认 24 小时；显示文案建议为 `Always 24h`。
 - `/stop` 中断 pending confirm 时，后端会取消等待并按固定 denied 结果收口：
   - `tool_end.status="denied"`
   - `tool_end.category="authorization"`
@@ -507,7 +529,73 @@ async def confirm_callback(decision) -> str:
 - `decision.available_actions`
 - `decision.input_preview`
 
-## 5. Execution Mode
+## 5. Runtime Steer
+
+运行中修正用于“模型还在处理上一条消息时，用户补一句方向修正”，例如：
+
+```text
+/steer 回答短一点，重点说结论
+```
+
+统一后端入口：
+
+- Slash command：`/steer <text>`
+- `CommandResult.kind`：默认 `text`
+- 运行中成功回执：`已收到，会在当前任务下一步应用。（st_xxx）`
+- 非运行中回执：`当前没有运行中的任务可修正。`
+- 空参数回执：`用法: /steer <运行中修正内容>`
+
+后端行为：
+
+- `ConversationService` 每个 turn 分配 `turn_id`，并在 turn 生命周期内登记 active turn。
+- `/steer` 会进入当前 session 的 `SteerManager` 队列，绑定当前 active `turn_id`。
+- agent loop 在下一次循环边界消费队列，并追加一条 user message：
+  - 第一行固定为 `[运行中用户补充/修正]`
+  - 后续为用户修正文本，多条会编号合并。
+- 如果修正在 LLM 调用期间到达，最晚会在该次调用返回后、下一次模型调用前生效。
+- turn 结束后未消费的 steer 会标记为 `expired`，不会污染下一轮。
+- 单 session pending steer 默认最多 10 条；文本会限制长度，避免上下文污染。
+
+Gateway / 平台行为：
+
+- 微信/QQ/飞书/Telegram 等 gateway 平台在同 session 正在运行时，`/steer` 会像确认回复一样旁路 adapter 队列，不会被普通“上一条还在处理”队列挡住。
+- `/stop` 仍然用于停止当前任务；`/steer` 只补充方向，不取消当前工具或模型调用。
+- 普通非 slash 文本在 busy 时仍返回 `我正在处理你上一条消息，请稍候...`。
+
+健康状态字段：
+
+- `Gateway.health_snapshot().pending_steer_count: integer`
+- `Gateway.health_snapshot().active_steer_sessions: list[string]`
+- `Gateway.health_snapshot().steer: object`
+- `Gateway.health_snapshot().running_agent_runs[].active_turn_id: string`
+- `Gateway.health_snapshot().running_agent_runs[].pending_steers: integer`
+
+`steer` session snapshot 常见形状：
+
+```json
+{
+  "session_key": "telegram:c1:u1",
+  "active_turn_id": "a1b2c3d4",
+  "pending_count": 1,
+  "pending_items": [
+    {
+      "id": "st_abc123",
+      "turn_id": "a1b2c3d4",
+      "status": "pending",
+      "text_preview": "回答短一点"
+    }
+  ],
+  "recent_items": []
+}
+```
+
+前端接入建议：
+
+- 运行中输入 `/steer <text>` 时，应走 slash command 通道，不要作为普通用户消息排队。
+- 对桌面端/自定义 UI，可在当前 turn running 时提供一个“发送修正”输入框，底层仍调用 `/steer <text>`。
+- 展示层可用 command 回执提示“已收到”，用 `steer_consumed` 或 health 中的 `pending_steers` 展示是否已应用。
+
+## 6. Execution Mode
 
 当前唯一用户入口是：
 
@@ -535,9 +623,28 @@ async def confirm_callback(decision) -> str:
 - `acceptEdits` -> `Edit Freely`
 - `auto` -> `Full Auto`
 
-切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
+切换 mode 会清空当前 agent 的本轮 grants，限时授权仍受 mode/config 的 `deny` 最高优先级约束。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-## 6. Usage / Context Summary
+`/allow` 是 mode/config 策略上的限时临时 grant：只解锁最终权限决策为 `ask` 的类别，不能覆盖 `deny`。`standard / Ask First` 下 `network=ask`，因此 `/allow network` 可用于 `web_search` / `web_fetch`；`guarded / Read Only` 下 `network=deny`，后端会返回“不能覆盖”的文本提示。`/allow network` 不会打开 bash 内部的 `curl` / `wget` 等网络命令，bash 网络仍由 `sandbox.bash_allow_network` 控制。
+
+新增命令：
+
+- `/deny <category>`：撤销当前 agent/session 的某类限时授权。
+- `/deny all`：撤销全部限时授权。
+- `/permissions` payload 新增 `temporary_grants`、`turn_grants`、`temporary_grant_ttl_seconds`，每个临时授权包含 `category`、`expires_at`、`expires_at_iso`。
+- `tool_decision` / `tool_end` / Turn Report / Tool Runs 现在都会透出 `grant_scope`、`grant_expires_at`、`temporary_grant_ttl_seconds`，用于解释工具为什么被放行以及限时授权何时失效。
+
+Gateway 异步确认：
+
+- 微信/QQ/飞书/Telegram 等 gateway 平台遇到 `permission_required + ask` 时，会发送确认文本，不再立即 denied。
+- 用户回复 `1` = 允许一次，`2` = 拒绝，`3` = 按 `permissions.temporary_grant_ttl_hours` 限时允许。
+- pending confirm 期间，非 `1/2/3` 普通文本会被消费并提示 `请回复 1、2 或 3；发送 /stop 可取消。`
+- `/stop` 会取消 pending confirm，并让等待中的工具确认返回 `interrupted`。
+- `Gateway.health_snapshot()` 新增 `pending_confirmations` 与 `pending_confirmation_count`；`/permissions` payload 的 `pending_confirmation` 会返回当前 session 的 pending 状态。
+
+当一批工具调用全部因为 `permission_required` 被拒绝时，后端会结束当前 turn 并发送一条 `assistant_message` 提示需要 `/allow <category>` 后重试，避免模型在同一轮里反复调用未授权工具。对应 `tool_end` / Tool Runs / Turn Reports 仍会记录实际 denied 工具结果。
+
+## 7. Usage / Context Summary
 
 `/usage` 返回人类可读文本，当前语义如下：
 
@@ -548,7 +655,7 @@ async def confirm_callback(decision) -> str:
 
 注意：`最近一轮工具执行` 不等于活跃 turn 内部计数；前端如需结构化历史工具明细，应优先使用 Tool Runs / Turn Reports。
 
-## 7. Tool Runs / Tool Truth
+## 8. Tool Runs / Tool Truth
 
 后端已持久化工具运行结果，供后续前端/desktop 查询使用。
 
@@ -571,7 +678,7 @@ async def confirm_callback(decision) -> str:
 - 是否需要 `full_output`。
 - 是否需要按 `status` / `tool_name` / `permission_category` 过滤。
 
-## 8. Turn Reports
+## 9. Turn Reports
 
 后端会把每轮 `AgentTurnReport` 持久化到 SQLite，作为 turn 级审计记录。它记录一轮对话的整体状态、LLM/cache usage、工具调用汇总、retry、错误、tool truth 等信息。
 
@@ -617,6 +724,24 @@ async def confirm_callback(decision) -> str:
 - `context_percent`
 - `context_budget`
 
+完整 `report.steer` 记录本轮运行中修正摘要：
+
+- `received: integer`
+- `consumed: integer`
+- `expired: integer`
+- `pending: integer`
+- `items: list[object]`
+
+`items[]` 常见字段：
+
+- `id: string`
+- `session_key: string`
+- `turn_id: string`
+- `status: string`，`pending` / `consumed` / `expired`
+- `text_preview: string`
+- `created_at: number`
+- `consumed_at: number`
+
 关联语义：
 
 - `turn_reports.turn_id` 与 `tool_runs.turn_id` 对齐。
@@ -624,7 +749,7 @@ async def confirm_callback(decision) -> str:
 - `session_id` 用于精确归属当前物理 session。
 - `tool_runs_for_turn_report(report_id)` 会按 `session_key + turn_id` 返回该轮工具明细。
 
-## 9. Runtime / Doctor Cache Diagnostics
+## 10. Runtime / Doctor Cache Diagnostics
 
 `personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
 
@@ -668,7 +793,7 @@ async def confirm_callback(decision) -> str:
 - `last_cache_write_tokens: integer`
 - `last_cache_read_tokens: integer`
 
-## 10. Activity Runtime Interface
+## 11. Activity Runtime Interface
 
 后端已提供稳定 Activity 接口，用于前端展示“系统正在做什么”。Activity 覆盖：
 
@@ -724,7 +849,7 @@ async def confirm_callback(decision) -> str:
 
 - `sub_agent`：`run_id`, `role`, `task`, `task_preview`, `usage`, `quota`, `tool_counts`, `result_preview`。
 - `background_process`：`pid`, `command`, `command_preview`, `cwd`, `returncode`, `has_stdout`, `has_stderr`, `stdout_bytes`, `stderr_bytes`, `output_preview`, `stdout_truncated`, `stderr_truncated`。
-- `gateway_agent`：`session_key`, `platform`, `chat_id`, `user_id`。
+- `gateway_agent`：`session_key`, `platform`, `chat_id`, `user_id`, `active_turn_id`, `pending_steers`。
 
 详情 payload：
 
@@ -753,7 +878,7 @@ Slash metadata：
 }
 ```
 
-## 11. Compatibility Notes
+## 12. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

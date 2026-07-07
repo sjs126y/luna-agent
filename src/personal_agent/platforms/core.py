@@ -136,6 +136,7 @@ class BasePlatformAdapter(ABC):
         self.db = db
         self._loop: asyncio.AbstractEventLoop | None = None
         self._message_handler: Callable[[MessageEvent], Awaitable[str | None]] | None = None
+        self._message_bypass_predicate: Callable[[MessageEvent], bool] | None = None
         self._active_sessions: dict[str, bool] = {}
         self._pending_messages: dict[str, list[PendingMessage]] = {}
         self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -199,6 +200,9 @@ class BasePlatformAdapter(ABC):
     def set_message_handler(self, handler: Callable[[MessageEvent], Awaitable[str | None]]) -> None:
         self._message_handler = handler
 
+    def set_message_bypass_predicate(self, predicate: Callable[[MessageEvent], bool] | None) -> None:
+        self._message_bypass_predicate = predicate
+
     def set_attachment_store(self, store: AttachmentStore) -> None:
         self._attachment_store = store
 
@@ -237,6 +241,9 @@ class BasePlatformAdapter(ABC):
             return
 
         session_key = self._make_session_key(event.source)
+        if self._should_bypass_queue(event):
+            asyncio.create_task(self._process_bypass_message_background(event, session_key))
+            return
         if session_key in self._active_sessions:
             queue = self._pending_messages.setdefault(session_key, [])
             queue.append(PendingMessage(event, queued_at=_now(), queued_monotonic=time.monotonic()))
@@ -280,6 +287,27 @@ class BasePlatformAdapter(ABC):
                     del self._pending_messages[session_key]
                 self._active_sessions[session_key] = True
                 asyncio.create_task(self._process_message_background(next_message.event, session_key))
+
+    async def _process_bypass_message_background(self, event: MessageEvent, session_key: str) -> None:
+        """Process a control reply while the normal session turn is waiting."""
+        try:
+            response = None
+            if self._message_handler:
+                response = await self._message_handler(event)
+                self._last_response_at = _now()
+            if response:
+                await self._send_with_retry(event.source.chat_id, response)
+        except Exception:
+            logger.exception("Bypass processing failed for session %s", session_key)
+
+    def _should_bypass_queue(self, event: MessageEvent) -> bool:
+        if self._message_bypass_predicate is None:
+            return False
+        try:
+            return bool(self._message_bypass_predicate(event))
+        except Exception:
+            logger.exception("Message bypass predicate failed")
+            return False
 
     async def _prepare_attachment_ref(
         self,
@@ -356,6 +384,12 @@ class BasePlatformAdapter(ABC):
 
     async def _send_with_retry(self, chat_id: str, content: str, max_retries: int | None = None) -> None:
         max_retries = self._send_max_retries if max_retries is None else max_retries
+        for chunk in split_text_for_platform(content, self._max_outbound_text_length()):
+            sent = await self._send_chunk_with_retry(chat_id, chunk, max_retries=max_retries)
+            if not sent:
+                return
+
+    async def _send_chunk_with_retry(self, chat_id: str, content: str, *, max_retries: int) -> bool:
         message = OutboundMessage.text(content)
         for attempt in range(max_retries + 1):
             try:
@@ -366,7 +400,7 @@ class BasePlatformAdapter(ABC):
                     self._send_stats.sent_count += 1
                     self._send_stats.last_success_at = _now()
                     self._send_stats.last_error = ""
-                    return
+                    return True
 
                 error_lower = (result.error or "").lower()
                 self._last_send_error = result.error or "send failed"
@@ -375,7 +409,7 @@ class BasePlatformAdapter(ABC):
                 if "timeout" in error_lower or "timed out" in error_lower:
                     self._record_send_failure(result.error or "timeout")
                     logger.error("Send timed out (attempt %d): %s", attempt + 1, result.error)
-                    return
+                    return False
 
                 if attempt < max_retries:
                     self._send_stats.retry_count += 1
@@ -390,12 +424,13 @@ class BasePlatformAdapter(ABC):
                 else:
                     self._record_send_failure(result.error or "send failed")
                     logger.error("Send failed after %d retries: %s", max_retries, result.error)
+                    return False
 
             except asyncio.TimeoutError:
                 self._last_send_error = "timeout"
                 self._record_send_failure("timeout")
                 logger.error("Send timeout (attempt %d) — not retrying", attempt + 1)
-                return
+                return False
             except Exception as exc:
                 error_msg = str(exc).lower()
                 self._last_send_error = f"{type(exc).__name__}: {exc}"
@@ -403,18 +438,26 @@ class BasePlatformAdapter(ABC):
                 if "timeout" in error_msg or "timed out" in error_msg:
                     self._record_send_failure(self._last_send_error)
                     logger.error("Send timeout exception (attempt %d)", attempt + 1)
-                    return
+                    return False
                 if attempt < max_retries:
                     self._send_stats.retry_count += 1
                     logger.warning("Send exception (attempt %d/%d): %s", attempt + 1, max_retries, exc)
                     await self._sleep_before_retry(self._send_retry_delay(attempt, error_msg))
                 else:
                     self._record_send_failure(self._last_send_error)
+                    return False
+        return False
 
     # ── helpers ───────────────────────────────────────
 
     def _make_session_key(self, source) -> str:
         return f"{source.platform}:{source.chat_id}:{source.user_id}"
+
+    def _max_outbound_text_length(self) -> int:
+        try:
+            return int(getattr(self.capabilities, "max_text_length", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _message_dedupe_key(self, event: MessageEvent) -> str:
         message_id = str(event.message_id or "").strip()
@@ -531,6 +574,43 @@ def _strip_formatting(text: str) -> str:
     text = re.sub(r'`(.+?)`', r'\1', text)
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
     return text
+
+
+def split_text_for_platform(text: str, limit: int) -> list[str]:
+    """Split outbound text to fit platform message limits."""
+    value = str(text or "")
+    try:
+        max_chars = int(limit)
+    except (TypeError, ValueError):
+        max_chars = 0
+    if max_chars <= 0 or len(value) <= max_chars:
+        return [value]
+
+    chunks: list[str] = []
+    current = ""
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            chunks.append(current)
+            current = ""
+
+    for line in value.splitlines(keepends=True):
+        remaining_line = line
+        while remaining_line:
+            room = max_chars - len(current)
+            if room <= 0:
+                flush()
+                room = max_chars
+            if len(remaining_line) <= room:
+                current += remaining_line
+                break
+            current += remaining_line[:room]
+            remaining_line = remaining_line[room:]
+            flush()
+
+    flush()
+    return chunks or [value[:max_chars]]
 
 
 def _now() -> str:

@@ -34,6 +34,7 @@ def _settings(**overrides):
         "multimodal_image_text_cache": True,
         "multimodal_image_text_max_chars": 6000,
         "multimodal_image_text_provider": "",
+        "multimodal_image_text_api_mode": "auto",
         "multimodal_image_text_model": "",
         "multimodal_image_text_prompt": "",
         "multimodal_image_text_base_url": "",
@@ -322,6 +323,7 @@ async def test_store_resolution_error_returns_notice(tmp_path):
     assert result.diagnostics["items"][0]["reason"] == "file_not_found"
     assert result.diagnostics["items"][0]["name"] == "missing.txt"
     assert result.diagnostics["items"][0]["has_local_path"] is False
+    assert result.diagnostics["items"][0]["error"] == "file_not_found"
 
 
 @pytest.mark.asyncio
@@ -766,3 +768,80 @@ def test_default_image_text_describer_vision_mode_does_not_use_ocr(tmp_path):
     )
 
     assert not isinstance(describer, LocalOcrImageTextDescriber)
+
+
+def test_vision_transport_uses_anthropic_messages_for_anthropic_provider():
+    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+
+    settings = _settings(
+        multimodal_image_text_provider="anthropic",
+        multimodal_image_text_api_mode="auto",
+        multimodal_image_text_base_url="https://api.ahooqq.cn/v1",
+        multimodal_image_text_model="claude-3-5-haiku-latest",
+    )
+    provider = _vision_provider(settings, "anthropic")
+
+    assert provider.base_url == "https://api.ahooqq.cn/anthropic"
+    assert isinstance(_vision_transport(provider, settings), AnthropicMessagesTransport)
+
+
+def test_vision_transport_can_force_chat_completions_for_anthropic_gateway():
+    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from personal_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
+
+    settings = _settings(
+        multimodal_image_text_provider="anthropic",
+        multimodal_image_text_api_mode="chat_completions",
+        multimodal_image_text_base_url="https://api.ahooqq.cn/v1",
+        multimodal_image_text_model="claude-3-5-haiku-latest",
+    )
+    provider = _vision_provider(settings, "anthropic")
+
+    assert provider.base_url == "https://api.ahooqq.cn/v1"
+    assert isinstance(_vision_transport(provider, settings), ChatCompletionsTransport)
+
+
+def test_vision_transport_can_force_responses_for_anthropic_gateway():
+    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from personal_agent.plugins.builtin.llm.builtin.responses import OpenAIResponsesTransport
+
+    settings = _settings(
+        multimodal_image_text_provider="anthropic",
+        multimodal_image_text_api_mode="responses",
+        multimodal_image_text_base_url="https://api.ahooqq.cn",
+        multimodal_image_text_model="claude-3-5-haiku-latest",
+    )
+    provider = _vision_provider(settings, "anthropic")
+
+    assert provider.base_url == "https://api.ahooqq.cn"
+    assert isinstance(_vision_transport(provider, settings), OpenAIResponsesTransport)
+
+
+def test_vision_transport_can_force_codex_responses_alias():
+    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
+
+    settings = _settings(
+        multimodal_image_text_provider="anthropic",
+        multimodal_image_text_api_mode="codex_responses",
+        multimodal_image_text_base_url="https://api.ahooqq.cn",
+        multimodal_image_text_model="gpt-5.5",
+    )
+    provider = _vision_provider(settings, "anthropic")
+
+    assert provider.base_url == "https://api.ahooqq.cn"
+    assert isinstance(_vision_transport(provider, settings), CodexResponsesTransport)
+
+
+def test_vision_provider_keeps_explicit_anthropic_base_url():
+    from personal_agent.multimodal.image_text import _vision_provider
+
+    settings = _settings(
+        multimodal_image_text_provider="anthropic",
+        multimodal_image_text_api_mode="auto",
+        multimodal_image_text_base_url="https://api.deepseek.com/anthropic",
+        multimodal_image_text_model="claude-3-5-haiku-latest",
+    )
+
+    assert _vision_provider(settings, "anthropic").base_url == "https://api.deepseek.com/anthropic"

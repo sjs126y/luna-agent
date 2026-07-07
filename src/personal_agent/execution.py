@@ -178,10 +178,10 @@ MODE_PROFILES: dict[str, ExecutionModeProfile] = {
             "write": "ask",
             "bash": "ask",
             "background": "ask",
-            "network": "deny",
+            "network": "ask",
             "destructive": "ask",
         },
-        network=NetworkProfile(tool_permission="deny", bash_network="deny"),
+        network=NetworkProfile(tool_permission="ask", bash_network="deny"),
     ),
     "trusted": ExecutionModeProfile(
         name="trusted",
