@@ -31,6 +31,9 @@ storage:
   data_dir: ./runtime-data
 gateway:
   platform_send_max_retries: 5
+attachments:
+  resolve_inbound: false
+  download_platform_files: false
 sandbox:
   roots: ./data,./workspace
   bash_allow_network: yes
@@ -48,6 +51,8 @@ plugins:
     assert snapshot.attr_values["llm_max_tokens"] == 2048
     assert snapshot.attr_values["agent_data_dir"] == Path("./runtime-data")
     assert snapshot.attr_values["platform_send_max_retries"] == 7
+    assert snapshot.attr_values["attachments_resolve_inbound"] is False
+    assert snapshot.attr_values["attachments_download_platform_files"] is False
     assert snapshot.attr_values["sandbox_roots"] == [Path("./data"), Path("./workspace")]
     assert snapshot.attr_values["bash_allow_network"] is True
     assert snapshot.attr_values["plugins_dirs"] == [Path("./plugins"), Path("./more-plugins")]

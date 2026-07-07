@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 13:15 CST
+更新时间：2026-07-07 15:44 CST
 
 ## 交接定位
 
@@ -32,12 +32,13 @@
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
-- Platform adapter base：平台消息基类和 media attachment v1 已打底，但平台线暂时不要继续激进推进，避免牵动底层架构。
-- Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`，不做下载/OCR/ASR。
+- Platform adapter base：平台消息基类、media attachment v1 和授权后附件准备链路已打底；平台真实下载器可以按平台逐步补。
+- Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`，真实平台 file_id 下载器仍需逐步实现。
 - Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
+- Platform attachment resolve v1：新增 `attachments.*` 配置、adapter 基类 `prepare_inbound_attachments()` / `download_attachment()` 扩展点、`DownloadedAttachment` 入库结构；Gateway 在授权通过且命令未被消费后触发 adapter 准备附件，provider 不参与下载决策。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
-最近一次记录的全量测试结果：历史清理后 `708 passed`。
+最近一次记录的全量测试结果：`731 passed`。
 
 ## 已完成方向：Multimodal Input v1-v4
 
@@ -92,6 +93,35 @@ uv run pytest -q
 ```
 
 结果：目标测试 `56 passed`；全量 `723 passed`。
+
+## 已完成方向：Platform Attachment Resolve v1
+
+状态：已完成链路修正和扩展点，并通过全量回归。
+
+已完成：
+
+- 新增 `attachments.resolve_inbound`、`attachments.cache_inbound`、`attachments.download_urls`、`attachments.download_platform_files` 配置，并同步 example / 配置文档 / config registry。
+- `AttachmentStore` 新增 `DownloadedAttachment` 和 `store_downloaded()`，平台下载结果统一进入附件缓存、hash 去重和索引链路。
+- `BasePlatformAdapter` 新增 `prepare_inbound_attachments()`、`download_attachment()` 和 `AttachmentDownloadError`；默认真实平台 file id 下载返回稳定失败 reason，具体平台后续覆盖。
+- Gateway 在授权通过、slash command 未被内部消费、busy check 通过后触发来源 adapter 准备附件；Gateway 不包含平台下载细节。
+- `MultiAttachmentProcessor` 收敛为消费已准备的附件；provider 不再提前阻断本地化，只影响后续 `native` / `text` / `notice`。
+- `BACKEND_INTERFACE.md` 已说明 `attachments.*`、`AttachmentRef.metadata.attachment_resolve`、成功/失败 reason 和职责边界。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_attachment_store.py tests/test_multimodal_processor.py tests/test_platforms_core.py tests/test_platform_adapters.py tests/test_gateway_commands.py tests/test_config_registry.py tests/test_config_loader.py tests/test_config_diagnostics.py tests/test_event_protocol.py tests/test_transport_multimodal.py -q
+uv run pytest -q
+```
+
+结果：目标测试 `111 passed`；全量 `731 passed`。
+
+剩余：
+
+- QQ / WeChat 真实 `download_attachment()` 实现。
+- Feishu / Telegram 真实下载器可在 QQ / WeChat 后补。
+- OCR / ASR / 文件文本提取仍属于后续 multimodal describer / 工具层，不在平台下载链路内。
 
 ## 当前分工约定
 

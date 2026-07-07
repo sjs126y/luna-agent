@@ -40,6 +40,17 @@ class ResolvedAttachment:
         return asdict(self)
 
 
+@dataclass
+class DownloadedAttachment:
+    data: bytes
+    kind: str = ""
+    name: str = ""
+    mime_type: str = ""
+    source_url: str = ""
+    platform_file_id: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class AttachmentStore:
     def __init__(
         self,
@@ -124,6 +135,20 @@ class AttachmentStore:
         )
         self._write_index(resolved)
         return resolved
+
+    def store_downloaded(
+        self,
+        downloaded: DownloadedAttachment,
+        *,
+        ref: AttachmentRef | None = None,
+    ) -> ResolvedAttachment:
+        merged_ref = _merge_downloaded_ref(ref, downloaded)
+        return self.store_bytes(
+            downloaded.data,
+            ref=merged_ref,
+            name=downloaded.name or _name(ref, Path("attachment")),
+            source_url=downloaded.source_url,
+        )
 
     def _check_size(self, kind: str, size: int) -> None:
         limit = self._max_bytes(kind)
@@ -214,4 +239,25 @@ def _with_mime(ref: AttachmentRef | None, mime_type: str) -> AttachmentRef | Non
         platform_file_id=ref.platform_file_id,
         local_path=ref.local_path,
         metadata=dict(ref.metadata),
+    )
+
+
+def _merge_downloaded_ref(
+    ref: AttachmentRef | None,
+    downloaded: DownloadedAttachment,
+) -> AttachmentRef:
+    metadata = dict(getattr(ref, "metadata", {}) or {})
+    metadata.update(dict(downloaded.metadata or {}))
+    return AttachmentRef(
+        id=str(getattr(ref, "id", "") or downloaded.platform_file_id or downloaded.name or "attachment"),
+        kind=str(downloaded.kind or getattr(ref, "kind", "") or "file"),
+        name=str(downloaded.name or getattr(ref, "name", "") or ""),
+        mime_type=str(downloaded.mime_type or getattr(ref, "mime_type", "") or ""),
+        size=int(getattr(ref, "size", 0) or 0),
+        url=str(getattr(ref, "url", "") or downloaded.source_url or ""),
+        platform_file_id=str(
+            downloaded.platform_file_id or getattr(ref, "platform_file_id", "") or ""
+        ),
+        local_path=str(getattr(ref, "local_path", "") or ""),
+        metadata=metadata,
     )

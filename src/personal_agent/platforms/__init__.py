@@ -1,6 +1,7 @@
 """Platform runtime public API."""
 
 from personal_agent.platforms.core import (
+    AttachmentDownloadError,
     BasePlatformAdapter,
     ChatInfo,
     PlatformCapabilities,
@@ -11,6 +12,7 @@ from personal_agent.platforms.core import (
 )
 
 __all__ = [
+    "AttachmentDownloadError",
     "BasePlatformAdapter",
     "ChatInfo",
     "PlatformCapabilities",

@@ -157,6 +157,86 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_gateway_prepares_inbound_attachments_after_auth(gateway, monkeypatch):
+    adapter = FakeAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    prepared = []
+    captured = {}
+
+    async def prepare_inbound_attachments(event):
+        prepared.append(event.text)
+        event.envelope.metadata["prepared"] = True
+        return event
+
+    async def run_turn_input(session_key, user_input):
+        captured["metadata"] = user_input.metadata
+        return ConversationTurnResult(
+            final_response="ok",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    event = _event("hello")
+    event.attachments = [MessagePart(type="image", file_id="file-1", name="photo.png")]
+    result = await gateway._handle_message_inner(event)
+
+    assert result == "ok"
+    assert prepared == ["hello"]
+    assert captured["metadata"]["prepared"] is True
+
+
+@pytest.mark.asyncio
+async def test_gateway_does_not_prepare_attachments_when_auth_fails(gateway, monkeypatch):
+    adapter = FakeAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    prepared = []
+
+    async def prepare_inbound_attachments(event):
+        prepared.append(event.text)
+        return event
+
+    monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (False, "denied"))
+
+    event = _event("hello")
+    event.attachments = [MessagePart(type="image", file_id="file-1", name="photo.png")]
+    result = await gateway._handle_message_inner(event)
+
+    assert result == "denied"
+    assert prepared == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_does_not_prepare_attachments_for_consumed_command(gateway, monkeypatch):
+    adapter = FakeAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    prepared = []
+
+    async def prepare_inbound_attachments(event):
+        prepared.append(event.text)
+        return event
+
+    monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    result = await gateway._handle_message_inner(_event("/session list"))
+
+    assert result is not None
+    assert prepared == []
+
+
+@pytest.mark.asyncio
 async def test_gateway_session_current_rename_and_delete(gateway):
     await gateway._session_store.get_or_create("telegram:c1:u1", _event("hello").source)
     gateway._agent_cache["telegram:c1:u1"] = Agent()

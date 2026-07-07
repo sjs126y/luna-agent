@@ -392,6 +392,15 @@ def _multimodal_fields() -> tuple[ConfigField, ...]:
     )
 
 
+def _attachment_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("attachments.resolve_inbound", "attachments_resolve_inbound", True, "bool", "attachments", "Resolve inbound platform attachments after authorization."),
+        _yaml_field("attachments.cache_inbound", "attachments_cache_inbound", True, "bool", "attachments", "Cache resolved inbound attachments under the attachment store."),
+        _yaml_field("attachments.download_urls", "attachments_download_urls", True, "bool", "attachments", "Download inbound attachment URLs into the attachment store."),
+        _yaml_field("attachments.download_platform_files", "attachments_download_platform_files", True, "bool", "attachments", "Use platform adapters to download private platform file ids."),
+    )
+
+
 def _cron_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("cron.enabled", "enable_cron", False, "bool", "cron", "Enable cron scheduler."),
@@ -466,6 +475,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     *_compression_fields(),
     *_memory_fields(),
     *_multimodal_fields(),
+    *_attachment_fields(),
     *_cron_fields(),
     *_sandbox_fields(),
     *_gateway_fields(),

@@ -174,6 +174,17 @@ allow, ask, deny
 
 `off` 不会触发下载和缓存；`text` 会尝试文本化，当前没有可用解析能力时会降级成模型可见提示；`native` 目前用于支持图片输入的 provider。DeepSeek/OpenRouter 默认不启用原生图片，OpenAI/Anthropic 会按各自 transport 转换图片格式。
 
+`attachments` 控制平台附件的下载和本地缓存，和 `multimodal` 的内容处理分开：
+
+| 字段 | 说明 |
+| --- | --- |
+| `resolve_inbound` | 授权通过后，平台入口是否尝试把附件本地化 |
+| `cache_inbound` | 是否写入 `data/attachments/`，并按 sha256 去重 |
+| `download_urls` | 是否下载平台消息里的 URL 附件 |
+| `download_platform_files` | 是否调用平台适配器下载 `platform_file_id` 附件 |
+
+平台附件下载发生在 Gateway 授权通过之后、进入 `ConversationService` 之前。Gateway 只触发平台适配器的统一准备方法；具体平台下载逻辑由 adapter 提供，缓存入库由 `AttachmentStore` 统一处理。provider 只影响后续 `native` / `text` / `notice` 的处理方式，不参与附件下载决策。
+
 ## 旧配置迁移
 
 这些顶层配置已废弃：

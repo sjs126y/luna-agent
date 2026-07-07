@@ -359,6 +359,7 @@
 - 前端不负责 OCR / ASR / 文件解析。
 - 前端不直接调用 provider / transport。
 - 后端根据 `multimodal.*` 配置和 provider 能力决定 `off` / `text` / `native` / `notice`。
+- 后端根据 `attachments.*` 配置决定平台附件是否下载和缓存；provider 不参与下载决策。
 
 桌面端事件消费：
 
@@ -379,13 +380,43 @@ CLI 说明：
 - `kind` 会统一到 `image` / `audio` / `video` / `file`。
 - 能拿到的 `name` / `mime_type` / `size` / `url` / `platform_file_id` 会保留。
 - 平台原始附件字段会放入 attachment metadata，供未来下载器复用。
+- Gateway 授权通过且命令未被内部消费后，会调用来源 adapter 的附件准备方法。
+- 如果配置允许，平台 adapter 会尝试把 `url` / `platform_file_id` 本地化到 `data/attachments/`。
+- 本地化成功后，后端会把 `AttachmentRef.local_path` 更新为缓存文件路径。
+- 本地化状态会写入 `AttachmentRef.metadata.attachment_resolve`。
 
 平台 adapter 当前不保证：
 
-- 不保证已经下载到本地。
-- 不保证 `platform_file_id` 一定可以直接读取。
+- 不保证所有平台的 `platform_file_id` 都已经实现真实下载器。
+- 不保证下载失败的附件可以继续进入原生多模态处理。
 - 不做 OCR / ASR / 文件文本提取。
 - 不负责判断 provider 是否支持原生多模态。
+
+`metadata.attachment_resolve` 常见结构：
+
+```json
+{
+  "status": "resolved",
+  "reason": "cached",
+  "sha256": "abc...",
+  "local_path": "data/attachments/images/abc.png",
+  "source_url": "",
+  "size": 123456,
+  "mime_type": "image/png"
+}
+```
+
+失败或跳过时常见 `reason`：
+
+- `mode_off`
+- `multimodal_disabled`
+- `resolve_inbound_disabled`
+- `cache_disabled`
+- `url_download_disabled`
+- `platform_download_disabled`
+- `platform_download_unavailable`
+- `unsafe_url`
+- `size_exceeded`
 
 ## 4. Inline Tool Confirmation
 

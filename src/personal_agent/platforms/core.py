@@ -10,9 +10,13 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Awaitable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from personal_agent.agent.hooks import Hooks
-from personal_agent.models.messages import MessageEvent, OutboundMessage, PlatformCapabilities
+from personal_agent.attachments import AttachmentStore, DownloadedAttachment, ResolvedAttachment
+from personal_agent.attachments.store import AttachmentStoreError
+from personal_agent.models.messages import AttachmentRef, MessageEvent, OutboundMessage, PlatformCapabilities
+from personal_agent.models.messages import SessionSource
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,13 @@ class SendStats:
             "last_error_at": self.last_error_at,
             "last_error": self.last_error,
         }
+
+
+class AttachmentDownloadError(RuntimeError):
+    def __init__(self, reason: str, detail: str = "") -> None:
+        self.reason = reason
+        self.detail = detail
+        super().__init__(detail or reason)
 
 
 # ── PlatformEntry & PlatformRegistry ─────────────────
@@ -159,6 +170,7 @@ class BasePlatformAdapter(ABC):
         self._last_message_at = ""
         self._last_response_at = ""
         self._send_stats = SendStats()
+        self._attachment_store: AttachmentStore | None = None
 
     # ── abstract methods (subclass MUST implement) ───
 
@@ -186,6 +198,30 @@ class BasePlatformAdapter(ABC):
 
     def set_message_handler(self, handler: Callable[[MessageEvent], Awaitable[str | None]]) -> None:
         self._message_handler = handler
+
+    def set_attachment_store(self, store: AttachmentStore) -> None:
+        self._attachment_store = store
+
+    async def prepare_inbound_attachments(self, event: MessageEvent) -> MessageEvent:
+        """Resolve/cache inbound attachments after gateway authorization."""
+        envelope = event.to_envelope()
+        if not envelope.attachments:
+            return event
+
+        prepared: list[AttachmentRef] = []
+        for ref in envelope.attachments:
+            prepared.append(await self._prepare_attachment_ref(ref, event.source))
+        envelope.attachments = prepared
+        event.envelope = envelope
+        return event
+
+    async def download_attachment(
+        self,
+        ref: AttachmentRef,
+        source: SessionSource | None = None,
+    ) -> DownloadedAttachment:
+        """Download a platform-private attachment id. Override in concrete adapters."""
+        raise AttachmentDownloadError("platform_download_unavailable")
 
     # ── message pipeline (subclass should NOT override) ──
 
@@ -244,6 +280,77 @@ class BasePlatformAdapter(ABC):
                     del self._pending_messages[session_key]
                 self._active_sessions[session_key] = True
                 asyncio.create_task(self._process_message_background(next_message.event, session_key))
+
+    async def _prepare_attachment_ref(
+        self,
+        ref: AttachmentRef,
+        source: SessionSource | None,
+    ) -> AttachmentRef:
+        skip_reason = _attachment_prepare_skip_reason(self.config, ref)
+        if skip_reason:
+            return _ref_with_resolution(ref, status="skipped", reason=skip_reason)
+
+        store = self._get_attachment_store()
+        if store is None:
+            return _ref_with_resolution(ref, status="failed", reason="attachment_store_unavailable")
+
+        try:
+            if ref.local_path:
+                resolved = store.store_local_path(ref.local_path, ref=ref)
+            elif ref.url:
+                if not bool(getattr(self.config, "attachments_download_urls", True)):
+                    return _ref_with_resolution(
+                        ref,
+                        status="skipped",
+                        reason="url_download_disabled",
+                    )
+                resolved = store.store_url(ref.url, ref=ref)
+            elif ref.platform_file_id:
+                if not bool(getattr(self.config, "attachments_download_platform_files", True)):
+                    return _ref_with_resolution(
+                        ref,
+                        status="skipped",
+                        reason="platform_download_disabled",
+                    )
+                downloaded = await self.download_attachment(ref, source=source)
+                resolved = store.store_downloaded(downloaded, ref=ref)
+            else:
+                return _ref_with_resolution(
+                    ref,
+                    status="skipped",
+                    reason="attachment_has_no_resolvable_location",
+                )
+        except AttachmentDownloadError as exc:
+            return _ref_with_resolution(
+                ref,
+                status="failed",
+                reason=exc.reason,
+                error=str(exc),
+            )
+        except AttachmentStoreError as exc:
+            return _ref_with_resolution(
+                ref,
+                status="failed",
+                reason=exc.reason,
+                error=str(exc),
+            )
+        except Exception as exc:
+            return _ref_with_resolution(
+                ref,
+                status="failed",
+                reason="resolve_failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        return _ref_from_resolved(ref, resolved)
+
+    def _get_attachment_store(self) -> AttachmentStore | None:
+        if self._attachment_store is not None:
+            return self._attachment_store
+        data_dir = getattr(self.config, "agent_data_dir", None)
+        if data_dir is None:
+            return None
+        self._attachment_store = AttachmentStore(Path(data_dir) / "attachments")
+        return self._attachment_store
 
     # ── retry logic ───────────────────────────────────
 
@@ -428,3 +535,108 @@ def _strip_formatting(text: str) -> str:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _attachment_prepare_skip_reason(config, ref: AttachmentRef) -> str:
+    if not bool(getattr(config, "multimodal_enabled", True)):
+        return "multimodal_disabled"
+    if _attachment_mode(config, ref) == "off":
+        return "mode_off"
+    if not bool(getattr(config, "attachments_resolve_inbound", True)):
+        return "resolve_inbound_disabled"
+    if not bool(getattr(config, "attachments_cache_inbound", True)):
+        return "cache_disabled"
+    return ""
+
+
+def _attachment_mode(config, ref: AttachmentRef) -> str:
+    kind = _canonical_attachment_kind(ref.kind)
+    attr = {
+        "image": "multimodal_image_mode",
+        "audio": "multimodal_audio_mode",
+        "video": "multimodal_video_mode",
+        "file": "multimodal_file_mode",
+    }.get(kind, "multimodal_file_mode")
+    return str(getattr(config, attr, "auto") or "auto").strip().lower()
+
+
+def _canonical_attachment_kind(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"image", "photo", "picture", "img"}:
+        return "image"
+    if normalized in {"voice", "record", "audio", "sound"}:
+        return "audio"
+    if normalized in {"video", "movie"}:
+        return "video"
+    if normalized in {"file", "document", "doc", "attachment"}:
+        return "file"
+    return normalized or "file"
+
+
+def _ref_from_resolved(ref: AttachmentRef, resolved: ResolvedAttachment) -> AttachmentRef:
+    return AttachmentRef(
+        id=ref.id or resolved.id,
+        kind=resolved.kind or ref.kind,
+        name=resolved.name or ref.name,
+        mime_type=resolved.mime_type or ref.mime_type,
+        size=resolved.size or ref.size,
+        url=ref.url or resolved.source_url,
+        platform_file_id=ref.platform_file_id or resolved.platform_file_id,
+        local_path=resolved.local_path,
+        metadata=_resolution_metadata(
+            ref,
+            status="resolved",
+            reason="cached",
+            resolved=resolved,
+        ),
+    )
+
+
+def _ref_with_resolution(
+    ref: AttachmentRef,
+    *,
+    status: str,
+    reason: str,
+    error: str = "",
+) -> AttachmentRef:
+    return AttachmentRef(
+        id=ref.id,
+        kind=ref.kind,
+        name=ref.name,
+        mime_type=ref.mime_type,
+        size=ref.size,
+        url=ref.url,
+        platform_file_id=ref.platform_file_id,
+        local_path=ref.local_path,
+        metadata=_resolution_metadata(ref, status=status, reason=reason, error=error),
+    )
+
+
+def _resolution_metadata(
+    ref: AttachmentRef,
+    *,
+    status: str,
+    reason: str,
+    error: str = "",
+    resolved: ResolvedAttachment | None = None,
+) -> dict:
+    metadata = dict(ref.metadata or {})
+    if resolved is not None:
+        metadata.update(dict(resolved.metadata or {}))
+    payload = {
+        "status": status,
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    if resolved is not None:
+        payload.update({
+            "id": resolved.id,
+            "sha256": resolved.sha256,
+            "local_path": resolved.local_path,
+            "source_url": resolved.source_url,
+            "size": resolved.size,
+            "mime_type": resolved.mime_type,
+        })
+    metadata["attachment_resolve"] = payload
+    return metadata

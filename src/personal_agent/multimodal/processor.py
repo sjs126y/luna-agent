@@ -138,26 +138,23 @@ class MultiAttachmentProcessor:
         if configured_mode == "off":
             return _notice(ref, attachment_id, kind, configured_mode, "off", "skipped", "mode_off")
 
-        effective_mode = _effective_mode(
-            configured_mode,
-            kind=kind,
-            provider=provider,
-            settings=self.settings,
-        )
-        if effective_mode == "notice":
+        prepared_status = _prepared_resolution_status(ref)
+        if prepared_status and prepared_status.get("status") in {"skipped", "failed"}:
+            status = "failed" if prepared_status.get("status") == "failed" else "skipped"
             return _notice(
                 ref,
                 attachment_id,
                 kind,
                 configured_mode,
-                effective_mode,
-                "unsupported",
-                "provider_not_supported",
+                "notice",
+                status,
+                str(prepared_status.get("reason") or "attachment_not_resolved"),
+                error=str(prepared_status.get("error") or ""),
             )
 
         store = self.attachment_store
         if store is None:
-            return _notice(ref, attachment_id, kind, configured_mode, effective_mode, "failed",
+            return _notice(ref, attachment_id, kind, configured_mode, "notice", "failed",
                            "attachment_store_unavailable")
         try:
             resolved = store.resolve(ref)
@@ -182,6 +179,24 @@ class MultiAttachmentProcessor:
                 "failed",
                 "resolve_failed",
                 error=f"{type(exc).__name__}: {exc}",
+            )
+
+        effective_mode = _effective_mode(
+            configured_mode,
+            kind=kind,
+            provider=provider,
+            settings=self.settings,
+        )
+        if effective_mode == "notice":
+            return _notice(
+                ref,
+                resolved.id,
+                kind,
+                configured_mode,
+                effective_mode,
+                "unsupported",
+                "provider_not_supported",
+                resolved=resolved,
             )
 
         if effective_mode == "text":
@@ -343,14 +358,22 @@ def _notice_text(kind: str, label: str, reason: str) -> str:
     reason_label = {
         "mode_off": "当前配置关闭了该类型附件处理，未下载、未解析、未传给模型。",
         "multimodal_disabled": "当前配置关闭了多模态处理，未下载、未解析、未传给模型。",
+        "resolve_inbound_disabled": "当前配置关闭了平台附件本地化。",
+        "cache_disabled": "当前配置关闭了平台附件缓存。",
+        "url_download_disabled": "当前配置关闭了附件 URL 下载。",
+        "platform_download_disabled": "当前配置关闭了平台文件下载。",
         "provider_not_supported": "当前 provider 不支持原生处理，且没有可用的文本化能力。",
         "describer_unavailable": "当前没有可用的文本化能力。",
         "path_not_allowed": "本地路径不在允许范围内。",
         "unsafe_url": "附件 URL 未通过安全检查。",
         "size_exceeded": "附件超过大小限制。",
         "platform_file_download_unavailable": "该平台文件暂时没有通用下载能力。",
+        "platform_download_unavailable": "该平台文件暂时没有下载能力。",
+        "attachment_has_no_resolvable_location": "附件没有可下载或可读取的位置。",
+        "attachment_not_resolved": "附件尚未本地化。",
         "attachment_store_unavailable": "附件缓存服务不可用。",
         "mime_type_not_supported": "当前 provider 不支持该图片格式。",
+        "resolve_failed": "附件本地化失败。",
     }.get(reason, "当前无法处理该附件。")
     return f"已收到{kind_label} {label}，但{reason_label}"
 
@@ -364,6 +387,11 @@ def _canonical_kind(ref: AttachmentRef) -> str:
     if value == "video":
         return "video"
     return "file"
+
+
+def _prepared_resolution_status(ref: AttachmentRef) -> dict[str, Any]:
+    value = dict(ref.metadata or {}).get("attachment_resolve")
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _diagnostics(items: list[ProcessedAttachment], *, settings) -> dict[str, Any]:

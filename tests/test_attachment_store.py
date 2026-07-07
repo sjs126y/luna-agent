@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.attachments.store import AttachmentStore, AttachmentStoreError
+from personal_agent.attachments.store import AttachmentStore, AttachmentStoreError, DownloadedAttachment
 from personal_agent.models.messages import AttachmentRef
 from personal_agent.tools.sandbox import init_sandbox
 
@@ -47,3 +47,31 @@ def test_attachment_store_blocks_oversized_file(tmp_path):
         store.resolve(AttachmentRef(id="f1", kind="file", name="big.bin", local_path=str(source)))
 
     assert exc.value.reason == "size_exceeded"
+
+
+def test_attachment_store_caches_downloaded_attachment_by_hash(tmp_path):
+    store = AttachmentStore(tmp_path / "cache")
+    ref = AttachmentRef(
+        id="p1",
+        kind="image",
+        name="remote.png",
+        platform_file_id="file-1",
+        metadata={"platform": "qq"},
+    )
+    downloaded = DownloadedAttachment(
+        data=b"\x89PNG\r\n\x1a\npayload",
+        kind="image",
+        name="remote.png",
+        mime_type="image/png",
+        platform_file_id="file-1",
+        metadata={"downloaded": True},
+    )
+
+    first = store.store_downloaded(downloaded, ref=ref)
+    second = store.store_downloaded(downloaded, ref=ref)
+
+    assert first.sha256 == second.sha256
+    assert first.local_path == second.local_path
+    assert first.metadata["platform"] == "qq"
+    assert first.metadata["downloaded"] is True
+    assert first.platform_file_id == "file-1"

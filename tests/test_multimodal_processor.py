@@ -58,6 +58,42 @@ async def test_off_mode_does_not_resolve_attachment(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_prepared_skip_does_not_resolve_attachment(tmp_path):
+    class Store:
+        def resolve(self, ref):  # pragma: no cover - should never run
+            raise AssertionError("store should not be called")
+
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_image_mode="auto"),
+        attachment_store=Store(),
+    )
+    result = await processor.resolve(
+        ConversationInput(
+            text="hello",
+            attachments=[
+                AttachmentRef(
+                    id="a1",
+                    kind="image",
+                    name="x.png",
+                    platform_file_id="file-1",
+                    metadata={
+                        "attachment_resolve": {
+                            "status": "skipped",
+                            "reason": "platform_download_disabled",
+                        },
+                    },
+                )
+            ],
+        ),
+        provider=_provider(supports_image=True),
+    )
+
+    assert result.attachments[0].status == "skipped"
+    assert result.attachments[0].reason == "platform_download_disabled"
+    assert result.diagnostics["notice_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_native_image_creates_image_url_block(tmp_path):
     source = tmp_path / "image.png"
     source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
@@ -79,6 +115,30 @@ async def test_native_image_creates_image_url_block(tmp_path):
     assert result.attachments[0].effective_mode == "native"
     assert any(block.get("type") == "image_url" for block in result.content_blocks)
     assert result.diagnostics["native_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_unsupported_does_not_block_local_resolution(tmp_path):
+    source = tmp_path / "image.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    init_sandbox([tmp_path], [])
+    processor = MultiAttachmentProcessor(
+        settings=_settings(multimodal_image_mode="native"),
+        attachment_store=AttachmentStore(tmp_path / "cache"),
+    )
+
+    result = await processor.resolve(
+        ConversationInput(
+            text="describe",
+            attachments=[AttachmentRef(id="a1", kind="image", name="image.png", local_path=str(source))],
+        ),
+        provider=_provider(supports_image=False),
+    )
+
+    assert result.attachments[0].status == "unsupported"
+    assert result.attachments[0].reason == "provider_not_supported"
+    assert result.attachments[0].resolved is not None
+    assert result.diagnostics["resolved_count"] == 1
 
 
 @pytest.mark.asyncio
