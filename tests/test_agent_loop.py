@@ -185,7 +185,8 @@ async def test_run_conversation_consumes_pending_steer_before_llm_call(provider)
     assert result["completed"] is True
     assert signal.status == "consumed"
     first_call_text = _user_text(transport.call_messages[0])
-    assert "[运行中用户补充/修正]" in first_call_text
+    assert "[高优先级运行中用户指令]" in first_call_text
+    assert "优先级高于本轮较早的用户请求" in first_call_text
     assert "回答更短" in first_call_text
     assert [event.type for event in recorder.events][:3] == [
         "turn_start",

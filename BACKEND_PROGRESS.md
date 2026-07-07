@@ -477,7 +477,7 @@ uv run pytest tests/test_gateway_commands.py tests/test_platform_adapters.py -q
 
 - 新增 `SteerManager` / `SteerSignal`，按 `session_key + turn_id` 管理运行中修正，支持 pending、consumed、expired 状态。
 - `ConversationService` 每轮分配稳定 `turn_id`，登记 active turn，并向 `run_conversation(...)` 传入 steer manager。
-- agent loop 在循环边界消费 steer，追加 `[运行中用户补充/修正]` user message；如果修正在 LLM 最终答案返回时到达，会保留旧 assistant 文本后注入修正并继续下一次 LLM 调用。
+- agent loop 在循环边界消费 steer，追加 `[高优先级运行中用户指令]` user message；如果修正在 LLM 最终答案返回时到达，会保留旧 assistant 文本后注入修正并继续下一次 LLM 调用。
 - 新增 slash command `/steer <text>`，非运行中会返回明确提示，运行中会返回 `st_xxx` 回执。
 - Gateway busy 期间允许 `/steer` 像确认回复一样旁路 adapter 队列；普通 busy 文本仍然不会进入当前 turn。
 - `Gateway.health_snapshot()` 新增 `pending_steer_count`、`active_steer_sessions`、`steer`，并在 `running_agent_runs[]` 暴露 `active_turn_id` / `pending_steers`。
