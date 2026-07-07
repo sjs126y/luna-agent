@@ -428,7 +428,61 @@ async def test_permission_required_network_tool_stops_without_looping(provider):
     assert item["tool_name"] == "web_search"
     assert item["reason_code"] == "permission_required"
     assert item["permission_category"] == "network"
-    assert item["required_allow"] == "network"
+
+
+@pytest.mark.asyncio
+async def test_temporary_network_grant_survives_turn_reset(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我先搜索一下。",
+            finish_reason="tool_use",
+            tool_calls=[{"id": "s1", "name": "web_search", "input": {"query": "GPT-5.5"}}],
+            usage={"input_tokens": 4, "output_tokens": 1},
+        ),
+        NormalizedResponse(
+            text="搜索完成。",
+            finish_reason="end_turn",
+            usage={"input_tokens": 3, "output_tokens": 2},
+        ),
+    ])
+
+    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.permissions import add_temporary_grant
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _search(query: str = "", max_results: int = 3):
+        return f"searched:{query}:{max_results}"
+
+    tool_registry.register(ToolEntry(
+        name="web_search",
+        description="Search",
+        schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        handler=_search,
+        permission_category="network",
+    ))
+    agent = init_agent(
+        transport,
+        provider,
+        execution_policy=ExecutionPolicy(
+            mode="trusted",
+            permissions={"default": "ask", "network": "ask"},
+        ),
+    )
+    agent._destructive_allowed.add("network")
+    add_temporary_grant(agent, "network", ttl_seconds=3600)
+
+    ctx = await build_turn_context(agent, "试一下搜索")
+    assert "network" not in agent._destructive_allowed
+    result = await run_conversation(agent, ctx)
+
+    assert result["completed"] is True
+    assert result["final_response"] == "搜索完成。"
+    assert transport.calls == 2
+    item = result["turn_report"]["tools"]["items"][0]
+    assert item["status"] == "success"
+    assert item["grant_matched"] == "network"
+    assert item["required_allow"] == ""
 
 
 @pytest.mark.asyncio

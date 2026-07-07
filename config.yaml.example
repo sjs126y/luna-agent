@@ -22,6 +22,10 @@ execution:
     #   background: ask
     #   network: deny
 
+permissions:
+  temporary_grant_ttl_hours: 24    # /allow 和 Always 24h 产生的临时授权时长，1-168 小时
+  confirm_timeout_seconds: 120     # 网关异步工具确认超时时间，10-600 秒
+
 agents:
   max_concurrent_runs: 4          # 最多同时运行的委派子代理数
   max_tool_calls: 10              # 每个子代理的工具调用上限

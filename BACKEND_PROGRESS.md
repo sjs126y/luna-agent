@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 18:05 CST
+更新时间：2026-07-07 23:30 CST
 
 ## 交接定位
 
@@ -28,6 +28,27 @@
 - Tool runs：工具执行结果已持久化，并提供 `/tool-runs` 与 `ConversationQueryService` 查询。
 - Turn reports：每轮 `AgentTurnReport` 已进入持久化审计链路，可和 tool runs 通过 `turn_id/session_key` 关联。
 - Activity runtime：已提供统一结构化接口，覆盖子 agent、后台进程和 gateway agent，并支持 `/activity`、结构化 `CommandResult.kind="activity"`、runtime/query API、slash metadata 和动态候选。
+
+## 2026-07-07：权限限时授权 v1
+
+状态：已完成 v1 实现并通过聚焦验证。
+
+已完成：
+
+- `/allow <category>` 改为写入限时临时授权，默认 24 小时；下一条普通消息不会再被 turn reset 清掉。
+- CLI/TUI confirm 的 `always` 改为写入同一套限时授权；`allow once` 仍只本轮有效。
+- 新增 `/deny <category>` / `/deny all` 撤销限时授权。
+- `/permissions` 增加 `temporary_grants`、`turn_grants`、`temporary_grant_ttl_seconds`。
+- 新增配置 `permissions.temporary_grant_ttl_hours` 和 `permissions.confirm_timeout_seconds`，并同步配置示例和文档。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_commands.py::test_shared_command_core_session_usage_export_and_allow tests/test_commands.py::test_allow_network_follows_execution_mode_policy tests/test_tool_pipeline.py::test_tool_confirm_always_persists_grant_for_later_tool_calls tests/test_agent_loop.py::test_permission_required_network_tool_stops_without_looping tests/test_agent_loop.py::test_temporary_network_grant_survives_turn_reset -q
+```
+
+结果：聚焦 `5 passed`。
 - Usage / context：`llm_start` / `llm_end` 已区分“最近一次 API token 消耗”和“当前上下文占用估算”；`/usage` 已修正工具计数文案，避免把活跃 turn 内部计数显示成会话统计。
 - Tool protocol prompt：系统提示已加入稳定工具调用规则，要求需要工具时必须发出 tool call，避免只用文字声称已调用工具；未加入正则 retry 或额外控制流。
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。

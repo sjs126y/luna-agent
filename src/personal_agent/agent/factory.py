@@ -47,6 +47,8 @@ async def create_agent_runtime(
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
         execution_policy=getattr(settings, "execution_policy", None),
+        permission_temporary_grant_ttl_seconds=int(getattr(settings, "permission_temporary_grant_ttl_hours", 24) * 60 * 60),
+        permission_confirm_timeout_seconds=int(getattr(settings, "permission_confirm_timeout_seconds", 120)),
     )
 
     if plugin_manager is not None:

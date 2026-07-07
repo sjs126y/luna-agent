@@ -310,6 +310,31 @@ def _execution_fields() -> tuple[ConfigField, ...]:
     )
 
 
+def _permission_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field(
+            "permissions.temporary_grant_ttl_hours",
+            "permission_temporary_grant_ttl_hours",
+            24,
+            "int",
+            "permissions",
+            "Temporary permission grant TTL in hours.",
+            minimum=1,
+            maximum=168,
+        ),
+        _yaml_field(
+            "permissions.confirm_timeout_seconds",
+            "permission_confirm_timeout_seconds",
+            120,
+            "int",
+            "permissions",
+            "Gateway async tool confirmation timeout in seconds.",
+            minimum=10,
+            maximum=600,
+        ),
+    )
+
+
 def _llm_fields() -> tuple[ConfigField, ...]:
     return (
         _env_field("LLM_PROVIDER", "llm_provider", "deepseek", "str", "llm", "LLM provider.", choices=LLM_PROVIDERS),
@@ -495,6 +520,7 @@ def _profile_fields() -> tuple[ConfigField, ...]:
 CONFIG_FIELDS: tuple[ConfigField, ...] = (
     *_execution_fields(),
     *_llm_fields(),
+    *_permission_fields(),
     *_platform_env_fields(),
     *_agent_fields(),
     *_storage_fields(),

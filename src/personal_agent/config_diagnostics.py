@@ -36,6 +36,7 @@ KNOWN_TOP_LEVEL_KEYS = {
     "mcp",
     "memory",
     "multimodal",
+    "permissions",
     "plugins",
     "profiles",
     "sandbox",
@@ -79,6 +80,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "ocr_timeout_seconds",
         "ocr_language",
     },
+    "permissions": {"temporary_grant_ttl_hours", "confirm_timeout_seconds"},
     "plugins": {"dirs", "enabled", "disabled"},
     "profiles": None,
     "sandbox": {
@@ -483,6 +485,10 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     elif "policy" in execution:
         _execution_policy_value(execution["policy"], "execution.policy", errors)
 
+    permissions = sections["permissions"]
+    _range_int(permissions, "temporary_grant_ttl_hours", "permissions.temporary_grant_ttl_hours", 1, 168, errors)
+    _range_int(permissions, "confirm_timeout_seconds", "permissions.confirm_timeout_seconds", 10, 600, errors)
+
     sandbox = sections["sandbox"]
     _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)
     _string_list(sandbox, "blocked", "sandbox.blocked", errors)
@@ -850,6 +856,23 @@ def _non_negative_int(section: dict[str, Any], key: str, label: str, errors: lis
         errors.append(f"{label} 必须是非负整数。")
     elif value < 0:
         errors.append(f"{label} 必须大于等于 0。")
+
+
+def _range_int(
+    section: dict[str, Any],
+    key: str,
+    label: str,
+    minimum: int,
+    maximum: int,
+    errors: list[str],
+) -> None:
+    if key not in section:
+        return
+    value = section[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        errors.append(f"{label} 必须是整数。")
+    elif value < minimum or value > maximum:
+        errors.append(f"{label} 必须在 {minimum} 到 {maximum} 之间。")
 
 
 def _ratio_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:

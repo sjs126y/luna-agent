@@ -917,6 +917,7 @@ async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
     assert calls == 2
     assert len(decisions) == 1
     assert "write" in agent._destructive_allowed
+    assert "write" in agent._temporary_grants
     assert messages[-1]["content"][0]["content"] == "ok:1"
     assert messages[-1]["content"][1]["content"] == "ok:2"
 

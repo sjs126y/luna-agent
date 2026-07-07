@@ -165,7 +165,17 @@ allow, ask, deny
 | `file_max_write_bytes` | `file_write` 单次最大写入字节数 |
 | `audit_enabled` | 是否记录工具审计日志到 `data/audit.log` |
 
-注意：`/allow` 只解锁当前 mode/config 最终策略为 `ask` 的权限类别，不能覆盖 `deny`。`standard` 下普通网络工具为 `ask`，可用 `/allow network` 解锁 `web_search` / `web_fetch`；`guarded` 下 network 仍为 `deny`。`bash_allow_network: true` 只控制 bash 内部的 `curl` / `wget` / `pip` 等网络命令，不会被 `/allow network` 自动打开。
+`/allow` 只解锁当前 mode/config 最终策略为 `ask` 的权限类别，不能覆盖 `deny`。`standard` 下普通网络工具为 `ask`，可用 `/allow network` 解锁 `web_search` / `web_fetch`；`guarded` 下 network 仍为 `deny`。`bash_allow_network: true` 只控制 bash 内部的 `curl` / `wget` / `pip` 等网络命令，不会被 `/allow network` 自动打开。
+
+临时授权由 `permissions` 控制：
+
+```yaml
+permissions:
+  temporary_grant_ttl_hours: 24
+  confirm_timeout_seconds: 120
+```
+
+`/allow <category>` 和确认框里的 `Always 24h` 会写入当前运行时的限时授权，默认 24 小时后过期；`/deny <category>` 可撤销，`/deny all` 撤销全部。服务重启后这些运行时授权不会持久化。
 
 ## 多模态配置
 

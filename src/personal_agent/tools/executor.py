@@ -499,8 +499,10 @@ def _would_need_permission_confirm(tc: dict, entry: Any, agent: Any = None) -> b
             decision = policy.permission_for("destructive")
     if decision != "ask":
         return False
-    grants = getattr(agent, "_destructive_allowed", set())
-    return "all" not in grants and category not in grants
+    from personal_agent.permissions import matching_permission_grant
+
+    grant, _scope, _expires_at = matching_permission_grant(agent, category)
+    return not grant
 
 
 async def _confirm_tool_decision(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> str:
@@ -546,35 +548,27 @@ def _agent_interrupt_requested(agent: Any) -> bool:
 def _add_confirm_grants(agent: Any, decision: ToolDecision, *, persist: bool) -> set[str]:
     if agent is None:
         return set()
-    grants = getattr(agent, "_destructive_allowed", None)
-    if grants is None:
-        grants = set()
-        try:
-            agent._destructive_allowed = grants
-        except Exception:
-            return set()
     category = str(decision.permission_category or "")
     required = str(decision.required_allow or "")
     tokens = {item for item in (required, category) if item}
-    added: set[str] = set()
-    for token in tokens:
-        if token not in grants:
-            grants.add(token)
-            added.add(token)
-    return set() if persist else added
+    if persist:
+        from personal_agent.permissions import add_temporary_grant, add_turn_grants
+
+        for token in tokens:
+            add_temporary_grant(agent, token)
+        add_turn_grants(agent, *tokens)
+        return set()
+    from personal_agent.permissions import add_turn_grants
+
+    return add_turn_grants(agent, *tokens)
 
 
 def _remove_confirm_grants(agent: Any, added: set[str]) -> None:
     if not added or agent is None:
         return
-    grants = getattr(agent, "_destructive_allowed", None)
-    if grants is None:
-        return
-    for token in added:
-        try:
-            grants.discard(token)
-        except AttributeError:
-            return
+    from personal_agent.permissions import remove_turn_grants
+
+    remove_turn_grants(agent, added)
 
 
 async def _emit_tool_decision(event_sink: Any, decision: ToolDecision) -> None:

@@ -333,12 +333,9 @@ def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDe
             policy_decision=decision,
         )
 
-    grants = getattr(agent, "_destructive_allowed", set())
-    grant_matched = ""
-    if "all" in grants:
-        grant_matched = "all"
-    elif category in grants:
-        grant_matched = category
+    from personal_agent.permissions import matching_permission_grant
+
+    grant_matched, _grant_scope, _expires_at = matching_permission_grant(agent, category)
 
     if decision == "ask" and not grant_matched:
         return GuardDecision(

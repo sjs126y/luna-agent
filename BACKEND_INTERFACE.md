@@ -492,7 +492,7 @@ async def confirm_callback(decision) -> str:
 - 只在 `permission_required + ask` 时调用 `confirm`。
 - `"allow"`：本次临时放行，执行后撤销临时 grant。
 - `"deny"`：不执行工具，返回 denied 工具结果。
-- `"always"`：放行，并加入当前 agent 的 `_destructive_allowed`，本轮后续同类工具不再询问。
+- `"always"`：放行，并加入当前 agent/session 的限时临时授权，默认 24 小时；显示文案建议为 `Always 24h`。
 - `/stop` 中断 pending confirm 时，后端会取消等待并按固定 denied 结果收口：
   - `tool_end.status="denied"`
   - `tool_end.category="authorization"`
@@ -538,9 +538,15 @@ async def confirm_callback(decision) -> str:
 - `acceptEdits` -> `Edit Freely`
 - `auto` -> `Full Auto`
 
-切换 mode 会清空当前 agent 的临时 `/allow` grants，避免高权限残留。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
+切换 mode 会清空当前 agent 的本轮 grants，限时授权仍受 mode/config 的 `deny` 最高优先级约束。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-`/allow` 是 mode/config 策略上的临时 grant：只解锁最终权限决策为 `ask` 的类别，不能覆盖 `deny`。`standard / Ask First` 下 `network=ask`，因此 `/allow network` 可用于 `web_search` / `web_fetch`；`guarded / Read Only` 下 `network=deny`，后端会返回“不能覆盖”的文本提示。`/allow network` 不会打开 bash 内部的 `curl` / `wget` 等网络命令，bash 网络仍由 `sandbox.bash_allow_network` 控制。
+`/allow` 是 mode/config 策略上的限时临时 grant：只解锁最终权限决策为 `ask` 的类别，不能覆盖 `deny`。`standard / Ask First` 下 `network=ask`，因此 `/allow network` 可用于 `web_search` / `web_fetch`；`guarded / Read Only` 下 `network=deny`，后端会返回“不能覆盖”的文本提示。`/allow network` 不会打开 bash 内部的 `curl` / `wget` 等网络命令，bash 网络仍由 `sandbox.bash_allow_network` 控制。
+
+新增命令：
+
+- `/deny <category>`：撤销当前 agent/session 的某类限时授权。
+- `/deny all`：撤销全部限时授权。
+- `/permissions` payload 新增 `temporary_grants`、`turn_grants`、`temporary_grant_ttl_seconds`，每个临时授权包含 `category`、`expires_at`、`expires_at_iso`。
 
 当一批工具调用全部因为 `permission_required` 被拒绝时，后端会结束当前 turn 并发送一条 `assistant_message` 提示需要 `/allow <category>` 后重试，避免模型在同一轮里反复调用未授权工具。对应 `tool_end` / Tool Runs / Turn Reports 仍会记录实际 denied 工具结果。
 

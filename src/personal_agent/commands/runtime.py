@@ -14,6 +14,14 @@ from personal_agent.commands.registry import (
     format_commands,
     suggest_command_names,
 )
+from personal_agent.permissions import (
+    add_temporary_grant,
+    add_turn_grants,
+    format_expiry,
+    remove_temporary_grant,
+    temporary_grant_ttl_seconds,
+    temporary_grants_snapshot,
+)
 
 
 @dataclass
@@ -190,6 +198,10 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
     if command_name == "allow":
         parts = args.split()
         return CommandResult.reply(await _allow(runtime, parts[0] if parts else "write"))
+
+    if command_name == "deny":
+        parts = args.split()
+        return CommandResult.reply(await _deny(runtime, parts[0] if parts else "all"))
 
     if command_name == "mode":
         text, payload = await _mode(runtime, args)
@@ -458,19 +470,46 @@ async def _allow(runtime: CommandRuntime, category: str) -> str:
     if category == "all" and len(denied) == len(_ALLOW_ALL_CATEGORIES):
         return _allow_denied_message(policy, category)
 
-    custom = await _call_optional(runtime, "allow_category", category)
     warning = _allow_warning(denied)
-    if custom is not None:
-        response = str(custom)
-        return f"{response}\n{warning}" if warning else response
     if agent is None:
         agent = await runtime.get_agent()
-    agent._destructive_allowed.add(category)
-    response = f"已授权 {category} 操作，本轮对话内有效。"
+    ttl = temporary_grant_ttl_seconds(runtime.settings)
+    if category == "all":
+        expires_at = 0.0
+        for item in _ALLOW_ALL_CATEGORIES:
+            if item not in denied:
+                expires_at = add_temporary_grant(agent, item, ttl_seconds=ttl)
+                add_turn_grants(agent, item)
+    else:
+        expires_at = add_temporary_grant(agent, category, ttl_seconds=ttl)
+        add_turn_grants(agent, category)
+    response = f"已授权 {category}，{_format_ttl(ttl)}内有效，至 {format_expiry(expires_at)} 失效。"
     return f"{response}\n{warning}" if warning else response
 
 
 _ALLOW_ALL_CATEGORIES = ("write", "bash", "background", "network", "destructive", "default")
+
+
+async def _deny(runtime: CommandRuntime, category: str) -> str:
+    valid = {"write", "bash", "background", "network", "destructive", "default", "all"}
+    if category not in valid:
+        return f"用法: /deny [write|bash|background|network|destructive|all]，当前有效类别: {', '.join(sorted(valid))}"
+    agent = _runtime_cached_agent(runtime)
+    if agent is None:
+        return "当前没有可撤销的临时授权。"
+    if category == "all":
+        changed = remove_temporary_grant(agent, "all")
+        return "已撤销全部临时授权。" if changed else "当前没有可撤销的临时授权。"
+    changed = remove_temporary_grant(agent, category)
+    return f"已撤销 {category} 临时授权。" if changed else f"当前没有 {category} 临时授权。"
+
+
+def _format_ttl(seconds: int) -> str:
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return f"{hours}小时"
+    minutes = max(1, seconds // 60)
+    return f"{minutes}分钟"
 
 
 def _runtime_cached_agent(runtime: CommandRuntime):
@@ -565,11 +604,12 @@ async def _mode(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     from personal_agent.execution import resolve_execution_policy_for_mode
 
     agent._execution_policy = resolve_execution_policy_for_mode(runtime.settings, choice.profile)
-    grants = getattr(agent, "_destructive_allowed", None)
-    if grants is None:
-        agent._destructive_allowed = set()
-    else:
-        grants.clear()
+    for attr in ("_destructive_allowed", "_turn_grants"):
+        grants = getattr(agent, attr, None)
+        if grants is None:
+            setattr(agent, attr, set())
+        else:
+            grants.clear()
     return f"执行模式已切换: {choice.label}（{choice.profile}）。", {
         "action": "set",
         "selected": _choice_payload(choice),
@@ -1085,11 +1125,16 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     parts = args.split()
     action = parts[0] if parts else "list"
     agent = await runtime.get_agent()
-    grants = sorted(str(item) for item in getattr(agent, "_destructive_allowed", set()) or [])
+    turn_grants = sorted(str(item) for item in getattr(agent, "_turn_grants", set()) or [])
+    legacy_grants = sorted(str(item) for item in getattr(agent, "_destructive_allowed", set()) or [])
+    temporary_grants = temporary_grants_snapshot(agent)
     if action == "grants":
-        return "当前 grants: " + (", ".join(grants) if grants else "无"), {
+        legacy_text = ", ".join(turn_grants or legacy_grants) if (turn_grants or legacy_grants) else "无"
+        return "当前 grants: " + legacy_text, {
             "action": "grants",
-            "grants": grants,
+            "grants": turn_grants or legacy_grants,
+            "turn_grants": turn_grants or legacy_grants,
+            "temporary_grants": temporary_grants,
         }
     if action not in {"list", "show"}:
         suggestions = _subcommand_suggestions(action, ["list", "show", "grants"])
@@ -1113,14 +1158,32 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
         for key in keys:
             if key in permissions:
                 lines.append(f"- {key}: {permissions[key]}")
-    lines.append("当前 grants: " + (", ".join(grants) if grants else "无"))
+    ttl = temporary_grant_ttl_seconds(runtime.settings)
+    pending = await _call_optional(runtime, "pending_confirmation_status")
+    lines.append(f"临时授权 TTL: {_format_ttl(ttl)}")
+    lines.append("当前 grants: " + _format_grants_text(temporary_grants, turn_grants or legacy_grants))
+    if pending:
+        lines.append(f"pending confirm: {pending.get('tool_name', '-')} ({pending.get('permission_category', '-')})")
     return "\n".join(lines), {
         "action": "list",
         "execution_mode": current_mode(agent),
         "policy_mode": mode or "standard",
         "permissions": dict(permissions) if isinstance(permissions, dict) else {},
-        "grants": grants,
+        "grants": turn_grants or legacy_grants,
+        "turn_grants": turn_grants or legacy_grants,
+        "temporary_grants": temporary_grants,
+        "temporary_grant_ttl_seconds": ttl,
+        "pending_confirmation": pending or None,
     }
+
+
+def _format_grants_text(temporary_grants: list[dict], turn_grants: list[str]) -> str:
+    parts: list[str] = []
+    for item in temporary_grants:
+        parts.append(f"{item['category']} 至 {item['expires_at_iso']}")
+    for item in turn_grants:
+        parts.append(f"{item} 本轮")
+    return ", ".join(parts) if parts else "无"
 
 
 def _protocol(args: str) -> tuple[str, dict]:

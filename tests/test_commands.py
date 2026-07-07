@@ -305,6 +305,15 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
     result = await handle_slash_command(runtime, "/allow write")
     assert "已授权 write" in result.response
     assert "write" in runtime.agent._destructive_allowed
+    assert runtime.agent._temporary_grants["write"] > 0
+
+    result = await handle_slash_command(runtime, "/permissions")
+    assert "临时授权 TTL" in result.response
+    assert result.payload["temporary_grants"][0]["category"] == "write"
+
+    result = await handle_slash_command(runtime, "/deny write")
+    assert "已撤销 write" in result.response
+    assert "write" not in runtime.agent._temporary_grants
 
     result = await handle_slash_command(runtime, "/memory list")
     assert result.handled
@@ -341,6 +350,7 @@ async def test_allow_network_follows_execution_mode_policy(tmp_path):
 
     assert "已授权 network" in result.response
     assert "network" in runtime.agent._destructive_allowed
+    assert "network" in runtime.agent._temporary_grants
 
     runtime = Runtime(tmp_path)
     runtime.agent._execution_policy = resolve_execution_policy(SimpleNamespace(
