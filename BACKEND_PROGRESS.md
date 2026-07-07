@@ -1,12 +1,12 @@
 # Backend Progress
 
-更新时间：2026-07-08 01:31 CST
+更新时间：2026-07-08 02:51 CST
 
 ## 交接定位
 
 这个文档只记录后端线进度，给后续接手后端的 Codex 使用。前端 TUI / desktop / prompt_toolkit 真实终端问题交给前端线处理；后端线只负责事件、接口、agent runtime、工具执行、权限、配置、平台适配、provider / transport 等基础能力。
 
-当前工作分支：`feature/desktop-app-backend`
+当前工作分支：`main`
 
 权威接口文档：
 
@@ -18,6 +18,7 @@
 
 后端主干能力已经比较完整；`feature/backend-provider-cache` 和历史清理分支已合并回主分支，当前分支用于继续后端收敛。最近已完成并验证的方向包括：
 
+- README showcase refresh：根目录 README 已整理为更适合公开推送的项目首页，突出项目定位、架构图、核心亮点、当前能力、快速开始和文档索引。
 - Execution Mode v3：四档模式已经稳定，对应权限、沙箱、工具类别和确认行为。
 - Permission mode cleanup：`standard / Ask First` 下普通网络工具调整为 `ask`，`/allow network` 可解锁 `web_search` / `web_fetch`；`/allow` 只对 `ask` 生效，遇到 `deny` 会明确提示不能覆盖，bash 网络仍由 `sandbox.bash_allow_network` 单独控制。
 - Execution / Sandbox 配置开放：`execution.policy.tool_permissions`、`sandbox.*` 已在 example、配置文档、init 模板和 doctor 重点字段中显式展示；未新增 per-tool 权限、timeout 或关闭硬安全边界的配置。
