@@ -1,6 +1,6 @@
 # Frontend Interface Requirements
 
-更新时间：2026-07-07 10:25 CST
+更新时间：2026-07-07 22:45 CST
 
 本文给后端线使用，只记录 inline TUI / future desktop-web 前端仍需要后端配合或需要继续固化的接口事项。已经完成并被前端消费的需求不再保留在待办区，避免重复实现或误判优先级。
 
@@ -18,6 +18,73 @@
 - 静态参数候选：`/mode set <mode>` 和 `/allow <category>`。
 - 动态参数候选入口：`slash_argument_choices(...)`，当前 provider 为 `tools` 和 `sessions`。
 - Tool Runs 查询入口：`ConversationQueryService` 和 `/tool-runs [recent|summary|show <id>]`，返回 `CommandResult.kind="tool_runs"` 与结构化 payload。
+
+## Future Desktop App 技术方向
+
+桌面端暂不作为当前 CLI/TUI 阻塞项，但后续如果启动 desktop app，前端建议长期固定为：
+
+- Shell / packaging：Tauri 2。
+- UI runtime：React + TypeScript。
+- Build：Vite。
+- Styling：Tailwind CSS。
+- UI primitives：Radix UI 或 shadcn/ui，按项目实际视觉风格取舍。
+- Icons：lucide-react。
+- Client state：Zustand，用于当前会话、composer、局部 UI 状态。
+- Server state：TanStack Query，用于 HTTP 查询、缓存和刷新。
+- Realtime：WebSocket 消费 agent event stream。
+- Backend boundary：本地 Python service，不在桌面前端直接 import Python runtime。
+
+桌面端目标边界：
+
+```text
+Tauri desktop shell
+  -> React/TypeScript UI
+  -> HTTP + WebSocket
+  -> local Python desktop service
+  -> AppRuntime / Agent Loop / Tools / Memory / Gateway
+```
+
+后端需要提供的不是远程云服务，而是一个只绑定 localhost 的本地 API facade。建议命令形态：
+
+```bash
+personal-agent desktop-serve
+```
+
+启动后向桌面壳提供 host / port / token，例如：
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 18743,
+  "token": "<ephemeral-token>",
+  "ws": "ws://127.0.0.1:18743/ws"
+}
+```
+
+桌面端预期后端接口分工：
+
+- HTTP：会话创建、发送消息、历史查询、配置/doctor、activity、tool runs、turn reports、confirm 决策、附件上传。
+- WebSocket：复用当前 `ConversationEvent` 语义，推送 `assistant_delta`、`thinking_delta`、`tool_start`、`tool_decision`、`tool_end`、`llm_end`、`error`、`turn_end` 等实时事件。
+- Attachments：桌面端通过 multipart 上传文件，后端返回 `attachment_id`；发送多模态消息时只引用 attachment id 和 metadata。
+- Confirm：工具确认请求应通过 WebSocket 推给桌面端，用户选择后通过 HTTP 或 WebSocket 回传 `confirm_id` + action。
+- Security：只监听 `127.0.0.1`，启动生成临时 token；文件路径仍走后端 sandbox / permission / audit 逻辑，桌面端不绕过权限。
+
+当前 CLI/TUI 已经验证过的事件和结构化 payload 应作为 desktop service 的基础，而不是另起一套协议：
+
+- `ConversationEvent`
+- `CommandResult v2`
+- slash command registry / argument choices
+- `activity` payload
+- `tool_runs` payload
+- `turn_report.report.llm`
+- `llm_end.data.context_*`
+- confirmation payload fields
+
+桌面端多模态预期：
+
+- CLI 不直接做附件上传式多模态；CLI 可以继续通过工具、路径或文本抽取能力间接处理文件。
+- Desktop composer 需要原生附件区，支持图片/文件上传、预览、移除、发送前校验。
+- 后端多模态接口应尽量输出稳定 metadata：`attachment_id`, `filename`, `mime_type`, `size_bytes`, `preview_text`, `image_dimensions`, `processable`, `error`。
 
 ## 已实现 / 归档需求
 
