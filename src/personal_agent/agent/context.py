@@ -5,10 +5,14 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from personal_agent.context_budget import compose_context_text
 from personal_agent.llm.token_counter import count_messages_tokens, count_tools_tokens
 from personal_agent.text_safety import clean_text
+
+if TYPE_CHECKING:
+    from personal_agent.multimodal.processor import ResolvedConversationInput
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +38,14 @@ class TurnContext:
     skill_summaries: str = ""               # ephemeral, injected to api_messages
     memory_prefetch_messages: list[dict] = field(default_factory=list)  # ephemeral
     memory_injections_text: str = ""        # for /usage diagnostics
+    resolved_input: "ResolvedConversationInput | None" = None
+    processed_attachments: list = field(default_factory=list)
+    multimodal_diagnostics: dict = field(default_factory=dict)
 
 
 async def build_turn_context(
     agent,
-    user_message: str,
+    user_message: str | "ResolvedConversationInput",
     history: list[dict] | None = None,
 ) -> TurnContext:
     """Prepare messages for a conversation turn.
@@ -47,7 +54,17 @@ async def build_turn_context(
     import time
     import uuid
 
-    user_message = clean_text(user_message)
+    from personal_agent.multimodal.processor import ResolvedConversationInput
+
+    resolved_input = user_message if isinstance(user_message, ResolvedConversationInput) else None
+    content_blocks = (
+        list(resolved_input.content_blocks)
+        if resolved_input is not None
+        else [{"type": "text", "text": clean_text(str(user_message or ""))}]
+    )
+    text_message = clean_text(
+        resolved_input.text if resolved_input is not None else str(user_message or "")
+    )
 
     # Reset per-turn state
     agent._iteration_budget = agent.max_iterations
@@ -84,7 +101,7 @@ async def build_turn_context(
     # Append current user message
     messages.append({
         "role": "user",
-        "content": [{"type": "text", "text": user_message}],
+        "content": content_blocks,
     })
     # Consume pending skill injection (set by Gateway /skill-name)
     skill_injection = None
@@ -93,7 +110,7 @@ async def build_turn_context(
         agent._pending_skill_injection = None  # consumed, won't leak to next turn
 
     skill_summaries = _load_skill_summaries()
-    memory_prefetch_messages, memory_injections_text = await _prefetch_memory(agent, user_message)
+    memory_prefetch_messages, memory_injections_text = await _prefetch_memory(agent, text_message)
     agent._last_skill_summaries = skill_summaries or ""
     agent._last_skill_injection = skill_injection or ""
     agent._last_memory_injections = memory_injections_text or ""
@@ -117,8 +134,8 @@ async def build_turn_context(
     turn_id = f"{uuid.uuid4().hex[:8]}"
 
     return TurnContext(
-        user_message=user_message,
-        original_user_message=user_message,
+        user_message=text_message,
+        original_user_message=text_message,
         messages=messages,
         conversation_history=conversation_history,
         active_system_prompt=agent._cached_system_prompt or "",
@@ -131,6 +148,9 @@ async def build_turn_context(
         memory_prefetch_messages=memory_prefetch_messages,
         memory_injections_text=memory_injections_text,
         should_review_memory=should_review,
+        resolved_input=resolved_input,
+        processed_attachments=list(resolved_input.attachments) if resolved_input is not None else [],
+        multimodal_diagnostics=dict(resolved_input.diagnostics) if resolved_input is not None else {},
     )
 
 

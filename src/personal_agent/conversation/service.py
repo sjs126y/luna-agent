@@ -11,7 +11,11 @@ from pathlib import Path
 import time
 from typing import Any
 
+from personal_agent.attachments import AttachmentStore
 from personal_agent.conversation.events import ConversationEvent, EventRecorder, emit_event
+from personal_agent.conversation.input import ConversationInput, ensure_conversation_input
+from personal_agent.models.messages import SessionSource
+from personal_agent.multimodal.processor import MultiAttachmentProcessor
 
 TURN_REPORT_HISTORY_LIMIT = 50
 
@@ -61,12 +65,32 @@ class ConversationService:
         self._persisted_turn_report_count = 0
         self._last_persisted_turn_report: dict[str, Any] = {}
         self._last_persisted_turn_report_error = ""
+        self.attachment_store = AttachmentStore(Path(settings.agent_data_dir) / "attachments")
+        self.multimodal_processor = MultiAttachmentProcessor(
+            settings=settings,
+            attachment_store=self.attachment_store,
+        )
         from personal_agent.conversation.query import ConversationQueryService
 
         self.queries = ConversationQueryService(self)
 
     async def run_turn(self, session_key: str, source, text: str) -> ConversationTurnResult:
         return await self.run_turn_events(session_key, source, text)
+
+    async def run_turn_input(
+        self,
+        session_key: str,
+        user_input: ConversationInput,
+        *,
+        event_sink=None,
+        confirm=None,
+    ) -> ConversationTurnResult:
+        return await self.run_turn_input_events(
+            session_key,
+            user_input,
+            event_sink=event_sink,
+            confirm=confirm,
+        )
 
     async def run_turn_events(
         self,
@@ -77,10 +101,27 @@ class ConversationService:
         event_sink=None,
         confirm=None,
     ) -> ConversationTurnResult:
+        user_input = ensure_conversation_input(text, source=source)
+        return await self.run_turn_input_events(
+            session_key,
+            user_input,
+            event_sink=event_sink,
+            confirm=confirm,
+        )
+
+    async def run_turn_input_events(
+        self,
+        session_key: str,
+        user_input: ConversationInput,
+        *,
+        event_sink=None,
+        confirm=None,
+    ) -> ConversationTurnResult:
         recorder = EventRecorder(event_sink)
         if self.plugin_manager is not None:
             await self.plugin_manager.invoke_hook("on_session_selected", session_key=session_key)
 
+        source = user_input.source or SessionSource(platform="unknown", user_id="unknown")
         session = await self.session_store.get_or_create(session_key, source)
         current_id = self.resolve_session_id(session.session_id)
         history = await self.session_store.load_history(current_id)
@@ -92,7 +133,12 @@ class ConversationService:
         ctx = None
         try:
             agent = await self.get_or_create_agent(session_key)
-            ctx = await build_turn_context(agent, text, history)
+            resolved_input = await self.multimodal_processor.resolve(
+                user_input,
+                provider=getattr(agent, "_provider", None),
+            )
+            ctx_input = resolved_input if user_input.attachments else resolved_input.text
+            ctx = await build_turn_context(agent, ctx_input, history)
             if _accepts_event_sink(run_conversation) and _accepts_confirm(run_conversation):
                 result = await run_conversation(agent, ctx, event_sink=recorder, confirm=confirm)
             elif _accepts_event_sink(run_conversation):
@@ -115,7 +161,7 @@ class ConversationService:
             )
             result = {
                 "final_response": final,
-                "messages": _minimal_turn_messages(text, final),
+                "messages": _minimal_turn_messages(user_input.text, final),
                 "completed": False,
                 "status": "failed",
                 "error": error,
@@ -146,7 +192,7 @@ class ConversationService:
                 )
                 stored_session_id = current_id
         else:
-            minimal_messages = _minimal_turn_messages(text, final_response)
+            minimal_messages = _minimal_turn_messages(user_input.text, final_response)
             await self.session_store.save_transcript(
                 current_id, history + minimal_messages, previous_count
             )

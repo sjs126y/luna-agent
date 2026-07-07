@@ -35,6 +35,7 @@ KNOWN_TOP_LEVEL_KEYS = {
     "execution",
     "mcp",
     "memory",
+    "multimodal",
     "plugins",
     "profiles",
     "sandbox",
@@ -59,6 +60,14 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     "execution": {"mode", "policy"},
     "mcp": {"enabled", "servers"},
     "memory": {"provider", "external_provider", "review_interval", "embedding"},
+    "multimodal": {
+        "enabled",
+        "image_mode",
+        "audio_mode",
+        "video_mode",
+        "file_mode",
+        "native_fallback",
+    },
     "plugins": {"dirs", "enabled", "disabled"},
     "profiles": None,
     "sandbox": {

@@ -95,6 +95,9 @@ class AgentTurnReport:
     initial_message_count: int = 0
     was_compressed: bool = False
     should_review_memory: bool = False
+    attachments_count: int = 0
+    attachment_kinds: list[str] = field(default_factory=list)
+    multimodal_diagnostics: dict[str, Any] = field(default_factory=dict)
     llm: TurnLlmReport = field(default_factory=TurnLlmReport)
     retries: list[TurnRetryReport] = field(default_factory=list)
     event_counts: dict[str, int] = field(default_factory=dict)
@@ -113,6 +116,11 @@ class AgentTurnReport:
             self.user_message_summary = _summarize(data.get("user_message") or "")
             self.initial_message_count = _as_int(data.get("message_count"))
             self.was_compressed = bool(data.get("was_compressed", False))
+            self.attachments_count = _as_int(data.get("attachments_count"))
+            self.attachment_kinds = [str(item) for item in data.get("attachment_kinds") or []]
+            diagnostics = data.get("multimodal_diagnostics")
+            if isinstance(diagnostics, dict):
+                self.multimodal_diagnostics = dict(diagnostics)
         elif event.type == "llm_start":
             model = str(data.get("model") or "")
             if model:
@@ -217,6 +225,9 @@ class AgentTurnReport:
             "initial_message_count": self.initial_message_count,
             "was_compressed": self.was_compressed,
             "should_review_memory": self.should_review_memory,
+            "attachments_count": self.attachments_count,
+            "attachment_kinds": list(self.attachment_kinds),
+            "multimodal_diagnostics": dict(self.multimodal_diagnostics),
             "llm": self.llm.as_dict(),
             "tools": {
                 "total": len(tool_items),

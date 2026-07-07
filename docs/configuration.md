@@ -42,6 +42,11 @@ WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
 常用配置：
 
 ```yaml
+execution:
+  mode: standard
+  policy:
+    tool_permissions: {}
+
 storage:
   data_dir: ./data
   log_level: INFO
@@ -58,6 +63,14 @@ memory:
   external_provider: none
   review_interval: 10
 
+multimodal:
+  enabled: true
+  image_mode: auto
+  audio_mode: auto
+  video_mode: off
+  file_mode: auto
+  native_fallback: notice
+
 sandbox:
   roots:
     - ./data
@@ -68,6 +81,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  file_max_write_bytes: 100000
   audit_enabled: true
 
 auth:
@@ -80,15 +94,85 @@ auth:
 | 分区 | 说明 |
 | --- | --- |
 | `agent` | 主 agent 迭代次数和每轮工具调用上限 |
+| `execution` | 执行模式和工具权限覆盖 |
 | `agents` | 子 agent 并发、工具调用、token 和历史限制 |
 | `storage` | 数据目录和日志级别 |
 | `plugins` | 用户插件目录、显式启用/禁用插件 |
 | `memory` | 内置记忆 provider、外置记忆 provider 和 review 间隔 |
+| `multimodal` | 平台附件、多模态降级和原生图片输入策略 |
 | `compression` | 上下文压缩阈值和 tail budget |
 | `sandbox` | 文件、bash、审计的安全边界 |
 | `mcp` | MCP server 开关和 server 列表 |
 | `session` | 会话过期和会话 override |
 | `auth` | 平台用户认证和白名单 |
+
+## 执行模式与权限
+
+`execution.mode` 是默认执行模式，启动时生效；运行中可以用 `/mode` 临时切换当前会话的执行模式。可选值：
+
+| mode | UI 名称 | 行为 |
+| --- | --- | --- |
+| `guarded` | Read Only | 只允许读和搜索，写入、bash、后台任务、网络和破坏性操作拒绝 |
+| `standard` | Ask First | 日常模式，读和搜索允许，写入、bash、后台任务和破坏性操作需要确认，网络默认拒绝 |
+| `trusted` | Edit Freely | 信任本地项目，写入和 bash 允许，后台任务、网络和破坏性操作仍需确认 |
+| `sovereign` | Full Auto | sandbox 内大多数工具直接允许，破坏性操作仍需确认 |
+
+可以用 `execution.policy.tool_permissions` 覆盖某类工具权限：
+
+```yaml
+execution:
+  mode: standard
+  policy:
+    tool_permissions:
+      bash: ask
+      background: ask
+      network: deny
+```
+
+权限类别：
+
+```text
+default, read, search, write, bash, background, network, destructive
+```
+
+权限决策：
+
+```text
+allow, ask, deny
+```
+
+`execution.policy` 只负责权限决策，不会关闭沙箱硬边界。密钥文件、blocked 路径、危险 bash 模式和系统路径逃逸仍会被 precheck/sandbox 拦截。
+
+## 沙箱配置
+
+`sandbox` 控制文件工具、bash 工具和审计行为：
+
+| 字段 | 说明 |
+| --- | --- |
+| `roots` | 文件工具和 bash 允许访问的根目录 |
+| `blocked` | 强制禁止访问的 glob 路径 |
+| `bash_work_dir` | bash 默认工作目录 |
+| `bash_restrict_paths` | 是否限制 bash 路径在 `roots` 内 |
+| `bash_allow_network` | 是否允许 bash 运行 `curl` / `wget` / `pip` 等网络命令 |
+| `file_max_write_bytes` | `file_write` 单次最大写入字节数 |
+| `audit_enabled` | 是否记录工具审计日志到 `data/audit.log` |
+
+注意：`guarded` 模式下网络始终拒绝；其他模式下 `bash_allow_network: true` 才会放开 bash 网络命令。
+
+## 多模态配置
+
+`multimodal` 控制 gateway/平台附件进入 agent 前的处理方式：
+
+| 字段 | 说明 |
+| --- | --- |
+| `enabled` | 总开关。关闭后附件不会下载、缓存、解析或传给模型，只会生成提示文本 |
+| `image_mode` | 图片处理方式：`auto` / `native` / `text` / `off` |
+| `audio_mode` | 音频处理方式：`auto` / `text` / `off` |
+| `video_mode` | 视频处理方式：`auto` / `text` / `off` |
+| `file_mode` | 文件处理方式：`auto` / `text` / `off` |
+| `native_fallback` | provider 不支持原生多模态时的降级方式：`notice` / `text` |
+
+`off` 不会触发下载和缓存；`text` 会尝试文本化，当前没有可用解析能力时会降级成模型可见提示；`native` 目前用于支持图片输入的 provider。DeepSeek/OpenRouter 默认不启用原生图片，OpenAI/Anthropic 会按各自 transport 转换图片格式。
 
 ## 旧配置迁移
 
@@ -116,4 +200,3 @@ uv run personal-agent doctor
 | `telegram` | 启用 `platforms/telegram`，`.env.example` 只列 Telegram 平台字段 |
 | `feishu` | 启用 `platforms/feishu`，`.env.example` 只列飞书平台字段 |
 | `wechat` | 启用 `platforms/wechat`，`.env.example` 只列微信平台字段 |
-

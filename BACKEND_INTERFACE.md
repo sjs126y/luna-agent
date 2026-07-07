@@ -1,6 +1,6 @@
 # Backend Interface Contract
 
-更新时间：2026-07-06
+更新时间：2026-07-07
 
 本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
 
@@ -43,6 +43,23 @@
 - `user_message: string`
 - `message_count: integer`
 - `was_compressed: boolean`
+- `attachments_count: integer`
+- `attachment_kinds: list[string]`
+- `multimodal_diagnostics: object`
+
+`multimodal_diagnostics` 常见字段：
+
+- `enabled: boolean`
+- `attachments_count: integer`
+- `attachment_kinds: list[string]`
+- `status_counts: object`
+- `effective_modes: object`
+- `resolved_count: integer`
+- `native_count: integer`
+- `notice_count: integer`
+- `failed_count: integer`
+
+说明：后端不会在事件或 transcript 中返回图片 base64。前端只需要展示附件数量、类型和降级/失败摘要；具体附件缓存路径属于后端内部实现。
 
 ### `compression`
 

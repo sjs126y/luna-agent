@@ -294,7 +294,16 @@ class Gateway:
     # ── agent dispatch ────────────────────────────────
 
     async def _handle_message_with_agent(self, event, session_key: str) -> str:
-        turn = await self._conversation_service.run_turn(session_key, event.source, event.text)
+        from personal_agent.conversation.input import ConversationInput
+
+        envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
+        if envelope is not None:
+            turn = await self._conversation_service.run_turn_input(
+                session_key,
+                ConversationInput.from_envelope(envelope),
+            )
+        else:
+            turn = await self._conversation_service.run_turn(session_key, event.source, event.text)
 
         # Hook: on_before_send
         final = turn.final_response

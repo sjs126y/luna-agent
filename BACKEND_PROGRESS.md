@@ -1,12 +1,12 @@
 # Backend Progress
 
-更新时间：2026-07-07 10:55 CST
+更新时间：2026-07-07 12:35 CST
 
 ## 交接定位
 
 这个文档只记录后端线进度，给后续接手后端的 Codex 使用。前端 TUI / desktop / prompt_toolkit 真实终端问题交给前端线处理；后端线只负责事件、接口、agent runtime、工具执行、权限、配置、平台适配、provider / transport 等基础能力。
 
-当前工作分支：`feature/legacy-cleanup`
+当前工作分支：`feature/backend-next`
 
 权威接口文档：
 
@@ -16,9 +16,10 @@
 
 ## 当前后端状态
 
-后端主干能力已经比较完整；`feature/backend-provider-cache` 已合并回主分支，当前分支用于清理历史遗留和收敛 CLI/TUI 入口。最近已完成并验证的方向包括：
+后端主干能力已经比较完整；`feature/backend-provider-cache` 和历史清理分支已合并回主分支，当前分支用于继续后端收敛。最近已完成并验证的方向包括：
 
 - Execution Mode v3：四档模式已经稳定，对应权限、沙箱、工具类别和确认行为。
+- Execution / Sandbox 配置开放：`execution.policy.tool_permissions`、`sandbox.*` 已在 example、配置文档、init 模板和 doctor 重点字段中显式展示；未新增 per-tool 权限、timeout 或关闭硬安全边界的配置。
 - Tool execution / permission pipeline：工具执行门控已经统一到 executor 路径，权限只负责自己的决策层，不再和其他阻断逻辑混在一起。
 - Tool decision metadata：`tool_decision` / `tool_end` 已带前端确认 UI 所需字段，包括展示名、风险摘要、默认动作、可选动作、路径/命令/URL 预览等。
 - Event protocol：事件有 `protocol_version`，`retry` / `error` / `stop` / `tool_decision` / `tool_end` 等事件结构化。
@@ -32,8 +33,38 @@
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
 - Platform adapter base：平台消息基类和 media attachment v1 已打底，但平台线暂时不要继续激进推进，避免牵动底层架构。
+- Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
 
 最近一次记录的全量测试结果：历史清理后 `708 passed`。
+
+## 已完成方向：Multimodal Input v1-v4
+
+状态：已完成实现并通过全量回归。
+
+已完成：
+
+- 新增 `ConversationInput` / `ResolvedConversationInput` / `ProcessedAttachment`，gateway 不再只把 `event.text` 传给 agent。
+- `ConversationService` 新增 `run_turn_input()` / `run_turn_input_events()`，旧 `run_turn()` 保持兼容。
+- 新增 `AttachmentStore`，缓存目录为 `data/attachments/`，按 sha256 去重，并复用 sandbox 与 URL safety。
+- 新增 `MultiAttachmentProcessor`，支持 `auto` / `native` / `text` / `off`，附件失败会转成模型可见 notice，不中断 turn。
+- 新增 `multimodal.*` 配置字段，并同步 `config.yaml.example`、配置文档和 doctor known keys。
+- `ProviderProfile` 增加图片输入能力字段；OpenAI/Anthropic 默认支持图片，DeepSeek/OpenRouter 默认保守关闭。
+- ChatCompletions transport 支持 `image_url` mixed content；Anthropic transport 会把 data URL 转成 Anthropic image source。
+- provider 拒绝图片输入时，agent loop 会移除 image blocks 并纯文本重试一次。
+- token/context 估算对图片使用固定 token 估值，不按 base64 字符串长度计算。
+- cache diagnostics hash 会对 data URL 做指纹化，不记录完整 base64。
+- `turn_start` 新增 `attachments_count`、`attachment_kinds`、`multimodal_diagnostics`，`AgentTurnReport` 同步记录。
+- `BACKEND_INTERFACE.md` 已同步多模态事件字段。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_attachment_store.py tests/test_multimodal_processor.py tests/test_transport_multimodal.py tests/test_event_protocol.py tests/test_transport_cache.py tests/test_conversation_service.py -q
+uv run pytest -q
+```
+
+结果：目标测试 `52 passed`；全量 `719 passed`。
 
 ## 当前分工约定
 

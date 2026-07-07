@@ -247,6 +247,9 @@ LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions")
 COMPRESSION_ENGINES = ("compressor", "disabled", "none", "off", "simple")
 MEMORY_PROVIDERS = ("file",)
 EXTERNAL_MEMORY_PROVIDERS = ("embedding", "none")
+MULTIMODAL_MODES = ("auto", "native", "text", "off")
+MULTIMODAL_NON_NATIVE_MODES = ("auto", "text", "off")
+MULTIMODAL_NATIVE_FALLBACKS = ("notice", "text")
 
 
 def _field(
@@ -378,6 +381,17 @@ def _memory_fields() -> tuple[ConfigField, ...]:
     )
 
 
+def _multimodal_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("multimodal.enabled", "multimodal_enabled", True, "bool", "multimodal", "Enable multimodal attachment processing."),
+        _yaml_field("multimodal.image_mode", "multimodal_image_mode", "auto", "str", "multimodal", "Image processing mode.", choices=MULTIMODAL_MODES),
+        _yaml_field("multimodal.audio_mode", "multimodal_audio_mode", "auto", "str", "multimodal", "Audio processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
+        _yaml_field("multimodal.video_mode", "multimodal_video_mode", "off", "str", "multimodal", "Video processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
+        _yaml_field("multimodal.file_mode", "multimodal_file_mode", "auto", "str", "multimodal", "File processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
+        _yaml_field("multimodal.native_fallback", "multimodal_native_fallback", "notice", "str", "multimodal", "Fallback when native multimodal input is unavailable.", choices=MULTIMODAL_NATIVE_FALLBACKS),
+    )
+
+
 def _cron_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("cron.enabled", "enable_cron", False, "bool", "cron", "Enable cron scheduler."),
@@ -451,6 +465,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     *_toolset_fields(),
     *_compression_fields(),
     *_memory_fields(),
+    *_multimodal_fields(),
     *_cron_fields(),
     *_sandbox_fields(),
     *_gateway_fields(),

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CONTEXT_LIMIT = 64_000  # DeepSeek
+IMAGE_INPUT_TOKEN_ESTIMATE = 1500
 
 # Model prefix → tiktoken encoding name. Longer prefixes checked first.
 _MODEL_ENCODING_MAP: list[tuple[str, str]] = [
@@ -135,10 +136,14 @@ def count_messages_tokens(
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict):
+                    block_type = block.get("type")
+                    if block_type in {"image_url", "image"}:
+                        total += IMAGE_INPUT_TOKEN_ESTIMATE
+                        continue
                     total += estimate_tokens(block.get("text", ""), model)
-                    if block.get("type") == "tool_use":
+                    if block_type == "tool_use":
                         total += estimate_tokens(str(block.get("input", {})), model)
-                    if block.get("type") == "tool_result":
+                    if block_type == "tool_result":
                         total += estimate_tokens(str(block.get("content", "")), model)
     return total
 

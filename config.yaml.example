@@ -7,8 +7,17 @@ agent:
   max_tool_calls_per_turn: 20
 
 execution:
-  mode: "standard"                # guarded | standard | trusted | sovereign
-  policy: {}                      # 可选权限覆盖，例如 {"tool_permissions": {"bash": "ask"}}
+  mode: "standard"                # 执行模式：guarded | standard | trusted | sovereign
+  policy:
+    # 可选权限覆盖。只建议覆盖 tool_permissions；硬沙箱和密钥保护规则不会被这里绕过。
+    # 可选权限类别：default/read/search/write/bash/background/network/destructive
+    # 可选决策：allow（直接允许）| ask（执行前确认）| deny（拒绝）
+    tool_permissions: {}
+    # 示例：
+    # tool_permissions:
+    #   bash: ask
+    #   background: ask
+    #   network: deny
 
 agents:
   max_concurrent_runs: 4          # 最多同时运行的委派子代理数
@@ -35,6 +44,14 @@ memory:
   external_provider: "embedding"  # 外部记忆提供方："none" | "embedding"
   review_interval: 10             # 每 N 轮自动 review，0 表示关闭
 
+multimodal:
+  enabled: true                    # true = 接收平台附件并进入统一处理链路
+  image_mode: "auto"               # 图片：auto | native | text | off
+  audio_mode: "auto"               # 音频：auto | text | off；当前无转写能力时会降级提示
+  video_mode: "off"                # 视频：auto | text | off；默认关闭，避免误下载大文件
+  file_mode: "auto"                # 文件：auto | text | off；当前无解析器时会降级提示
+  native_fallback: "notice"        # 原生多模态不可用时：notice（提示）| text（尝试文本化）
+
 cron:
   enabled: false
 
@@ -46,7 +63,7 @@ sandbox:
   roots:                          # 文件工具和 bash 允许访问的目录
     - "."
     - "./data"
-  blocked:
+  blocked:                        # 即使 mode/policy 放行，也禁止访问这些路径
     - "**/.env"
     - "**/.env.*"
     - "**/.git/**"
@@ -61,11 +78,11 @@ sandbox:
     - "**/audit.log"
     - "**/pyproject.toml"
     - "**/config.yaml"
-  bash_work_dir: "./data"
-  bash_restrict_paths: true
-  bash_allow_network: false
-  file_max_write_bytes: 100000
-  audit_enabled: true
+  bash_work_dir: "./data"         # bash 工具默认工作目录
+  bash_restrict_paths: true       # true = bash 路径限制在 sandbox.roots 内
+  bash_allow_network: false       # true = 允许 bash 里的 curl/wget/pip 等网络命令
+  file_max_write_bytes: 100000    # file_write 单次最大写入字节数
+  audit_enabled: true             # true = 记录工具审计日志到 data/audit.log
 
 auth:
   enabled: true

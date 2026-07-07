@@ -42,6 +42,9 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
         user_message=getattr(ctx, "user_message", ""),
         message_count=len(getattr(ctx, "messages", []) or []),
         was_compressed=bool(getattr(ctx, "was_compressed", False)),
+        attachments_count=len(getattr(ctx, "processed_attachments", []) or []),
+        attachment_kinds=list((getattr(ctx, "multimodal_diagnostics", {}) or {}).get("attachment_kinds") or []),
+        multimodal_diagnostics=dict(getattr(ctx, "multimodal_diagnostics", {}) or {}),
     )
     if getattr(ctx, "was_compressed", False):
         await emit_event(
@@ -167,6 +170,29 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 "error": "",
             })
         except Exception as exc:
+            if _looks_like_image_unsupported_error(exc) and not getattr(ctx, "_image_retry_text_only", False):
+                stripped = _strip_image_blocks(ctx.messages)
+                if stripped:
+                    ctx._image_retry_text_only = True
+                    diagnostics = dict(getattr(ctx, "multimodal_diagnostics", {}) or {})
+                    diagnostics["provider_rejected_images"] = True
+                    diagnostics["native_retry_text_only"] = True
+                    ctx.multimodal_diagnostics = diagnostics
+                    await emit_event(
+                        report_recorder,
+                        "retry",
+                        "模型不接受图片输入，已切换为纯文本重试",
+                        category="multimodal_fallback",
+                        attempt=1,
+                        max_attempts=1,
+                        error=f"{type(exc).__name__}: {exc}",
+                        recoverable=True,
+                    )
+                    ctx.messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": "图片输入被 provider 拒绝，本轮已改为纯文本处理。"}],
+                    })
+                    continue
             # ── retry: invalid JSON / parse error ──
             if _looks_like_parse_error(exc) and \
                agent._retry.invalid_json_retries < agent._retry.MAX_INVALID_JSON:
@@ -404,6 +430,36 @@ def _looks_like_parse_error(exc: Exception) -> bool:
     keywords = ("json", "parse", "decode", "malformed", "unexpected token",
                 "invalid character", "expecting")
     return any(kw in msg for kw in keywords)
+
+
+def _looks_like_image_unsupported_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    keywords = (
+        "image",
+        "vision",
+        "multi-modal",
+        "multimodal",
+        "unsupported content",
+        "invalid content type",
+        "image_url",
+    )
+    return any(keyword in msg for keyword in keywords)
+
+
+def _strip_image_blocks(messages: list[dict]) -> bool:
+    stripped = False
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        filtered = [
+            block for block in content
+            if not (isinstance(block, dict) and block.get("type") in {"image_url", "image"})
+        ]
+        if len(filtered) != len(content):
+            message["content"] = filtered or [{"type": "text", "text": "图片内容已移除。"}]
+            stripped = True
+    return stripped
 
 
 async def _emit_stop(

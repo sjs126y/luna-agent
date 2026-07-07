@@ -32,12 +32,26 @@ class ProviderProfile:
     cache_usage_fields: dict[str, str] = field(default_factory=dict)
     cacheable_blocks: tuple[str, ...] = ()
 
+    # Multimodal capability. Conservative defaults keep text-only providers safe.
+    supports_image_input: bool = False
+    image_input_modes: tuple[str, ...] = ()
+    supported_image_mime_types: tuple[str, ...] = ()
+    max_image_bytes: int = 0
+
     def cache_capability(self) -> dict[str, Any]:
         return {
             "strategy": self.cache_strategy,
             "supports_usage": self.supports_cache_usage,
             "usage_fields": dict(self.cache_usage_fields),
             "cacheable_blocks": list(self.cacheable_blocks),
+        }
+
+    def multimodal_capability(self) -> dict[str, Any]:
+        return {
+            "supports_image_input": self.supports_image_input,
+            "image_input_modes": list(self.image_input_modes),
+            "supported_image_mime_types": list(self.supported_image_mime_types),
+            "max_image_bytes": self.max_image_bytes,
         }
 
 
@@ -127,6 +141,10 @@ def _openai_factory(config) -> ProviderProfile:
             "cache_hit_tokens": "prompt_tokens_details.cached_tokens",
         },
         cacheable_blocks=("system", "tools", "message_prefix"),
+        supports_image_input=True,
+        image_input_modes=("url", "base64"),
+        supported_image_mime_types=("image/jpeg", "image/png", "image/webp", "image/gif"),
+        max_image_bytes=20 * 1024 * 1024,
     )
 
 def _anthropic_factory(config) -> ProviderProfile:
@@ -141,6 +159,10 @@ def _anthropic_factory(config) -> ProviderProfile:
             "cache_read_tokens": "cache_read_input_tokens",
         },
         cacheable_blocks=("system",),
+        supports_image_input=True,
+        image_input_modes=("base64",),
+        supported_image_mime_types=("image/jpeg", "image/png", "image/webp", "image/gif"),
+        max_image_bytes=5 * 1024 * 1024,
     )
 
 def _openrouter_factory(config) -> ProviderProfile:
