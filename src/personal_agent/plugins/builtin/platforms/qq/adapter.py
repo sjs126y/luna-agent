@@ -19,6 +19,7 @@ from typing import Any
 import aiohttp
 
 from personal_agent.models.messages import MessageEnvelope, MessageEvent, MessagePart, SessionSource
+from personal_agent.platforms.attachments import attachment_part, canonical_attachment_kind
 from personal_agent.platforms.core import (
     BasePlatformAdapter,
     ChatInfo,
@@ -262,7 +263,7 @@ def _extract_structured_message(message: Any) -> tuple[str, list[MessagePart], l
             structured.append(part)
             attachments.append(part)
         elif segment_type == "record":
-            part = _media_part("voice", data, ("file", "url"))
+            part = _media_part("audio", data, ("file", "url"))
             parts.append(part.render_text())
             structured.append(part)
             attachments.append(part)
@@ -364,14 +365,13 @@ def _media_part(kind: str, data: dict[str, Any], keys: tuple[str, ...]) -> Messa
         if value:
             detail = str(value)
             break
-    return MessagePart(
-        type=kind,
+    return attachment_part(
+        kind=canonical_attachment_kind(kind),
+        data=data,
         text=detail,
-        url=str(data.get("url") or ""),
-        path=str(data.get("file") or ""),
-        file_id=str(data.get("file_id") or data.get("id") or ""),
         name=str(data.get("name") or data.get("filename") or ""),
-        metadata=dict(data),
+        mime_type=str(data.get("mime_type") or data.get("mime") or ""),
+        metadata_key="onebot_data",
     )
 
 

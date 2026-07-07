@@ -373,6 +373,20 @@ CLI 说明：
 - CLI 不建议开放图片 / 文件上传 UI。
 - 用户在 CLI 里输入本机路径时，应让 agent 通过文件工具读取，而不是把 CLI 输入模拟成 attachment。
 
+平台 adapter 当前保证：
+
+- Telegram / Feishu / QQ / WeChat 会尽量把平台图片、音频、视频、文件解析为 `AttachmentRef`。
+- `kind` 会统一到 `image` / `audio` / `video` / `file`。
+- 能拿到的 `name` / `mime_type` / `size` / `url` / `platform_file_id` 会保留。
+- 平台原始附件字段会放入 attachment metadata，供未来下载器复用。
+
+平台 adapter 当前不保证：
+
+- 不保证已经下载到本地。
+- 不保证 `platform_file_id` 一定可以直接读取。
+- 不做 OCR / ASR / 文件文本提取。
+- 不负责判断 provider 是否支持原生多模态。
+
 ## 4. Inline Tool Confirmation
 
 前端可以在调用：

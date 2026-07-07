@@ -105,6 +105,78 @@ async def test_feishu_after_parse_without_hooks_keeps_message_event(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_feishu_image_message_preserves_attachment_reference(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+
+    adapter = FeishuAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+    event_data = SimpleNamespace(
+        event=SimpleNamespace(
+            sender=SimpleNamespace(
+                sender_id=SimpleNamespace(open_id="ou-user", union_id="", user_id="")
+            ),
+            message=SimpleNamespace(
+                content='{"image_key": "img-key", "file_size": 123}',
+                message_type="image",
+                chat_type="p2p",
+                message_id="mid-1",
+                chat_id="oc-chat",
+                create_time="123456",
+            ),
+        )
+    )
+
+    await adapter._handle_feishu_event(event_data)
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.text == "[image: img-key]"
+    assert [item.type for item in event.attachments] == ["image"]
+    assert event.envelope.attachments[0].platform_file_id == "img-key"
+    assert event.envelope.attachments[0].size == 123
+    assert event.attachments[0].metadata["size"] == 123
+    assert event.attachments[0].metadata["feishu_data"]["image_key"] == "img-key"
+
+
+@pytest.mark.asyncio
+async def test_feishu_file_message_preserves_name_and_mime(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+
+    adapter = FeishuAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+    event_data = SimpleNamespace(
+        event=SimpleNamespace(
+            sender=SimpleNamespace(
+                sender_id=SimpleNamespace(open_id="ou-user", union_id="", user_id="")
+            ),
+            message=SimpleNamespace(
+                content=json.dumps({
+                    "file_key": "file-key",
+                    "file_name": "report.pdf",
+                    "mime_type": "application/pdf",
+                    "file_size": 456,
+                }),
+                message_type="file",
+                chat_type="p2p",
+                message_id="mid-2",
+                chat_id="oc-chat",
+                create_time="123457",
+            ),
+        )
+    )
+
+    await adapter._handle_feishu_event(event_data)
+
+    attachment = captured[0].envelope.attachments[0]
+    assert attachment.kind == "file"
+    assert attachment.platform_file_id == "file-key"
+    assert attachment.name == "report.pdf"
+    assert attachment.mime_type == "application/pdf"
+
+
+@pytest.mark.asyncio
 async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: Path, monkeypatch):
     from personal_agent.models.messages import MessageEvent, SessionSource
     from personal_agent.plugins.builtin.platforms.telegram.adapter import TelegramAdapter
@@ -122,6 +194,65 @@ async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: 
     assert captured == [event]
     assert event.envelope is not None
     assert event.envelope.text == "hello"
+
+
+def test_telegram_message_parts_extracts_photo_document_and_voice():
+    from personal_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
+
+    msg = SimpleNamespace(
+        text="",
+        caption="see",
+        photo=[
+            SimpleNamespace(file_id="small", file_unique_id="u-small", file_size=10, width=10, height=10),
+            SimpleNamespace(file_id="big", file_unique_id="u-big", file_size=20, width=100, height=100),
+        ],
+        document=SimpleNamespace(
+            file_id="doc-1",
+            file_unique_id="doc-u",
+            file_name="report.pdf",
+            mime_type="application/pdf",
+            file_size=300,
+        ),
+        voice=SimpleNamespace(
+            file_id="voice-1",
+            file_unique_id="voice-u",
+            mime_type="audio/ogg",
+            file_size=40,
+            duration=2,
+        ),
+        audio=None,
+        video=None,
+    )
+
+    text, parts, attachments = _message_parts(msg)
+
+    assert text == "see"
+    assert [item.type for item in attachments] == ["image", "file", "audio"]
+    assert attachments[0].file_id == "big"
+    assert attachments[1].name == "report.pdf"
+    assert attachments[1].mime_type == "application/pdf"
+    assert attachments[2].file_id == "voice-1"
+    assert parts[0].text == "see"
+
+
+def test_telegram_message_parts_allows_attachment_only_message():
+    from personal_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
+
+    msg = SimpleNamespace(
+        text="",
+        caption="",
+        photo=[SimpleNamespace(file_id="photo-1", file_unique_id="photo-u", file_size=10, width=1, height=1)],
+        document=None,
+        voice=None,
+        audio=None,
+        video=None,
+    )
+
+    text, parts, attachments = _message_parts(msg)
+
+    assert text == "[image: photo-1]"
+    assert [item.type for item in parts] == ["image"]
+    assert attachments[0].file_id == "photo-1"
 
 
 @pytest.mark.asyncio
@@ -221,14 +352,15 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
 
     assert len(captured) == 1
     assert captured[0].text == (
-        "see [image: img-1] [voice: voice.amr] [video: video-1] [file: report.pdf]"
+        "see [image: img-1] [audio: voice.amr] [video: video-1] [file: report.pdf]"
     )
-    assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
+    assert [item.type for item in captured[0].attachments] == ["image", "audio", "video", "file"]
     assert captured[0].attachments[0].file_id == "img-1"
     assert captured[0].attachments[-1].name == "report.pdf"
     assert captured[0].envelope is not None
-    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "voice", "video", "file"]
+    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "audio", "video", "file"]
     assert captured[0].envelope.attachments[0].platform_file_id == "img-1"
+    assert captured[0].attachments[1].metadata["wechat_media"]["file_name"] == "voice.amr"
     assert adapter._context_tokens["wx-user"] == "ctx-token"
 
 
@@ -363,16 +495,18 @@ async def test_qq_webhook_payload_summarizes_media_segments(tmp_path: Path, monk
     assert handled is True
     assert captured[0].text == (
         "see [image: https://example.test/a.png]"
-        "[voice: voice.amr]"
+        "[audio: voice.amr]"
         "[video: movie.mp4]"
         "[file: report.pdf]"
         "[reply:42]"
     )
-    assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
+    assert [item.type for item in captured[0].attachments] == ["image", "audio", "video", "file"]
     assert captured[0].attachments[0].url == "https://example.test/a.png"
+    assert captured[0].attachments[1].file_id == "voice.amr"
+    assert captured[0].attachments[2].file_id == "movie.mp4"
     assert captured[0].attachments[-1].name == "report.pdf"
     assert captured[0].envelope is not None
-    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "voice", "video", "file"]
+    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "audio", "video", "file"]
     assert captured[0].envelope.attachments[0].url == "https://example.test/a.png"
 
 

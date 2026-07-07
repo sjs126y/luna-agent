@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 12:50 CST
+更新时间：2026-07-07 13:15 CST
 
 ## 交接定位
 
@@ -33,6 +33,7 @@
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
 - Platform adapter base：平台消息基类和 media attachment v1 已打底，但平台线暂时不要继续激进推进，避免牵动底层架构。
+- Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`，不做下载/OCR/ASR。
 - Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
@@ -67,6 +68,30 @@ uv run pytest -q
 ```
 
 结果：目标测试 `52 passed`；全量 `719 passed`。
+
+## 已完成方向：Platform Adapter Attachments v1
+
+状态：已完成实现并通过全量回归。
+
+已完成：
+
+- 新增 `personal_agent.platforms.attachments` 公共 helper，统一 kind 归一化和 `url/local_path/platform_file_id` 归类。
+- Telegram adapter 支持解析 photo/document/voice/audio/video；附件-only 消息不会被丢弃。
+- Feishu adapter 支持解析 image/file/audio/video/media/post 中的附件引用；附件消息不进入 debounce 合并。
+- QQ adapter 将 `record/voice` 统一为 `audio`；OneBot `data.file` 会按 URL / 本机路径 / 平台 id 归类，不再无脑写入 `local_path`。
+- WeChat adapter 将 `voice/audio` 统一为 `audio`，保留 `file_id/media_id/url/cdn_url/name/mime/size` 和原始 media metadata。
+- `MessagePart.to_attachment_ref()` 会把 `metadata.size` 映射到 `AttachmentRef.size`。
+- `BACKEND_INTERFACE.md` 已说明平台 adapter 当前只保证附件引用结构，不保证下载、OCR、ASR 或文本化。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_platform_adapters.py tests/test_platforms_core.py tests/test_gateway_commands.py -q
+uv run pytest -q
+```
+
+结果：目标测试 `56 passed`；全量 `723 passed`。
 
 ## 当前分工约定
 

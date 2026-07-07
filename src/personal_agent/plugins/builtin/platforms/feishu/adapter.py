@@ -8,6 +8,7 @@ import logging
 import time
 from collections import OrderedDict
 from contextlib import suppress
+from typing import Any
 
 from personal_agent.platforms.core import (
     BasePlatformAdapter,
@@ -15,7 +16,8 @@ from personal_agent.platforms.core import (
     PlatformCapabilities,
     SendResult,
 )
-from personal_agent.models.messages import MessageEvent, SessionSource
+from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+from personal_agent.platforms.attachments import attachment_part
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 class FeishuAdapter(BasePlatformAdapter):
     capabilities = PlatformCapabilities(
         text=True,
+        attachments_in=True,
         max_text_length=20000,
     )
 
@@ -252,11 +255,16 @@ class FeishuAdapter(BasePlatformAdapter):
             content_raw = msg.content or "{}"
             try:
                 content_obj = json.loads(content_raw)
-                text = content_obj.get("text", "")
             except (json.JSONDecodeError, TypeError):
-                text = str(content_raw)
+                content_obj = {"text": str(content_raw)}
+            message_type = str(
+                getattr(msg, "message_type", "")
+                or getattr(msg, "msg_type", "")
+                or "text"
+            )
+            text, parts, attachments = _parse_feishu_content(message_type, content_obj)
 
-            if not text:
+            if not text and not attachments:
                 logger.debug("Feishu event dropped: empty text, msg_type=%s chat_id=%s",
                            getattr(msg, "message_type", "?"), getattr(msg, "chat_id", "?"))
                 return
@@ -294,15 +302,16 @@ class FeishuAdapter(BasePlatformAdapter):
             # ── debounce ──
             chat_id = msg.chat_id or ""
             if chat_id:
-                merged = self._debounce(chat_id, text, source_info={
-                    "user_id": user_id, "user_name": "",
-                    "chat_id": chat_id, "chat_type": chat_type,
-                })
-                if merged is not None:
-                    if merged == "":
-                        logger.debug("Feishu event absorbed by debounce: chat=%s", chat_id[:16])
-                        return
-                    text = merged  # accumulated text from burst
+                if not attachments:
+                    merged = self._debounce(chat_id, text, source_info={
+                        "user_id": user_id, "user_name": "",
+                        "chat_id": chat_id, "chat_type": chat_type,
+                    })
+                    if merged is not None:
+                        if merged == "":
+                            logger.debug("Feishu event absorbed by debounce: chat=%s", chat_id[:16])
+                            return
+                        text = merged  # accumulated text from burst
 
             logger.info("Feishu inbound: user=%s chat=%s type=%s text=%s",
                        user_id[:12] if user_id else "?",
@@ -321,6 +330,8 @@ class FeishuAdapter(BasePlatformAdapter):
                 text=text,
                 message_type="command" if text.startswith("/") else "text",
                 source=source,
+                parts=parts,
+                attachments=attachments,
                 raw_message=event_data,
                 message_id=msg.message_id,
                 timestamp=float(msg.create_time or time.time()),
@@ -423,3 +434,96 @@ def _response_error(resp) -> str:
     if code or msg:
         return f"Feishu API error: {code} {msg}".strip()
     return "Feishu API error"
+
+
+def _parse_feishu_content(
+    message_type: str,
+    content: dict[str, Any],
+) -> tuple[str, list[MessagePart], list[MessagePart]]:
+    msg_type = str(message_type or "text").lower()
+    if msg_type == "text":
+        text = str(content.get("text") or "")
+        return text, [MessagePart(type="text", text=text)] if text else [], []
+    if msg_type == "post":
+        return _parse_feishu_post(content)
+
+    attachment = _feishu_attachment(msg_type, content)
+    if attachment is None:
+        text = str(content.get("text") or content.get("content") or "")
+        return text, [MessagePart(type="text", text=text)] if text else [], []
+    text = str(content.get("text") or content.get("caption") or "").strip()
+    parts = [MessagePart(type="text", text=text)] if text else []
+    parts.append(attachment)
+    if not text:
+        text = attachment.render_text()
+    return text, parts, [attachment]
+
+
+def _parse_feishu_post(content: dict[str, Any]) -> tuple[str, list[MessagePart], list[MessagePart]]:
+    parts: list[MessagePart] = []
+    attachments: list[MessagePart] = []
+    text_parts: list[str] = []
+    for line in content.get("content") or []:
+        if not isinstance(line, list):
+            continue
+        for node in line:
+            if not isinstance(node, dict):
+                continue
+            tag = str(node.get("tag") or "").lower()
+            if tag in {"text", "a", "at"}:
+                text = str(node.get("text") or node.get("name") or "")
+                if text:
+                    text_parts.append(text)
+                    parts.append(MessagePart(type="text", text=text))
+            elif tag in {"img", "image"}:
+                attachment = _feishu_attachment("image", node)
+                if attachment is not None:
+                    parts.append(attachment)
+                    attachments.append(attachment)
+            elif tag in {"file", "media", "audio", "video"}:
+                attachment = _feishu_attachment(tag, node)
+                if attachment is not None:
+                    parts.append(attachment)
+                    attachments.append(attachment)
+    text = "".join(text_parts).strip()
+    if not text and attachments:
+        text = " ".join(item.render_text() for item in attachments)
+    return text, parts, attachments
+
+
+def _feishu_attachment(message_type: str, content: dict[str, Any]) -> MessagePart | None:
+    kind = {
+        "img": "image",
+        "image": "image",
+        "file": "file",
+        "audio": "audio",
+        "voice": "audio",
+        "media": "video",
+        "video": "video",
+    }.get(str(message_type or "").lower())
+    if kind is None:
+        return None
+    file_id = str(
+        content.get("image_key")
+        or content.get("imageKey")
+        or content.get("file_key")
+        or content.get("fileKey")
+        or content.get("file_id")
+        or content.get("fileId")
+        or content.get("media_id")
+        or content.get("mediaId")
+        or ""
+    )
+    name = str(content.get("file_name") or content.get("fileName") or content.get("name") or "")
+    mime_type = str(content.get("mime_type") or content.get("mimeType") or "")
+    size = int(content.get("file_size") or content.get("size") or 0)
+    return attachment_part(
+        kind=kind,
+        data=content,
+        text=name or file_id or kind,
+        name=name,
+        mime_type=mime_type,
+        size=size,
+        platform_file_id=file_id,
+        metadata_key="feishu_data",
+    )

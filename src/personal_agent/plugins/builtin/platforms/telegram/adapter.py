@@ -17,7 +17,8 @@ from personal_agent.platforms.core import (
     PlatformCapabilities,
     SendResult,
 )
-from personal_agent.models.messages import MessageEvent, SessionSource
+from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+from personal_agent.platforms.attachments import attachment_part
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class TelegramAdapter(BasePlatformAdapter):
         text=True,
         markdown=True,
         typing=True,
+        attachments_in=True,
         max_text_length=4096,
     )
 
@@ -47,9 +49,7 @@ class TelegramAdapter(BasePlatformAdapter):
         from telegram.ext import Application, MessageHandler, filters
 
         self._application = Application.builder().token(self._token).build()
-        self._application.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text)
-        )
+        self._application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, self._on_text))
         self._application.add_handler(
             MessageHandler(filters.COMMAND, self._on_command)
         )
@@ -124,7 +124,10 @@ class TelegramAdapter(BasePlatformAdapter):
         import asyncio as _asyncio
         try:
             msg = update.message
-            if msg is None or not msg.text:
+            if msg is None:
+                return
+            text, parts, attachments = _message_parts(msg)
+            if not text and not attachments:
                 return
 
             source = SessionSource(
@@ -136,9 +139,11 @@ class TelegramAdapter(BasePlatformAdapter):
             )
 
             event = MessageEvent(
-                text=msg.text,
+                text=text,
                 message_type=message_type,
                 source=source,
+                parts=parts,
+                attachments=attachments,
                 raw_message=update,
                 message_id=str(msg.message_id),
                 timestamp=msg.date.timestamp() if msg.date else time.time(),
@@ -174,3 +179,78 @@ class TelegramAdapter(BasePlatformAdapter):
                 await self._bot.send_chat_action(chat_id=chat_id, action="typing")
             except Exception:
                 pass
+
+
+def _message_parts(msg) -> tuple[str, list[MessagePart], list[MessagePart]]:
+    text = str(getattr(msg, "text", "") or getattr(msg, "caption", "") or "")
+    parts: list[MessagePart] = [MessagePart(type="text", text=text)] if text else []
+    attachments: list[MessagePart] = []
+
+    photo = _largest_photo(getattr(msg, "photo", None) or [])
+    if photo is not None:
+        attachments.append(attachment_part(
+            kind="image",
+            data=_telegram_file_data(photo),
+            text=getattr(photo, "file_unique_id", "") or "photo",
+            platform_file_id=str(getattr(photo, "file_id", "") or ""),
+            size=int(getattr(photo, "file_size", 0) or 0),
+            metadata_key="telegram_data",
+        ))
+
+    document = getattr(msg, "document", None)
+    if document is not None:
+        attachments.append(attachment_part(
+            kind="file",
+            data=_telegram_file_data(document),
+            name=str(getattr(document, "file_name", "") or ""),
+            mime_type=str(getattr(document, "mime_type", "") or ""),
+            platform_file_id=str(getattr(document, "file_id", "") or ""),
+            size=int(getattr(document, "file_size", 0) or 0),
+            metadata_key="telegram_data",
+        ))
+
+    for attr, kind in (("voice", "audio"), ("audio", "audio"), ("video", "video")):
+        media = getattr(msg, attr, None)
+        if media is None:
+            continue
+        attachments.append(attachment_part(
+            kind=kind,
+            data=_telegram_file_data(media),
+            name=str(getattr(media, "file_name", "") or ""),
+            mime_type=str(getattr(media, "mime_type", "") or ""),
+            platform_file_id=str(getattr(media, "file_id", "") or ""),
+            size=int(getattr(media, "file_size", 0) or 0),
+            metadata_key="telegram_data",
+        ))
+
+    for item in attachments:
+        parts.append(item)
+    if not text and attachments:
+        text = " ".join(item.render_text() for item in attachments)
+    return text, parts, attachments
+
+
+def _largest_photo(items):
+    photos = [item for item in items if item is not None]
+    if not photos:
+        return None
+    return max(
+        photos,
+        key=lambda item: (
+            int(getattr(item, "width", 0) or 0) * int(getattr(item, "height", 0) or 0),
+            int(getattr(item, "file_size", 0) or 0),
+        ),
+    )
+
+
+def _telegram_file_data(item) -> dict:
+    data = {
+        "file_id": str(getattr(item, "file_id", "") or ""),
+        "file_unique_id": str(getattr(item, "file_unique_id", "") or ""),
+        "file_size": int(getattr(item, "file_size", 0) or 0),
+    }
+    for key in ("width", "height", "duration", "mime_type", "file_name"):
+        value = getattr(item, key, None)
+        if value is not None:
+            data[key] = value
+    return data

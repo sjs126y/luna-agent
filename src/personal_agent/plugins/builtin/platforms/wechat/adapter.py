@@ -25,6 +25,7 @@ from personal_agent.platforms.core import (
     PlatformCapabilities,
     SendResult,
 )
+from personal_agent.platforms.attachments import attachment_part
 from personal_agent.models.messages import MessageEnvelope, MessageEvent, MessagePart, SessionSource
 
 logger = logging.getLogger(__name__)
@@ -421,25 +422,28 @@ def _media_part(item: dict) -> MessagePart:
         "aes_key",
         "md5",
     )
-    return MessagePart(
-        type=kind,
+    return attachment_part(
+        kind=kind,
+        data=data,
         text=detail,
-        url=str(data.get("url") or data.get("cdn_url") or ""),
-        file_id=str(data.get("file_id") or data.get("media_id") or ""),
         name=str(data.get("file_name") or data.get("filename") or data.get("name") or ""),
-        metadata=dict(data),
+        mime_type=str(data.get("mime_type") or data.get("mime") or ""),
+        size=int(data.get("size") or data.get("file_size") or 0),
+        url=str(data.get("url") or data.get("cdn_url") or ""),
+        platform_file_id=str(data.get("file_id") or data.get("media_id") or ""),
+        metadata_key="wechat_media",
     )
 
 
 def _media_kind(itype) -> str:
     mapping = {
         2: "image",
-        3: "voice",
+        3: "audio",
         4: "video",
         5: "file",
         "image": "image",
-        "voice": "voice",
-        "audio": "voice",
+        "voice": "audio",
+        "audio": "audio",
         "video": "video",
         "file": "file",
     }
