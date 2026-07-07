@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-07 16:29 CST
+更新时间：2026-07-07 17:14 CST
 
 ## 交接定位
 
@@ -43,7 +43,7 @@
 - Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
 - Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
-最近一次记录的全量测试结果：`739 passed`。
+最近一次记录的全量测试结果：`754 passed`。
 
 ## 已完成方向：Multimodal Input v1-v4
 
@@ -76,7 +76,7 @@ uv run pytest tests/test_attachment_store.py tests/test_multimodal_processor.py 
 uv run pytest -q
 ```
 
-结果：多模态/配置/文档目标回归 `63 passed`；全量 `739 passed`。
+结果：多模态/配置/文档目标回归 `60 passed`；全量 `754 passed`。
 
 ## 已完成方向：Platform Adapter Attachments v1
 
