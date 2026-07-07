@@ -316,6 +316,8 @@ def _gateway_agent_item(data: dict[str, Any]) -> dict[str, Any]:
         "finished_at": str(data.get("finished_at") or ""),
         "duration_seconds": round(float(data.get("duration_seconds") or 0.0), 3),
         "stop_requested": stop_requested,
+        "active_turn_id": str(data.get("active_turn_id") or ""),
+        "pending_steers": int(data.get("pending_steers") or 0),
         "error": error,
         "attention_required": status == "failed" or bool(error),
     }

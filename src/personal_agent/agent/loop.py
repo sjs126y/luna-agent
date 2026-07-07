@@ -24,7 +24,7 @@ from personal_agent.tools.executor import execute_tool_calls
 logger = logging.getLogger(__name__)
 
 
-async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict:
+async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=None, session_key: str = "") -> dict:
     """Execute the agent while loop. Returns final result dict."""
     just_executed_tools = False
     report_recorder = TurnReportRecorder(event_sink)
@@ -67,6 +67,8 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
                 "status": "stopped",
                 "error": "",
             })
+
+        await _consume_steer(ctx, steer, session_key, report_recorder)
 
         # ── build api_messages (injections, NOT persisted) ──
         skill_injection_for_plan = getattr(ctx, "skill_injection", None)
@@ -344,11 +346,21 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None) -> dict
 
         # ── no tool_calls → done ──
         if not response.tool_calls:
-            ctx.messages.append({
-                "role": "assistant",
-                "content": [{"type": "text", "text": response.text}],
-            })
-            await emit_event(report_recorder, "assistant_message", response.text)
+            if response.text:
+                ctx.messages.append({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": response.text}],
+                })
+                await emit_event(report_recorder, "assistant_message", response.text)
+            if await _consume_steer(ctx, steer, session_key, report_recorder):
+                just_executed_tools = False
+                continue
+            if not response.text:
+                ctx.messages.append({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": response.text}],
+                })
+                await emit_event(report_recorder, "assistant_message", response.text)
             break
 
         # ── has tool_calls → execute ──
@@ -509,6 +521,51 @@ async def _emit_error(sink, message: str, exc: Exception, *, category: str) -> N
 def _event_detail_id(category: str, detail: str) -> str:
     digest = hashlib.sha1(f"{category}:{detail}".encode("utf-8", errors="replace")).hexdigest()
     return f"err_{digest[:12]}"
+
+
+async def _consume_steer(ctx, steer, session_key: str, sink) -> bool:
+    if steer is None:
+        return False
+    turn_id = str(getattr(ctx, "turn_id", "") or "")
+    if not turn_id:
+        return False
+    consume = getattr(steer, "consume", None)
+    if consume is None:
+        return False
+    signals = consume(session_key, turn_id)
+    if not signals:
+        return False
+    text = _format_steer_message(signals)
+    ctx.messages.append({
+        "role": "user",
+        "content": [{"type": "text", "text": text}],
+    })
+    await emit_event(
+        sink,
+        "steer_consumed",
+        "已应用运行中修正",
+        count=len(signals),
+        steer_ids=[signal.id for signal in signals],
+        text_preview="; ".join(_signal_preview(signal.text) for signal in signals),
+    )
+    return True
+
+
+def _format_steer_message(signals) -> str:
+    lines = ["[运行中用户补充/修正]"]
+    if len(signals) == 1:
+        lines.append(str(signals[0].text or "").strip())
+    else:
+        for index, signal in enumerate(signals, 1):
+            lines.append(f"{index}. {str(signal.text or '').strip()}")
+    return "\n".join(line for line in lines if line)
+
+
+def _signal_preview(value: str, limit: int = 120) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 async def _build_api_messages(agent, ctx) -> list[dict]:

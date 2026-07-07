@@ -8,7 +8,8 @@ from personal_agent.agent.loop import run_conversation
 from personal_agent.agent.retry import RetryState
 from personal_agent.models.messages import NormalizedResponse
 from personal_agent.llm.provider import ProviderProfile
-from personal_agent.conversation.events import ConversationEventSink
+from personal_agent.conversation.events import ConversationEventSink, EventRecorder
+from personal_agent.conversation.steer import SteerManager
 
 
 class MockTransport:
@@ -17,8 +18,10 @@ class MockTransport:
     def __init__(self, responses: list[NormalizedResponse]):
         self.responses = responses
         self.calls = 0
+        self.call_messages = []
 
     async def call(self, messages, system_prompt="", tools=None, max_tokens=4096, stream=False):
+        self.call_messages.append(messages)
         if self.calls >= len(self.responses):
             return NormalizedResponse(text="done", finish_reason="end_turn")
         resp = self.responses[self.calls]
@@ -61,6 +64,24 @@ class PlanProbeTransport(MockTransport):
         request_plan=None,
     ):
         self.request_plan = request_plan
+        return await super().call(messages, system_prompt, tools, max_tokens, stream)
+
+
+class SteerAddingTransport(MockTransport):
+    def __init__(
+        self,
+        responses: list[NormalizedResponse],
+        *,
+        manager: SteerManager,
+        session_key: str,
+    ):
+        super().__init__(responses)
+        self.manager = manager
+        self.session_key = session_key
+
+    async def call(self, messages, system_prompt="", tools=None, max_tokens=4096, stream=False):
+        if self.calls == 0:
+            self.manager.add(self.session_key, None, "请按新的补充重新回答")
         return await super().call(messages, system_prompt, tools, max_tokens, stream)
 
 
@@ -139,6 +160,79 @@ async def test_simple_response(provider):
     assert recorder.events[2].data["context_remaining_tokens"] >= 0
     assert recorder.events[2].data["context_budget"]["used"] == recorder.events[2].data["context_used_tokens"]
     assert recorder.events[3].message == "Hello!"
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_consumes_pending_steer_before_llm_call(provider):
+    recorder = EventRecorder()
+    transport = MockTransport([
+        NormalizedResponse(text="收到", finish_reason="end_turn"),
+    ])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi", turn_id="turn-1")
+    steer = SteerManager()
+    steer.begin_turn("cli:default:local", "turn-1")
+    signal = steer.add("cli:default:local", None, "回答更短")
+
+    result = await run_conversation(
+        agent,
+        ctx,
+        event_sink=recorder,
+        steer=steer,
+        session_key="cli:default:local",
+    )
+
+    assert result["completed"] is True
+    assert signal.status == "consumed"
+    first_call_text = _user_text(transport.call_messages[0])
+    assert "[运行中用户补充/修正]" in first_call_text
+    assert "回答更短" in first_call_text
+    assert [event.type for event in recorder.events][:3] == [
+        "turn_start",
+        "steer_consumed",
+        "llm_start",
+    ]
+    assert result["turn_report"]["steer"]["consumed"] == 1
+    assert result["turn_report"]["steer"]["consumed_ids"] == [signal.id]
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_applies_steer_received_during_final_response(provider):
+    steer = SteerManager()
+    steer.begin_turn("cli:default:local", "turn-1")
+    transport = SteerAddingTransport(
+        [
+            NormalizedResponse(text="旧答案", finish_reason="end_turn"),
+            NormalizedResponse(text="新答案", finish_reason="end_turn"),
+        ],
+        manager=steer,
+        session_key="cli:default:local",
+    )
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi", turn_id="turn-1")
+
+    result = await run_conversation(
+        agent,
+        ctx,
+        steer=steer,
+        session_key="cli:default:local",
+    )
+
+    assert result["final_response"] == "新答案"
+    assert transport.calls == 2
+    second_call_text = _user_text(transport.call_messages[1])
+    assert "请按新的补充重新回答" in second_call_text
+    assert [message["role"] for message in result["messages"][-3:]] == ["assistant", "user", "assistant"]
+
+
+def _user_text(messages: list[dict]) -> str:
+    return "\n".join(
+        str(block.get("text") or "")
+        for message in messages
+        if message.get("role") == "user"
+        for block in (message.get("content") or [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
 
 
 @pytest.mark.asyncio

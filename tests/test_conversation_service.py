@@ -235,6 +235,40 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_run_turn_events_forwards_steer_manager_and_records_summary(service, monkeypatch):
+    svc, _manager, _db = service
+    seen = {}
+
+    async def build_turn_context(agent, text, history, *, turn_id=None):
+        assert turn_id
+        ctx = Ctx(_messages())
+        ctx.turn_id = turn_id
+        return ctx
+
+    async def run_conversation(agent, ctx, *, steer=None, session_key=""):
+        signal = steer.add(session_key, None, "补充说明")
+        consumed = steer.consume(session_key, ctx.turn_id)
+        seen["signal_id"] = signal.id
+        seen["consumed"] = [item.id for item in consumed]
+        return {
+            "final_response": "echo:hello",
+            "messages": ctx.messages,
+            "completed": True,
+            "turn_report": _turn_report(llm_calls=1, tool_calls=0),
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn_events("cli:default:local", _source(), "hello")
+
+    assert seen["consumed"] == [seen["signal_id"]]
+    assert result.turn_report["steer"]["received"] == 1
+    assert result.turn_report["steer"]["consumed"] == 1
+    assert result.turn_report["steer"]["items"][0]["id"] == seen["signal_id"]
+
+
+@pytest.mark.asyncio
 async def test_run_turn_events_forwards_confirm_callback(service, monkeypatch):
     svc, _manager, _db = service
     confirm_seen = []

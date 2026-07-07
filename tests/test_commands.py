@@ -98,6 +98,8 @@ class Runtime:
         self.deleted = None
         self.exported = False
         self.memory_deleted = None
+        self.running = False
+        self.steers = []
         self.tool_runs = [
             {
                 "id": 1,
@@ -250,6 +252,15 @@ class Runtime:
 
     async def clear_agent(self):
         self.clear_called = True
+
+    async def is_session_running(self) -> bool:
+        return self.running
+
+    async def add_steer(self, text: str) -> str:
+        if not self.running:
+            return "当前没有运行中的任务可修正。"
+        self.steers.append(text)
+        return f"已收到，会在当前任务下一步应用。（test-steer）"
 
     def plugin_command_kwargs(self, args: str):
         return {
@@ -500,6 +511,25 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     assert result.handled
     assert result.error
     assert "/permissions" in result.suggestions
+
+
+@pytest.mark.asyncio
+async def test_steer_command_delegates_to_runtime(tmp_path):
+    runtime = Runtime(tmp_path)
+
+    result = await handle_slash_command(runtime, "/steer")
+    assert result.handled
+    assert "用法" in result.response
+
+    result = await handle_slash_command(runtime, "/steer 回答短一点")
+    assert result.response == "当前没有运行中的任务可修正。"
+    assert runtime.steers == []
+
+    runtime.running = True
+    result = await handle_slash_command(runtime, "/steer 回答短一点")
+
+    assert "已收到" in result.response
+    assert runtime.steers == ["回答短一点"]
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ ConversationEventType = Literal[
     "tool_end",
     "retry",
     "compression",
+    "steer_consumed",
     "stop",
     "error",
     "turn_end",
@@ -238,6 +239,15 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
         fields=(
             EventFieldSpec("pre_message_count", "integer", "Message count before compression."),
             EventFieldSpec("post_message_count", "integer", "Message count after compression."),
+        ),
+    ),
+    "steer_consumed": EventSchema(
+        "steer_consumed",
+        "Pending steer messages were injected into the active turn context.",
+        fields=(
+            EventFieldSpec("count", "integer", "Number of steer signals consumed."),
+            EventFieldSpec("steer_ids", "list[string]", "Consumed steer ids."),
+            EventFieldSpec("text_preview", "string", "Compact combined steer text preview."),
         ),
     ),
     "stop": EventSchema(

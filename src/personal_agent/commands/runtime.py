@@ -127,6 +127,12 @@ class CommandRuntime(Protocol):
 
     async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20) -> list[dict]: ...
 
+    async def is_session_running(self) -> bool: ...
+
+    async def add_steer(self, text: str) -> str: ...
+
+    async def steer_snapshot(self) -> dict: ...
+
     def plugin_command_kwargs(self, args: str) -> dict: ...
 
 
@@ -217,6 +223,9 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
 
     if command_name == "stop":
         return CommandResult.reply(await _stop(runtime))
+
+    if command_name == "steer":
+        return CommandResult.reply(await _steer(runtime, args))
 
     if command_name in {"agents", "agent-runs"}:
         return CommandResult.reply(await _agents(args))
@@ -873,7 +882,11 @@ def _format_activity_item(item: dict[str, Any]) -> str:
     title = item.get("task_preview") or item.get("task") or item.get("command_preview")
     title = title or item.get("command") or item.get("platform") or ""
     suffix = f" - {_short_text(str(title), 90)}" if title else ""
-    return f"- {item_id} [{status}] {duration:.1f}s{suffix}"
+    extras = []
+    if int(item.get("pending_steers") or 0):
+        extras.append(f"steer={int(item.get('pending_steers') or 0)}")
+    extra = f" ({', '.join(extras)})" if extras else ""
+    return f"- {item_id} [{status}] {duration:.1f}s{extra}{suffix}"
 
 
 def _format_activity_detail(payload: dict[str, Any]) -> str:
@@ -1295,6 +1308,19 @@ async def _stop(runtime: CommandRuntime) -> str:
     if stopped:
         return f"已停止。已请求停止 {stopped} 个子 agent。"
     return "已停止。"
+
+
+async def _steer(runtime: CommandRuntime, args: str) -> str:
+    text = str(args or "").strip()
+    if not text:
+        return "用法: /steer <运行中修正内容>"
+    handler = getattr(runtime, "add_steer", None)
+    if handler is None:
+        return "当前入口不支持 /steer。"
+    result = handler(text)
+    if hasattr(result, "__await__"):
+        result = await result
+    return str(result)
 
 
 async def _prepare_skill(runtime: CommandRuntime, text: str) -> str | None:

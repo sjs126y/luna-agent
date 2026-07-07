@@ -47,6 +47,8 @@ async def build_turn_context(
     agent,
     user_message: str | "ResolvedConversationInput",
     history: list[dict] | None = None,
+    *,
+    turn_id: str | None = None,
 ) -> TurnContext:
     """Prepare messages for a conversation turn.
     Does NOT build api_messages — that happens inside the while loop.
@@ -132,7 +134,7 @@ async def build_turn_context(
     was_compressed = messages != pre_compress_messages
     user_idx = max(0, len(messages) - 1)
 
-    turn_id = f"{uuid.uuid4().hex[:8]}"
+    resolved_turn_id = str(turn_id or "").strip() or f"{uuid.uuid4().hex[:8]}"
 
     return TurnContext(
         user_message=text_message,
@@ -140,7 +142,7 @@ async def build_turn_context(
         messages=messages,
         conversation_history=conversation_history,
         active_system_prompt=agent._cached_system_prompt or "",
-        turn_id=turn_id,
+        turn_id=resolved_turn_id,
         current_turn_user_idx=user_idx,
         was_compressed=was_compressed,
         pre_compress_message_count=pre_count,

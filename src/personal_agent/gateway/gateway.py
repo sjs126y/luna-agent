@@ -143,11 +143,19 @@ class Gateway:
         await self._shutdown_event.wait()
 
     def health_snapshot(self) -> dict:
+        steer_snapshot = self._conversation_service.steer_snapshot()
         platforms = [
             self._platforms[key].snapshot()
             for key in sorted(self._platforms)
         ]
         run_health = self._run_state.snapshot()
+        for run in run_health.get("running_agent_runs", []):
+            if not isinstance(run, dict):
+                continue
+            session_key = str(run.get("session_key") or "")
+            session_steer = self._conversation_service.steer_snapshot(session_key)
+            run["active_turn_id"] = session_steer.get("active_turn_id", "")
+            run["pending_steers"] = int(session_steer.get("pending_count") or 0)
         data = {
             "started": self._started,
             "adapter_count": len(self._adapters),
@@ -161,6 +169,9 @@ class Gateway:
             "platform_chat_locks_maxsize": getattr(self.config, "platform_chat_locks_maxsize", 64),
             "platform_message_dedupe_max_size": getattr(self.config, "platform_message_dedupe_max_size", 1024),
             "platform_send_max_retries": getattr(self.config, "platform_send_max_retries", 2),
+            "steer": steer_snapshot,
+            "pending_steer_count": int(steer_snapshot.get("pending_steer_count") or 0),
+            "active_steer_sessions": list(steer_snapshot.get("active_steer_sessions") or []),
         }
         data.update(self._confirmations.snapshot() or {})
         data.update(run_health)
@@ -254,7 +265,12 @@ class Gateway:
 
     def _should_bypass_adapter_queue(self, event) -> bool:
         session_key = self._session_router.active_key(event.source)
-        return self._confirmations.get(session_key) is not None
+        if self._confirmations.get(session_key) is not None:
+            return True
+        if not self._run_state.is_running(session_key):
+            return False
+        text = str(getattr(event, "text", "") or "").strip()
+        return text.startswith("/steer") or text.startswith("/stop")
 
     async def _handle_message_inner(self, event) -> str | None:
         if getattr(event, "envelope", None) is None and hasattr(event, "to_envelope"):
@@ -482,6 +498,9 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
 
     async def pending_confirmation_status(self) -> dict | None:
         return self.gateway._confirmations.snapshot(self.session_key)
+
+    async def is_session_running(self) -> bool:
+        return self.gateway._run_state.is_running(self._session_key)
 
     def plugin_command_kwargs(self, args: str) -> dict:
         return {

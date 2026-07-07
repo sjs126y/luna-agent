@@ -1,12 +1,12 @@
 # Backend Progress
 
-更新时间：2026-07-07 23:30 CST
+更新时间：2026-07-08 01:31 CST
 
 ## 交接定位
 
 这个文档只记录后端线进度，给后续接手后端的 Codex 使用。前端 TUI / desktop / prompt_toolkit 真实终端问题交给前端线处理；后端线只负责事件、接口、agent runtime、工具执行、权限、配置、平台适配、provider / transport 等基础能力。
 
-当前工作分支：`feature/backend-next`
+当前工作分支：`feature/desktop-app-backend`
 
 权威接口文档：
 
@@ -28,6 +28,7 @@
 - Tool runs：工具执行结果已持久化，并提供 `/tool-runs` 与 `ConversationQueryService` 查询。
 - Turn reports：每轮 `AgentTurnReport` 已进入持久化审计链路，可和 tool runs 通过 `turn_id/session_key` 关联。
 - Activity runtime：已提供统一结构化接口，覆盖子 agent、后台进程和 gateway agent，并支持 `/activity`、结构化 `CommandResult.kind="activity"`、runtime/query API、slash metadata 和动态候选。
+- Runtime steer：新增 `/steer <text>` 运行中修正机制，gateway 平台可旁路同会话队列入队，agent loop 下一步消费并重答；health、activity、turn report 和事件协议已同步。
 
 ## 2026-07-07：权限限时授权 v1
 
@@ -466,6 +467,34 @@ uv run pytest tests/test_gateway_commands.py tests/test_platform_adapters.py -q
 
 结果：聚焦 `5 passed`，gateway/platform 测试 `69 passed`。
 
+## 2026-07-08：Runtime Steer v1-v3
+
+状态：已完成实现并通过聚焦验证。
+
+背景：用户在 gateway/CLI 长任务运行中，希望能补充“回答短一点”“先停一下这个方向”等修正，而不是只能等待本轮完成或用 `/stop` 中断。平台 adapter 原本会把同会话后续消息排队，普通文本也无法安全区分是新 turn 还是运行中修正。
+
+已完成：
+
+- 新增 `SteerManager` / `SteerSignal`，按 `session_key + turn_id` 管理运行中修正，支持 pending、consumed、expired 状态。
+- `ConversationService` 每轮分配稳定 `turn_id`，登记 active turn，并向 `run_conversation(...)` 传入 steer manager。
+- agent loop 在循环边界消费 steer，追加 `[运行中用户补充/修正]` user message；如果修正在 LLM 最终答案返回时到达，会保留旧 assistant 文本后注入修正并继续下一次 LLM 调用。
+- 新增 slash command `/steer <text>`，非运行中会返回明确提示，运行中会返回 `st_xxx` 回执。
+- Gateway busy 期间允许 `/steer` 像确认回复一样旁路 adapter 队列；普通 busy 文本仍然不会进入当前 turn。
+- `Gateway.health_snapshot()` 新增 `pending_steer_count`、`active_steer_sessions`、`steer`，并在 `running_agent_runs[]` 暴露 `active_turn_id` / `pending_steers`。
+- `ConversationEventType` 新增 `steer_consumed`；`AgentTurnReport.report.steer` 记录本轮 received / consumed / expired / pending 和安全文本预览。
+- `/activity gateway` item 同步 `active_turn_id` / `pending_steers`，前端可在运行列表展示。
+- `BACKEND_INTERFACE.md` 已新增 Runtime Steer 合约，前端只需按文档接 slash command / health / event，不需要后端改 TUI 交互。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_conversation_steer.py tests/test_agent_loop.py tests/test_conversation_service.py tests/test_commands.py tests/test_gateway_commands.py tests/test_event_protocol.py -q
+uv run pytest -q
+```
+
+结果：聚焦 `110 passed`，全量 `798 passed`。
+
 ## 后续可评估方向
 
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。
@@ -476,8 +505,7 @@ uv run pytest tests/test_gateway_commands.py tests/test_platform_adapters.py -q
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest tests/test_agent_factory.py tests/test_agent_loop.py tests/test_transport_cache.py tests/test_context_budget.py -q
 uv run pytest -q
 ```
 
-结果：聚焦 `29 passed`，全量 `685 passed`。
+结果：全量 `798 passed`。

@@ -103,6 +103,7 @@ class AgentTurnReport:
     multimodal_diagnostics: dict[str, Any] = field(default_factory=dict)
     llm: TurnLlmReport = field(default_factory=TurnLlmReport)
     retries: list[TurnRetryReport] = field(default_factory=list)
+    steer: dict[str, Any] = field(default_factory=dict)
     event_counts: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -177,6 +178,8 @@ class AgentTurnReport:
         elif event.type == "assistant_message":
             self._record_assistant_claim(event.message)
             self.final_response_summary = _summarize(event.message)
+        elif event.type == "steer_consumed":
+            self._apply_steer_consumed(data)
         elif event.type == "stop":
             self.status = "stopped"
             self.completed = False
@@ -239,6 +242,7 @@ class AgentTurnReport:
             },
             "tool_truth": tool_truth,
             "retries": [retry.as_dict() for retry in self.retries],
+            "steer": dict(self.steer),
             "event_counts": dict(sorted(self.event_counts.items())),
         }
 
@@ -288,6 +292,17 @@ class AgentTurnReport:
             self.should_review_memory = bool(data.get("should_review_memory"))
         if data.get("context_overflow"):
             self.status = "context_overflow"
+
+    def _apply_steer_consumed(self, data: dict[str, Any]) -> None:
+        steer = dict(self.steer or {})
+        steer["consumed"] = int(steer.get("consumed") or 0) + _as_int(data.get("count"))
+        ids = list(steer.get("consumed_ids") or [])
+        ids.extend(str(item) for item in data.get("steer_ids") or [])
+        steer["consumed_ids"] = ids
+        preview = str(data.get("text_preview") or "")
+        if preview:
+            steer["last_text_preview"] = preview
+        self.steer = steer
 
     def _tool(self, tool_use_id: str, tool_name: str) -> TurnToolReport:
         item = self._tool_items.get(tool_use_id)

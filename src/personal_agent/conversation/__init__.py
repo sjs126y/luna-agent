@@ -13,6 +13,7 @@ from personal_agent.conversation.service import (
     ConversationService,
     ConversationTurnResult,
 )
+from personal_agent.conversation.steer import SteerManager, SteerSignal
 
 __all__ = [
     "ConversationCommandRuntime",
@@ -23,5 +24,7 @@ __all__ = [
     "ConversationTurnResult",
     "EMPTY_FINAL_RESPONSE_MESSAGE",
     "EventRecorder",
+    "SteerManager",
+    "SteerSignal",
     "frontend_protocol_schema",
 ]

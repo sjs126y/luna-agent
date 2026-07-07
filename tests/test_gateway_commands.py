@@ -568,6 +568,60 @@ async def test_platform_confirmation_reply_bypasses_same_session_queue(gateway, 
     assert gateway.health_snapshot()["pending_confirmation_count"] == 0
 
 
+@pytest.mark.asyncio
+async def test_gateway_steer_command_queues_current_turn(gateway):
+    session_key = "telegram:c1:u1"
+    source = _event("hello").source
+    gateway._run_state.begin(session_key, source)
+    gateway._conversation_service.steer_manager.begin_turn(session_key, "turn-1")
+
+    try:
+        response = await gateway._handle_command(_event("/steer 回答短一点"), session_key)
+
+        assert "已收到" in response
+        snapshot = gateway._conversation_service.steer_snapshot(session_key)
+        assert snapshot["active_turn_id"] == "turn-1"
+        assert snapshot["pending_count"] == 1
+        assert snapshot["pending_items"][0]["turn_id"] == "turn-1"
+        assert snapshot["pending_items"][0]["text_preview"] == "回答短一点"
+        health = gateway.health_snapshot()
+        assert health["pending_steer_count"] == 1
+        assert health["running_agent_runs"][0]["active_turn_id"] == "turn-1"
+        assert health["running_agent_runs"][0]["pending_steers"] == 1
+    finally:
+        gateway._conversation_service.steer_manager.end_turn(session_key, "turn-1")
+        gateway._run_state.end(session_key)
+
+
+@pytest.mark.asyncio
+async def test_platform_steer_reply_bypasses_same_session_queue(gateway, monkeypatch):
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    adapter.set_message_handler(gateway._handle_message)
+    adapter.set_message_bypass_predicate(gateway._should_bypass_adapter_queue)
+    gateway._adapters.append(adapter)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    session_key = "telegram:c1:u1"
+    gateway._run_state.begin(session_key, _event("hello").source)
+    gateway._conversation_service.steer_manager.begin_turn(session_key, "turn-1")
+    adapter._active_sessions[session_key] = True
+
+    try:
+        adapter.handle_message(_event("/steer 回答短一点", message_id="steer-1"))
+        await _wait_until(lambda: adapter.sent_contents)
+
+        assert "已收到" in adapter.sent_contents[0]
+        assert adapter.health_snapshot()["pending_messages"] == 0
+        snapshot = gateway._conversation_service.steer_snapshot(session_key)
+        assert snapshot["pending_count"] == 1
+        assert snapshot["pending_items"][0]["text_preview"] == "回答短一点"
+    finally:
+        gateway._conversation_service.steer_manager.end_turn(session_key, "turn-1")
+        gateway._run_state.end(session_key)
+        adapter._active_sessions.pop(session_key, None)
+
+
 def test_gateway_health_snapshot_reports_runtime_state(gateway):
     gateway._run_state.begin("telegram:c1:u1", _event("hello").source)
     gateway._agent_cache["telegram:c1:u1"] = Agent()

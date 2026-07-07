@@ -156,6 +156,21 @@ class ConversationCommandRuntime:
                 self.conversation_service.allow_agent_category(self.session_key, category)
         return f"已授权 {category} 操作，本轮对话内有效。"
 
+    async def is_session_running(self) -> bool:
+        snapshot = self.conversation_service.steer_snapshot(self.session_key)
+        return bool(snapshot.get("active_turn_id"))
+
+    async def add_steer(self, text: str) -> str:
+        if not str(text or "").strip():
+            return "用法: /steer <运行中修正内容>"
+        if not await self.is_session_running():
+            return "当前没有运行中的任务可修正。"
+        signal = self.conversation_service.add_steer(self.session_key, self.source, text)
+        return f"已收到，会在当前任务下一步应用。（{signal.id}）"
+
+    async def steer_snapshot(self) -> dict:
+        return self.conversation_service.steer_snapshot(self.session_key)
+
     async def stop_agents(self) -> str:
         stopped = self.conversation_service.request_stop(None)
         if stopped:
