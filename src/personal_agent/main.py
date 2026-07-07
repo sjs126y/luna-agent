@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-import sys
 
 from personal_agent.config import Settings
 from personal_agent.runtime import create_app_runtime, ensure_system_files
@@ -139,80 +138,10 @@ async def _shutdown(runtime) -> None:
 
 
 def main() -> None:
-    """CLI entry: python -m personal_agent"""
-    if len(sys.argv) > 1 and sys.argv[1] == "--cli":
-        _run_cli(sys.argv[2] if len(sys.argv) > 2 else "Hello")
-    elif len(sys.argv) > 1 and sys.argv[1] == "--wechat-login":
-        _run_wechat_login()
-    elif len(sys.argv) > 1 and sys.argv[1] == "--ingest":
-        _run_ingest(sys.argv[2] if len(sys.argv) > 2 else "")
-    elif len(sys.argv) > 1:
-        from personal_agent.cli import run
-        run()
-    else:
-        try:
-            asyncio.run(boot())
-        except KeyboardInterrupt:
-            pass
+    """Compatibility module entry: delegate to the Typer CLI."""
+    from personal_agent.cli import run
 
-
-def _run_wechat_login() -> None:
-    """CLI: QR login for WeChat."""
-    import asyncio
-
-    settings = Settings()
-
-    async def _run():
-        from personal_agent.plugins.core.manager import PluginManager
-
-        plugin_manager = PluginManager(settings)
-        plugin_manager.discover()
-        plugin_manager.load_plugin("platforms/wechat")
-        result = await plugin_manager.invoke_hook("wechat_qr_login", settings=settings)
-        if result is None:
-            print("WeChat login plugin is unavailable.")
-
-    asyncio.run(_run())
-
-
-def _run_ingest(file_path: str) -> None:
-    """CLI: ingest a file into external memory."""
-    import asyncio
-    from pathlib import Path
-
-    async def _run():
-        path = Path(file_path)
-        if not path.exists():
-            print(f"Error: file not found: {file_path}")
-            return
-
-        settings = Settings()
-        runtime = await create_app_runtime(settings)
-        try:
-            ext = await runtime.plugin_manager.invoke_hook(
-                "create_external_memory_provider",
-                settings=runtime.settings,
-                data_dir=runtime.data_dir / "memory",
-                force=True,
-            )
-            if ext is None:
-                print("Error: external embedding memory provider is unavailable.")
-                return
-            count = await ext.ingest_file(str(path.resolve()))
-            print(f"Ingested {path.name}: {count} chunks stored.")
-        except ValueError as e:
-            print(f"Error: {e}")
-        finally:
-            await runtime.close()
-
-    asyncio.run(_run())
-
-
-def _run_cli(message: str) -> None:
-    """Compatibility one-shot CLI entry."""
-    from personal_agent.cli_chat import run_cli_once_sync
-
-    run_cli_once_sync(message)
+    run()
 
 
 if __name__ == "__main__":

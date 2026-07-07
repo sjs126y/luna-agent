@@ -155,19 +155,18 @@ def test_chat_once_entrypoint_bootstraps_runtime_and_persists_history(tmp_path, 
     assert rows == [("user", "你好"), ("assistant", "echo:你好")]
 
 
-def test_chat_repl_entrypoint_handles_commands_and_closes_runtime(tmp_path, monkeypatch):
+def test_chat_default_entrypoint_starts_inline_tui(tmp_path, monkeypatch):
     _init_local_project(tmp_path, monkeypatch)
-    _install_echo_agent(monkeypatch)
+    calls = []
 
-    result = runner.invoke(app, ["chat"], input="你好\n/usage\n/session work\n\n")
+    def fake_inline(*, session_name="default"):
+        calls.append(session_name)
+
+    monkeypatch.setattr("personal_agent.tui.app.run_inline_tui_sync", fake_inline)
+    result = runner.invoke(app, ["chat", "--session", "work"])
 
     assert result.exit_code == 0, result.output
-    assert "Personal Agent CLI" in result.output
-    assert "echo:你好" in result.output
-    assert "上下文窗口" in result.output
-    assert "会话已切换: cli:work:local" in result.output
-    assert "deepseek-chat" in result.output
-    assert "› " in result.output
+    assert calls == ["work"]
 
 
 def test_serve_dry_run_bootstraps_without_starting_platforms(tmp_path, monkeypatch):

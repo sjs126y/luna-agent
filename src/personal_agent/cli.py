@@ -447,6 +447,21 @@ def serve(
     asyncio.run(boot())
 
 
+@app.command("wechat-login")
+def wechat_login() -> None:
+    """Run the WeChat QR login helper."""
+    async def _run() -> None:
+        settings = Settings()
+        plugin_manager = PluginManager(settings)
+        plugin_manager.discover()
+        plugin_manager.load_plugin("platforms/wechat")
+        result = await plugin_manager.invoke_hook("wechat_qr_login", settings=settings)
+        if result is None:
+            _exit_error("WeChat login plugin is unavailable.")
+
+    asyncio.run(_run())
+
+
 @app.command()
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
@@ -765,6 +780,35 @@ def memory_search(
             typer.echo(_json_dumps(entries))
         else:
             typer.echo(format_memory_entries(entries, title="记忆搜索结果"))
+
+    asyncio.run(_run())
+
+
+@memory_app.command("ingest")
+def memory_ingest(path: Path) -> None:
+    """Ingest a file into external memory."""
+    async def _run() -> None:
+        if not path.exists():
+            _exit_error(f"file not found: {path}")
+        from personal_agent.runtime import create_app_runtime
+
+        settings = Settings()
+        runtime = await create_app_runtime(settings)
+        try:
+            ext = await runtime.plugin_manager.invoke_hook(
+                "create_external_memory_provider",
+                settings=runtime.settings,
+                data_dir=runtime.data_dir / "memory",
+                force=True,
+            )
+            if ext is None:
+                _exit_error("external embedding memory provider is unavailable.")
+            count = await ext.ingest_file(str(path.resolve()))
+            typer.echo(f"Ingested {path.name}: {count} chunks stored.")
+        except ValueError as exc:
+            _exit_error(str(exc))
+        finally:
+            await runtime.close()
 
     asyncio.run(_run())
 

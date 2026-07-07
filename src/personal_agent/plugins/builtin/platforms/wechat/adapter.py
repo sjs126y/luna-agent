@@ -93,7 +93,7 @@ class WeChatAdapter(BasePlatformAdapter):
         self._load_creds()
 
         if not self._token or not self._account_id:
-            error = "WeChat not logged in. Run: uv run python -m personal_agent --wechat-login"
+            error = "WeChat not logged in. Run: uv run personal-agent wechat-login"
             logger.warning(error)
             self.mark_connect_error(error, name="wechat")
             raise RuntimeError(error)
@@ -542,7 +542,7 @@ async def wechat_qr_login(state_dir: Path, base_url: str = API_BASE) -> dict | N
                     qr_scan = qr_data["scan"]
                     refresh_count += 1
                     if refresh_count > 3:
-                        print("\n❌ 二维码多次过期，请重新运行 --wechat-login。")
+                        print("\n❌ 二维码多次过期，请重新运行 personal-agent wechat-login。")
                         return None
                     print(f"\n二维码已过期，正在刷新... ({refresh_count}/3)")
                     _print_qr(qr_scan)
