@@ -1,0 +1,103 @@
+# Personal Agent — example behavioral configuration
+# Copy to config.yaml for local use. API keys / base URLs / secrets go in .env.
+
+agent:
+  ui: "classic"                   # classic | inline
+  max_iterations: 30
+  max_tool_calls_per_turn: 20
+
+execution:
+  mode: "standard"                # guarded | standard | trusted | sovereign
+  policy: {}                      # optional permission overrides, e.g. {"tool_permissions": {"bash": "ask"}}
+
+agents:
+  max_concurrent_runs: 4          # max active delegated sub-agents
+  max_tool_calls: 10              # max tool calls per delegated sub-agent
+  max_tokens: 4096                # max output tokens per delegated sub-agent
+  history_limit: 100              # recent sub-agent runs kept in memory
+
+storage:
+  data_dir: "./data"
+  log_level: "INFO"
+
+compression:
+  engine: "compressor"            # compressor (built-in) | none | disabled
+  model: ""                       # empty = use main model; set = cheap model
+  max_tokens: 500
+  tail_token_budget: 20000
+  threshold_ratio: 0.6
+
+toolsets:
+  enabled: ["all"]                # ["all"] | ["web","terminal","utility"] | etc.
+
+memory:
+  provider: "file"                # built-in memory provider
+  external_provider: "embedding"  # external: "none" | "embedding"
+  review_interval: 10             # auto-review every N turns, 0=disabled
+
+cron:
+  enabled: false
+
+session:
+  expire_days: 30
+  override: {}                    # {"wechat:<chat_id>:<user_id>": "wechat:custom:<user_id>"}
+
+sandbox:
+  roots:                          # allowed directories for file tools + bash
+    - "."
+    - "./data"
+  blocked:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/.git/**"
+    - "**/.ssh/**"
+    - "**/id_rsa*"
+    - "**/.netrc"
+    - "**/data/auth/**"
+    - "**/node_modules/**"
+    - "**/__pycache__/**"
+    - "**/.venv/**"
+    - "**/.claude/**"
+    - "**/audit.log"
+    - "**/pyproject.toml"
+    - "**/config.yaml"
+  bash_work_dir: "./data"
+  bash_restrict_paths: true
+  bash_allow_network: false
+  file_max_write_bytes: 100000
+  audit_enabled: true
+
+auth:
+  enabled: true
+  admins: []
+  allowed_users: []
+
+profiles:
+  # Map session_key -> profile directory under data/system/.
+  # Example: "wechat:<chat_id>:<user_id>": "default"
+
+mcp:
+  enabled: true
+  servers:
+    # Enable after installing Node.js/npm if you want filesystem MCP access.
+    - name: "filesystem"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      enabled: false
+
+    - name: "github"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ""
+      enabled: false
+
+    - name: "memory"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-memory", "--storage-path", "./data/mcp/memory.json"]
+      enabled: true
+
+    - name: "sequential-thinking"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      enabled: true
