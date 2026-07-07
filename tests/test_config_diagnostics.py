@@ -214,7 +214,8 @@ sandbox:
 
     report = build_config_report(tmp_path)
 
-    assert [item["key"] for item in report["deprecated_keys"]] == ["llm", "platforms"]
+    assert [item["key"] for item in report["deprecated_keys"]] == ["platforms"]
+    assert "llm.provider" in report["unknown_nested_keys"]
     assert any("LLM_PROVIDER" in hint for hint in report["migration_hints"])
     assert any("platforms/telegram" in hint or "平台 telegram" in hint for hint in report["migration_hints"])
     assert any("平台 telegram 缺少环境变量" in warning for warning in report["warnings"])
@@ -274,7 +275,13 @@ sandbox:
         encoding="utf-8",
     )
     (tmp_path / ".env").write_text(
-        "LLM_PROVIDER=unknown\nLLM_API_KEY=test\nLLM_API_MODE=bad\nLLM_MAX_TOKENS=nope\n",
+        (
+            "LLM_PROVIDER=unknown\n"
+            "LLM_API_KEY=test\n"
+            "LLM_API_MODE=bad\n"
+            "LLM_MAX_TOKENS=nope\n"
+            "LLM_CONTEXT_WINDOW=-1\n"
+        ),
         encoding="utf-8",
     )
 
@@ -285,6 +292,7 @@ sandbox:
     assert any("LLM_PROVIDER 不支持" in error for error in report["errors"])
     assert any("LLM_API_MODE 不支持" in error for error in report["errors"])
     assert any("LLM_MAX_TOKENS 必须是正整数" in error for error in report["errors"])
+    assert any("LLM_CONTEXT_WINDOW 必须大于等于 0" in error for error in report["errors"])
     assert any("agent.max_iterations 必须大于 0" in error for error in report["errors"])
     assert any("agent.max_tool_calls_per_turn 必须是正整数" in error for error in report["errors"])
     assert any("compression.engine 不支持" in error for error in report["errors"])
@@ -342,6 +350,7 @@ def test_config_report_accepts_codex_responses_api_mode(tmp_path):
             "LLM_BASE_URL=https://api.ahooqq.cn",
             "LLM_MODEL=gpt-5.5",
             "LLM_API_MODE=codex_responses",
+            "LLM_CONTEXT_WINDOW=1000000",
         ]),
         encoding="utf-8",
     )
@@ -353,6 +362,7 @@ def test_config_report_accepts_codex_responses_api_mode(tmp_path):
     report = build_config_report(tmp_path)
 
     assert report["ok"] is True
+    assert report["env"]["llm_context_window"] == "1000000"
     assert not any("LLM_API_MODE 不支持" in error for error in report["errors"])
     assert report["errors"] == []
     assert report["warnings"] == []

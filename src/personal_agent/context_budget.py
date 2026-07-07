@@ -136,6 +136,11 @@ async def build_context_budget(
     if tools is None:
         tools = []
 
+    if settings is not None:
+        model = model or str(getattr(settings, "llm_model", "") or "")
+        if context_limit <= 0:
+            context_limit = int(getattr(settings, "llm_context_window", 0) or 0)
+
     if skills_summary is None:
         skills_summary = _current_skill_summaries()
 

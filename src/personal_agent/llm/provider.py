@@ -71,6 +71,13 @@ def _detect_context_window(model: str) -> int:
     return 64_000
 
 
+def _configured_context_window(config) -> int:
+    configured = int(getattr(config, "llm_context_window", 0) or 0)
+    if configured > 0:
+        return configured
+    return _detect_context_window(str(getattr(config, "llm_model", "") or ""))
+
+
 # ── Provider Registry ──────────────────────────────────
 
 class ProviderRegistry:
@@ -120,7 +127,7 @@ def _deepseek_factory(config) -> ProviderProfile:
     return ProviderProfile(
         name="deepseek", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
-        context_window=_detect_context_window(config.llm_model),
+        context_window=_configured_context_window(config),
         cache_strategy="prefix",
         supports_cache_usage=True,
         cache_usage_fields={
@@ -134,7 +141,7 @@ def _openai_factory(config) -> ProviderProfile:
     return ProviderProfile(
         name="openai", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
-        context_window=_detect_context_window(config.llm_model),
+        context_window=_configured_context_window(config),
         cache_strategy="prefix",
         supports_cache_usage=True,
         cache_usage_fields={
@@ -151,7 +158,7 @@ def _anthropic_factory(config) -> ProviderProfile:
     return ProviderProfile(
         name="anthropic", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
-        context_window=_detect_context_window(config.llm_model),
+        context_window=_configured_context_window(config),
         cache_strategy="explicit",
         supports_cache_usage=True,
         cache_usage_fields={
@@ -173,7 +180,7 @@ def _openrouter_factory(config) -> ProviderProfile:
         api_key=config.llm_api_key,
         model=config.llm_model,
         max_tokens=config.llm_max_tokens,
-        context_window=_detect_context_window(config.llm_model),
+        context_window=_configured_context_window(config),
         extra_headers={
             "HTTP-Referer": "http://localhost",
             "X-Title": "Personal Agent",

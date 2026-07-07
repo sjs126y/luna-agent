@@ -39,6 +39,9 @@ agent:
   max_iterations: 30
   max_tool_calls_per_turn: 20
 
+llm:
+  context_window: 0
+
 agents:
   max_concurrent_runs: 4
   max_tool_calls: 10
@@ -119,6 +122,9 @@ agent:
   max_iterations: 30
   max_tool_calls_per_turn: 20
 
+llm:
+  context_window: 0
+
 agents:
   max_concurrent_runs: 4
   max_tool_calls: 10
@@ -198,6 +204,9 @@ _CONFIG_TEMPLATE_BOT = """# Personal Agent bot configuration
 agent:
   max_iterations: 30
   max_tool_calls_per_turn: 20
+
+llm:
+  context_window: 0
 
 agents:
   max_concurrent_runs: 4
@@ -305,6 +314,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 
 # Platforms
 TELEGRAM_BOT_TOKEN=
@@ -327,6 +337,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 
 # Telegram
 TELEGRAM_BOT_TOKEN=
@@ -354,6 +365,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 
 # Telegram
 TELEGRAM_BOT_TOKEN=
@@ -366,6 +378,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 
 # Feishu
 FEISHU_APP_ID=
@@ -379,6 +392,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 
 # WeChat
 WEIXIN_TOKEN=
@@ -394,6 +408,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 
 # QQ / OneBot HTTP
 QQ_BOT_BASE_URL=
@@ -640,7 +655,12 @@ def tokens_session(
             messages.extend(json.loads(session_json.read_text(encoding="utf-8")))
 
         effective_model = model or settings.llm_model
-        effective_limit = context_limit or _detect_context_window(effective_model)
+        configured_limit = int(getattr(settings, "llm_context_window", 0) or 0)
+        effective_limit = (
+            context_limit
+            or (configured_limit if not model else 0)
+            or _detect_context_window(effective_model)
+        )
         budget = await build_context_budget(
             messages=messages,
             settings=settings,

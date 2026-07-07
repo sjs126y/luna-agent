@@ -23,9 +23,12 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
+LLM_CONTEXT_WINDOW=0
 ```
 
 `LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。Codex/Ahoo 这类 Responses 中转站通常使用根 `LLM_BASE_URL`，并显式设置 `LLM_API_MODE=codex_responses`。
+
+`LLM_CONTEXT_WINDOW=0` 表示按模型名自动推断上下文窗口；使用中转站自定义模型名时可以填真实窗口大小，例如 `1000000`。同一配置也可以写在 `config.yaml` 的 `llm.context_window`，优先级是 `.env` 高于 `config.yaml`。
 
 平台字段按需填写：
 
@@ -48,6 +51,9 @@ execution:
   mode: standard
   policy:
     tool_permissions: {}
+
+llm:
+  context_window: 0
 
 storage:
   data_dir: ./data

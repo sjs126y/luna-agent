@@ -318,6 +318,17 @@ def _llm_fields() -> tuple[ConfigField, ...]:
         _env_field("LLM_MODEL", "llm_model", "deepseek-chat", "str", "llm", "LLM model name."),
         _env_field("LLM_API_MODE", "llm_api_mode", "auto", "str", "llm", "LLM API compatibility mode.", choices=LLM_API_MODES),
         _env_field("LLM_MAX_TOKENS", "llm_max_tokens", 4096, "int", "llm", "Maximum LLM output tokens.", minimum=1),
+        _mixed_field(
+            "llm.context_window",
+            "llm_context_window",
+            0,
+            "int",
+            "llm",
+            "Model context window override. 0 means auto-detect from model name.",
+            minimum=0,
+            env_key="LLM_CONTEXT_WINDOW",
+            yaml_path="llm.context_window",
+        ),
     )
 
 

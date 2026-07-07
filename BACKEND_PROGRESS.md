@@ -306,6 +306,31 @@ uv run pytest -q
 
 结果：聚焦 `108 passed`，全量 `684 passed`。
 
+## 已完成方向：LLM 上下文窗口显式配置
+
+状态：已完成实现并通过全量验证。
+
+背景：中转站自定义模型名（例如 `gpt-5.5`）无法被 `_detect_context_window(...)` 准确识别时，后端会回退到默认 `64000`，导致前端 context meter、`/usage` 和 turn report 显示的上下文窗口偏小。
+
+已完成：
+
+- 新增 `LLM_CONTEXT_WINDOW` / `llm.context_window` 配置，默认 `0` 表示继续按模型名自动推断；正整数会覆盖推断结果。
+- `ProviderProfile.context_window` 创建时优先读取显式配置，DeepSeek/OpenAI/Anthropic/OpenRouter 统一生效。
+- `build_context_budget(...)` 和 `personal-agent tokens session` 会使用显式上下文窗口。
+- `doctor` / config diagnostics 增加 `LLM_CONTEXT_WINDOW` 校验和 env 报告字段。
+- `config.yaml.example`、`.env.example`、`docs/configuration.md`、`BACKEND_INTERFACE.md` 已同步该配置含义和前端可见影响。
+- `llm` 顶层不再整体视为废弃；仅旧的 `llm.provider` / `llm.model` / `llm.api_key` 等字段继续给迁移提示，`llm.context_window` 合法。
+
+已验证：
+
+```bash
+uv run pytest tests/test_config_loader.py tests/test_config_registry.py tests/test_config_diagnostics.py tests/test_transport_cache.py -q
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
+
+结果：聚焦 `43 passed`，全量 `781 passed`。
+
 ## 后续可评估方向
 
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。

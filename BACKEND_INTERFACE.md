@@ -385,6 +385,7 @@
 - 图片在 `text` fallback 模式下会进入统一图片文本化链路；配置 `multimodal.image_text_provider` 后可调用辅助 vision provider 生成文本描述。
 - `multimodal.image_text_api_mode` 可控制图片文本化使用的 API 协议：`auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。`anthropic + auto` 会按 Anthropic Messages 请求，base URL 会按 `{base}/messages` 调用，例如 `https://api.deepseek.com/anthropic` -> `/anthropic/messages`；OpenAI-compatible 中转站应显式使用 `chat_completions`；Codex/Ahoo 这类 Responses 中转站建议显式使用 `codex_responses`，base URL 通常填根地址，例如 `https://api.ahooqq.cn`，后端会请求 `{base}/responses`。`codex_responses` 是 `responses` 的语义别名，底层 wire format 相同。
 - 主 Agent 的 `LLM_API_MODE` 也支持 `responses` / `codex_responses`。使用 Codex/Ahoo 这类中转站时，推荐 `.env` 设为 `LLM_PROVIDER=openai`、`LLM_BASE_URL=https://api.ahooqq.cn`、`LLM_API_MODE=codex_responses`、`LLM_MODEL=<目标模型>`；`doctor` 会接受该配置。
+- 主 Agent 的上下文窗口可通过 `.env` 的 `LLM_CONTEXT_WINDOW` 或 `config.yaml` 的 `llm.context_window` 显式配置；默认 `0` 表示按模型名自动推断。该值会影响 `llm_end.context_window`、`context_budget.context_limit`、`/usage` 上下文估算和 turn report 里的 context 字段。`.env` 优先级高于 `config.yaml`，中转站自定义模型名可填真实窗口，例如 `1000000`。
 - vision fallback 的 API key / base URL 使用 `.env` 的 `IMAGE_TEXT_API_KEY` / `IMAGE_TEXT_BASE_URL`；前端不参与模型调用。
 - 配置 `multimodal.ocr_endpoint` 后，后端可调用本地 OCR HTTP 服务；OCR 引擎不内置在主项目中。
 

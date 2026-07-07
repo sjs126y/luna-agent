@@ -98,7 +98,6 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
 DEPRECATED_TOP_LEVEL_KEYS = {
     "platform": "平台配置已插件化，平台 secret 放到 .env，启用项由插件和 env 决定。",
     "platforms": "平台配置已插件化，平台 secret 放到 .env，启用项由插件和 env 决定。",
-    "llm": "LLM secret 和模型配置请使用 .env 中的 LLM_*。",
 }
 
 PROVIDER_REQUIRED_ENV = {
@@ -144,6 +143,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     llm_provider = str(env.get("LLM_PROVIDER") or "deepseek").strip()
     llm_api_mode = str(env.get("LLM_API_MODE") or "auto").strip()
     llm_max_tokens = str(env.get("LLM_MAX_TOKENS") or "4096").strip()
+    llm_context_window = str(env.get("LLM_CONTEXT_WINDOW") or "0").strip()
     required_llm_env = PROVIDER_REQUIRED_ENV.get(llm_provider, ["LLM_API_KEY"])
     missing_llm_env = [name for name in required_llm_env if not env.get(name)]
     llm_base_url = str(env.get("LLM_BASE_URL") or "")
@@ -167,6 +167,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         llm_provider=llm_provider,
         llm_api_mode=llm_api_mode,
         llm_max_tokens=llm_max_tokens,
+        llm_context_window=llm_context_window,
     )
     mcp_servers = _mcp_server_report(config)
     path_warnings = _path_warnings(directories)
@@ -258,6 +259,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
             "llm_model": llm_model,
             "llm_model_set": bool(llm_model),
             "llm_max_tokens": llm_max_tokens,
+            "llm_context_window": llm_context_window,
             "missing_llm_env": missing_llm_env,
             "platforms": platform_env,
         },
@@ -333,7 +335,13 @@ def _read_env(path: Path) -> dict[str, str]:
         return {}
 
 
-def _validate_env(*, llm_provider: str, llm_api_mode: str, llm_max_tokens: str) -> dict[str, list[str]]:
+def _validate_env(
+    *,
+    llm_provider: str,
+    llm_api_mode: str,
+    llm_max_tokens: str,
+    llm_context_window: str,
+) -> dict[str, list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     if llm_provider not in VALID_LLM_PROVIDERS:
@@ -353,6 +361,13 @@ def _validate_env(*, llm_provider: str, llm_api_mode: str, llm_max_tokens: str) 
             errors.append("LLM_MAX_TOKENS 必须大于 0。")
         elif max_tokens < 256:
             warnings.append("LLM_MAX_TOKENS 很小，可能导致回复被截断。")
+    try:
+        context_window = int(llm_context_window)
+    except ValueError:
+        errors.append("LLM_CONTEXT_WINDOW 必须是非负整数，0 表示自动推断。")
+    else:
+        if context_window < 0:
+            errors.append("LLM_CONTEXT_WINDOW 必须大于等于 0，0 表示自动推断。")
     return {"errors": errors, "warnings": warnings}
 
 
@@ -674,12 +689,7 @@ def _migration_hints(
 
     for item in deprecated_keys:
         key = item["key"]
-        if key == "llm":
-            hints.append("将顶层 llm 配置迁移到 .env 的 LLM_PROVIDER/LLM_API_KEY/LLM_BASE_URL/LLM_MODEL。")
-            for old_key, env_name in llm_mapping.items():
-                if old_key in llm:
-                    hints.append(f"旧配置 llm.{old_key} 请迁移到 .env 的 {env_name}。")
-        elif key in {"platform", "platforms"}:
+        if key in {"platform", "platforms"}:
             hints.append(
                 "删除顶层 platform/platforms；平台 secret 放到 .env，平台插件 key 使用 platforms/telegram 等。"
             )
@@ -687,6 +697,10 @@ def _migration_hints(
                 hints.append(
                     f"旧配置 platforms.{name} 请改为 plugins.enabled 添加 platforms/{name}，secret 放入 .env。"
                 )
+    if isinstance(llm, dict):
+        for old_key, env_name in llm_mapping.items():
+            if old_key in llm:
+                hints.append(f"旧配置 llm.{old_key} 请迁移到 .env 的 {env_name}。")
     if "external" in memory or (memory.get("embedding") is not None and not isinstance(memory.get("embedding"), dict)):
         hints.append("旧 memory external/embedding 配置请改为 memory.external_provider: embedding 或 none。")
     if unknown_keys:

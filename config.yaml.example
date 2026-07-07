@@ -6,6 +6,9 @@ agent:
   max_iterations: 30
   max_tool_calls_per_turn: 20
 
+llm:
+  context_window: 0               # 0 = 根据模型名自动推断；中转站自定义模型名可填真实窗口，例如 1000000
+
 execution:
   mode: "standard"                # 执行模式：guarded | standard | trusted | sovereign
   policy:
