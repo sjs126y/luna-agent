@@ -12,6 +12,7 @@ def test_config_registry_paths_are_unique():
     assert "execution.mode" in paths
     assert "LLM_API_KEY" in paths
     assert "sandbox.roots" in paths
+    assert "attachments.resolve_inbound" in paths
     assert "gateway.platform_send_max_retries" in paths
     assert "profiles" in paths
     assert CONFIG_REGISTRY.get("execution.mode") is not None
@@ -91,11 +92,13 @@ def test_config_registry_exposes_known_yaml_sections_and_keys():
     keys = config_yaml_known_keys_by_section()
 
     assert "execution" in sections
+    assert "attachments" in sections
     assert "gateway" in sections
     assert "profiles" in sections
     assert "platform_send_max_retries" in keys["gateway"]
     assert "embedding" in keys["memory"]
     assert keys["profiles"] is None
+    assert "resolve_inbound" in keys["attachments"]
     assert len(CONFIG_REGISTRY.env_fields()) > 0
 
 
@@ -134,6 +137,16 @@ def test_config_registry_schema_is_stable():
     assert schema["field_count"] == len(schema["fields"])
     assert "execution" in schema["sections"]
     assert fields["LLM_API_KEY"]["sensitive"] is True
+    assert fields["attachments.resolve_inbound"]["value_type"] == "bool"
+    assert fields["multimodal.text_extract_max_chars"]["value_type"] == "int"
+    assert fields["multimodal.text_extract_pdf_max_pages"]["minimum"] == 1
+    assert fields["multimodal.image_text_mode"]["choices"] == ["auto", "vision", "ocr", "off"]
+    assert fields["multimodal.image_text_cache"]["value_type"] == "bool"
+    assert fields["multimodal.image_text_provider"]["choices"][0] == ""
+    assert set(fields["multimodal.image_text_provider"]["choices"]) == {"", "deepseek", "openai", "anthropic", "openrouter"}
+    assert fields["IMAGE_TEXT_API_KEY"]["sensitive"] is True
+    assert fields["multimodal.ocr_timeout_seconds"]["minimum"] == 1
+    assert fields["multimodal.ocr_language"]["value_type"] == "str"
     assert fields["profiles"]["env_key"] == "PROFILES"
     assert fields["profiles"]["yaml_path"] == "profiles"
     assert fields["execution.mode"]["choices"] == ["guarded", "standard", "trusted", "sovereign"]

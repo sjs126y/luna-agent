@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
+from urllib.parse import urlparse
 
 from personal_agent.llm.base import BaseTransport, DeltaCallback, LLMRequestPlan
 from personal_agent.llm.client import call_anthropic
@@ -190,8 +191,25 @@ class AnthropicMessagesTransport(BaseTransport):
         return result
 
     def convert_messages(self, messages: list[dict]) -> list[dict]:
-        """Already in Anthropic format — pass through (fast path)."""
-        return messages
+        """Convert internal blocks to Anthropic Messages blocks."""
+        result: list[dict] = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if not isinstance(content, list):
+                result.append(dict(msg))
+                continue
+            blocks: list[dict] = []
+            for block in content:
+                if block.get("type") == "image_url":
+                    image = _anthropic_image_block(block)
+                    if image is not None:
+                        blocks.append(image)
+                    continue
+                blocks.append(block)
+            converted = dict(msg)
+            converted["content"] = blocks
+            result.append(converted)
+        return result
 
     # ── convenience call ───────────────────────────────
 
@@ -246,3 +264,22 @@ def _map_stop_reason(stop_reason: str, has_tool_calls: bool) -> str:
 
 def _sorted_tools(tools: list[dict]) -> list[dict]:
     return sorted(tools, key=lambda item: str(item.get("name") or ""))
+
+
+def _anthropic_image_block(block: dict) -> dict | None:
+    url = str((block.get("image_url") or {}).get("url") or "")
+    if not url.startswith("data:"):
+        return None
+    parsed = urlparse(url)
+    header, _, data = url.partition(",")
+    if ";base64" not in header:
+        return None
+    media_type = parsed.path.split(";", 1)[0] or "application/octet-stream"
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type,
+            "data": data,
+        },
+    }

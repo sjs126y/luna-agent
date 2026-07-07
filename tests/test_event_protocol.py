@@ -33,6 +33,14 @@ def test_event_protocol_schema_is_frontend_serializable():
     assert schema["protocol_version"] == EVENT_PROTOCOL_VERSION
     assert "tool_end" in schema["events"]
     assert schema["events"]["assistant_delta"]["delta"] is True
+    turn_start_fields = {
+        field["name"]: field
+        for field in schema["events"]["turn_start"]["fields"]
+    }
+    assert turn_start_fields["attachments_count"]["type"] == "integer"
+    assert turn_start_fields["attachment_kinds"]["type"] == "list[string]"
+    assert turn_start_fields["multimodal_diagnostics"]["type"] == "object"
+
     fields = {
         field["name"]: field
         for field in schema["events"]["tool_end"]["fields"]

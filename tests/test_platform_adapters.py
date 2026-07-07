@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import base64
 import hashlib
 import hmac
 import json
@@ -105,6 +106,78 @@ async def test_feishu_after_parse_without_hooks_keeps_message_event(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_feishu_image_message_preserves_attachment_reference(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+
+    adapter = FeishuAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+    event_data = SimpleNamespace(
+        event=SimpleNamespace(
+            sender=SimpleNamespace(
+                sender_id=SimpleNamespace(open_id="ou-user", union_id="", user_id="")
+            ),
+            message=SimpleNamespace(
+                content='{"image_key": "img-key", "file_size": 123}',
+                message_type="image",
+                chat_type="p2p",
+                message_id="mid-1",
+                chat_id="oc-chat",
+                create_time="123456",
+            ),
+        )
+    )
+
+    await adapter._handle_feishu_event(event_data)
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.text == "[image: img-key]"
+    assert [item.type for item in event.attachments] == ["image"]
+    assert event.envelope.attachments[0].platform_file_id == "img-key"
+    assert event.envelope.attachments[0].size == 123
+    assert event.attachments[0].metadata["size"] == 123
+    assert event.attachments[0].metadata["feishu_data"]["image_key"] == "img-key"
+
+
+@pytest.mark.asyncio
+async def test_feishu_file_message_preserves_name_and_mime(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+
+    adapter = FeishuAdapter(_settings(tmp_path), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+    event_data = SimpleNamespace(
+        event=SimpleNamespace(
+            sender=SimpleNamespace(
+                sender_id=SimpleNamespace(open_id="ou-user", union_id="", user_id="")
+            ),
+            message=SimpleNamespace(
+                content=json.dumps({
+                    "file_key": "file-key",
+                    "file_name": "report.pdf",
+                    "mime_type": "application/pdf",
+                    "file_size": 456,
+                }),
+                message_type="file",
+                chat_type="p2p",
+                message_id="mid-2",
+                chat_id="oc-chat",
+                create_time="123457",
+            ),
+        )
+    )
+
+    await adapter._handle_feishu_event(event_data)
+
+    attachment = captured[0].envelope.attachments[0]
+    assert attachment.kind == "file"
+    assert attachment.platform_file_id == "file-key"
+    assert attachment.name == "report.pdf"
+    assert attachment.mime_type == "application/pdf"
+
+
+@pytest.mark.asyncio
 async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: Path, monkeypatch):
     from personal_agent.models.messages import MessageEvent, SessionSource
     from personal_agent.plugins.builtin.platforms.telegram.adapter import TelegramAdapter
@@ -122,6 +195,65 @@ async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: 
     assert captured == [event]
     assert event.envelope is not None
     assert event.envelope.text == "hello"
+
+
+def test_telegram_message_parts_extracts_photo_document_and_voice():
+    from personal_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
+
+    msg = SimpleNamespace(
+        text="",
+        caption="see",
+        photo=[
+            SimpleNamespace(file_id="small", file_unique_id="u-small", file_size=10, width=10, height=10),
+            SimpleNamespace(file_id="big", file_unique_id="u-big", file_size=20, width=100, height=100),
+        ],
+        document=SimpleNamespace(
+            file_id="doc-1",
+            file_unique_id="doc-u",
+            file_name="report.pdf",
+            mime_type="application/pdf",
+            file_size=300,
+        ),
+        voice=SimpleNamespace(
+            file_id="voice-1",
+            file_unique_id="voice-u",
+            mime_type="audio/ogg",
+            file_size=40,
+            duration=2,
+        ),
+        audio=None,
+        video=None,
+    )
+
+    text, parts, attachments = _message_parts(msg)
+
+    assert text == "see"
+    assert [item.type for item in attachments] == ["image", "file", "audio"]
+    assert attachments[0].file_id == "big"
+    assert attachments[1].name == "report.pdf"
+    assert attachments[1].mime_type == "application/pdf"
+    assert attachments[2].file_id == "voice-1"
+    assert parts[0].text == "see"
+
+
+def test_telegram_message_parts_allows_attachment_only_message():
+    from personal_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
+
+    msg = SimpleNamespace(
+        text="",
+        caption="",
+        photo=[SimpleNamespace(file_id="photo-1", file_unique_id="photo-u", file_size=10, width=1, height=1)],
+        document=None,
+        voice=None,
+        audio=None,
+        video=None,
+    )
+
+    text, parts, attachments = _message_parts(msg)
+
+    assert text == "[image: photo-1]"
+    assert [item.type for item in parts] == ["image"]
+    assert attachments[0].file_id == "photo-1"
 
 
 @pytest.mark.asyncio
@@ -221,14 +353,15 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
 
     assert len(captured) == 1
     assert captured[0].text == (
-        "see [image: img-1] [voice: voice.amr] [video: video-1] [file: report.pdf]"
+        "see [image: img-1] [audio: voice.amr] [video: video-1] [file: report.pdf]"
     )
-    assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
+    assert [item.type for item in captured[0].attachments] == ["image", "audio", "video", "file"]
     assert captured[0].attachments[0].file_id == "img-1"
     assert captured[0].attachments[-1].name == "report.pdf"
     assert captured[0].envelope is not None
-    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "voice", "video", "file"]
+    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "audio", "video", "file"]
     assert captured[0].envelope.attachments[0].platform_file_id == "img-1"
+    assert captured[0].attachments[1].metadata["wechat_media"]["file_name"] == "voice.amr"
     assert adapter._context_tokens["wx-user"] == "ctx-token"
 
 
@@ -363,16 +496,18 @@ async def test_qq_webhook_payload_summarizes_media_segments(tmp_path: Path, monk
     assert handled is True
     assert captured[0].text == (
         "see [image: https://example.test/a.png]"
-        "[voice: voice.amr]"
+        "[audio: voice.amr]"
         "[video: movie.mp4]"
         "[file: report.pdf]"
         "[reply:42]"
     )
-    assert [item.type for item in captured[0].attachments] == ["image", "voice", "video", "file"]
+    assert [item.type for item in captured[0].attachments] == ["image", "audio", "video", "file"]
     assert captured[0].attachments[0].url == "https://example.test/a.png"
+    assert captured[0].attachments[1].file_id == "voice.amr"
+    assert captured[0].attachments[2].file_id == "movie.mp4"
     assert captured[0].attachments[-1].name == "report.pdf"
     assert captured[0].envelope is not None
-    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "voice", "video", "file"]
+    assert [item.kind for item in captured[0].envelope.attachments] == ["image", "audio", "video", "file"]
     assert captured[0].envelope.attachments[0].url == "https://example.test/a.png"
 
 
@@ -396,3 +531,196 @@ async def test_qq_webhook_signature_is_checked(tmp_path: Path, monkeypatch):
     assert await adapter.handle_webhook_payload(payload, signature="bad") is False
     assert await adapter.handle_webhook_payload(payload, signature=signature) is True
     assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_qq_download_attachment_uses_onebot_media_endpoint(tmp_path: Path, monkeypatch):
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path), db=None)
+    adapter._session = object()
+    calls = []
+
+    async def fake_post_json(endpoint, payload):
+        calls.append((endpoint, payload))
+        return {"status": "ok", "data": {"file": "https://example.test/voice.amr"}}
+
+    async def fake_read_download_target(target, **kwargs):
+        return b"voice", target, "audio/amr"
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+    monkeypatch.setattr(adapter, "_read_download_target", fake_read_download_target)
+
+    downloaded = await adapter.download_attachment(
+        AttachmentRef(
+            id="q1",
+            kind="audio",
+            name="voice.amr",
+            platform_file_id="voice.amr",
+            metadata={"onebot_data": {"file": "voice.amr"}},
+        )
+    )
+
+    assert calls[0] == ("get_record", {"file": "voice.amr"})
+    assert downloaded.data == b"voice"
+    assert downloaded.kind == "audio"
+    assert downloaded.mime_type == "audio/amr"
+    assert downloaded.source_url == "https://example.test/voice.amr"
+
+
+@pytest.mark.asyncio
+async def test_wechat_download_attachment_decrypts_cdn_media(tmp_path: Path, monkeypatch):
+    from Crypto.Cipher import AES
+
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    key = b"0123456789abcdef"
+    plaintext = b"image-payload"
+    pad = 16 - (len(plaintext) % 16)
+    encrypted = AES.new(key, AES.MODE_ECB).encrypt(plaintext + bytes([pad]) * pad)
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+
+    async def fake_download_url_bytes(url, *, kind):
+        return encrypted, "application/octet-stream"
+
+    monkeypatch.setattr(adapter, "_download_url_bytes", fake_download_url_bytes)
+
+    downloaded = await adapter.download_attachment(
+        AttachmentRef(
+            id="w1",
+            kind="image",
+            name="photo.png",
+            metadata={
+                "wechat_media": {
+                    "file_name": "photo.png",
+                    "media": {
+                        "encrypt_query_param": "encrypted-param",
+                        "aes_key": base64.b64encode(key).decode(),
+                    },
+                }
+            },
+        )
+    )
+
+    assert downloaded.data == plaintext
+    assert downloaded.name == "photo.png"
+    assert downloaded.source_url.startswith("https://novac2c.cdn.weixin.qq.com/c2c/download")
+    assert downloaded.platform_file_id == "encrypted-param"
+    assert downloaded.metadata["wechat_download"]["encrypted"] is True
+
+
+@pytest.mark.asyncio
+async def test_wechat_download_attachment_requires_key_before_download(tmp_path: Path, monkeypatch):
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.platforms import AttachmentDownloadError
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+
+    async def fake_download_url_bytes(url, *, kind):  # pragma: no cover - should not run
+        raise AssertionError("download should not run without decrypt key")
+
+    monkeypatch.setattr(adapter, "_download_url_bytes", fake_download_url_bytes)
+
+    with pytest.raises(AttachmentDownloadError) as exc_info:
+        await adapter.download_attachment(
+            AttachmentRef(
+                id="w-key",
+                kind="image",
+                metadata={
+                    "wechat_media": {
+                        "encrypt_query_param": "encrypted-param",
+                    }
+                },
+            )
+        )
+
+    assert exc_info.value.reason == "decrypt_key_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_wechat_prepare_encrypted_url_uses_platform_downloader(tmp_path: Path, monkeypatch):
+    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))
+    calls = []
+
+    async def fake_download_attachment(ref, source=None):
+        calls.append((ref.url, ref.platform_file_id))
+        return DownloadedAttachment(
+            data=b"\x89PNG\r\n\x1a\npayload",
+            kind="image",
+            name="photo.png",
+            mime_type="image/png",
+            platform_file_id=ref.platform_file_id,
+        )
+
+    monkeypatch.setattr(adapter, "download_attachment", fake_download_attachment)
+
+    prepared = await adapter._prepare_attachment_ref(
+        AttachmentRef(
+            id="w2",
+            kind="image",
+            name="photo.png",
+            url="https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=encrypted-param",
+            metadata={
+                "wechat_media": {
+                    "cdn_url": "https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=encrypted-param",
+                    "aes_key": base64.b64encode(b"0123456789abcdef").decode(),
+                    "media_id": "encrypted-param",
+                }
+            },
+        ),
+        source=None,
+    )
+
+    assert calls == [("", "encrypted-param")]
+    assert prepared.local_path
+    assert prepared.metadata["attachment_resolve"]["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_wechat_prepare_top_level_encrypted_param_uses_platform_downloader(tmp_path: Path, monkeypatch):
+    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
+    from personal_agent.models.messages import AttachmentRef
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))
+    calls = []
+
+    async def fake_download_attachment(ref, source=None):
+        calls.append((ref.url, ref.platform_file_id))
+        return DownloadedAttachment(
+            data=b"\x89PNG\r\n\x1a\npayload",
+            kind="image",
+            name="photo.png",
+            mime_type="image/png",
+            platform_file_id=ref.platform_file_id,
+        )
+
+    monkeypatch.setattr(adapter, "download_attachment", fake_download_attachment)
+
+    prepared = await adapter._prepare_attachment_ref(
+        AttachmentRef(
+            id="w3",
+            kind="image",
+            name="photo.png",
+            metadata={
+                "wechat_media": {
+                    "encrypt_query_param": "encrypted-param",
+                    "aes_key": base64.b64encode(b"0123456789abcdef").decode(),
+                }
+            },
+        ),
+        source=None,
+    )
+
+    assert calls == [("", "encrypted-param")]
+    assert prepared.local_path
+    assert prepared.metadata["attachment_resolve"]["status"] == "resolved"

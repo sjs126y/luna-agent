@@ -30,11 +30,17 @@ class MessagePart:
 
     def to_attachment_ref(self, attachment_id: str = "") -> "AttachmentRef":
         detail = self.file_id or self.url or self.path or self.name or self.text
+        size = 0
+        try:
+            size = int(self.metadata.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
         return AttachmentRef(
             id=attachment_id or detail,
             kind=self.type,
             name=self.name,
             mime_type=self.mime_type,
+            size=size,
             url=self.url,
             platform_file_id=self.file_id,
             local_path=self.path,

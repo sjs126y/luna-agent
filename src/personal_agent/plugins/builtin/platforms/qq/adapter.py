@@ -8,23 +8,31 @@ handle_webhook_payload method for future HTTP gateway integration.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import logging
+import mimetypes
 import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import aiohttp
 
+from personal_agent.attachments import DownloadedAttachment
+from personal_agent.attachments.store import DEFAULT_MAX_BYTES
 from personal_agent.models.messages import MessageEnvelope, MessageEvent, MessagePart, SessionSource
+from personal_agent.platforms.attachments import attachment_part, canonical_attachment_kind
 from personal_agent.platforms.core import (
+    AttachmentDownloadError,
     BasePlatformAdapter,
     ChatInfo,
     PlatformCapabilities,
     SendResult,
 )
+from personal_agent.tools.url_safety import check_url
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +99,63 @@ class QQAdapter(BasePlatformAdapter):
             return ChatInfo(chat_id=chat_id, chat_type="group")
         return ChatInfo(chat_id=raw_id, chat_type="dm")
 
+    async def download_attachment(
+        self,
+        ref,
+        source: SessionSource | None = None,
+    ) -> DownloadedAttachment:
+        if not self._session:
+            raise AttachmentDownloadError("platform_not_connected", "QQ HTTP session is not connected")
+        data = _onebot_data(ref)
+        file_id = str(ref.platform_file_id or data.get("file_id") or data.get("file") or "")
+        if not file_id:
+            raise AttachmentDownloadError("attachment_has_no_resolvable_location")
+
+        errors: list[str] = []
+        for endpoint, payload in _download_candidates(ref, file_id, data, source):
+            try:
+                result = await self._post_json(endpoint, payload)
+            except Exception as exc:
+                errors.append(f"{endpoint}: {type(exc).__name__}: {exc}")
+                continue
+            if not _is_success_response(result):
+                errors.append(f"{endpoint}: {_response_error(result)}")
+                continue
+            payload_data = _result_data(result)
+            target = _download_target(payload_data)
+            inline = _inline_bytes(payload_data)
+            try:
+                if inline is not None:
+                    content = inline
+                    source_url = ""
+                    mime_type = _download_mime(ref, data, payload_data, "")
+                elif target:
+                    content, source_url, mime_type = await self._read_download_target(
+                        target,
+                        kind=str(ref.kind or ""),
+                        ref=ref,
+                        data=data,
+                        response_data=payload_data,
+                    )
+                else:
+                    errors.append(f"{endpoint}: download target missing")
+                    continue
+            except AttachmentDownloadError as exc:
+                errors.append(f"{endpoint}: {exc.reason}")
+                continue
+            return DownloadedAttachment(
+                data=content,
+                kind=canonical_attachment_kind(ref.kind),
+                name=_download_name(ref, data, payload_data, target or file_id),
+                mime_type=mime_type,
+                source_url=source_url,
+                platform_file_id=file_id,
+                metadata={"onebot_download": payload_data},
+            )
+
+        detail = "; ".join(errors[-3:]) if errors else "no OneBot download candidate succeeded"
+        raise AttachmentDownloadError("platform_download_unavailable", detail)
+
     async def handle_webhook_payload(self, payload: dict[str, Any], *, signature: str = "") -> bool:
         """Parse an inbound QQ/OneBot payload and enqueue it for the gateway."""
         if not self._verify_signature(payload, signature):
@@ -130,6 +195,36 @@ class QQAdapter(BasePlatformAdapter):
             if not resp.ok:
                 raise RuntimeError(f"QQ HTTP {resp.status}: {str(data)[:200]}")
             return data if isinstance(data, dict) else {"data": data}
+
+    async def _read_download_target(
+        self,
+        target: str,
+        *,
+        kind: str,
+        ref,
+        data: dict[str, Any],
+        response_data: dict[str, Any],
+    ) -> tuple[bytes, str, str]:
+        if _is_url(target):
+            safety_error = check_url(target)
+            if safety_error:
+                raise AttachmentDownloadError("unsafe_url", safety_error)
+            limit = _download_limit(kind)
+            async with self._session.get(target) as resp:
+                if not resp.ok:
+                    raise AttachmentDownloadError("download_failed", f"QQ media HTTP {resp.status}")
+                content = await resp.content.read(limit + 1)
+                if len(content) > limit:
+                    raise AttachmentDownloadError("size_exceeded")
+                mime_type = _download_mime(ref, data, response_data, resp.headers.get("Content-Type", ""))
+                return content, target, mime_type
+        path = _target_path(target)
+        if path is None or not path.exists() or not path.is_file():
+            raise AttachmentDownloadError("download_target_unavailable")
+        content = path.read_bytes()
+        if len(content) > _download_limit(kind):
+            raise AttachmentDownloadError("size_exceeded")
+        return content, "", _download_mime(ref, data, response_data, mimetypes.guess_type(path.name)[0] or "")
 
     def _parse_payload(self, payload: dict[str, Any]) -> MessageEvent | None:
         post_type = str(payload.get("post_type") or "")
@@ -216,6 +311,139 @@ def _split_chat_id(chat_id: str) -> tuple[str, str]:
     return "private", value
 
 
+def _onebot_data(ref) -> dict[str, Any]:
+    metadata = dict(getattr(ref, "metadata", {}) or {})
+    data = metadata.get("onebot_data")
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _download_candidates(
+    ref,
+    file_id: str,
+    data: dict[str, Any],
+    source: SessionSource | None,
+) -> list[tuple[str, dict[str, Any]]]:
+    kind = canonical_attachment_kind(getattr(ref, "kind", ""))
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    if kind == "image":
+        candidates.append(("get_image", {"file": file_id}))
+    elif kind == "audio":
+        payload = {"file": file_id}
+        out_format = str(data.get("out_format") or data.get("format") or "")
+        if out_format:
+            payload["out_format"] = out_format
+        candidates.append(("get_record", payload))
+    if kind == "file":
+        group_id = _source_group_id(source)
+        busid = data.get("busid") or data.get("bus_id")
+        if group_id and busid is not None:
+            candidates.append(("get_group_file_url", {
+                "group_id": group_id,
+                "file_id": file_id,
+                "busid": busid,
+            }))
+    candidates.extend([
+        ("get_file", {"file_id": file_id}),
+        ("get_file", {"file": file_id}),
+    ])
+    return _dedupe_candidates(candidates)
+
+
+def _source_group_id(source: SessionSource | None) -> str:
+    chat_id = str(getattr(source, "chat_id", "") or "")
+    if chat_id.startswith("group:"):
+        return chat_id.split(":", 1)[1]
+    return ""
+
+
+def _dedupe_candidates(candidates: list[tuple[str, dict[str, Any]]]) -> list[tuple[str, dict[str, Any]]]:
+    result: list[tuple[str, dict[str, Any]]] = []
+    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+    for endpoint, payload in candidates:
+        key = (endpoint, tuple(sorted((key, str(value)) for key, value in payload.items())))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append((endpoint, payload))
+    return result
+
+
+def _result_data(result: dict[str, Any]) -> dict[str, Any]:
+    data = result.get("data")
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, str):
+        return {"file": data}
+    return result
+
+
+def _download_target(data: dict[str, Any]) -> str:
+    for key in ("url", "download_url", "file_url", "file", "file_path", "path"):
+        value = data.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _inline_bytes(data: dict[str, Any]) -> bytes | None:
+    value = data.get("base64") or data.get("content_base64")
+    if value:
+        return base64.b64decode(str(value))
+    content = data.get("content")
+    if isinstance(content, bytes):
+        return content
+    return None
+
+
+def _download_name(ref, source_data: dict[str, Any], response_data: dict[str, Any], fallback: str) -> str:
+    value = (
+        getattr(ref, "name", "")
+        or source_data.get("name")
+        or source_data.get("filename")
+        or response_data.get("name")
+        or response_data.get("filename")
+        or Path(str(fallback or "attachment")).name
+    )
+    return str(value or "attachment")
+
+
+def _download_mime(ref, source_data: dict[str, Any], response_data: dict[str, Any], declared: str) -> str:
+    explicit = (
+        getattr(ref, "mime_type", "")
+        or source_data.get("mime_type")
+        or source_data.get("mime")
+        or response_data.get("mime_type")
+        or response_data.get("mime")
+    )
+    if explicit:
+        return str(explicit)
+    declared = str(declared or "").split(";", 1)[0]
+    if declared and declared != "application/octet-stream":
+        return declared
+    name = _download_name(ref, source_data, response_data, "")
+    return mimetypes.guess_type(name)[0] or ""
+
+
+def _is_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"}
+
+
+def _target_path(value: str) -> Path | None:
+    parsed = urlparse(value)
+    if parsed.scheme == "file":
+        return Path(unquote(parsed.path)).expanduser()
+    if parsed.scheme:
+        return None
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else None
+
+
+def _download_limit(kind: str) -> int:
+    normalized = canonical_attachment_kind(kind)
+    return int(DEFAULT_MAX_BYTES.get(normalized, DEFAULT_MAX_BYTES["file"]))
+
+
 def _extract_text(message: Any) -> str:
     if isinstance(message, str):
         return message.strip()
@@ -262,7 +490,7 @@ def _extract_structured_message(message: Any) -> tuple[str, list[MessagePart], l
             structured.append(part)
             attachments.append(part)
         elif segment_type == "record":
-            part = _media_part("voice", data, ("file", "url"))
+            part = _media_part("audio", data, ("file", "url"))
             parts.append(part.render_text())
             structured.append(part)
             attachments.append(part)
@@ -364,14 +592,13 @@ def _media_part(kind: str, data: dict[str, Any], keys: tuple[str, ...]) -> Messa
         if value:
             detail = str(value)
             break
-    return MessagePart(
-        type=kind,
+    return attachment_part(
+        kind=canonical_attachment_kind(kind),
+        data=data,
         text=detail,
-        url=str(data.get("url") or ""),
-        path=str(data.get("file") or ""),
-        file_id=str(data.get("file_id") or data.get("id") or ""),
         name=str(data.get("name") or data.get("filename") or ""),
-        metadata=dict(data),
+        mime_type=str(data.get("mime_type") or data.get("mime") or ""),
+        metadata_key="onebot_data",
     )
 
 

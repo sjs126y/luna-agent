@@ -7,8 +7,17 @@ agent:
   max_tool_calls_per_turn: 20
 
 execution:
-  mode: "standard"                # guarded | standard | trusted | sovereign
-  policy: {}                      # 可选权限覆盖，例如 {"tool_permissions": {"bash": "ask"}}
+  mode: "standard"                # 执行模式：guarded | standard | trusted | sovereign
+  policy:
+    # 可选权限覆盖。只建议覆盖 tool_permissions；硬沙箱和密钥保护规则不会被这里绕过。
+    # 可选权限类别：default/read/search/write/bash/background/network/destructive
+    # 可选决策：allow（直接允许）| ask（执行前确认）| deny（拒绝）
+    tool_permissions: {}
+    # 示例：
+    # tool_permissions:
+    #   bash: ask
+    #   background: ask
+    #   network: deny
 
 agents:
   max_concurrent_runs: 4          # 最多同时运行的委派子代理数
@@ -35,6 +44,31 @@ memory:
   external_provider: "embedding"  # 外部记忆提供方："none" | "embedding"
   review_interval: 10             # 每 N 轮自动 review，0 表示关闭
 
+multimodal:
+  enabled: true                    # true = 接收平台附件并进入统一处理链路
+  image_mode: "auto"               # 图片：auto | native | text | off
+  audio_mode: "auto"               # 音频：auto | text | off；当前无转写能力时会降级提示
+  video_mode: "off"                # 视频：auto | text | off；默认关闭，避免误下载大文件
+  file_mode: "auto"                # 文件：auto | text | off；当前无解析器时会降级提示
+  native_fallback: "notice"        # 原生多模态不可用时：notice（提示）| text（尝试文本化）
+  text_extract_max_chars: 12000     # 文本/PDF/docx 附件最多注入的字符数，超出会截断
+  text_extract_pdf_max_pages: 20    # PDF 附件最多抽取页数，避免大文件污染上下文
+  image_text_mode: "auto"           # 图片文本化：auto | vision | ocr | off；当前默认只预留链路
+  image_text_cache: true            # 是否缓存图片文本化结果，后续 vision/OCR 会复用
+  image_text_max_chars: 6000        # 图片文本化结果最多注入的字符数
+  image_text_provider: ""           # 可选视觉辅助 provider，例如 openai / anthropic；密钥用 .env 的 IMAGE_TEXT_API_KEY
+  image_text_model: ""              # 可选视觉辅助模型，留空使用 provider 默认或主模型
+  image_text_prompt: ""             # 可选自定义提示词，留空使用内置“提取文字并描述图片”
+  ocr_endpoint: ""                  # 可选本地 OCR HTTP 服务，例如 http://127.0.0.1:7788
+  ocr_timeout_seconds: 20           # OCR 服务请求超时秒数
+  ocr_language: "auto"              # OCR 语言提示，具体支持取决于本地 OCR 服务
+
+attachments:
+  resolve_inbound: true            # 授权通过后，平台入口是否尝试把附件本地化
+  cache_inbound: true              # 是否写入 data/attachments 缓存并按 sha256 去重
+  download_urls: true              # 是否下载平台消息中的 URL 附件
+  download_platform_files: true    # 是否调用平台适配器下载 platform_file_id 附件
+
 cron:
   enabled: false
 
@@ -46,7 +80,7 @@ sandbox:
   roots:                          # 文件工具和 bash 允许访问的目录
     - "."
     - "./data"
-  blocked:
+  blocked:                        # 即使 mode/policy 放行，也禁止访问这些路径
     - "**/.env"
     - "**/.env.*"
     - "**/.git/**"
@@ -61,11 +95,11 @@ sandbox:
     - "**/audit.log"
     - "**/pyproject.toml"
     - "**/config.yaml"
-  bash_work_dir: "./data"
-  bash_restrict_paths: true
-  bash_allow_network: false
-  file_max_write_bytes: 100000
-  audit_enabled: true
+  bash_work_dir: "./data"         # bash 工具默认工作目录
+  bash_restrict_paths: true       # true = bash 路径限制在 sandbox.roots 内
+  bash_allow_network: false       # true = 允许 bash 里的 curl/wget/pip 等网络命令
+  file_max_write_bytes: 100000    # file_write 单次最大写入字节数
+  audit_enabled: true             # true = 记录工具审计日志到 data/audit.log
 
 auth:
   enabled: true

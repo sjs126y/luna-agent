@@ -14,7 +14,7 @@ from personal_agent.gateway.gateway import Gateway
 from personal_agent.gateway.state import PlatformRuntime
 from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
-from personal_agent.models.messages import MessageEvent, SessionSource
+from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
 from personal_agent.plugins.models import CommandEntry
 from personal_agent.conversation import ConversationTurnResult
 
@@ -135,8 +135,8 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
     await gateway._handle_command(_event("/session work"), "telegram:c1:u1")
     captured = []
 
-    async def run_turn(session_key, source, text):
-        captured.append((session_key, text))
+    async def run_turn_input(session_key, user_input):
+        captured.append((session_key, user_input.text))
         return ConversationTurnResult(
             final_response="ok",
             messages=[],
@@ -147,13 +147,93 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
             raw={},
         )
 
-    monkeypatch.setattr(gateway._conversation_service, "run_turn", run_turn)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     result = await gateway._handle_message_inner(_event("hello"))
 
     assert result == "ok"
     assert captured == [("telegram:work:u1", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_gateway_prepares_inbound_attachments_after_auth(gateway, monkeypatch):
+    adapter = FakeAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    prepared = []
+    captured = {}
+
+    async def prepare_inbound_attachments(event):
+        prepared.append(event.text)
+        event.envelope.metadata["prepared"] = True
+        return event
+
+    async def run_turn_input(session_key, user_input):
+        captured["metadata"] = user_input.metadata
+        return ConversationTurnResult(
+            final_response="ok",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    event = _event("hello")
+    event.attachments = [MessagePart(type="image", file_id="file-1", name="photo.png")]
+    result = await gateway._handle_message_inner(event)
+
+    assert result == "ok"
+    assert prepared == ["hello"]
+    assert captured["metadata"]["prepared"] is True
+
+
+@pytest.mark.asyncio
+async def test_gateway_does_not_prepare_attachments_when_auth_fails(gateway, monkeypatch):
+    adapter = FakeAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    prepared = []
+
+    async def prepare_inbound_attachments(event):
+        prepared.append(event.text)
+        return event
+
+    monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (False, "denied"))
+
+    event = _event("hello")
+    event.attachments = [MessagePart(type="image", file_id="file-1", name="photo.png")]
+    result = await gateway._handle_message_inner(event)
+
+    assert result == "denied"
+    assert prepared == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_does_not_prepare_attachments_for_consumed_command(gateway, monkeypatch):
+    adapter = FakeAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    gateway._adapters.append(adapter)
+    prepared = []
+
+    async def prepare_inbound_attachments(event):
+        prepared.append(event.text)
+        return event
+
+    monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    result = await gateway._handle_message_inner(_event("/session list"))
+
+    assert result is not None
+    assert prepared == []
 
 
 @pytest.mark.asyncio
@@ -288,9 +368,9 @@ async def test_gateway_before_send_and_memory_review_use_conversation_result(gat
     ]
     gateway._conversation_service.agent_cache["telegram:c1:u1"] = Agent()
 
-    async def run_turn(session_key, source, text):
+    async def run_turn_input(session_key, user_input):
         assert session_key == "telegram:c1:u1"
-        assert text == "hello"
+        assert user_input.text == "hello"
         return ConversationTurnResult(
             final_response="base",
             messages=messages,
@@ -306,7 +386,7 @@ async def test_gateway_before_send_and_memory_review_use_conversation_result(gat
 
     captured = []
     gateway.hooks.on_before_send.append(before_send)
-    monkeypatch.setattr(gateway._conversation_service, "run_turn", run_turn)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
     monkeypatch.setattr(
         gateway._memory_review_service,
         "maybe_spawn",
@@ -322,6 +402,33 @@ async def test_gateway_before_send_and_memory_review_use_conversation_result(gat
         "should_review": True,
         "final_response": "base!",
     }]
+
+
+@pytest.mark.asyncio
+async def test_gateway_passes_attachments_as_conversation_input(gateway, monkeypatch):
+    captured = {}
+
+    async def run_turn_input(session_key, user_input):
+        captured["input"] = user_input
+        return ConversationTurnResult(
+            final_response="ok",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    event = _event("look", message_id="m1")
+    event.attachments = [MessagePart(type="image", url="https://example.test/a.png", name="a.png")]
+
+    result = await gateway._handle_message_with_agent(event, "telegram:c1:u1")
+
+    assert result == "ok"
+    assert captured["input"].attachments[0].kind == "image"
+    assert captured["input"].attachments[0].url == "https://example.test/a.png"
 
 
 def test_gateway_health_snapshot_reports_runtime_state(gateway):

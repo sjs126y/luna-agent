@@ -14,6 +14,16 @@ def test_config_loader_uses_defaults(tmp_path):
 
     assert snapshot.attr_values["llm_provider"] == "deepseek"
     assert snapshot.attr_values["agent_data_dir"] == Path("./data")
+    assert snapshot.attr_values["multimodal_text_extract_max_chars"] == 12000
+    assert snapshot.attr_values["multimodal_text_extract_pdf_max_pages"] == 20
+    assert snapshot.attr_values["multimodal_image_text_mode"] == "auto"
+    assert snapshot.attr_values["multimodal_image_text_cache"] is True
+    assert snapshot.attr_values["multimodal_image_text_max_chars"] == 6000
+    assert snapshot.attr_values["multimodal_image_text_provider"] == ""
+    assert snapshot.attr_values["multimodal_image_text_api_key"] == ""
+    assert snapshot.attr_values["multimodal_ocr_endpoint"] == ""
+    assert snapshot.attr_values["multimodal_ocr_timeout_seconds"] == 20
+    assert snapshot.attr_values["multimodal_ocr_language"] == "auto"
     assert snapshot.sources["LLM_PROVIDER"] == "default"
     assert snapshot.source_counts["default"] == snapshot.field_count
 
@@ -22,7 +32,7 @@ def test_config_loader_resolves_env_yaml_and_overrides(tmp_path):
     from personal_agent.config_loader import ConfigLoader
 
     (tmp_path / ".env").write_text(
-        "LLM_PROVIDER=openai\nLLM_MAX_TOKENS=2048\n",
+        "LLM_PROVIDER=openai\nLLM_MAX_TOKENS=2048\nIMAGE_TEXT_API_KEY=vision-key\n",
         encoding="utf-8",
     )
     (tmp_path / "config.yaml").write_text(
@@ -31,6 +41,20 @@ storage:
   data_dir: ./runtime-data
 gateway:
   platform_send_max_retries: 5
+attachments:
+  resolve_inbound: false
+  download_platform_files: false
+multimodal:
+  text_extract_max_chars: 4096
+  text_extract_pdf_max_pages: 3
+  image_text_mode: "off"
+  image_text_cache: false
+  image_text_max_chars: 2048
+  image_text_provider: openai
+  image_text_model: gpt-4o-mini
+  ocr_endpoint: http://127.0.0.1:7788
+  ocr_timeout_seconds: 5
+  ocr_language: zh
 sandbox:
   roots: ./data,./workspace
   bash_allow_network: yes
@@ -48,6 +72,19 @@ plugins:
     assert snapshot.attr_values["llm_max_tokens"] == 2048
     assert snapshot.attr_values["agent_data_dir"] == Path("./runtime-data")
     assert snapshot.attr_values["platform_send_max_retries"] == 7
+    assert snapshot.attr_values["attachments_resolve_inbound"] is False
+    assert snapshot.attr_values["attachments_download_platform_files"] is False
+    assert snapshot.attr_values["multimodal_text_extract_max_chars"] == 4096
+    assert snapshot.attr_values["multimodal_text_extract_pdf_max_pages"] == 3
+    assert snapshot.attr_values["multimodal_image_text_mode"] == "off"
+    assert snapshot.attr_values["multimodal_image_text_cache"] is False
+    assert snapshot.attr_values["multimodal_image_text_max_chars"] == 2048
+    assert snapshot.attr_values["multimodal_image_text_provider"] == "openai"
+    assert snapshot.attr_values["multimodal_image_text_model"] == "gpt-4o-mini"
+    assert snapshot.attr_values["multimodal_image_text_api_key"] == "vision-key"
+    assert snapshot.attr_values["multimodal_ocr_endpoint"] == "http://127.0.0.1:7788"
+    assert snapshot.attr_values["multimodal_ocr_timeout_seconds"] == 5
+    assert snapshot.attr_values["multimodal_ocr_language"] == "zh"
     assert snapshot.attr_values["sandbox_roots"] == [Path("./data"), Path("./workspace")]
     assert snapshot.attr_values["bash_allow_network"] is True
     assert snapshot.attr_values["plugins_dirs"] == [Path("./plugins"), Path("./more-plugins")]

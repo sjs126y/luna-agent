@@ -97,3 +97,100 @@ async def test_base_adapter_send_message_falls_back_to_text():
     assert result.success is True
     assert adapter.sent == [("chat", "see [image: https://example.test/a.png]")]
     assert adapter.health_snapshot()["capabilities"]["text"] is True
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_prepare_inbound_attachment_downloads_to_store(tmp_path):
+    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
+    from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+    from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+
+    class Adapter(BasePlatformAdapter):
+        async def connect(self) -> None:
+            pass
+
+        async def disconnect(self) -> None:
+            pass
+
+        async def send(self, chat_id: str, content: str) -> SendResult:
+            return SendResult(success=True)
+
+        async def get_chat_info(self, chat_id: str) -> ChatInfo:
+            return ChatInfo(chat_id=chat_id)
+
+        async def download_attachment(self, ref, source=None) -> DownloadedAttachment:
+            return DownloadedAttachment(
+                data=b"\x89PNG\r\n\x1a\npayload",
+                kind="image",
+                name="photo.png",
+                mime_type="image/png",
+                platform_file_id=ref.platform_file_id,
+                metadata={"downloaded_by": "test"},
+            )
+
+    adapter = Adapter(SimpleNamespace(agent_data_dir=tmp_path / "data"), db=None)
+    adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))
+    event = MessageEvent(
+        text="[image: file-1]",
+        source=SessionSource(platform="test", user_id="u1", chat_id="c1"),
+        attachments=[MessagePart(type="image", file_id="file-1", name="photo.png")],
+        message_id="m1",
+    )
+
+    prepared = await adapter.prepare_inbound_attachments(event)
+    attachment = prepared.envelope.attachments[0]
+
+    assert attachment.local_path
+    assert attachment.mime_type == "image/png"
+    assert attachment.metadata["downloaded_by"] == "test"
+    assert attachment.metadata["attachment_resolve"]["status"] == "resolved"
+    assert attachment.metadata["attachment_resolve"]["sha256"]
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_prepare_inbound_attachment_respects_off_mode(tmp_path):
+    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
+    from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+    from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+
+    class Adapter(BasePlatformAdapter):
+        def __init__(self):
+            super().__init__(
+                SimpleNamespace(agent_data_dir=tmp_path / "data", multimodal_image_mode="off"),
+                db=None,
+            )
+            self.download_called = False
+
+        async def connect(self) -> None:
+            pass
+
+        async def disconnect(self) -> None:
+            pass
+
+        async def send(self, chat_id: str, content: str) -> SendResult:
+            return SendResult(success=True)
+
+        async def get_chat_info(self, chat_id: str) -> ChatInfo:
+            return ChatInfo(chat_id=chat_id)
+
+        async def download_attachment(self, ref, source=None) -> DownloadedAttachment:
+            self.download_called = True
+            return DownloadedAttachment(data=b"payload", kind="image")
+
+    adapter = Adapter()
+    adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))
+    event = MessageEvent(
+        text="[image: file-1]",
+        source=SessionSource(platform="test", user_id="u1", chat_id="c1"),
+        attachments=[MessagePart(type="image", file_id="file-1", name="photo.png")],
+        message_id="m1",
+    )
+
+    prepared = await adapter.prepare_inbound_attachments(event)
+    attachment = prepared.envelope.attachments[0]
+
+    assert adapter.download_called is False
+    assert attachment.local_path == ""
+    assert attachment.platform_file_id == "file-1"
+    assert attachment.metadata["attachment_resolve"]["status"] == "skipped"
+    assert attachment.metadata["attachment_resolve"]["reason"] == "mode_off"

@@ -75,6 +75,9 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("user_message", "string", "Raw user message text when available."),
             EventFieldSpec("message_count", "integer", "History message count before the turn."),
             EventFieldSpec("was_compressed", "boolean", "Whether history was compressed before the turn."),
+            EventFieldSpec("attachments_count", "integer", "Number of attachments received in this turn."),
+            EventFieldSpec("attachment_kinds", "list[string]", "Attachment kinds received in this turn."),
+            EventFieldSpec("multimodal_diagnostics", "object", "Multimodal processing diagnostics."),
         ),
     ),
     "llm_start": EventSchema(

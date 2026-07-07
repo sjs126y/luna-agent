@@ -247,6 +247,10 @@ LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions")
 COMPRESSION_ENGINES = ("compressor", "disabled", "none", "off", "simple")
 MEMORY_PROVIDERS = ("file",)
 EXTERNAL_MEMORY_PROVIDERS = ("embedding", "none")
+MULTIMODAL_MODES = ("auto", "native", "text", "off")
+MULTIMODAL_NON_NATIVE_MODES = ("auto", "text", "off")
+MULTIMODAL_NATIVE_FALLBACKS = ("notice", "text")
+IMAGE_TEXT_MODES = ("auto", "vision", "ocr", "off")
 
 
 def _field(
@@ -378,6 +382,39 @@ def _memory_fields() -> tuple[ConfigField, ...]:
     )
 
 
+def _multimodal_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("multimodal.enabled", "multimodal_enabled", True, "bool", "multimodal", "Enable multimodal attachment processing."),
+        _yaml_field("multimodal.image_mode", "multimodal_image_mode", "auto", "str", "multimodal", "Image processing mode.", choices=MULTIMODAL_MODES),
+        _yaml_field("multimodal.audio_mode", "multimodal_audio_mode", "auto", "str", "multimodal", "Audio processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
+        _yaml_field("multimodal.video_mode", "multimodal_video_mode", "off", "str", "multimodal", "Video processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
+        _yaml_field("multimodal.file_mode", "multimodal_file_mode", "auto", "str", "multimodal", "File processing mode.", choices=MULTIMODAL_NON_NATIVE_MODES),
+        _yaml_field("multimodal.native_fallback", "multimodal_native_fallback", "notice", "str", "multimodal", "Fallback when native multimodal input is unavailable.", choices=MULTIMODAL_NATIVE_FALLBACKS),
+        _yaml_field("multimodal.text_extract_max_chars", "multimodal_text_extract_max_chars", 12000, "int", "multimodal", "Maximum extracted attachment text characters.", minimum=1),
+        _yaml_field("multimodal.text_extract_pdf_max_pages", "multimodal_text_extract_pdf_max_pages", 20, "int", "multimodal", "Maximum PDF pages to extract from an attachment.", minimum=1),
+        _yaml_field("multimodal.image_text_mode", "multimodal_image_text_mode", "auto", "str", "multimodal", "Image-to-text fallback mode.", choices=IMAGE_TEXT_MODES),
+        _yaml_field("multimodal.image_text_cache", "multimodal_image_text_cache", True, "bool", "multimodal", "Cache image-to-text fallback results."),
+        _yaml_field("multimodal.image_text_max_chars", "multimodal_image_text_max_chars", 6000, "int", "multimodal", "Maximum image-to-text characters injected into context.", minimum=1),
+        _yaml_field("multimodal.image_text_provider", "multimodal_image_text_provider", "", "str", "multimodal", "Vision provider used for image-to-text fallback.", choices=("", *LLM_PROVIDERS)),
+        _yaml_field("multimodal.image_text_model", "multimodal_image_text_model", "", "str", "multimodal", "Vision model used for image-to-text fallback."),
+        _yaml_field("multimodal.image_text_prompt", "multimodal_image_text_prompt", "", "str", "multimodal", "Custom image-to-text prompt."),
+        _yaml_field("multimodal.ocr_endpoint", "multimodal_ocr_endpoint", "", "str", "multimodal", "Local OCR HTTP service endpoint."),
+        _yaml_field("multimodal.ocr_timeout_seconds", "multimodal_ocr_timeout_seconds", 20, "int", "multimodal", "Local OCR HTTP timeout in seconds.", minimum=1),
+        _yaml_field("multimodal.ocr_language", "multimodal_ocr_language", "auto", "str", "multimodal", "Local OCR language hint."),
+        _env_field("IMAGE_TEXT_BASE_URL", "multimodal_image_text_base_url", "", "str", "multimodal", "Vision fallback base URL."),
+        _env_field("IMAGE_TEXT_API_KEY", "multimodal_image_text_api_key", "", "str", "multimodal", "Vision fallback API key.", sensitive=True),
+    )
+
+
+def _attachment_fields() -> tuple[ConfigField, ...]:
+    return (
+        _yaml_field("attachments.resolve_inbound", "attachments_resolve_inbound", True, "bool", "attachments", "Resolve inbound platform attachments after authorization."),
+        _yaml_field("attachments.cache_inbound", "attachments_cache_inbound", True, "bool", "attachments", "Cache resolved inbound attachments under the attachment store."),
+        _yaml_field("attachments.download_urls", "attachments_download_urls", True, "bool", "attachments", "Download inbound attachment URLs into the attachment store."),
+        _yaml_field("attachments.download_platform_files", "attachments_download_platform_files", True, "bool", "attachments", "Use platform adapters to download private platform file ids."),
+    )
+
+
 def _cron_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("cron.enabled", "enable_cron", False, "bool", "cron", "Enable cron scheduler."),
@@ -451,6 +488,8 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     *_toolset_fields(),
     *_compression_fields(),
     *_memory_fields(),
+    *_multimodal_fields(),
+    *_attachment_fields(),
     *_cron_fields(),
     *_sandbox_fields(),
     *_gateway_fields(),

@@ -162,11 +162,19 @@ class ChatCompletionsTransport(BaseTransport):
                 continue
 
             text_blocks = []
+            content_parts = []
             tool_calls = []
             for block in content:
                 btype = block.get("type", "")
                 if btype == "text":
-                    text_blocks.append(block.get("text", ""))
+                    text = block.get("text", "")
+                    text_blocks.append(text)
+                    content_parts.append({"type": "text", "text": text})
+                elif btype == "image_url":
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": dict(block.get("image_url") or {}),
+                    })
                 elif btype == "tool_use":
                     tool_calls.append({
                         "id": block.get("id", ""),
@@ -187,6 +195,8 @@ class ChatCompletionsTransport(BaseTransport):
                 assistant_msg = {"role": "assistant", "content": "\n".join(text_blocks) or None}
                 assistant_msg["tool_calls"] = tool_calls
                 result.append(assistant_msg)
+            elif any(part.get("type") == "image_url" for part in content_parts):
+                result.append({"role": role, "content": content_parts})
             elif text_blocks:
                 result.append({"role": role, "content": "\n".join(text_blocks)})
 

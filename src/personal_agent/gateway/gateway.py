@@ -179,6 +179,8 @@ class Gateway:
         try:
             adapter = entry.factory(self.config, self.db)
             adapter.set_message_handler(self._handle_message)
+            if hasattr(adapter, "set_attachment_store"):
+                adapter.set_attachment_store(self._conversation_service.attachment_store)
             await adapter.connect()
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
@@ -294,7 +296,17 @@ class Gateway:
     # ── agent dispatch ────────────────────────────────
 
     async def _handle_message_with_agent(self, event, session_key: str) -> str:
-        turn = await self._conversation_service.run_turn(session_key, event.source, event.text)
+        from personal_agent.conversation.input import ConversationInput
+
+        event = await self._prepare_inbound_attachments(event)
+        envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
+        if envelope is not None:
+            turn = await self._conversation_service.run_turn_input(
+                session_key,
+                ConversationInput.from_envelope(envelope),
+            )
+        else:
+            turn = await self._conversation_service.run_turn(session_key, event.source, event.text)
 
         # Hook: on_before_send
         final = turn.final_response
@@ -316,6 +328,27 @@ class Gateway:
         )
 
         return final or "..."
+
+    async def _prepare_inbound_attachments(self, event):
+        adapter = self._adapter_for_source(event.source)
+        if adapter is None or not hasattr(adapter, "prepare_inbound_attachments"):
+            return event
+        try:
+            return await adapter.prepare_inbound_attachments(event)
+        except Exception:
+            logger.exception("Inbound attachment preparation failed for platform %s", event.source.platform)
+            return event
+
+    def _adapter_for_source(self, source):
+        platform = str(getattr(source, "platform", "") or "")
+        runtime = self._platforms.get(platform)
+        adapter = getattr(runtime, "adapter", None) if runtime is not None else None
+        if adapter is not None:
+            return adapter
+        for candidate in self._adapters:
+            if getattr(candidate, "_platform_name", "") == platform:
+                return candidate
+        return None
 
     async def _get_or_create_agent(self, session_key: str):
         """Return cached Agent if available, otherwise create and cache."""

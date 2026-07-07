@@ -85,6 +85,8 @@ gateway:
 
 execution:
   mode: standard
+  policy:
+    tool_permissions: {}
 
 sandbox:
   roots:
@@ -96,6 +98,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  file_max_write_bytes: 100000
   audit_enabled: true
 
 mcp:
@@ -162,6 +165,8 @@ gateway:
 
 execution:
   mode: standard
+  policy:
+    tool_permissions: {}
 
 sandbox:
   roots:
@@ -173,6 +178,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  file_max_write_bytes: 100000
   audit_enabled: true
 
 mcp:
@@ -239,6 +245,8 @@ gateway:
 
 execution:
   mode: standard
+  policy:
+    tool_permissions: {}
 
 sandbox:
   roots:
@@ -250,6 +258,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  file_max_write_bytes: 100000
   audit_enabled: true
 
 mcp:
@@ -1878,8 +1887,14 @@ def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str
     }
     paths = [
         "execution.mode",
+        "execution.policy",
+        "sandbox.roots",
+        "sandbox.blocked",
+        "sandbox.bash_work_dir",
         "sandbox.bash_allow_network",
         "sandbox.bash_restrict_paths",
+        "sandbox.file_max_write_bytes",
+        "sandbox.audit_enabled",
         "gateway.platform_send_max_retries",
         "gateway.platform_message_dedupe_max_size",
         "memory.external_provider",

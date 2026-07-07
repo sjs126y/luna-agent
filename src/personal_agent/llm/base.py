@@ -221,8 +221,30 @@ class BaseTransport(ABC):
 
 
 def stable_request_hash(value: Any, *, length: int = 16) -> str:
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload = json.dumps(_sanitize_for_hash(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()[:length]
+
+
+def _sanitize_for_hash(value: Any) -> Any:
+    if isinstance(value, dict):
+        if value.get("type") == "image_url" and isinstance(value.get("image_url"), dict):
+            url = str(value["image_url"].get("url") or "")
+            return {
+                "type": "image_url",
+                "image_url": {"url": _image_url_fingerprint(url)},
+            }
+        return {key: _sanitize_for_hash(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_for_hash(item) for item in value]
+    return value
+
+
+def _image_url_fingerprint(url: str) -> str:
+    if not url.startswith("data:"):
+        return url
+    header, _, data = url.partition(",")
+    digest = hashlib.sha256(data.encode("ascii", errors="ignore")).hexdigest()[:16]
+    return f"{header};sha256={digest};chars={len(data)}"
 
 
 def _first_present(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:

@@ -1,12 +1,12 @@
 # Backend Progress
 
-更新时间：2026-07-07 10:55 CST
+更新时间：2026-07-07 18:05 CST
 
 ## 交接定位
 
 这个文档只记录后端线进度，给后续接手后端的 Codex 使用。前端 TUI / desktop / prompt_toolkit 真实终端问题交给前端线处理；后端线只负责事件、接口、agent runtime、工具执行、权限、配置、平台适配、provider / transport 等基础能力。
 
-当前工作分支：`feature/legacy-cleanup`
+当前工作分支：`feature/backend-next`
 
 权威接口文档：
 
@@ -16,9 +16,10 @@
 
 ## 当前后端状态
 
-后端主干能力已经比较完整；`feature/backend-provider-cache` 已合并回主分支，当前分支用于清理历史遗留和收敛 CLI/TUI 入口。最近已完成并验证的方向包括：
+后端主干能力已经比较完整；`feature/backend-provider-cache` 和历史清理分支已合并回主分支，当前分支用于继续后端收敛。最近已完成并验证的方向包括：
 
 - Execution Mode v3：四档模式已经稳定，对应权限、沙箱、工具类别和确认行为。
+- Execution / Sandbox 配置开放：`execution.policy.tool_permissions`、`sandbox.*` 已在 example、配置文档、init 模板和 doctor 重点字段中显式展示；未新增 per-tool 权限、timeout 或关闭硬安全边界的配置。
 - Tool execution / permission pipeline：工具执行门控已经统一到 executor 路径，权限只负责自己的决策层，不再和其他阻断逻辑混在一起。
 - Tool decision metadata：`tool_decision` / `tool_end` 已带前端确认 UI 所需字段，包括展示名、风险摘要、默认动作、可选动作、路径/命令/URL 预览等。
 - Event protocol：事件有 `protocol_version`，`retry` / `error` / `stop` / `tool_decision` / `tool_end` 等事件结构化。
@@ -31,9 +32,136 @@
 - Slash commands v2：chat / inline TUI / gateway 共用 slash command registry，`/commands`、`/tools`、`/permissions`、`/protocol`、`/mode` 等支持结构化 `CommandResult`。
 - Doctor diagnostics：runtime health 已能展示 commands、query、execution、doctor 配置/运行时状态。
 - Config registry：配置整理已进入可用状态，新增配置通过 registry/field 描述，不再散落硬编码。
-- Platform adapter base：平台消息基类和 media attachment v1 已打底，但平台线暂时不要继续激进推进，避免牵动底层架构。
+- Platform adapter base：平台消息基类、media attachment v1 和授权后附件准备链路已打底；QQ/微信真实下载器 v1 已补，Feishu/Telegram 可后续补。
+- Platform adapter attachments v1：Telegram / Feishu / QQ / WeChat 已统一附件引用语义，标准 kind 为 `image/audio/video/file`，保留 `name/mime_type/size/url/platform_file_id/metadata`。
+- Multimodal input v1-v4：gateway 附件已进入结构化输入链路，支持本地附件缓存、配置化降级、OpenAI/Anthropic 原生图片输入、DeepSeek/OpenRouter 保守文本降级。
+- Multimodal text extraction v1：`text` / `auto -> text` 模式下已支持文本类、PDF、docx 附件抽取，结果进入本轮模型上下文；OCR / ASR / 视频仍留后续。
+- Image text fallback v2.1：新增图片文本化抽象、默认 null describer 和 `data/attachments/derived/` 缓存 helper；图片 text fallback 已有稳定 notice 与可注入扩展点。
+- Image text fallback v2.2：新增 vision fallback describer，可通过 `multimodal.image_text_provider` + `.env` 的 `IMAGE_TEXT_API_KEY` 调用辅助视觉模型，并按图片 sha256/provider/model/prompt version 缓存结果。
+- Image text fallback v2.3：新增本地 OCR HTTP describer，支持 `GET /health` + `POST /ocr` 协议，OCR 结果复用同一套图片文本化缓存；主项目不引入 OCR 重依赖。
+- Platform attachment resolve v1：新增 `attachments.*` 配置、adapter 基类 `prepare_inbound_attachments()` / `download_attachment()` 扩展点、`DownloadedAttachment` 入库结构；Gateway 在授权通过且命令未被消费后触发 adapter 准备附件，provider 不参与下载决策。
+- Platform downloader v1：QQ adapter 支持 OneBot 风格 `get_image/get_record/get_file/get_group_file_url` 下载候选；WeChat adapter 支持 iLink CDN 加密媒体下载和 AES 解密。
+- Multimodal attachment diagnostics：`turn_start.multimodal_diagnostics` 已补充失败 reason 聚合和每个附件的安全摘要，前端可直接展示单个附件为何失败。
+- WeChat encrypted media hardening：微信顶层或嵌套 `encrypt_query_param/encrypted_query_param` 均会进入平台下载链路；缺少 `aes_key` 时稳定返回 `decrypt_key_unavailable`，不再只给泛化失败提示。
+- Desktop multimodal contract：`BACKEND_INTERFACE.md` 已新增桌面端预留接口说明，明确未来 desktop/web 发送 `text + attachments`，后端转换为 `ConversationInput` 后调用 `run_turn_input()`。
 
-最近一次记录的全量测试结果：历史清理后 `708 passed`。
+最近一次记录的全量测试结果：`757 passed`。
+最近一次聚焦验证：`tests/test_multimodal_processor.py tests/test_platform_adapters.py`，`52 passed`。
+
+## 已完成方向：Multimodal Input v1-v4
+
+状态：已完成实现并通过全量回归。
+
+已完成：
+
+- 新增 `ConversationInput` / `ResolvedConversationInput` / `ProcessedAttachment`，gateway 不再只把 `event.text` 传给 agent。
+- `ConversationService` 新增 `run_turn_input()` / `run_turn_input_events()`，旧 `run_turn()` 保持兼容。
+- 新增 `AttachmentStore`，缓存目录为 `data/attachments/`，按 sha256 去重，并复用 sandbox 与 URL safety。
+- 新增 `MultiAttachmentProcessor`，支持 `auto` / `native` / `text` / `off`，附件失败会转成模型可见 notice，不中断 turn。
+- 新增 `multimodal.*` 配置字段，并同步 `config.yaml.example`、配置文档和 doctor known keys。
+- `ProviderProfile` 增加图片输入能力字段；OpenAI/Anthropic 默认支持图片，DeepSeek/OpenRouter 默认保守关闭。
+- ChatCompletions transport 支持 `image_url` mixed content；Anthropic transport 会把 data URL 转成 Anthropic image source。
+- provider 拒绝图片输入时，agent loop 会移除 image blocks 并纯文本重试一次。
+- token/context 估算对图片使用固定 token 估值，不按 base64 字符串长度计算。
+- cache diagnostics hash 会对 data URL 做指纹化，不记录完整 base64。
+- `MultiAttachmentProcessor` 默认文本化能力已支持文本类、PDF、docx 附件，并通过 `multimodal.text_extract_max_chars` / `multimodal.text_extract_pdf_max_pages` 控制上下文注入上限。
+- `MultiAttachmentProcessor` 已预留 `ImageTextDescriber` 扩展点，图片 text fallback 可走 vision/OCR 描述器；vision provider 与本地 OCR HTTP 服务均已可配置。
+- 修复附件 resolve 失败时 `effective_mode` 未赋值导致的异常，失败现在会稳定转成 notice/diagnostics。
+- `turn_start` 新增 `attachments_count`、`attachment_kinds`、`multimodal_diagnostics`，`AgentTurnReport` 同步记录。
+- `BACKEND_INTERFACE.md` 已同步多模态事件字段。
+- `BACKEND_INTERFACE.md` 已新增桌面端预留接口：请求结构、`AttachmentRef` 字段、前端职责边界、事件消费方式和 CLI 不承载附件上传的约定。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_attachment_store.py tests/test_multimodal_processor.py tests/test_transport_multimodal.py tests/test_event_protocol.py tests/test_transport_cache.py tests/test_conversation_service.py -q
+uv run pytest -q
+```
+
+结果：多模态/配置/文档目标回归 `60 passed`；全量 `754 passed`。
+
+## 已完成方向：Platform Adapter Attachments v1
+
+状态：已完成实现并通过全量回归。
+
+已完成：
+
+- 新增 `personal_agent.platforms.attachments` 公共 helper，统一 kind 归一化和 `url/local_path/platform_file_id` 归类。
+- Telegram adapter 支持解析 photo/document/voice/audio/video；附件-only 消息不会被丢弃。
+- Feishu adapter 支持解析 image/file/audio/video/media/post 中的附件引用；附件消息不进入 debounce 合并。
+- QQ adapter 将 `record/voice` 统一为 `audio`；OneBot `data.file` 会按 URL / 本机路径 / 平台 id 归类，不再无脑写入 `local_path`。
+- WeChat adapter 将 `voice/audio` 统一为 `audio`，保留 `file_id/media_id/url/cdn_url/name/mime/size` 和原始 media metadata。
+- `MessagePart.to_attachment_ref()` 会把 `metadata.size` 映射到 `AttachmentRef.size`。
+- `BACKEND_INTERFACE.md` 已说明平台 adapter 当前只保证附件引用结构，不保证下载、OCR、ASR 或文本化。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_platform_adapters.py tests/test_platforms_core.py tests/test_gateway_commands.py -q
+uv run pytest -q
+```
+
+结果：目标测试 `56 passed`；全量 `723 passed`。
+
+## 已完成方向：Platform Attachment Resolve v1
+
+状态：已完成链路修正和扩展点，并通过全量回归。
+
+已完成：
+
+- 新增 `attachments.resolve_inbound`、`attachments.cache_inbound`、`attachments.download_urls`、`attachments.download_platform_files` 配置，并同步 example / 配置文档 / config registry。
+- `AttachmentStore` 新增 `DownloadedAttachment` 和 `store_downloaded()`，平台下载结果统一进入附件缓存、hash 去重和索引链路。
+- `BasePlatformAdapter` 新增 `prepare_inbound_attachments()`、`download_attachment()` 和 `AttachmentDownloadError`；默认真实平台 file id 下载返回稳定失败 reason，具体平台后续覆盖。
+- Gateway 在授权通过、slash command 未被内部消费、busy check 通过后触发来源 adapter 准备附件；Gateway 不包含平台下载细节。
+- `MultiAttachmentProcessor` 收敛为消费已准备的附件；provider 不再提前阻断本地化，只影响后续 `native` / `text` / `notice`。
+- `BACKEND_INTERFACE.md` 已说明 `attachments.*`、`AttachmentRef.metadata.attachment_resolve`、成功/失败 reason 和职责边界。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_attachment_store.py tests/test_multimodal_processor.py tests/test_platforms_core.py tests/test_platform_adapters.py tests/test_gateway_commands.py tests/test_config_registry.py tests/test_config_loader.py tests/test_config_diagnostics.py tests/test_event_protocol.py tests/test_transport_multimodal.py -q
+uv run pytest -q
+```
+
+结果：目标测试 `111 passed`；全量 `731 passed`。
+
+剩余：
+
+- QQ / WeChat 真实 `download_attachment()` 实现。
+- Feishu / Telegram 真实下载器可在 QQ / WeChat 后补。
+- OCR / ASR / 文件文本提取仍属于后续 multimodal describer / 工具层，不在平台下载链路内。
+
+## 已完成方向：Platform Downloader v1
+
+状态：已完成 QQ / WeChat 下载器首版实现。
+
+已完成：
+
+- QQ adapter 覆盖 `download_attachment()`，按附件类型尝试 OneBot 风格 `get_image`、`get_record`、`get_file`，群文件额外尝试 `get_group_file_url`。
+- QQ 下载器支持 OneBot 返回 URL、file URI、本机绝对路径或 base64 inline 内容，统一转换为 `DownloadedAttachment` 后交给 `AttachmentStore`。
+- WeChat adapter 对带 `aes_key` / `encrypt_query_param` 的 iLink CDN 媒体优先走平台下载器，避免通用 URL 缓存加密内容。
+- WeChat 下载器支持 AES-ECB + PKCS7 解密，解密后的 bytes 再进入统一附件缓存。
+- adapter 自己下载 URL 时复用 URL safety 检查和附件大小上限。
+- `BACKEND_INTERFACE.md` 已同步 QQ / WeChat 下载能力和剩余平台边界。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent tests/test_platform_adapters.py
+uv run pytest tests/test_platform_adapters.py tests/test_platforms_core.py tests/test_gateway_commands.py tests/test_attachment_store.py tests/test_multimodal_processor.py tests/test_docs.py -q
+uv run pytest -q
+```
+
+结果：目标测试 `76 passed`；全量 `734 passed`。
+
+剩余：
+
+- Feishu / Telegram 真实 `download_attachment()`。
+- QQ 不同 OneBot 实现的文件下载 API 仍需结合真实服务验证。
+- 微信缺少 `cdn_url` / `encrypt_query_param` / `aes_key` 的媒体仍会稳定失败。
 
 ## 当前分工约定
 
