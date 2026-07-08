@@ -146,6 +146,7 @@ async def test_tool_lifecycle_and_expandable():
     assert "t1" not in r.state.active_tools
     assert r.state.last_expandable == ("read #1", "DATA")
     assert any("read" in line for line in printed)
+    assert "\n  ⚙" in printed[-1]
     assert "Ctrl+O expand" not in "\n".join(printed)
 
 

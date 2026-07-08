@@ -572,6 +572,59 @@ def test_runtime_accepts_confirm_detection():
     assert app._runtime_accepts_confirm() is True
 
 
+def test_idle_ctrl_c_requires_second_press_to_exit():
+    app = _app()
+
+    class _EventApp:
+        def __init__(self) -> None:
+            self.exited = False
+
+        def exit(self) -> None:
+            self.exited = True
+
+    class _Event:
+        def __init__(self) -> None:
+            self.app = _EventApp()
+
+    scheduled: list[bool] = []
+    app._schedule_exit_notice_clear = lambda: scheduled.append(True)  # type: ignore[method-assign]
+    event = _Event()
+
+    app._handle_idle_ctrl_c(event)
+
+    assert event.app.exited is False
+    assert app.state.status_message == "press Ctrl+C again to exit"
+    assert scheduled == [True]
+
+    app._handle_idle_ctrl_c(event)
+
+    assert event.app.exited is True
+
+
+def test_ctrl_c_with_input_clears_without_exit():
+    app = _app()
+
+    class _EventApp:
+        exited = False
+
+        def exit(self) -> None:
+            self.exited = True
+
+    class _Event:
+        app = _EventApp()
+
+    scheduled: list[bool] = []
+    app._schedule_exit_notice_clear = lambda: scheduled.append(True)  # type: ignore[method-assign]
+    app.input_area.text = "draft"
+
+    app._handle_idle_ctrl_c(_Event())
+
+    assert app.input_area.text == ""
+    assert app.state.status_message == "cleared"
+    assert _Event.app.exited is False
+    assert scheduled == [True]
+
+
 def test_enter_keeps_draft_while_turn_running():
     app = _app()
     class _RunningTask:
@@ -582,6 +635,24 @@ def test_enter_keeps_draft_while_turn_running():
     app.input_area.text = "next question"
     app._on_enter()
     assert app.input_area.text == "next question"
+
+
+@pytest.mark.asyncio
+async def test_complete_slash_command_submits_instead_of_applying_menu_item():
+    app = _app()
+    submitted: list[str] = []
+
+    async def submit(text: str):
+        submitted.append(text)
+
+    app._submit = submit  # type: ignore[method-assign]
+    app.input_area.text = "/activity agents"
+
+    app._on_enter()
+    await asyncio.sleep(0)
+
+    assert app.input_area.text == ""
+    assert submitted == ["/activity agents"]
 
 
 @pytest.mark.asyncio
@@ -597,7 +668,7 @@ async def test_enter_allows_steer_while_turn_running():
         submitted.append(text)
 
     app._turn_task = _RunningTask()  # type: ignore[assignment]
-    app._submit = submit  # type: ignore[method-assign]
+    app._submit_running_command = submit  # type: ignore[method-assign]
     app.input_area.text = "/steer 回答短一点"
 
     app._on_enter()
@@ -605,6 +676,29 @@ async def test_enter_allows_steer_while_turn_running():
 
     assert app.input_area.text == ""
     assert submitted == ["/steer 回答短一点"]
+
+
+@pytest.mark.asyncio
+async def test_enter_allows_activity_while_turn_running():
+    app = _app()
+    submitted: list[str] = []
+
+    class _RunningTask:
+        def done(self) -> bool:
+            return False
+
+    async def submit_running(text: str):
+        submitted.append(text)
+
+    app._turn_task = _RunningTask()  # type: ignore[assignment]
+    app._submit_running_command = submit_running  # type: ignore[method-assign]
+    app.input_area.text = "/activity agents"
+
+    app._on_enter()
+    await asyncio.sleep(0)
+
+    assert app.input_area.text == ""
+    assert submitted == ["/activity agents"]
 
 
 @pytest.mark.asyncio

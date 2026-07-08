@@ -14,6 +14,7 @@ import asyncio
 
 from pathlib import Path
 import sys
+import time
 import unicodedata
 from typing import NamedTuple
 
@@ -67,6 +68,17 @@ class _DynamicChoiceRequest(NamedTuple):
     command: str
     args: tuple[str, ...]
     query: str
+
+
+_EXIT_CONFIRM_SECONDS = 2.0
+_RUNNING_COMMANDS = (
+    "/activity",
+    "/tool-runs",
+    "/usage",
+    "/agents",
+    "/session",
+    "/steer",
+)
 
 
 def _decision_field(decision, name: str) -> str:
@@ -632,6 +644,9 @@ class InlineTuiApp:
         self._slash_choice_tasks: dict[_DynamicChoiceRequest, asyncio.Task] = {}
         self._print_queue: asyncio.Queue[_PrintRequest] = asyncio.Queue()
         self._print_worker_task: asyncio.Task | None = None
+        self._exit_confirm_until = 0.0
+        self._exit_notice_task: asyncio.Task | None = None
+        self._banner_shown = False
         self.app: Application | None = None
 
     # ── command registry + history ──
@@ -755,6 +770,15 @@ class InlineTuiApp:
     def _clear_slash_input(self) -> None:
         self.input_area.text = ""
         self._on_input_text_changed(self.input_area.buffer)
+
+    def _reset_exit_confirm(self) -> None:
+        self._exit_confirm_until = 0.0
+        if self._exit_notice_task is not None:
+            self._exit_notice_task.cancel()
+            self._exit_notice_task = None
+        if self.state.status_message == "press Ctrl+C again to exit":
+            self.state.status_message = "ready"
+            self._invalidate()
 
     def _slash_empty_message(
         self,
@@ -1221,13 +1245,37 @@ class InlineTuiApp:
                 self.app.exit()
             return
         if self._turn_task and not self._turn_task.done():
-            if command_text.startswith("/steer "):
+            if self._can_submit_while_running(command_text):
                 self.input_area.text = ""
-                asyncio.ensure_future(self._submit(command_text))
+                asyncio.ensure_future(self._submit_running_command(command_text))
+                self._reset_exit_confirm()
                 return
             return  # keep the draft intact while a turn is already running
+        if self.state.slash_mode and command_text and self._is_complete_slash_command(command_text):
+            self.input_area.text = ""
+            self._turn_task = asyncio.ensure_future(self._submit(text))
+            self._reset_exit_confirm()
+            return
         self.input_area.text = ""
         self._turn_task = asyncio.ensure_future(self._submit(text))
+        self._reset_exit_confirm()
+
+    def _can_submit_while_running(self, command_text: str) -> bool:
+        if not command_text.startswith("/"):
+            return False
+        return any(
+            command_text == command or command_text.startswith(command + " ")
+            for command in _RUNNING_COMMANDS
+        )
+
+    async def _submit_running_command(self, command_text: str) -> None:
+        result = await self._handle_command(command_text)
+        if result is None:
+            return
+        response = self._command_output(result)
+        if response:
+            await self._print_above(response)
+        await self._refresh_mode()
 
     async def _stop(self) -> None:
         stop_agents = getattr(self.runtime, "stop_agents", None)
@@ -1240,6 +1288,8 @@ class InlineTuiApp:
                 await self.runtime.handle_command("/stop")
             except Exception:
                 pass
+        self.state.status_message = "stop requested"
+        self._invalidate()
 
     def _build_keys(self) -> KeyBindings:
         kb = KeyBindings()
@@ -1306,6 +1356,14 @@ class InlineTuiApp:
             if self._confirm_future is not None:
                 self._resolve_selected_confirm_action()
                 return
+            command_text = self.input_area.text.strip()
+            if (
+                self.state.slash_mode
+                and command_text
+                and self._is_complete_slash_command(command_text)
+            ):
+                self._on_enter()
+                return
             if self._apply_selected_slash_item():
                 return
             self._on_enter()
@@ -1337,7 +1395,7 @@ class InlineTuiApp:
             elif self._turn_task and not self._turn_task.done():
                 asyncio.ensure_future(self._stop())
             else:
-                self.input_area.text = ""
+                self._handle_idle_ctrl_c(event)
 
         @kb.add("c-o")
         def _(event) -> None:
@@ -1352,10 +1410,40 @@ class InlineTuiApp:
 
         @kb.add("c-d")
         def _(event) -> None:
-            if not self.input_area.text:
-                event.app.exit()
+            return
 
         return kb
+
+    def _handle_idle_ctrl_c(self, event) -> None:
+        if self.input_area.text:
+            self.input_area.text = ""
+            self.state.status_message = "cleared"
+            self._invalidate()
+            self._schedule_exit_notice_clear()
+            return
+        now = time.monotonic()
+        if now <= self._exit_confirm_until:
+            event.app.exit()
+            return
+        self._exit_confirm_until = now + _EXIT_CONFIRM_SECONDS
+        self.state.status_message = "press Ctrl+C again to exit"
+        self._invalidate()
+        self._schedule_exit_notice_clear()
+
+    def _schedule_exit_notice_clear(self) -> None:
+        if self._exit_notice_task is not None:
+            self._exit_notice_task.cancel()
+        self._exit_notice_task = asyncio.create_task(self._clear_exit_notice_later())
+
+    async def _clear_exit_notice_later(self) -> None:
+        try:
+            await asyncio.sleep(_EXIT_CONFIRM_SECONDS)
+        except asyncio.CancelledError:
+            return
+        self._exit_confirm_until = 0.0
+        if self.state.status_message in {"press Ctrl+C again to exit", "cleared"}:
+            self.state.status_message = "ready"
+            self._invalidate()
 
     def _expand_last(self) -> None:
         """Print the most recent expandable output (tool result / thinking) into
@@ -1480,6 +1568,9 @@ class InlineTuiApp:
             fut.set_result(answer)
 
     async def run(self) -> None:
+        if not self._banner_shown:
+            self._banner_shown = True
+            self._write_terminal(_startup_banner())
         self.app = Application(
             layout=Layout(self.root, focused_element=self.input_area),
             key_bindings=self._build_keys(),
@@ -1489,6 +1580,9 @@ class InlineTuiApp:
         try:
             await self.app.run_async()
         finally:
+            if self._exit_notice_task is not None:
+                self._exit_notice_task.cancel()
+                self._exit_notice_task = None
             await self._stop_print_worker()
 
 
@@ -1505,6 +1599,21 @@ async def run_inline_tui(*, session_name: str = "default") -> None:
 
 def run_inline_tui_sync(*, session_name: str = "default") -> None:
     asyncio.run(run_inline_tui(session_name=session_name))
+
+
+def _startup_banner() -> str:
+    return (
+        "\n"
+        "\x1b[36m"
+        "██╗     ██╗   ██╗███╗   ███╗ ██████╗ ██████╗  █████╗ \n"
+        "██║     ██║   ██║████╗ ████║██╔═══██╗██╔══██╗██╔══██╗\n"
+        "██║     ██║   ██║██╔████╔██║██║   ██║██████╔╝███████║\n"
+        "██║     ██║   ██║██║╚██╔╝██║██║   ██║██╔══██╗██╔══██║\n"
+        "███████╗╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║  ██║██║  ██║\n"
+        "╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝\n"
+        "\x1b[0m"
+        "  Lumora agent\n\n"
+    )
 
 
 def _display_width(text: str) -> int:

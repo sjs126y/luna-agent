@@ -29,6 +29,7 @@ HINT_LABEL = "37"     # shortcut labels: quieter than keys, still legible
 AGENT_BAR = "35"      # agent streaming bar ▍: magenta
 AGENT = "1;35"        # "Agent" label: bold magenta
 TOOL_ACTIVE = "36"    # running tool line: cyan
+TOOL_ACTIVE_NAME = "1;36"
 TOOL_OK = "32"        # completed tool ✓: green
 TOOL_ERR = "31"       # failed tool ✗: red
 TOOL_HINT = "2"       # "(Ctrl+O 展开)" hint: dim

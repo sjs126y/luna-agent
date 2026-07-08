@@ -39,6 +39,7 @@ _MAX_ACTIVE_LINES = 12
 _MAX_ACTIVE_TOOLS = 6
 _STREAM_TAIL_CHARS = 2000
 _SLASH_MENU_LINES = 5
+_CONFIRM_DETAIL_LIMIT = 118
 SLASH_MENU_VISIBLE_ITEMS = _SLASH_MENU_LINES - 1
 
 
@@ -56,7 +57,13 @@ def build_layout(
             lines.append(theme.sgr(f"💭 思考中… ({state.thinking_chars} 字)", theme.THINKING))
         tools = list(state.active_tools.values())
         for item in tools[:_MAX_ACTIVE_TOOLS]:
-            lines.append(f"{theme.sgr('⚙', theme.TOOL_ACTIVE)} {theme.sgr(item.display_name + '…', theme.TOOL_ACTIVE)}")
+            if lines:
+                lines.append("")
+            lines.append(
+                f"{theme.sgr('⚙', theme.TOOL_ACTIVE)} "
+                f"{theme.sgr(item.display_name, theme.TOOL_ACTIVE_NAME)}"
+                f"{theme.sgr('…', theme.TOOL_ACTIVE)}"
+            )
         if len(tools) > _MAX_ACTIVE_TOOLS:
             lines.append(theme.dim(f"… 还有 {len(tools) - _MAX_ACTIVE_TOOLS} 个工具在运行"))
         if state.stream_text:
@@ -70,6 +77,8 @@ def build_layout(
             lines.append(f"{bar} {preview}{cursor}")
         if state.pending_confirm:
             lines.extend(_confirm_lines(state.pending_confirm))
+        elif state.status_message in {"press Ctrl+C again to exit", "cleared", "stop requested"}:
+            lines.append(theme.sgr(f"  {state.status_message}", theme.NOTICE))
         return ANSI("\n".join(lines))
 
     def meter_content() -> ANSI:
@@ -305,7 +314,15 @@ def _confirm_detail_lines(confirm) -> list[str]:
 
 
 def _confirm_detail(label: str, value: str) -> str:
+    value = _clip_detail(value)
     return (
         theme.sgr(f"  {label} ", theme.CONFIRM_DIM)
         + theme.sgr(value, theme.CONFIRM_TEXT)
     )
+
+
+def _clip_detail(value: str, limit: int = _CONFIRM_DETAIL_LIMIT) -> str:
+    value = " ".join(str(value).split())
+    if len(value) <= limit:
+        return value
+    return value[:max(0, limit - 1)] + "…"

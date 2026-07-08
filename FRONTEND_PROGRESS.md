@@ -220,6 +220,24 @@ uv run pytest tests/test_agent_loop.py tests/test_event_protocol.py tests/test_t
 
 结果：TUI tests `85 passed`；activity/runtime/commands/CLI tests `62 passed`；context/meter/event tests `107 passed`。
 
+### 2026-07-08 15:20 CST
+
+- 重新补回 followup TUI 改动，并按用户要求本次完成后立即提交。
+- 启动时输出一次 Lumora ASCII banner 到普通 scrollback，不进入 active region，不改 delta/streaming renderer 链路。
+- Ctrl+C 行为改为：运行中请求 stop；confirm 中拒绝；有输入时清空；空闲空输入时第一次显示短暂提示，第二次退出。Ctrl+D 不再作为空行退出入口。
+- 运行中允许发送只读/控制 slash 命令：`/steer`、`/activity ...`、`/tool-runs ...`、`/usage`、`/agents`、`/session`，结果打印到 scrollback，不启动第二个模型 turn。
+- 完整 slash 命令优先提交，避免 `/activity agents` 被动态 id 候选自动补成某个历史 run id。
+- confirm 面板继续使用纵向编号动作，并截断长 input/command/url preview，避免长 JSON 把选项挤出可视区域。
+- 工具运行/完成行增加间距，工具名加粗突出，提升连续工具调用的可读性。
+
+已验证：
+
+```bash
+uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
+```
+
+结果：`98 passed`。
+
 ## 不建议现在做
 
 - 不建议现在做完整 tool result browser。
