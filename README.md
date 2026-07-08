@@ -62,6 +62,149 @@ flowchart LR
 
 入口层只负责接入和展示；`ConversationService` 负责把输入转成统一会话请求；Agent Runtime 负责推理、工具、安全、记忆、多模态、状态和持久化。
 
+## Runtime Flow
+
+```mermaid
+flowchart TB
+    subgraph Entry["入口层"]
+        CLI["CLI / Inline TUI"]
+        Gateway["Gateway / Platform Adapters"]
+        Desktop["Future Desktop / Web"]
+    end
+
+    subgraph Bootstrap["启动与装配"]
+        Settings["Settings / ConfigLoader"]
+        AppRuntime["create_app_runtime"]
+        AgentRuntime["create_agent_runtime"]
+        Plugins["PluginManager"]
+    end
+
+    subgraph Conversation["会话层"]
+        Service["ConversationService"]
+        Commands["ConversationCommandRuntime"]
+        Sessions["SessionStore"]
+        Input["ConversationInput"]
+    end
+
+    subgraph InputLayer["输入与附件"]
+        Text["Text Message"]
+        PlatformParts["Platform Message Parts"]
+        Attachments["AttachmentRef"]
+        AttachmentStore["AttachmentStore"]
+        Multi["MultiAttachmentProcessor"]
+    end
+
+    subgraph AgentCore["Agent 核心"]
+        Context["build_turn_context"]
+        Memory["Memory Prefetch"]
+        Skills["Skill Injection"]
+        Planner["Request Planning"]
+        Loop["run_conversation"]
+        Steer["SteerManager"]
+        Reports["TurnReportRecorder"]
+    end
+
+    subgraph LLM["Provider / Transport"]
+        Provider["ProviderProfile"]
+        Registry["Transport Registry"]
+        Anthropic["Anthropic Messages"]
+        Chat["Chat Completions"]
+        Responses["Responses / Codex Responses"]
+        Cache["Cache Diagnostics / Usage"]
+    end
+
+    subgraph Tools["工具执行"]
+        ToolRegistry["ToolRegistry"]
+        Executor["ToolExecutor"]
+        Guard["ExecutionGuard"]
+        Permission["PermissionManager"]
+        Sandbox["Sandbox / Path Safety"]
+        Audit["Audit Log"]
+        MCP["MCP Tools"]
+        Process["Background Processes"]
+    end
+
+    subgraph Extensions["扩展能力"]
+        BuiltinPlugins["Builtin Plugins"]
+        UserPlugins["User Plugins"]
+        SkillsExt["Skills"]
+        Workflows["Workflows"]
+        SubAgents["Sub Agents"]
+    end
+
+    subgraph Storage["持久化与观测"]
+        DB["SQLite"]
+        Messages["Messages"]
+        ToolRuns["Tool Runs"]
+        TurnReports["Turn Reports"]
+        Activity["Activity Runtime"]
+        Doctor["Doctor / Health"]
+    end
+
+    CLI --> AppRuntime
+    Gateway --> AppRuntime
+    Desktop --> AppRuntime
+
+    Settings --> AppRuntime
+    Plugins --> AppRuntime
+    AppRuntime --> Service
+    AppRuntime --> AgentRuntime
+
+    Service --> Commands
+    Service --> Sessions
+    Service --> Input
+
+    Text --> Input
+    Gateway --> PlatformParts
+    PlatformParts --> Attachments
+    Input --> Multi
+    Attachments --> AttachmentStore
+    AttachmentStore --> Multi
+
+    Service --> Loop
+    Loop --> Context
+    Context --> Memory
+    Context --> Skills
+    Context --> Planner
+    Loop --> Steer
+    Loop --> Reports
+
+    Planner --> Provider
+    Provider --> Registry
+    Registry --> Anthropic
+    Registry --> Chat
+    Registry --> Responses
+    Anthropic --> Cache
+    Chat --> Cache
+    Responses --> Cache
+
+    Loop --> ToolRegistry
+    ToolRegistry --> Executor
+    Executor --> Guard
+    Guard --> Permission
+    Guard --> Sandbox
+    Executor --> Audit
+    Executor --> MCP
+    Executor --> Process
+
+    Plugins --> BuiltinPlugins
+    Plugins --> UserPlugins
+    BuiltinPlugins --> SkillsExt
+    BuiltinPlugins --> Workflows
+    BuiltinPlugins --> SubAgents
+
+    Service --> DB
+    DB --> Messages
+    Reports --> TurnReports
+    Executor --> ToolRuns
+    AgentRuntime --> Activity
+    Process --> Activity
+    Gateway --> Activity
+    Doctor --> Activity
+```
+
+这张图描述内部流转和开发者接入点；更具体的分层说明见 [架构说明](docs/architecture.md)。
+
 ## 核心亮点
 
 ### 1. 真正的 Agent Runtime
@@ -204,7 +347,7 @@ uv run pytest -q
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | 后端整体架构、启动链路、对话流转、Gateway、provider/transport、工具权限和扩展点。 |
+| [docs/architecture.md](docs/architecture.md) | Runtime Flow 分层说明和开发者接入边界。 |
 | [docs/configuration.md](docs/configuration.md) | 配置项、profile、execution mode、sandbox、multimodal、MCP。 |
 | [docs/capabilities-and-boundaries.md](docs/capabilities-and-boundaries.md) | 项目亮点、安全边界、可靠性设计、mode 和可配置化总览。 |
 | [docs/platforms.md](docs/platforms.md) | Gateway 和平台插件接入。 |
