@@ -504,6 +504,8 @@ uv run pytest -q
 
 ## 后续可评估方向
 
+- Responses/Codex Responses 工具结果兼容性已补强：`openai_responses` 使用结构化 `function_call/function_call_output`，`codex_responses` 对中转站走文本化工具链路，避免工具结果被当作普通用户文本或触发中转站 5xx。
+  - 已验证：`uv run pytest tests/test_transport_responses.py -q`，`python -m compileall -q src/personal_agent`。
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。
 - 上下文压缩质量：优化长对话压缩后的任务状态、路径、工具结果保留。
 - 工具失败恢复策略：改进工具错误、权限拒绝、格式错误后的模型恢复提示；暂不做“声称调用工具但无 tool_call”的正则触发 retry。

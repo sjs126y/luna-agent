@@ -130,7 +130,17 @@ class OpenAIResponsesTransport(BaseTransport):
         return result
 
     def convert_messages(self, messages: list[dict], system_prompt: str = "") -> list[dict]:
+        return self._convert_messages(messages, system_prompt, structured_tools=True)
+
+    def _convert_messages(
+        self,
+        messages: list[dict],
+        system_prompt: str = "",
+        *,
+        structured_tools: bool,
+    ) -> list[dict]:
         result: list[dict] = []
+        tool_names_by_id: dict[str, str] = {}
 
         if system_prompt:
             result.append({
@@ -159,6 +169,12 @@ class OpenAIResponsesTransport(BaseTransport):
                 continue
 
             parts: list[dict] = []
+
+            def flush_parts() -> None:
+                if parts:
+                    result.append({"role": role, "content": list(parts)})
+                    parts.clear()
+
             for block in content:
                 btype = block.get("type", "")
                 if btype == "text":
@@ -168,13 +184,39 @@ class OpenAIResponsesTransport(BaseTransport):
                     if url:
                         parts.append({"type": "input_image", "image_url": url})
                 elif btype == "tool_result":
-                    parts.append({"type": "input_text", "text": str(block.get("content") or "")})
+                    call_id = str(block.get("tool_use_id") or "")
+                    if call_id and structured_tools:
+                        flush_parts()
+                        result.append({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": str(block.get("content") or ""),
+                        })
+                    else:
+                        parts.append({
+                            "type": "input_text",
+                            "text": _tool_result_text(block, tool_names_by_id),
+                        })
                 elif btype == "tool_use":
-                    # Responses streaming tool-call reconstruction is handled on output.
-                    continue
+                    call_id = str(block.get("id") or "")
+                    name = str(block.get("name") or "")
+                    if call_id:
+                        tool_names_by_id[call_id] = name
+                    if structured_tools:
+                        flush_parts()
+                        result.append({
+                            "type": "function_call",
+                            "call_id": call_id,
+                            "name": name,
+                            "arguments": json.dumps(block.get("input") or {}, ensure_ascii=False),
+                        })
+                    else:
+                        parts.append({
+                            "type": _text_part_type(role),
+                            "text": _tool_call_text(block),
+                        })
 
-            if parts:
-                result.append({"role": role, "content": parts})
+            flush_parts()
 
         return result
 
@@ -206,6 +248,13 @@ class OpenAIResponsesTransport(BaseTransport):
 class CodexResponsesTransport(OpenAIResponsesTransport):
     """Semantic alias for Codex-style middle stations using Responses API."""
 
+    def convert_messages(self, messages: list[dict], system_prompt: str = "") -> list[dict]:
+        # Some Codex-style middle stations expose the Responses endpoint but do
+        # not accept previous function_call/function_call_output items as input.
+        # Keep the tool result visible to the model without using those item
+        # types, so the main loop remains usable with those providers.
+        return self._convert_messages(messages, system_prompt, structured_tools=False)
+
 
 def _text_part_type(role: str) -> str:
     return "output_text" if role == "assistant" else "input_text"
@@ -213,6 +262,25 @@ def _text_part_type(role: str) -> str:
 
 def _responses_output_text(response: dict) -> str:
     return _collect_response_output(response, {})
+
+
+def _tool_call_text(block: dict) -> str:
+    name = str(block.get("name") or "tool")
+    call_id = str(block.get("id") or "")
+    arguments = json.dumps(block.get("input") or {}, ensure_ascii=False)
+    suffix = f" call_id={call_id}" if call_id else ""
+    return f"[Tool call requested: {name}{suffix} arguments={arguments}]"
+
+
+def _tool_result_text(block: dict, tool_names_by_id: dict[str, str]) -> str:
+    call_id = str(block.get("tool_use_id") or "")
+    name = tool_names_by_id.get(call_id, "tool")
+    content = str(block.get("content") or "")
+    prefix = f"[Tool result for {name}"
+    if call_id:
+        prefix += f" call_id={call_id}"
+    prefix += "]\n"
+    return prefix + content
 
 
 def _collect_response_output(response: dict, tool_call_deltas: dict[int, dict]) -> str:

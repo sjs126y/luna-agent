@@ -47,6 +47,114 @@ def test_responses_transport_converts_image_url_to_input_image():
     ]
 
 
+def test_responses_transport_preserves_tool_call_chain():
+    transport = OpenAIResponsesTransport(_provider())
+
+    body = transport.build_request(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "我会读取文件。"},
+                    {
+                        "type": "tool_use",
+                        "id": "call_read_1",
+                        "name": "read",
+                        "input": {"path": "AGENTS.md"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_read_1",
+                        "content": "# AGENTS.md\nRepository Guidelines",
+                    }
+                ],
+            },
+        ],
+        "",
+        [],
+        512,
+    )
+
+    assert body["input"] == [
+        {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "我会读取文件。"}],
+        },
+        {
+            "type": "function_call",
+            "call_id": "call_read_1",
+            "name": "read",
+            "arguments": "{\"path\": \"AGENTS.md\"}",
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_read_1",
+            "output": "# AGENTS.md\nRepository Guidelines",
+        },
+    ]
+
+
+def test_codex_responses_transport_textualizes_tool_call_chain_for_middle_stations():
+    transport = CodexResponsesTransport(_provider())
+
+    body = transport.build_request(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "我会读取文件。"},
+                    {
+                        "type": "tool_use",
+                        "id": "call_read_1",
+                        "name": "read",
+                        "input": {"path": "AGENTS.md"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_read_1",
+                        "content": "# AGENTS.md\nRepository Guidelines",
+                    }
+                ],
+            },
+        ],
+        "",
+        [],
+        512,
+    )
+
+    assert body["input"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "我会读取文件。"},
+                {
+                    "type": "output_text",
+                    "text": '[Tool call requested: read call_id=call_read_1 arguments={"path": "AGENTS.md"}]',
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "[Tool result for read call_id=call_read_1]\n# AGENTS.md\nRepository Guidelines",
+                }
+            ],
+        },
+    ]
+
+
 def test_codex_responses_transport_alias_is_registered():
     from personal_agent.llm.transport_registry import transport_registry
     from personal_agent.plugins.builtin.llm.builtin import register
