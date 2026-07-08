@@ -77,7 +77,7 @@ def build_layout(
             lines.append(f"{bar} {preview}{cursor}")
         if state.pending_confirm:
             lines.extend(_confirm_lines(state.pending_confirm))
-        elif state.status_message in {"press Ctrl+C again to exit", "cleared", "stop requested"}:
+        elif state.status_message in {"Press Ctrl+C again to exit", "cleared", "stop requested"}:
             lines.append(theme.sgr(f"  {state.status_message}", theme.NOTICE))
         return ANSI("\n".join(lines))
 

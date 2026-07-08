@@ -71,6 +71,7 @@ class _DynamicChoiceRequest(NamedTuple):
 
 
 _EXIT_CONFIRM_SECONDS = 2.0
+_EXIT_AGAIN_MESSAGE = "Press Ctrl+C again to exit"
 _RUNNING_COMMANDS = (
     "/activity",
     "/tool-runs",
@@ -776,7 +777,7 @@ class InlineTuiApp:
         if self._exit_notice_task is not None:
             self._exit_notice_task.cancel()
             self._exit_notice_task = None
-        if self.state.status_message == "press Ctrl+C again to exit":
+        if self.state.status_message == _EXIT_AGAIN_MESSAGE:
             self.state.status_message = "ready"
             self._invalidate()
 
@@ -1426,7 +1427,7 @@ class InlineTuiApp:
             event.app.exit()
             return
         self._exit_confirm_until = now + _EXIT_CONFIRM_SECONDS
-        self.state.status_message = "press Ctrl+C again to exit"
+        self.state.status_message = _EXIT_AGAIN_MESSAGE
         self._invalidate()
         self._schedule_exit_notice_clear()
 
@@ -1441,7 +1442,7 @@ class InlineTuiApp:
         except asyncio.CancelledError:
             return
         self._exit_confirm_until = 0.0
-        if self.state.status_message in {"press Ctrl+C again to exit", "cleared"}:
+        if self.state.status_message in {_EXIT_AGAIN_MESSAGE, "cleared"}:
             self.state.status_message = "ready"
             self._invalidate()
 

@@ -274,9 +274,10 @@ def test_active_region_confirm_truncates_long_input_preview():
 
 def test_active_region_shows_ctrl_c_exit_notice():
     state = UIState()
-    state.status_message = "press Ctrl+C again to exit"
+    state.status_message = "Press Ctrl+C again to exit"
+    assert state.has_active_region() is True
     text = _active_text(state)
-    assert "press Ctrl+C again to exit" in text
+    assert "Press Ctrl+C again to exit" in text
 
 
 def test_hint_bar_shows_expand_key():

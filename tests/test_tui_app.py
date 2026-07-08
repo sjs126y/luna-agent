@@ -593,7 +593,7 @@ def test_idle_ctrl_c_requires_second_press_to_exit():
     app._handle_idle_ctrl_c(event)
 
     assert event.app.exited is False
-    assert app.state.status_message == "press Ctrl+C again to exit"
+    assert app.state.status_message == "Press Ctrl+C again to exit"
     assert scheduled == [True]
 
     app._handle_idle_ctrl_c(event)

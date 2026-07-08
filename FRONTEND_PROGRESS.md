@@ -238,6 +238,21 @@ uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_rend
 
 结果：`98 passed`。
 
+### 2026-07-08 15:34 CST
+
+- 修复 Ctrl+C 二次退出提示不可见的问题：`UIState.has_active_region()` 现在会把 `Press Ctrl+C again to exit`、`cleared`、`stop requested` 这些短状态算作 active region 内容。
+- 空闲空输入第一次 Ctrl+C 会在输入框上方短暂显示 `Press Ctrl+C again to exit`，第二次 Ctrl+C 才退出。
+
+已验证：
+
+```bash
+uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
+python -m compileall -q src/personal_agent/tui
+git diff --check
+```
+
+结果：`98 passed`。
+
 ## 不建议现在做
 
 - 不建议现在做完整 tool result browser。
