@@ -256,6 +256,30 @@ def test_active_region_confirm_shows_process_label():
     assert "Process vite dev server" in text
 
 
+def test_active_region_confirm_truncates_long_input_preview():
+    state = UIState()
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="Web search",
+        input_preview='{"query":"' + "张雪峰 巧乐兹 " * 30 + '"}',
+    )
+    text = _active_text(state)
+    assert "Input" in text
+    assert "…" in text
+    assert len(max(text.splitlines(), key=len)) < 170
+    assert "1> Allow once" in text
+    assert "2> Deny" in text
+    assert "3> Always" in text
+
+
+def test_active_region_shows_ctrl_c_exit_notice():
+    state = UIState()
+    state.status_message = "Press Ctrl+C again to exit"
+    assert state.has_active_region() is True
+    text = _active_text(state)
+    assert "Press Ctrl+C again to exit" in text
+
+
 def test_hint_bar_shows_expand_key():
     from personal_agent.tui.layout import _hint_bar
 

@@ -196,7 +196,7 @@ class InlineRenderer(Renderer):
         if full:
             self.state.last_expandable = (compact_tool_title(item.display_name, item.index), full)
         # Print the completed tool trace line into scrollback.
-        await self._print_above(render_plain(self._tool_line(item), width=self.width))
+        await self._print_above("\n" + render_plain(self._tool_line(item), width=self.width))
         self._invalidate()
 
     async def on_retry(self, event: ConversationEvent) -> None:
@@ -303,7 +303,8 @@ class InlineRenderer(Renderer):
             summary += f" {theme.dim(item.risk_summary)}"
         if _should_hint_expand(item):
             summary += f" {theme.sgr('Ctrl+O expand', theme.TOOL_HINT)}"
-        return f"  ⚙ {item.display_name}{summary}  {mark}{dur}"
+        name = theme.sgr(item.display_name, theme.TOOL_ACTIVE_NAME)
+        return f"  ⚙ {name}{summary}  {mark}{dur}"
 
 
 def _join_notice(text: str, parts: list[str]) -> str:

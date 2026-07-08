@@ -179,6 +179,11 @@ class UIState:
             or self.stream_text
             or self.active_tools
             or self.pending_confirm
+            or self.status_message in {
+                "Press Ctrl+C again to exit",
+                "cleared",
+                "stop requested",
+            }
         )
 
     def has_slash_menu(self) -> bool:

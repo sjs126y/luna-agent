@@ -7,7 +7,7 @@ CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `doc
 - `personal-agent chat` 默认启用 inline TUI；`--ui inline` 可显式指定。
 - `InlineTuiApp` 负责 prompt_toolkit 应用、输入框、快捷键、历史、命令补全和打印队列。
 - `InlineRenderer` 只消费事件并更新 `UIState`；定稿内容通过 app 的 `print_above` 回调进入 scrollback。
-- 快捷键：`Enter` 发送、`Ctrl+J` 换行、`Ctrl+O` 展开最近长输出、`Ctrl+C` 停止或清空、`Shift+Tab` 循环执行模式。
+- 快捷键：`Enter` 发送、`Ctrl+J` 换行、`Ctrl+O` 展开最近长输出、`Ctrl+C` 停止/清空/二次退出、`Shift+Tab` 循环执行模式。
 - slash 命令仍走 runtime 后端命令入口；TUI 不重新实现命令逻辑。
 - inline tool confirmation 已接入后端 `confirm=` 回调，app 会传入 `confirm_tool` 并消费结构化确认字段。
 
@@ -36,7 +36,7 @@ CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `doc
 1. 输入框始终钉底(满屏时因分隔线上偏一行,预期内)。
 2. 流式回复在活跃区原地重绘,不逐行下滚。
 3. 定稿回复进 scrollback,滚轮可上翻查看历史。
-4. Ctrl+C 中断流式;Ctrl+D 空行退出,无全屏残留,记录留在 scrollback。
+4. Ctrl+C 中断流式;空闲时连续两次 Ctrl+C 退出,无全屏残留,记录留在 scrollback。
 
 ## 备选方案 (未采用,留档)
 若上述在某些终端失效,退路是 `patch_stdout` 模式或 `print_formatted_text` +
