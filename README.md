@@ -204,6 +204,7 @@ uv run pytest -q
 
 | 文档 | 内容 |
 | --- | --- |
+| [docs/architecture.md](docs/architecture.md) | 后端整体架构、启动链路、对话流转、Gateway、provider/transport、工具权限和扩展点。 |
 | [docs/configuration.md](docs/configuration.md) | 配置项、profile、execution mode、sandbox、multimodal、MCP。 |
 | [docs/capabilities-and-boundaries.md](docs/capabilities-and-boundaries.md) | 项目亮点、安全边界、可靠性设计、mode 和可配置化总览。 |
 | [docs/platforms.md](docs/platforms.md) | Gateway 和平台插件接入。 |
