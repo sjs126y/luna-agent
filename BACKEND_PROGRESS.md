@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-08 15:58 CST
+更新时间：2026-07-08 16:20 CST
 
 ## 交接定位
 
@@ -22,6 +22,7 @@
 - README showcase polish：README 再次调整为更偏项目展示页，扩充“一眼看懂”、为什么做、12 个核心亮点和能力地图；命令部分收敛为基础启动路径，其余用法导向文档索引。
 - Project display rename：对外展示名从 `Personal Agent` 调整为 `Lumora`；内部 Python 包名 `personal_agent` 和 CLI 命令 `personal-agent` 暂时保留，避免破坏运行入口。
 - Streaming restore：确认 main 上 TUI/事件协议仍支持 `assistant_delta` / `thinking_delta`，实际断点在 ChatCompletions transport 没有把 `on_delta` 传给 parser，且 ChatCompletions / Responses 默认非流式；已修复为 renderer 请求 delta 时强制 `stream=True` 并转发 `on_delta`，补 call 层回归测试。
+- Doctor output v1：`personal-agent doctor` 默认改为普通用户摘要，只展示状态、模型、运行时、配置、记忆、MCP、工具、网关、平台、插件、最多 5 条注意事项和下一步；新增 `doctor --verbose` 保留原完整开发诊断，`--json` / `--section` 行为不变。
 - Execution Mode v3：四档模式已经稳定，对应权限、沙箱、工具类别和确认行为。
 - Permission mode cleanup：`standard / Ask First` 下普通网络工具调整为 `ask`，`/allow network` 可解锁 `web_search` / `web_fetch`；`/allow` 只对 `ask` 生效，遇到 `deny` 会明确提示不能覆盖，bash 网络仍由 `sandbox.bash_allow_network` 单独控制。
 - Execution / Sandbox 配置开放：`execution.policy.tool_permissions`、`sandbox.*` 已在 example、配置文档、init 模板和 doctor 重点字段中显式展示；未新增 per-tool 权限、timeout 或关闭硬安全边界的配置。

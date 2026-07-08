@@ -490,6 +490,7 @@ def wechat_login() -> None:
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
     section: str = typer.Option("all", "--section", help="输出部分诊断: all|runtime|config|platforms|tools|plugins。"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="输出完整开发诊断。"),
 ) -> None:
     """Show system diagnostics."""
     section = _normalize_doctor_section(section)
@@ -497,7 +498,7 @@ def doctor(
     if json_output:
         typer.echo(json.dumps(_doctor_section_payload(report, section), indent=2, ensure_ascii=False))
     else:
-        typer.echo(format_doctor_report(report, section=section))
+        typer.echo(format_doctor_report(report, section=section, verbose=verbose))
 
 
 @app.command("init")
@@ -1663,10 +1664,12 @@ def _format_runtime_execution_detail_lines(execution: dict[str, Any]) -> list[st
     ]
 
 
-def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str:
+def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbose: bool = False) -> str:
     section = _normalize_doctor_section(section)
     if section != "all":
         return _format_doctor_section(report, section)
+    if not verbose:
+        return _format_doctor_summary_report(report)
 
     issues = _doctor_issues(report)
     plugin_summary = _plugin_status_summary(report["plugins"])
@@ -1683,7 +1686,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
     execution_runtime = runtime.get("execution", {})
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
-        "Personal Agent 诊断",
+        "Lumora doctor --verbose",
         f"总体状态: {'需要注意' if issues else '正常'}",
         f"数据目录: {report['data_dir']}",
         f"日志级别: {report['log_level']}",
@@ -1833,6 +1836,167 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all") -> str
     return "\n".join(lines)
 
 
+def _format_doctor_summary_report(report: dict[str, Any]) -> str:
+    issues = _doctor_issues(report)
+    runtime = report.get("runtime") or {}
+    memory = report.get("memory") or {}
+    gateway = report.get("gateway") or {}
+    tools = report.get("tools") or {}
+    config = report.get("config") or {}
+    plugin_summary = _plugin_status_summary(report.get("plugins") or [])
+    mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
+    platforms = list(report.get("platforms") or [])
+
+    lines = [
+        "Lumora doctor",
+        "",
+        f"状态: {_doctor_summary_status(report, issues)}",
+        f"模型: {report.get('llm_provider') or '-'} / {report.get('llm_model') or '-'}",
+        f"运行时: {_doctor_runtime_status(runtime)}",
+        f"配置: {_doctor_config_status(config)}",
+        f"记忆: {_doctor_memory_summary(memory)}",
+        f"MCP: {_doctor_mcp_summary(report, mcp_runtime)}",
+        f"工具: {int(tools.get('available') or 0)} 可用 / {int(tools.get('total') or 0)} 总数",
+        f"网关: {_doctor_gateway_summary(gateway)}",
+        f"平台: {_doctor_platform_summary(platforms)}",
+        (
+            "插件: "
+            f"{plugin_summary['loaded']} 已加载, "
+            f"{plugin_summary['deferred']} 延迟, "
+            f"{plugin_summary['error']} 错误"
+        ),
+        "",
+        "需要注意:",
+    ]
+    attention = _doctor_summary_attention(issues)
+    lines.extend(f"  - {item}" for item in attention)
+    lines.extend([
+        "",
+        "下一步:",
+        *[f"  - {item}" for item in _doctor_next_steps(report, issues)],
+        "",
+        "更多:",
+        "  - uv run personal-agent doctor --verbose",
+        "  - uv run personal-agent doctor --json",
+    ])
+    return "\n".join(lines)
+
+
+def _doctor_summary_status(report: dict[str, Any], issues: list[str]) -> str:
+    config = report.get("config") or {}
+    runtime = report.get("runtime") or {}
+    has_config_errors = bool(config.get("errors"))
+    runtime_failed = runtime and not runtime.get("initialized", False)
+    llm_key = (config.get("env") or {}).get("llm_api_key_set")
+    if has_config_errors or runtime_failed or llm_key is False:
+        return "不可用，需要处理"
+    if issues:
+        return "可用，有提示"
+    return "正常"
+
+
+def _doctor_runtime_status(runtime: dict[str, Any]) -> str:
+    if not runtime:
+        return "未初始化"
+    if not runtime.get("initialized", False):
+        return "失败"
+    if runtime.get("boot") and not (runtime.get("boot") or {}).get("ok", False):
+        return "boot 异常"
+    return "已就绪"
+
+
+def _doctor_config_status(config: dict[str, Any]) -> str:
+    if not config:
+        return "未知"
+    errors = len(config.get("errors") or [])
+    warnings = len(config.get("warnings") or [])
+    llm_key = (config.get("env") or {}).get("llm_api_key_set")
+    if errors:
+        return f"{errors} 个错误"
+    if llm_key is False:
+        return "缺少 LLM_API_KEY"
+    if warnings:
+        return f"正常，{warnings} 个提示"
+    return "正常"
+
+
+def _doctor_memory_summary(memory: dict[str, Any]) -> str:
+    builtin = memory.get("builtin_provider") or ("file" if memory.get("builtin_available") else "-")
+    external = memory.get("external_provider") or ("embedding" if memory.get("external_available") else "none")
+    return f"{builtin} + {external}" if external and external != "none" else str(builtin or "-")
+
+
+def _doctor_mcp_summary(report: dict[str, Any], mcp_runtime: dict[str, Any]) -> str:
+    if not report.get("mcp_enabled", False):
+        return "未启用"
+    connected = int(mcp_runtime.get("connected_count") or 0)
+    if not connected:
+        connected = sum(1 for item in mcp_runtime.get("servers", []) if item.get("connected"))
+    disabled = sum(1 for item in report.get("mcp_servers", []) if not item.get("enabled", True))
+    configured = len(report.get("mcp_servers", []) or mcp_runtime.get("servers", []) or [])
+    parts = [f"{connected} 已连接"]
+    if disabled:
+        parts.append(f"{disabled} 禁用")
+    elif configured and connected < configured:
+        parts.append(f"{configured - connected} 未连接")
+    return ", ".join(parts)
+
+
+def _doctor_gateway_summary(gateway: dict[str, Any]) -> str:
+    if not gateway or not gateway.get("started", False):
+        return "未运行"
+    running = int(gateway.get("running_agents") or 0)
+    pending = int(gateway.get("pending_messages") or 0)
+    if running or pending:
+        return f"运行中, agents={running}, pending={pending}"
+    return "运行中"
+
+
+def _doctor_platform_summary(platforms: list[dict[str, Any]]) -> str:
+    if not platforms:
+        return "未配置"
+    configured = sum(1 for item in platforms if item.get("enabled", True) and not item.get("missing_env"))
+    missing = sum(1 for item in platforms if item.get("missing_env"))
+    deferred = sum(1 for item in platforms if str(item.get("status") or "").upper() == "DEFERRED")
+    parts = [f"{configured} 已配置"]
+    if missing:
+        parts.append(f"{missing} 缺少环境变量")
+    if deferred:
+        parts.append(f"{deferred} 延迟加载")
+    return ", ".join(parts)
+
+
+def _doctor_summary_attention(issues: list[str], *, limit: int = 5) -> list[str]:
+    if not issues:
+        return ["无"]
+    visible = issues[:limit]
+    remaining = len(issues) - len(visible)
+    if remaining > 0:
+        visible.append(f"还有 {remaining} 条，运行 doctor --verbose 查看详情")
+    return visible
+
+
+def _doctor_next_steps(report: dict[str, Any], issues: list[str]) -> list[str]:
+    config = report.get("config") or {}
+    if (config.get("env") or {}).get("llm_api_key_set") is False:
+        return [
+            "编辑 .env，填写 LLM_API_KEY",
+            "uv run personal-agent doctor",
+        ]
+    if config.get("errors"):
+        return [
+            "uv run personal-agent init --check",
+            "uv run personal-agent doctor --verbose",
+        ]
+    steps = ["uv run personal-agent chat"]
+    platforms = list(report.get("platforms") or [])
+    if any(item.get("enabled", True) and not item.get("missing_env") for item in platforms):
+        steps.append("uv run personal-agent serve")
+    if issues:
+        steps.append("uv run personal-agent doctor --verbose")
+    return steps
+
+
 def _format_tool_summary_lines(tools: dict[str, Any]) -> list[str]:
     lines = [
         f"  total: {tools.get('total', 0)}",
@@ -1974,7 +2138,7 @@ def _format_doctor_section(report: dict[str, Any], section: str) -> str:
         return "\n".join(lines)
     if section == "plugins":
         return format_plugin_list(report.get("plugins", []))
-    lines = [f"Personal Agent 诊断: {section}"]
+    lines = [f"Lumora doctor: {section}"]
     if section == "runtime":
         runtime = report.get("runtime", {})
         gateway = report.get("gateway", {})

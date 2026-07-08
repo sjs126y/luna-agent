@@ -31,6 +31,7 @@ uv run personal-agent chat "单轮消息"
 uv run personal-agent serve
 
 uv run personal-agent doctor
+uv run personal-agent doctor --verbose
 uv run personal-agent doctor --json
 uv run personal-agent init --check
 
@@ -68,6 +69,8 @@ uv run personal-agent doctor
 
 ## Doctor 结果怎么读
 
+`doctor` 默认输出启动体检摘要，适合普通用户判断能不能运行；`doctor --verbose` 输出完整开发诊断，包含 runtime、effective config、插件、MCP、Gateway、工具和 sandbox 明细；`doctor --json` 给脚本或前端消费完整结构化数据。
+
 `Config`：
 
 - `config.yaml: 否`：运行 `personal-agent init`。
@@ -101,4 +104,3 @@ uv run personal-agent doctor
 python -m compileall -q src/personal_agent
 uv run pytest -q
 ```
-

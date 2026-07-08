@@ -57,7 +57,8 @@ def test_doctor_report_includes_execution_policy():
         llm_base_url="https://example.test",
     )
     report = build_doctor_report(settings)
-    text = format_doctor_report(report)
+    summary = format_doctor_report(report)
+    text = format_doctor_report(report, verbose=True)
 
     assert report["execution"]["mode"] == "sovereign"
     assert report["execution"]["isolation"] == "tool-enforced"
@@ -71,6 +72,10 @@ def test_doctor_report_includes_execution_policy():
     assert effective_fields["LLM_API_KEY"]["value"] == "<set>"
     assert report["tools"]["total"] >= 0
     assert "by_permission" in report["tools"]
+    assert "Lumora doctor" in summary
+    assert "工具:" in summary
+    assert "doctor --verbose" in summary
+    assert "Effective Config:" not in summary
     assert "Execution:" in text
     assert "Tools:" in text
     assert "by risk:" in text
@@ -463,10 +468,13 @@ def test_doctor_report_includes_runtime_failure(monkeypatch):
 
     report = build_doctor_report()
     text = format_doctor_report(report)
+    verbose_text = format_doctor_report(report, verbose=True)
 
     assert report["runtime"]["initialized"] is False
     assert "Runtime 初始化失败: RuntimeError: broken" in text
-    assert "内置 memory provider 不可用" in text
+    assert "内置 memory provider 不可用" in verbose_text
+    assert "Lumora doctor" in text
+    assert "状态: 不可用，需要处理" in text
 
 
 def test_init_command_generates_and_skips_existing_files(tmp_path):
@@ -1042,8 +1050,18 @@ def test_format_doctor_report_includes_summary_and_issues():
         },
     }
 
-    text = format_doctor_report(report)
+    summary_text = format_doctor_report(report)
+    text = format_doctor_report(report, verbose=True)
 
+    assert "Lumora doctor" in summary_text
+    assert "状态: 可用，有提示" in summary_text
+    assert "模型: deepseek / deepseek-v4-flash" in summary_text
+    assert "运行时: 已就绪" in summary_text
+    assert "工具:" in summary_text
+    assert "需要注意:" in summary_text
+    assert "doctor --verbose" in summary_text
+    assert "Agents:" not in summary_text
+    assert "Effective Config:" not in summary_text
     assert "总体状态: 需要注意" in text
     assert "Agents:" in text
     assert "Tools:" in text
