@@ -504,6 +504,7 @@ uv run pytest -q
 
 ## 后续可评估方向
 
+- 发布准备补强：`.gitignore` 已从忽略整个 `data/` 调整为保留运行目录骨架和 `data/system.example` 模板，同时继续忽略数据库、日志、附件、授权、真实 system prompt、微信凭据等本机数据；README 补充 uv 安装和 example 去后缀使用说明。
 - Responses/Codex Responses 工具结果兼容性已补强：`openai_responses` 使用结构化 `function_call/function_call_output`，`codex_responses` 对中转站走文本化工具链路，避免工具结果被当作普通用户文本或触发中转站 5xx。
   - 已验证：`uv run pytest tests/test_transport_responses.py -q`，`python -m compileall -q src/personal_agent`。
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。

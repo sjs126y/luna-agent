@@ -10,11 +10,47 @@ venv/
 # uv
 uv.lock
 
-# Data
-data/
+# Runtime data
+data/*
+!data/.gitkeep
+!data/attachments/
+data/attachments/*
+!data/attachments/.gitkeep
+!data/attachments/derived/
+data/attachments/derived/*
+!data/attachments/derived/.gitkeep
+!data/attachments/files/
+data/attachments/files/*
+!data/attachments/files/.gitkeep
+!data/attachments/images/
+data/attachments/images/*
+!data/attachments/images/.gitkeep
+!data/auth/
+data/auth/*
+!data/auth/.gitkeep
+!data/exports/
+data/exports/*
+!data/exports/.gitkeep
+!data/memory/
+data/memory/*
+!data/memory/.gitkeep
+!data/plugins/
+data/plugins/*
+!data/plugins/.gitkeep
+!data/system.example/
+!data/system.example/**
+data/system/
+data/wechat/
+data/*.db
+data/*.json
+data/*.jsonl
+data/*.log
+data/*.txt
+data/*.npy
 
 # Env
 .env
+config.yaml
 
 # IDE
 .vscode/

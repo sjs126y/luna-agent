@@ -1,5 +1,7 @@
-# Personal Agent 行为配置示例
-# 复制为 config.yaml 后按本机环境修改。密钥、基础地址、平台令牌等敏感信息放到 .env。
+# Lumora 行为配置模板
+# 复制为 config.yaml 后即可作为本机配置起步。
+# 密钥、基础地址、平台令牌等敏感信息放到 .env，不要写进本文件。
+# 如需自定义长期系统提示词，可复制 data/system.example 为 data/system 后编辑其中的 Markdown 文件。
 
 agent:
   ui: "inline"                    # 终端交互界面，目前正式入口为行内 TUI
