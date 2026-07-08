@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-08 16:20 CST
+更新时间：2026-07-08 17:05 CST
 
 ## 交接定位
 
@@ -20,6 +20,7 @@
 
 - README showcase refresh：根目录 README 已整理为更适合公开推送的项目首页，突出项目定位、架构图、核心亮点、当前能力、快速开始和文档索引。
 - README showcase polish：README 再次调整为更偏项目展示页，扩充“一眼看懂”、为什么做、12 个核心亮点和能力地图；命令部分收敛为基础启动路径，其余用法导向文档索引。
+- README boundaries refresh：README 首页补充安全边界、可靠性、execution mode 和可配置化入口；新增 `docs/capabilities-and-boundaries.md`，把详细功能亮点、安全下限、Gateway/LLM/tool 可靠性和配置项说明拆到独立文档。
 - Project display rename：对外展示名从 `Personal Agent` 调整为 `Lumora`；内部 Python 包名 `personal_agent` 和 CLI 命令 `personal-agent` 暂时保留，避免破坏运行入口。
 - Streaming restore：确认 main 上 TUI/事件协议仍支持 `assistant_delta` / `thinking_delta`，实际断点在 ChatCompletions transport 没有把 `on_delta` 传给 parser，且 ChatCompletions / Responses 默认非流式；已修复为 renderer 请求 delta 时强制 `stream=True` 并转发 `on_delta`，补 call 层回归测试。
 - Doctor output v1：`personal-agent doctor` 默认改为普通用户摘要，只展示状态、模型、运行时、配置、记忆、MCP、工具、网关、平台、插件、最多 5 条注意事项和下一步；新增 `doctor --verbose` 保留原完整开发诊断，`--json` / `--section` 行为不变。
