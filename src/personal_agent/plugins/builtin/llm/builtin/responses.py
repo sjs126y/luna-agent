@@ -197,7 +197,7 @@ class OpenAIResponsesTransport(BaseTransport):
             base_url=self._provider.base_url,
             api_key=self._provider.api_key,
             body=body,
-            stream=stream,
+            stream=stream or on_delta is not None,
             extra_headers=self._provider.extra_headers,
         )
         return await self.parse_stream(event_stream, on_delta=on_delta)

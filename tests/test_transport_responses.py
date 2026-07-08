@@ -163,3 +163,38 @@ async def test_responses_transport_parses_completed_event_function_call():
             "input": {"path": "CLAUDE.md"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_responses_call_streams_when_delta_callback_is_present(monkeypatch):
+    transport = OpenAIResponsesTransport(_provider())
+    seen: dict[str, object] = {}
+    deltas: list[tuple[str, str]] = []
+
+    async def fake_call_openai_responses(**kwargs):
+        seen.update(kwargs)
+        yield {"type": "response.output_text.delta", "delta": "Hel"}
+        yield {"type": "response.output_text.delta", "delta": "lo"}
+        yield {
+            "type": "response.completed",
+            "response": {"model": "gpt-test", "status": "completed"},
+        }
+
+    async def on_delta(kind: str, chunk: str) -> None:
+        deltas.append((kind, chunk))
+
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.llm.builtin.responses.call_openai_responses",
+        fake_call_openai_responses,
+    )
+
+    response = await transport.call(
+        messages=[{"role": "user", "content": "hi"}],
+        system_prompt="system",
+        tools=[],
+        on_delta=on_delta,
+    )
+
+    assert seen["stream"] is True
+    assert response.text == "Hello"
+    assert deltas == [("text", "Hel"), ("text", "lo")]

@@ -211,6 +211,7 @@ class ChatCompletionsTransport(BaseTransport):
         tools: list[dict] | None = None,
         max_tokens: int = 4096,
         stream: bool = False,
+        on_delta: DeltaCallback | None = None,
         request_plan: LLMRequestPlan | None = None,
     ) -> NormalizedResponse:
         if request_plan is not None:
@@ -222,10 +223,10 @@ class ChatCompletionsTransport(BaseTransport):
             base_url=self._provider.base_url,
             api_key=self._provider.api_key,
             body=body,
-            stream=stream,
+            stream=stream or on_delta is not None,
             extra_headers=self._provider.extra_headers,
         )
-        return await self.parse_stream(event_stream)
+        return await self.parse_stream(event_stream, on_delta=on_delta)
 
 
 def _sorted_tools(tools: list[dict]) -> list[dict]:

@@ -171,3 +171,36 @@ async def test_chat_completions_parse_stream_without_callback_is_unchanged():
 
     assert resp.text == "Hello"
     assert resp.thinking == ""
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_call_streams_when_delta_callback_is_present(monkeypatch):
+    provider = _provider(model="gpt-4o")
+    transport = ChatCompletionsTransport(provider)
+    seen: dict[str, object] = {}
+    deltas: list[tuple[str, str]] = []
+
+    async def fake_call_chat_completions(**kwargs):
+        seen.update(kwargs)
+        yield {"choices": [{"delta": {"content": "Hel"}}]}
+        yield {"choices": [{"delta": {"content": "lo"}}]}
+        yield {"choices": [{"finish_reason": "stop", "delta": {}}]}
+
+    async def on_delta(kind: str, chunk: str) -> None:
+        deltas.append((kind, chunk))
+
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.llm.builtin.chat_completions.call_chat_completions",
+        fake_call_chat_completions,
+    )
+
+    resp = await transport.call(
+        messages=[{"role": "user", "content": "hi"}],
+        system_prompt="system",
+        tools=[],
+        on_delta=on_delta,
+    )
+
+    assert seen["stream"] is True
+    assert resp.text == "Hello"
+    assert deltas == [("text", "Hel"), ("text", "lo")]
