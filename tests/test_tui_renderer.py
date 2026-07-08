@@ -6,6 +6,8 @@ assert on UIState and the printed-to-scrollback lines.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from personal_agent.conversation.events import ConversationEvent
@@ -30,6 +32,11 @@ def _make():
         width=60,
     )
     return r, printed, calls
+
+
+def _plain(text: str) -> str:
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    return " ".join(text.split())
 
 
 @pytest.mark.asyncio
@@ -117,7 +124,7 @@ async def test_steer_consumed_prints_lightweight_notice():
         "text_preview": "回答短一点",
     }))
 
-    text = "\n".join(printed)
+    text = _plain("\n".join(printed))
     assert "steer applied x2" in text
     assert "回答短一点" in text
 
@@ -161,7 +168,7 @@ async def test_tool_end_hints_expand_for_long_output():
         "input_preview": "large.log",
         "full_output": "line1\nline2\nline3\nline4",
     }))
-    text = "\n".join(printed)
+    text = _plain("\n".join(printed))
     assert "Read file" in text
     assert "large.log" in text
     assert "Ctrl+O expand" in text
@@ -202,7 +209,7 @@ async def test_tool_end_uses_display_metadata_in_trace():
         "risk_summary": "Will execute a shell command.",
         "error": "not allowed",
     }))
-    text = "\n".join(printed)
+    text = _plain("\n".join(printed))
     assert "Shell command" in text
     assert "rm -rf build" in text
     assert "Will execute a shell" in text
@@ -220,7 +227,7 @@ async def test_tool_end_summarizes_web_search_args_without_raw_json():
         "input_summary": '{"max_results": 5, "query": "MCP 最新进展 2026"}',
         "duration": 0.4,
     }))
-    text = "\n".join(printed)
+    text = _plain("\n".join(printed))
     assert "Web search" in text
     assert "Query MCP 最新进展 2026" in text
     assert "5 results" in text
