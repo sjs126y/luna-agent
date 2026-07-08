@@ -105,6 +105,25 @@ def test_doctor_section_json_returns_only_requested_section(tmp_path, monkeypatc
     assert "runtime" not in data
 
 
+def test_doctor_default_summary_and_verbose_output(tmp_path, monkeypatch):
+    _init_local_project(tmp_path, monkeypatch)
+
+    summary = runner.invoke(app, ["doctor"])
+    verbose = runner.invoke(app, ["doctor", "--verbose"])
+
+    assert summary.exit_code == 0, summary.output
+    assert "Lumora doctor" in summary.output
+    assert "更多:" in summary.output
+    assert "doctor --verbose" in summary.output
+    assert "Effective Config:" not in summary.output
+    assert "MCP 服务器:" not in summary.output
+
+    assert verbose.exit_code == 0, verbose.output
+    assert "Lumora doctor --verbose" in verbose.output
+    assert "Effective Config:" in verbose.output
+    assert "MCP 服务器:" in verbose.output
+
+
 def test_doctor_execution_section_reports_profile(tmp_path, monkeypatch):
     _init_local_project(tmp_path, monkeypatch)
 
@@ -112,7 +131,7 @@ def test_doctor_execution_section_reports_profile(tmp_path, monkeypatch):
     json_result = runner.invoke(app, ["doctor", "--json", "--section", "execution"])
 
     assert text_result.exit_code == 0, text_result.output
-    assert "Personal Agent 诊断: execution" in text_result.output
+    assert "Lumora doctor: execution" in text_result.output
     assert "profile: Standard" in text_result.output
     assert "effective permissions:" in text_result.output
     assert "overrides: 无" in text_result.output
@@ -133,7 +152,7 @@ def test_doctor_section_text_filters_output(tmp_path, monkeypatch):
     result = runner.invoke(app, ["doctor", "--section", "platforms"])
 
     assert result.exit_code == 0, result.output
-    assert "Personal Agent 诊断: platforms" in result.output
+    assert "Lumora doctor: platforms" in result.output
     assert "platforms/qq" in result.output
     assert "Memory:" not in result.output
 
