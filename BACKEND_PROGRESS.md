@@ -1,6 +1,32 @@
 # Backend Progress
 
-更新时间：2026-07-08 17:50 CST
+更新时间：2026-07-08 20:24 CST
+
+## 阶段性收尾状态
+
+状态：后端主干进入稳定可展示阶段，短期如果没有新产品方向，可以先暂停大功能开发，后续主要做真实使用反馈下的修 bug、文档补齐和小幅体验打磨。
+
+当前主干：`main`，最近后端提交：
+
+- `7d5967f [codex] prepare public config templates`
+- `dd9bc4d [codex] fix codex responses tool context`
+- `6987e3a [codex] expand runtime architecture docs`
+
+当前整体判断：
+
+- Agent runtime、provider/transport、工具执行、权限/sandbox、gateway、platform adapter、多模态附件链路、activity、turn report、runtime steer、doctor/config/docs 都已经具备完整底座。
+- README、架构文档、能力边界文档、example 配置和 data 目录骨架已整理到可公开推送状态。
+- `data/` 现在只提交目录骨架和 `data/system.example/` 模板；真实数据库、日志、附件、auth、微信凭据、个人 system prompt 都继续被 `.gitignore` 保护。
+- `openai_responses` 与 `codex_responses` 的工具上下文转换已分开处理：官方 Responses 走结构化工具项，Codex/Ahoo 类中转站走文本化工具链路，避免上游 5xx。
+- 当前不建议再做大规模架构改造；如果后续继续推进，优先基于真实使用日志和前端/桌面端需求做小步验证。
+
+暂停期间最值得关注的后续方向：
+
+- 真实长对话下的上下文压缩质量：路径、任务状态、工具结果是否被保留得足够好。
+- stop/interrupted turn 的 partial tool results 是否需要持久化，避免“工具已经执行但被 stop 后下一轮忘记”。
+- codex_responses 中转站真实使用下，文本化工具结果是否足够降低重复工具调用；如果仍重复，再考虑同轮只读工具去重或更强的 tool-result 提示。
+- Feishu / Telegram 真实附件下载器、OCR/ASR/vision 服务接入，可以等实际平台需求再做。
+- Desktop/Web 客户端如果启动，优先复用 `ConversationInput + attachments + ConversationService.run_turn_input()`，不要绕开后端主链路。
 
 ## 交接定位
 
@@ -502,20 +528,20 @@ uv run pytest -q
 
 结果：聚焦 `110 passed`，全量 `798 passed`。
 
-## 后续可评估方向
+## 暂停期后续 Backlog
 
-- 发布准备补强：`.gitignore` 已从忽略整个 `data/` 调整为保留运行目录骨架和 `data/system.example` 模板，同时继续忽略数据库、日志、附件、授权、真实 system prompt、微信凭据等本机数据；README 补充 uv 安装和 example 去后缀使用说明。
-- Responses/Codex Responses 工具结果兼容性已补强：`openai_responses` 使用结构化 `function_call/function_call_output`，`codex_responses` 对中转站走文本化工具链路，避免工具结果被当作普通用户文本或触发中转站 5xx。
-  - 已验证：`uv run pytest tests/test_transport_responses.py -q`，`python -m compileall -q src/personal_agent`。
-- 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率。
+- stop/interrupted turn partial persistence：工具已经成功执行但本轮被 stop 时，评估是否保存 partial `ctx.messages`，避免下一轮忘记已读取内容。
+- 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率，尤其是中转站是否返回标准 usage。
 - 上下文压缩质量：优化长对话压缩后的任务状态、路径、工具结果保留。
 - 工具失败恢复策略：改进工具错误、权限拒绝、格式错误后的模型恢复提示；暂不做“声称调用工具但无 tool_call”的正则触发 retry。
+- 平台附件下载器补全：Feishu / Telegram 可等真实使用需要再做，QQ / WeChat 已有首版。
+- OCR / ASR / vision：当前后端已预留扩展点，本地服务或中转站视觉模型可后续按需接入。
 
 最近一次验证：
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest -q
+uv run pytest tests/test_transport_responses.py -q
 ```
 
-结果：全量 `798 passed`。
+结果：Responses transport 聚焦测试 `9 passed`；最近一次记录的全量回归为 `798 passed`。
