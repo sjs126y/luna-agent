@@ -1,6 +1,6 @@
 # 插件系统
 
-Personal Agent 的插件系统是一个“装配层”：负责发现插件、加载入口、注册 hook/command，并把工具、平台、MCP、技能、workflow 等能力转发给已有的运行时 registry 或 manager。插件系统不接管这些子系统自己的生命周期。
+Lumora 的插件系统是一个“装配层”：负责发现插件、加载入口、注册 hook/command，并把工具、平台、MCP、技能、workflow 等能力转发给已有的运行时 registry 或 manager。插件系统不接管这些子系统自己的生命周期。
 
 ## 最终目录结构
 

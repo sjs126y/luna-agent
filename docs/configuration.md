@@ -1,6 +1,6 @@
 # 配置说明
 
-Personal Agent 使用两类配置文件：
+Lumora 使用两类配置文件：
 
 - `.env`：secret、LLM provider、平台 token。
 - `config.yaml`：运行行为、目录、插件、记忆、沙箱、MCP、认证和会话。

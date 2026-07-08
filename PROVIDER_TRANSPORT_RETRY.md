@@ -2,7 +2,7 @@
 
 ## 背景
 
-当前 Personal Agent 有三个硬伤需要修复：
+当前 Lumora 有三个硬伤需要修复：
 
 1. **Provider 硬编码**：Gateway 直接手写 `ProviderProfile(...)`，没有注册表。`response_hook` 有字段但从未调用
 2. **Transport 单一**：只有 `AnthropicMessagesTransport`，无法对接 OpenAI 兼容 API
