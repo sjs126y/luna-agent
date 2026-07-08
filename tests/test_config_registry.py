@@ -11,6 +11,7 @@ def test_config_registry_paths_are_unique():
     assert len(paths) == len(set(paths))
     assert "execution.mode" in paths
     assert "LLM_API_KEY" in paths
+    assert "LLM_REASONING_EFFORT" in paths
     assert "llm.context_window" in paths
     assert "sandbox.roots" in paths
     assert "attachments.resolve_inbound" in paths
@@ -29,6 +30,7 @@ def test_config_registry_keeps_field_order_and_metadata():
     assert paths[:3] == ["execution.mode", "execution.policy", "LLM_PROVIDER"]
     assert paths[-1] == "profiles"
     assert fields["LLM_API_KEY"].sensitive is True
+    assert fields["LLM_REASONING_EFFORT"].source == ".env"
     assert fields["llm.context_window"].env_key == "LLM_CONTEXT_WINDOW"
     assert fields["llm.context_window"].minimum == 0
     assert fields["sandbox.roots"].allow_csv is True
@@ -142,6 +144,8 @@ def test_config_registry_schema_is_stable():
     assert schema["field_count"] == len(schema["fields"])
     assert "execution" in schema["sections"]
     assert fields["LLM_API_KEY"]["sensitive"] is True
+    assert fields["LLM_REASONING_EFFORT"]["value_type"] == "str"
+    assert fields["LLM_REASONING_EFFORT"]["default"] == ""
     assert fields["llm.context_window"]["env_key"] == "LLM_CONTEXT_WINDOW"
     assert fields["llm.context_window"]["yaml_path"] == "llm.context_window"
     assert fields["llm.context_window"]["minimum"] == 0

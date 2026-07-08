@@ -26,6 +26,7 @@ def test_config_loader_uses_defaults(tmp_path):
     assert snapshot.attr_values["multimodal_ocr_timeout_seconds"] == 20
     assert snapshot.attr_values["multimodal_ocr_language"] == "auto"
     assert snapshot.attr_values["llm_context_window"] == 0
+    assert snapshot.attr_values["llm_reasoning_effort"] == ""
     assert snapshot.sources["LLM_PROVIDER"] == "default"
     assert snapshot.source_counts["default"] == snapshot.field_count
 
@@ -38,6 +39,7 @@ def test_config_loader_resolves_env_yaml_and_overrides(tmp_path):
             "LLM_PROVIDER=openai\n"
             "LLM_MAX_TOKENS=2048\n"
             "LLM_CONTEXT_WINDOW=1000000\n"
+            "LLM_REASONING_EFFORT=high\n"
             "IMAGE_TEXT_API_KEY=vision-key\n"
             "IMAGE_TEXT_API_MODE=codex_responses\n"
         ),
@@ -82,6 +84,7 @@ plugins:
     assert snapshot.attr_values["llm_provider"] == "openai"
     assert snapshot.attr_values["llm_max_tokens"] == 2048
     assert snapshot.attr_values["llm_context_window"] == 1_000_000
+    assert snapshot.attr_values["llm_reasoning_effort"] == "high"
     assert snapshot.attr_values["agent_data_dir"] == Path("./runtime-data")
     assert snapshot.attr_values["platform_send_max_retries"] == 7
     assert snapshot.attr_values["attachments_resolve_inbound"] is False
@@ -103,6 +106,7 @@ plugins:
     assert snapshot.attr_values["plugins_dirs"] == [Path("./plugins"), Path("./more-plugins")]
     assert snapshot.sources["LLM_PROVIDER"] == ".env"
     assert snapshot.sources["llm.context_window"] == ".env"
+    assert snapshot.sources["LLM_REASONING_EFFORT"] == ".env"
     assert snapshot.sources["storage.data_dir"] == "config.yaml"
     assert snapshot.sources["gateway.platform_send_max_retries"] == "override"
 

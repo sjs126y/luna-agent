@@ -8,12 +8,13 @@ from personal_agent.llm.provider import ProviderProfile
 from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport, OpenAIResponsesTransport
 
 
-def _provider() -> ProviderProfile:
+def _provider(reasoning_effort: str = "") -> ProviderProfile:
     return ProviderProfile(
         name="openai",
         base_url="https://api.example.test/v1",
         api_key="key",
         model="gpt-test",
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -45,6 +46,19 @@ def test_responses_transport_converts_image_url_to_input_image():
         {"type": "input_text", "text": "describe"},
         {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
     ]
+
+
+def test_responses_transport_includes_reasoning_effort_when_configured():
+    transport = OpenAIResponsesTransport(_provider(reasoning_effort="high"))
+
+    body = transport.build_request(
+        [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        "system",
+        [],
+        512,
+    )
+
+    assert body["reasoning"] == {"effort": "high"}
 
 
 def test_responses_transport_preserves_tool_call_chain():

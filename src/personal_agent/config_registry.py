@@ -343,6 +343,7 @@ def _llm_fields() -> tuple[ConfigField, ...]:
         _env_field("LLM_MODEL", "llm_model", "deepseek-chat", "str", "llm", "LLM model name."),
         _env_field("LLM_API_MODE", "llm_api_mode", "auto", "str", "llm", "LLM API compatibility mode.", choices=LLM_API_MODES),
         _env_field("LLM_MAX_TOKENS", "llm_max_tokens", 4096, "int", "llm", "Maximum LLM output tokens.", minimum=1),
+        _env_field("LLM_REASONING_EFFORT", "llm_reasoning_effort", "", "str", "llm", "Optional provider reasoning effort. Empty means omit."),
         _mixed_field(
             "llm.context_window",
             "llm_context_window",

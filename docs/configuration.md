@@ -24,11 +24,14 @@ LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
 LLM_CONTEXT_WINDOW=0
+LLM_REASONING_EFFORT=
 ```
 
 `LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。Codex/Ahoo 这类 Responses 中转站通常使用根 `LLM_BASE_URL`，并显式设置 `LLM_API_MODE=codex_responses`。
 
 `LLM_CONTEXT_WINDOW=0` 表示按模型名自动推断上下文窗口；使用中转站自定义模型名时可以填真实窗口大小，例如 `1000000`。同一配置也可以写在 `config.yaml` 的 `llm.context_window`，优先级是 `.env` 高于 `config.yaml`。
+
+`LLM_REASONING_EFFORT` 用于设置支持推理强度的模型。留空表示不发送该字段；常见值是 `minimal` / `low` / `medium` / `high`。Chat Completions 会发送 `reasoning_effort`，Responses / Codex Responses 会发送 `reasoning.effort`，Anthropic Messages 暂不额外映射。
 
 平台字段按需填写：
 

@@ -18,6 +18,7 @@ def _settings(provider: str, model: str = "m"):
         llm_model=model,
         llm_max_tokens=4096,
         llm_context_window=0,
+        llm_reasoning_effort="",
     )
 
 
@@ -49,6 +50,15 @@ def test_provider_context_window_falls_back_to_model_detection():
     provider = provider_registry.get("openai", _settings("openai", "gpt-5.5"))
 
     assert provider.context_window == 64_000
+
+
+def test_provider_reasoning_effort_uses_env_setting():
+    settings = _settings("openai", "gpt-5.5")
+    settings.llm_reasoning_effort = "high"
+
+    provider = provider_registry.get("openai", settings)
+
+    assert provider.reasoning_effort == "high"
 
 
 def test_anthropic_usage_normalizes_cache_fields():
@@ -179,6 +189,22 @@ def test_chat_completions_tools_are_sorted_without_cache_fields():
     assert [item["function"]["name"] for item in body["tools"]] == ["alpha", "zeta"]
     assert "cache_control" not in body
     assert all("cache_control" not in item for item in body["tools"])
+
+
+def test_chat_completions_request_includes_reasoning_effort_when_configured():
+    settings = _settings("openai", "gpt-5.5")
+    settings.llm_reasoning_effort = "high"
+    provider = provider_registry.get("openai", settings)
+    transport = ChatCompletionsTransport(provider)
+
+    body = transport.build_request(
+        [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        "system",
+        [],
+        100,
+    )
+
+    assert body["reasoning_effort"] == "high"
 
 
 def test_request_plan_orders_dynamic_history_and_current_user():

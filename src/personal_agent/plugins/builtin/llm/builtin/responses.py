@@ -38,6 +38,8 @@ class OpenAIResponsesTransport(BaseTransport):
             "max_output_tokens": max_tokens or self._provider.max_tokens,
             "input": self.convert_messages(messages, system_prompt),
         }
+        if self._provider.reasoning_effort:
+            body["reasoning"] = {"effort": self._provider.reasoning_effort}
         if tools:
             body["tools"] = self.convert_tool_definitions(_sorted_tools(tools))
 

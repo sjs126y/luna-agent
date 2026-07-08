@@ -351,6 +351,7 @@ def test_config_report_accepts_codex_responses_api_mode(tmp_path):
             "LLM_MODEL=gpt-5.5",
             "LLM_API_MODE=codex_responses",
             "LLM_CONTEXT_WINDOW=1000000",
+            "LLM_REASONING_EFFORT=high",
         ]),
         encoding="utf-8",
     )
@@ -363,6 +364,7 @@ def test_config_report_accepts_codex_responses_api_mode(tmp_path):
 
     assert report["ok"] is True
     assert report["env"]["llm_context_window"] == "1000000"
+    assert report["env"]["llm_reasoning_effort"] == "high"
     assert not any("LLM_API_MODE 不支持" in error for error in report["errors"])
     assert report["errors"] == []
     assert report["warnings"] == []

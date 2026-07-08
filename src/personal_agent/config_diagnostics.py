@@ -146,6 +146,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     llm_api_mode = str(env.get("LLM_API_MODE") or "auto").strip()
     llm_max_tokens = str(env.get("LLM_MAX_TOKENS") or "4096").strip()
     llm_context_window = str(env.get("LLM_CONTEXT_WINDOW") or "0").strip()
+    llm_reasoning_effort = str(env.get("LLM_REASONING_EFFORT") or "").strip()
     required_llm_env = PROVIDER_REQUIRED_ENV.get(llm_provider, ["LLM_API_KEY"])
     missing_llm_env = [name for name in required_llm_env if not env.get(name)]
     llm_base_url = str(env.get("LLM_BASE_URL") or "")
@@ -262,6 +263,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
             "llm_model_set": bool(llm_model),
             "llm_max_tokens": llm_max_tokens,
             "llm_context_window": llm_context_window,
+            "llm_reasoning_effort": llm_reasoning_effort,
             "missing_llm_env": missing_llm_env,
             "platforms": platform_env,
         },

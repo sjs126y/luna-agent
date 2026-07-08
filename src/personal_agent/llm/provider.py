@@ -18,6 +18,7 @@ class ProviderProfile:
     model: str
     max_tokens: int = 4096
     context_window: int = 0                # 0 = auto-detect from model name
+    reasoning_effort: str = ""             # provider-specific effort, empty = omit
 
     # Hooks to patch vendor quirks (e.g., a vendor doesn't support temperature)
     request_hook: Callable[[dict], dict] | None = None
@@ -78,6 +79,10 @@ def _configured_context_window(config) -> int:
     return _detect_context_window(str(getattr(config, "llm_model", "") or ""))
 
 
+def _configured_reasoning_effort(config) -> str:
+    return str(getattr(config, "llm_reasoning_effort", "") or "").strip()
+
+
 # ── Provider Registry ──────────────────────────────────
 
 class ProviderRegistry:
@@ -128,6 +133,7 @@ def _deepseek_factory(config) -> ProviderProfile:
         name="deepseek", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
         context_window=_configured_context_window(config),
+        reasoning_effort=_configured_reasoning_effort(config),
         cache_strategy="prefix",
         supports_cache_usage=True,
         cache_usage_fields={
@@ -142,6 +148,7 @@ def _openai_factory(config) -> ProviderProfile:
         name="openai", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
         context_window=_configured_context_window(config),
+        reasoning_effort=_configured_reasoning_effort(config),
         cache_strategy="prefix",
         supports_cache_usage=True,
         cache_usage_fields={
@@ -159,6 +166,7 @@ def _anthropic_factory(config) -> ProviderProfile:
         name="anthropic", base_url=config.llm_base_url, api_key=config.llm_api_key,
         model=config.llm_model, max_tokens=config.llm_max_tokens,
         context_window=_configured_context_window(config),
+        reasoning_effort=_configured_reasoning_effort(config),
         cache_strategy="explicit",
         supports_cache_usage=True,
         cache_usage_fields={
@@ -181,6 +189,7 @@ def _openrouter_factory(config) -> ProviderProfile:
         model=config.llm_model,
         max_tokens=config.llm_max_tokens,
         context_window=_configured_context_window(config),
+        reasoning_effort=_configured_reasoning_effort(config),
         extra_headers={
             "HTTP-Referer": "http://localhost",
             "X-Title": "Personal Agent",

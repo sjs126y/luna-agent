@@ -38,6 +38,8 @@ class ChatCompletionsTransport(BaseTransport):
             "max_tokens": max_tokens or self._provider.max_tokens,
             "messages": self.convert_messages(messages, system_prompt),
         }
+        if self._provider.reasoning_effort:
+            body["reasoning_effort"] = self._provider.reasoning_effort
         if tools:
             body["tools"] = self.convert_tool_definitions(_sorted_tools(tools))
 

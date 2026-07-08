@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-08 20:24 CST
+更新时间：2026-07-09 20:10 CST
 
 ## 阶段性收尾状态
 
@@ -8,6 +8,7 @@
 
 当前主干：`main`，最近后端提交：
 
+- `待提交 [codex] add llm reasoning effort env`
 - `7d5967f [codex] prepare public config templates`
 - `dd9bc4d [codex] fix codex responses tool context`
 - `6987e3a [codex] expand runtime architecture docs`
@@ -18,6 +19,7 @@
 - README、架构文档、能力边界文档、example 配置和 data 目录骨架已整理到可公开推送状态。
 - `data/` 现在只提交目录骨架和 `data/system.example/` 模板；真实数据库、日志、附件、auth、微信凭据、个人 system prompt 都继续被 `.gitignore` 保护。
 - `openai_responses` 与 `codex_responses` 的工具上下文转换已分开处理：官方 Responses 走结构化工具项，Codex/Ahoo 类中转站走文本化工具链路，避免上游 5xx。
+- `LLM_REASONING_EFFORT` 已纳入统一 `.env` 配置链路，Chat Completions 写入 `reasoning_effort`，Responses / Codex Responses 写入 `reasoning.effort`，留空则不发送。
 - 当前不建议再做大规模架构改造；如果后续继续推进，优先基于真实使用日志和前端/桌面端需求做小步验证。
 
 暂停期间最值得关注的后续方向：
