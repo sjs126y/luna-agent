@@ -1,6 +1,6 @@
 # Backend Progress
 
-更新时间：2026-07-08 03:09 CST
+更新时间：2026-07-08 12:23 CST
 
 ## 交接定位
 
@@ -19,6 +19,7 @@
 后端主干能力已经比较完整；`feature/backend-provider-cache` 和历史清理分支已合并回主分支，当前分支用于继续后端收敛。最近已完成并验证的方向包括：
 
 - README showcase refresh：根目录 README 已整理为更适合公开推送的项目首页，突出项目定位、架构图、核心亮点、当前能力、快速开始和文档索引。
+- README showcase polish：README 再次调整为更偏项目展示页，扩充“一眼看懂”、为什么做、12 个核心亮点和能力地图；命令部分收敛为基础启动路径，其余用法导向文档索引。
 - Project display rename：对外展示名从 `Personal Agent` 调整为 `Lumora`；内部 Python 包名 `personal_agent` 和 CLI 命令 `personal-agent` 暂时保留，避免破坏运行入口。
 - Execution Mode v3：四档模式已经稳定，对应权限、沙箱、工具类别和确认行为。
 - Permission mode cleanup：`standard / Ask First` 下普通网络工具调整为 `ask`，`/allow network` 可解锁 `web_search` / `web_fetch`；`/allow` 只对 `ask` 生效，遇到 `deny` 会明确提示不能覆盖，bash 网络仍由 `sandbox.bash_allow_network` 单独控制。
