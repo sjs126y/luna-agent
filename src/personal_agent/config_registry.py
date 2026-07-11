@@ -242,7 +242,7 @@ class ConfigRegistry:
 
 
 EXECUTION_MODES = ("guarded", "standard", "trusted", "sovereign")
-LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter")
+LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter", "xai")
 LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 IMAGE_TEXT_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 COMPRESSION_ENGINES = ("compressor", "disabled", "none", "off", "simple")

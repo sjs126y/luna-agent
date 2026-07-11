@@ -27,6 +27,7 @@ def test_builtin_provider_cache_capabilities():
     deepseek = provider_registry.get("deepseek", _settings("deepseek", "deepseek-chat"))
     openai = provider_registry.get("openai", _settings("openai", "gpt-4o"))
     openrouter = provider_registry.get("openrouter", _settings("openrouter", "openai/gpt-4o"))
+    xai = provider_registry.get("xai", _settings("xai", "grok-4.5"))
 
     assert anthropic.cache_capability()["strategy"] == "explicit"
     assert anthropic.supports_cache_usage is True
@@ -35,6 +36,19 @@ def test_builtin_provider_cache_capabilities():
     assert deepseek.cache_usage_fields["cache_hit_tokens"] == "prompt_cache_hit_tokens"
     assert openai.cache_usage_fields["cache_hit_tokens"] == "prompt_tokens_details.cached_tokens"
     assert openrouter.cache_strategy == "prefix"
+    assert xai.name == "xai"
+    assert xai.supports_image_input is True
+    assert xai.image_input_modes == ("url", "base64")
+
+
+def test_xai_provider_uses_official_default_base_url():
+    settings = _settings("xai", "grok-4.5")
+    settings.llm_base_url = ""
+
+    provider = provider_registry.get("xai", settings)
+
+    assert provider.base_url == "https://api.x.ai/v1"
+    assert provider.model == "grok-4.5"
 
 
 def test_provider_context_window_uses_configured_override():

@@ -203,7 +203,25 @@ def _openrouter_factory(config) -> ProviderProfile:
     )
 
 
+def _xai_factory(config) -> ProviderProfile:
+    """Create an xAI profile for its OpenAI-compatible Chat Completions API."""
+    return ProviderProfile(
+        name="xai",
+        base_url=config.llm_base_url or "https://api.x.ai/v1",
+        api_key=config.llm_api_key,
+        model=config.llm_model,
+        max_tokens=config.llm_max_tokens,
+        context_window=_configured_context_window(config),
+        reasoning_effort=_configured_reasoning_effort(config),
+        supports_image_input=True,
+        image_input_modes=("url", "base64"),
+        supported_image_mime_types=("image/jpeg", "image/png", "image/webp", "image/gif"),
+        max_image_bytes=20 * 1024 * 1024,
+    )
+
+
 provider_registry.register("deepseek", _deepseek_factory)
 provider_registry.register("openai", _openai_factory)
 provider_registry.register("anthropic", _anthropic_factory)
 provider_registry.register("openrouter", _openrouter_factory)
+provider_registry.register("xai", _xai_factory)

@@ -33,6 +33,18 @@ LLM_REASONING_EFFORT=
 
 `LLM_REASONING_EFFORT` 用于设置支持推理强度的模型。留空表示不发送该字段；常见值是 `minimal` / `low` / `medium` / `high`。Chat Completions 会发送 `reasoning_effort`，Responses / Codex Responses 会发送 `reasoning.effort`，Anthropic Messages 暂不额外映射。
 
+xAI Grok 4.5 使用 OpenAI-compatible Chat Completions 协议：
+
+```dotenv
+LLM_PROVIDER=xai
+LLM_API_KEY=your_xai_api_key
+LLM_BASE_URL=https://api.x.ai/v1
+LLM_MODEL=grok-4.5
+LLM_API_MODE=chat_completions
+```
+
+`xai` provider 支持工具调用和图片输入；模型上下文窗口若需精确限制，可通过 `LLM_CONTEXT_WINDOW` 显式设置。模型名可按 xAI 账户实际可用模型覆盖。
+
 平台字段按需填写：
 
 ```dotenv
@@ -192,7 +204,7 @@ permissions:
 | `video_mode` | 视频处理方式：`auto` / `text` / `off` |
 | `file_mode` | 文件处理方式：`auto` / `text` / `off` |
 | `native_fallback` | provider 不支持原生多模态时的降级方式：`notice` / `text` |
-| `image_text_provider` | 图片文本化辅助 provider，例如 `openai` / `anthropic` |
+| `image_text_provider` | 图片文本化辅助 provider，例如 `openai` / `anthropic` / `xai` |
 | `image_text_api_mode` | 图片文本化 API 协议：`auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`；`anthropic + auto` 会使用 Anthropic Messages，base URL 会按 `{base}/messages` 调用，例如 `https://api.deepseek.com/anthropic` -> `/anthropic/messages`；OpenAI-compatible 中转站可显式设为 `chat_completions`，Codex/Ahoo 这类 Responses 中转站建议设为 `codex_responses` 并使用根 base URL |
 
 `off` 不会触发下载和缓存；`text` 会尝试文本化，当前没有可用解析能力时会降级成模型可见提示；`native` 目前用于支持图片输入的 provider。DeepSeek/OpenRouter 默认不启用原生图片，OpenAI/Anthropic 会按各自 transport 转换图片格式。
