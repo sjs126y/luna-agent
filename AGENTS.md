@@ -50,7 +50,7 @@ Frontend-to-backend requests are tracked in `FRONTEND_INTERFACE_REQUIREMENTS.md`
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses short imperative commits with a `[codex]` prefix, for example `[codex] polish terminal input frame`. Keep commits scoped and include tests with behavior changes.
+Use short imperative commit messages. Keep commits scoped and include tests with behavior changes.
 
 Pull requests should describe the user-visible change, list tests run, mention config or migration impacts, and include screenshots for terminal UI changes when relevant.
 

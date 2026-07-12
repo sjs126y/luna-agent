@@ -88,10 +88,10 @@ python -m compileall -q src/personal_agent # 语法快速检查
 
 ## 多 Provider / Transport
 
-`llm/` 下 4 个 provider（deepseek/openai/anthropic/openrouter）× 2 种 transport
-（AnthropicMessages / ChatCompletions），`create_agent_runtime` 里按 `detect_api_mode` 自动选。
-HTTP 层指数退避重试（429/5xx/连接错误）。压缩引擎见 `compression/`（config.yaml `compression`）。
-provider/transport/retry 的完整设计见 `PROVIDER_TRANSPORT_RETRY.md`。
+`llm/` 下有 5 个 provider（deepseek/openai/anthropic/openrouter/xai）和 Anthropic Messages、
+Chat Completions、Responses、Codex Responses transport；`create_agent_runtime` 按 `detect_api_mode`
+自动选择。HTTP 层对 429/5xx/连接错误使用指数退避重试。压缩引擎见 `compression/`（config.yaml
+`compression`）；架构边界见 `docs/architecture.md`。
 
 ## 配置与数据
 
@@ -103,7 +103,7 @@ provider/transport/retry 的完整设计见 `PROVIDER_TRANSPORT_RETRY.md`。
 ## 工作流约定
 
 - **改代码前先开分支**：`git checkout -b feature/<描述>`，不在 main 上直接改。
-- **小步 commit**：改动验证 OK 后就 `git commit`，别攒一堆；历史用简短祈使句 + `[codex]` 前缀。
+- **小步 commit**：改动验证 OK 后就 `git commit`，别攒一堆；提交信息使用简短祈使句。
 - 改工具/安全代码时保留 audit / sandbox / 路径遍历检查。
 - 自注册模式：工具/平台/skill/workflow import 即注册，别手动维护列表。
 - 线程安全：per-chat asyncio.Lock + _active_sessions 排队。
