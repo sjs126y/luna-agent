@@ -558,3 +558,36 @@ uv run pytest tests/test_transport_responses.py -q
 ```
 
 结果：Responses transport 聚焦测试 `9 passed`；最近一次记录的全量回归为 `798 passed`。
+## 2026-07-13：工具循环与 Memory Router 修复
+
+状态：已完成实现并通过全量验证。
+
+背景：微信实测中，模型在工具成功后仍反复调用相同工具，并在工具配额耗尽后继续请求；迭代上限还可能产生空回复。Memory Router 在运行中安装依赖或恢复配置后也可能长期停留在 fallback，且旧记录的来源提供器容易被误判为当前有效提供器。
+
+已完成：
+
+- `LLMRequestPlan` 新增 `turn_tail`，保持本轮消息严格按照“当前用户 → 工具调用 → 工具结果/steer”发送，不再为了 prompt cache 把原始用户消息移动到工具结果之后。
+- agent loop 对同一轮内完全相同且已经成功的工具调用执行熔断，返回上一次结果摘要，不重复产生副作用。
+- 任一工具结果出现 `quota_exceeded` 时立即硬停止；迭代预算耗尽时返回确定性的非空消息。
+- External Memory Router 在前台 scoped 操作前按冷却时间尝试恢复主提供器，并在路由状态变化时及时持久化 `provider_state`。
+- Memory `search/list` 记录新增 `source_provider` 与 `effective_provider`，区分历史写入来源和当前路由。
+- Lumora 返回实际落库后的 `memory_id/content/previous_content`，并记录 search、resolve、apply、embedding、Qdrant 各阶段耗时。
+- 归档读取以独立 `index_status` 列为权威值，避免 `metadata_json` 中的旧 `pending` 覆盖数据库中的 `ready`。
+- `BACKEND_INTERFACE.md` 已同步新增诊断字段和记忆提供器字段语义。
+
+阶段提交：
+
+- `ac33187 Preserve tool result message order`
+- `4499bf0 Stop runaway tool call loops`
+- `4e8d0ec Recover external memory providers`
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_agent_loop.py tests/test_tool_pipeline.py -q
+uv run pytest tests/test_*memory*.py tests/test_internal_memory*.py -q
+uv run pytest -q
+```
+
+结果：工具循环聚焦 `95 passed`，Memory 聚焦 `29 passed`，全量 `858 passed`。
