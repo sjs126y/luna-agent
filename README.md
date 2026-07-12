@@ -258,7 +258,19 @@ Provider 不只是 base URL 和 model。`ProviderProfile` 描述 provider 能力
 
 ### 12. 插件、MCP、Skill 都能扩展
 
-工具、平台、LLM transport、memory provider、workflow 都通过插件系统装配。MCP runtime 支持 stdio 与 Streamable HTTP、单 server 隔离恢复和动态工具刷新；MCP 工具进入同一套 tool registry、permission pipeline 和 audit。skill 适合沉淀提示、脚本和领域流程。
+工具、平台、LLM transport、外部 memory provider、workflow 都通过插件系统装配。记忆领域模型、internal Markdown、archive、review worker、router 和 fallback 属于核心；`memory/lumora` 与 `memory/mem0` 是可替换插件。MCP runtime 支持 stdio 与 Streamable HTTP、单 server 隔离恢复和动态工具刷新；MCP 工具进入同一套 tool registry、permission pipeline 和 audit。skill 适合沉淀提示、脚本和领域流程。
+
+## Memory
+
+内部记忆从 `data/system/*.md` 全量进入 system prompt，并按缓存 Agent 固定 revision，避免每轮修改破坏 prompt cache。自动整理只写入 `lumora-managed` 托管区块，用户手写内容受 hash 冲突检查和原子写入保护。
+
+外部记忆保存事实、偏好、事件、关系、承诺和行为。Lumora provider 使用两次 Memory LLM 调用完成提取与变更决策，以 SQLite 保存权威数据和历史，以阿里百炼 embedding + Qdrant 提供语义检索，并与 SQLite FTS5/BM25 通过 RRF 融合。Mem0 provider 直接适配官方依赖；配置或运行条件不满足时自动切换 SQLite + BM25 fallback。知识 RAG 不与个人记忆共用 provider。
+
+```bash
+uv sync --extra memory-lumora
+# 或
+uv sync --extra memory-mem0
+```
 
 ## 安全与可靠性边界
 
