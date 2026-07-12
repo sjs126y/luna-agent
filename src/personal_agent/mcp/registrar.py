@@ -6,7 +6,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 from personal_agent.mcp.models import MCPCallResult, MCPToolSpec
-from personal_agent.tools.entry import ToolEntry
+from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 
 MCP_PREFIX = "mcp__"
@@ -58,9 +58,27 @@ class MCPToolRegistrar:
     def _entry(self, local_name: str, spec: MCPToolSpec) -> ToolEntry:
         async def handler(**kwargs):
             result = await self._call_tool(spec.name, kwargs)
-            if result.is_error:
-                return f"Error: {result.text or 'MCP tool call failed'}"
-            return result.text
+            artifacts = [
+                ToolArtifact(
+                    kind=block.type,
+                    mime_type=block.mime_type,
+                    data=block.data,
+                    uri=block.uri,
+                    metadata=dict(block.metadata),
+                )
+                for block in result.content
+                if block.type in {"image", "audio", "resource"}
+            ]
+            return ToolHandlerOutput(
+                text=result.text,
+                artifacts=artifacts,
+                metadata={
+                    "mcp_server": self.server_name,
+                    "remote_tool": spec.name,
+                    "structured_content": result.metadata.get("structured_content"),
+                },
+                is_error=result.is_error,
+            )
 
         return ToolEntry(
             name=local_name,

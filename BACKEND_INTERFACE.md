@@ -277,6 +277,9 @@
 - `output_summary: string`
 - `full_output: string`
 - `output_truncated: boolean`
+- `artifact_count: integer`
+- `artifacts: list[object]`，只包含类型、MIME、编码大小和引用存在性等安全摘要，不包含 base64、完整 URI 或本地路径
+- `result_metadata: object`，MCP server、远端工具名和结构化内容存在性等安全元数据
 - `guard_stage: string`
 - `guard_reason_code: string`
 - `permission_category: string`

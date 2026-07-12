@@ -250,7 +250,8 @@ def _normalize_call_result(result) -> MCPCallResult:
             mime_type = str(resource.get("mimeType") or "")
             text = str(resource.get("text") or "")
             text_parts.append(text or f"[resource: {uri or 'unknown'}]")
-            blocks.append(MCPContentBlock(type=block_type, text=text, mime_type=mime_type, uri=uri))
+            data = str(resource.get("blob") or "")
+            blocks.append(MCPContentBlock(type=block_type, text=text, mime_type=mime_type, data=data, uri=uri))
         else:
             blocks.append(MCPContentBlock(type=block_type, metadata=raw))
 
