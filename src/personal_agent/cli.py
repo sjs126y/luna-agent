@@ -1786,13 +1786,15 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
     seen_mcp_servers: set[str] = set()
     if report["mcp_servers"]:
         for server in report["mcp_servers"]:
-            state = "禁用" if not server["enabled"] else _status(server["command_found"])
+            transport = str(server.get("transport") or "stdio")
+            configured = bool(server.get("url")) if transport == "streamable_http" else bool(server.get("command_found"))
+            state = "禁用" if not server["enabled"] else _status(configured)
             name = str(server["name"])
             seen_mcp_servers.add(name)
             runtime_server = runtime_servers.get(name, {})
             runtime_text = _format_mcp_runtime_summary(runtime_server)
             lines.append(
-                f"  - {name}: {server['command'] or '-'} [{state}] {runtime_text}"
+                f"  - {name}: {server.get('url') or server.get('command') or '-'} [{state}] {runtime_text}"
             )
             stderr = _format_mcp_stderr(runtime_server)
             if stderr:
@@ -2335,8 +2337,11 @@ def _format_mcp_runtime_summary(server: dict[str, Any]) -> str:
         return "runtime=-"
     error = server.get("last_error") or server.get("last_call_error") or "-"
     return (
-        f"runtime=connected:{_yes(bool(server.get('connected', False)))} "
+        f"runtime={server.get('state') or ('ready' if server.get('connected') else 'stopped')} "
+        f"transport={server.get('transport') or 'stdio'} "
         f"tools={server.get('tool_count', 0)} "
+        f"reconnects={server.get('reconnect_attempts', 0)} "
+        f"next_retry={server.get('next_retry_at') or '-'} "
         f"error={_short_text(str(error), 120)}"
     )
 
@@ -2503,7 +2508,11 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
             issues.append(f"Sandbox root 不存在: {root['path']}")
 
     for server in report["mcp_servers"]:
-        if server["enabled"] and not server["command_found"]:
+        if (
+            server["enabled"]
+            and str(server.get("transport") or "stdio") == "stdio"
+            and not server["command_found"]
+        ):
             issues.append(f"MCP 服务器 {server['name']} 的命令不可用: {server['command'] or '-'}")
 
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}

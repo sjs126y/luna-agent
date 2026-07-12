@@ -2,6 +2,12 @@
 
 更新时间：2026-07-09 20:10 CST
 
+## 2026-07-12：MCP Runtime
+
+- MCP client 切换到官方 Python SDK 稳定 v1.x，协议与 transport 封装在 Lumora connection contract 后，保留旧 stdio 配置兼容。
+- 新增单 server runtime、自动重连、健康检查、故障隔离、动态 `tools/list_changed` 快照同步和 transport-aware doctor 诊断。
+- 新增 Streamable HTTP、环境变量 header、安全 URL 校验和结构化 MCP 工具结果；图片、音频、resource 的原始数据只保留在内存结果中，事件、审计和 SQLite 仅保存安全摘要。
+
 ## 2026-07-12：xAI Provider 与路线图文档
 
 - 新增 `xai` LLM provider，使用 OpenAI-compatible Chat Completions，默认 xAI base URL，支持图片输入；配置注册、doctor 校验、视觉辅助 provider 和回归测试已同步。

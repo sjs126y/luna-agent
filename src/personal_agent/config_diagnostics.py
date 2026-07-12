@@ -7,6 +7,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -621,6 +622,10 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
             warnings.append(f"MCP 服务器 {name} 的命令不可用: {command}")
         elif mcp_enabled and enabled and transport == "streamable_http" and not url:
             errors.append(f"MCP 服务器 {name} 缺少 url。")
+        elif mcp_enabled and enabled and transport == "streamable_http":
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                errors.append(f"MCP 服务器 {name} 的 url 必须是 http(s) URL。")
         if duplicate_name:
             errors.append(f"MCP 服务器名称重复: {name}")
 

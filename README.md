@@ -258,7 +258,7 @@ Provider 不只是 base URL 和 model。`ProviderProfile` 描述 provider 能力
 
 ### 12. 插件、MCP、Skill 都能扩展
 
-工具、平台、LLM transport、memory provider、workflow 都通过插件系统装配。MCP server 进入同一套 tool registry、permission pipeline 和 audit；skill 适合沉淀提示、脚本和领域流程。
+工具、平台、LLM transport、memory provider、workflow 都通过插件系统装配。MCP runtime 支持 stdio 与 Streamable HTTP、单 server 隔离恢复和动态工具刷新；MCP 工具进入同一套 tool registry、permission pipeline 和 audit。skill 适合沉淀提示、脚本和领域流程。
 
 ## 安全与可靠性边界
 

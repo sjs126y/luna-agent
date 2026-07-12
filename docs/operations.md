@@ -71,6 +71,16 @@ uv run personal-agent doctor
 
 `doctor` 默认输出启动体检摘要，适合普通用户判断能不能运行；`doctor --verbose` 输出完整开发诊断，包含 runtime、effective config、插件、MCP、Gateway、工具和 sandbox 明细；`doctor --json` 给脚本或前端消费完整结构化数据。
 
+MCP verbose 诊断会展示每台 server 的 `state`、`transport`、工具数、重连次数、下一次重试和最近错误。常见状态：
+
+- `ready`：连接和工具快照可用。
+- `degraded`：连接仍可用，但最近一次工具列表刷新失败，继续保留旧快照。
+- `reconnecting`：连接已断开，runtime 正在后台退避重试。
+- `failed`：配置或凭据环境变量错误，不会持续快速重试。
+- `stopped` / `disabled`：runtime 已停止或配置禁用。
+
+Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 health 只展示变量名，不记录或回显凭据值。
+
 `Config`：
 
 - `config.yaml: 否`：运行 `personal-agent init`。

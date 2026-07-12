@@ -481,6 +481,24 @@ mcp:
     assert report["mcp_servers"][1]["duplicate_name"] is True
 
 
+def test_config_report_rejects_non_http_mcp_url(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+mcp:
+  enabled: true
+  servers:
+    - name: remote
+      transport: streamable_http
+      url: file:///tmp/mcp
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("url 必须是 http(s) URL" in error for error in report["errors"])
+
+
 def test_ensure_config_dirs_creates_expected_directories(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """
