@@ -2,6 +2,11 @@
 
 更新时间：2026-07-09 20:10 CST
 
+## 2026-07-12：xAI Provider 与路线图文档
+
+- 新增 `xai` LLM provider，使用 OpenAI-compatible Chat Completions，默认 xAI base URL，支持图片输入；配置注册、doctor 校验、视觉辅助 provider 和回归测试已同步。
+- 根目录新增 `lumora-roadmap.zh-CN.md`，将后续架构路线图整理为中文；移除已完成的 provider/transport 实施指令和前端历史清理计划，并修正 `CLAUDE.md` 的过时链接与 provider/transport 描述。
+
 ## 阶段性收尾状态
 
 状态：后端主干进入稳定可展示阶段，短期如果没有新产品方向，可以先暂停大功能开发，后续主要做真实使用反馈下的修 bug、文档补齐和小幅体验打磨。

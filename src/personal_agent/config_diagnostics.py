@@ -107,6 +107,7 @@ PROVIDER_REQUIRED_ENV = {
     "openai": ["LLM_API_KEY"],
     "anthropic": ["LLM_API_KEY"],
     "openrouter": ["LLM_API_KEY"],
+    "xai": ["LLM_API_KEY"],
 }
 
 VALID_LLM_PROVIDERS = set(PROVIDER_REQUIRED_ENV)

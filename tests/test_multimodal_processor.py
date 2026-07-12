@@ -845,3 +845,14 @@ def test_vision_provider_keeps_explicit_anthropic_base_url():
     )
 
     assert _vision_provider(settings, "anthropic").base_url == "https://api.deepseek.com/anthropic"
+
+
+def test_vision_provider_uses_xai_defaults():
+    from personal_agent.multimodal.image_text import _vision_provider
+
+    provider = _vision_provider(_settings(), "xai")
+
+    assert provider.name == "xai"
+    assert provider.base_url == "https://api.x.ai/v1"
+    assert provider.model == "grok-4.5"
+    assert provider.supports_image_input is True

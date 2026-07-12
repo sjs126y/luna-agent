@@ -462,6 +462,8 @@ def _default_base_url(provider_name: str) -> str:
         return "https://api.anthropic.com/v1"
     if provider_name == "openrouter":
         return "https://openrouter.ai/api/v1"
+    if provider_name == "xai":
+        return "https://api.x.ai/v1"
     return ""
 
 
@@ -470,6 +472,8 @@ def _default_model(provider_name: str) -> str:
         return "gpt-4o-mini"
     if provider_name == "anthropic":
         return "claude-3-5-haiku-latest"
+    if provider_name == "xai":
+        return "grok-4.5"
     return ""
 
 

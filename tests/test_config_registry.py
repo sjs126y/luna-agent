@@ -155,7 +155,7 @@ def test_config_registry_schema_is_stable():
     assert fields["multimodal.image_text_mode"]["choices"] == ["auto", "vision", "ocr", "off"]
     assert fields["multimodal.image_text_cache"]["value_type"] == "bool"
     assert fields["multimodal.image_text_provider"]["choices"][0] == ""
-    assert set(fields["multimodal.image_text_provider"]["choices"]) == {"", "deepseek", "openai", "anthropic", "openrouter"}
+    assert set(fields["multimodal.image_text_provider"]["choices"]) == {"", "deepseek", "openai", "anthropic", "openrouter", "xai"}
     assert fields["multimodal.image_text_api_mode"]["choices"] == [
         "anthropic_messages",
         "auto",
