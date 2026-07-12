@@ -1,0 +1,10 @@
+key: memory/mem0
+name: Mem0 Memory Provider
+version: "1.0.0"
+description: Adapter for the official Mem0 Python dependency.
+kind: memory
+entrypoint: personal_agent.plugins.builtin.memory.mem0:register
+enabled_by_default: true
+source: builtin
+provides:
+  - memory_provider:mem0

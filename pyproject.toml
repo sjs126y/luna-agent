@@ -33,6 +33,10 @@ dependencies = [
 [project.scripts]
 personal-agent = "personal_agent.cli:run"
 
+[project.optional-dependencies]
+memory-lumora = ["qdrant-client>=1.12"]
+memory-mem0 = ["mem0ai>=0.1"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

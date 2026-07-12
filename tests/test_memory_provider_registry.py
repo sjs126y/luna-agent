@@ -4,6 +4,9 @@ import pytest
 
 from personal_agent.memory.models import ProviderReadiness
 from personal_agent.memory.provider_registry import MemoryProviderRegistry
+from personal_agent.memory.provider_registry import memory_provider_registry
+from personal_agent.config import Settings
+from personal_agent.plugins.core.manager import PluginManager
 
 
 def _validator(**kwargs) -> ProviderReadiness:
@@ -27,3 +30,18 @@ def test_memory_provider_registry_rejects_cross_plugin_override() -> None:
 
     with pytest.raises(ValueError, match="already registered"):
         registry.register(name="demo", plugin_key="memory/b", factory=object, validator=_validator)
+
+
+def test_builtin_external_memory_plugins_register_and_unload(tmp_path) -> None:
+    memory_provider_registry.clear()
+    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
+    manager.discover()
+
+    manager.load_plugin("memory/lumora")
+    manager.load_plugin("memory/mem0")
+
+    assert set(memory_provider_registry.names()) == {"lumora", "mem0"}
+    manager.disable_plugin("memory/lumora")
+    assert memory_provider_registry.names() == ("mem0",)
+    memory_provider_registry.clear()

@@ -144,6 +144,90 @@ class MemoryArchive:
         )
         return [_record_from_row(row, scope) for row in rows]
 
+    async def get_memory(self, memory_id: str, scope: MemoryScope) -> MemoryRecord | None:
+        row = await self._fetchone(
+            "SELECT * FROM memories WHERE id = ? AND scope_key = ?", (memory_id, _scope_key(scope))
+        )
+        return _record_from_row(row, scope) if row else None
+
+    async def get_memories(self, memory_ids: list[str], scope: MemoryScope) -> list[MemoryRecord]:
+        if not memory_ids:
+            return []
+        placeholders = ",".join("?" for _ in memory_ids)
+        rows = await self._fetchall(
+            f"SELECT * FROM memories WHERE scope_key = ? AND id IN ({placeholders})",
+            (_scope_key(scope), *memory_ids),
+        )
+        by_id = {row["id"]: _record_from_row(row, scope) for row in rows}
+        return [by_id[item] for item in memory_ids if item in by_id]
+
+    async def find_memory_by_content(self, scope: MemoryScope, content: str) -> MemoryRecord | None:
+        row = await self._fetchone(
+            "SELECT * FROM memories WHERE scope_key = ? AND content_hash = ? LIMIT 1",
+            (_scope_key(scope), _content_hash(content)),
+        )
+        return _record_from_row(row, scope) if row else None
+
+    async def set_memory_index_status(self, memory_id: str, status: str) -> None:
+        await self._execute_write(
+            "UPDATE memories SET index_status = ?, updated_at = ? WHERE id = ?",
+            (status, utc_now(), memory_id),
+        )
+
+    async def delete_memory(self, memory_id: str, scope: MemoryScope, *, provider: str = "", reason: str = "") -> bool:
+        existing = await self.get_memory(memory_id, scope)
+        if existing is None:
+            return False
+        async with self._write_lock:
+            await self._connection.execute("DELETE FROM memories WHERE id = ? AND scope_key = ?", (memory_id, _scope_key(scope)))
+            await self._connection.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
+            await self._connection.execute(
+                "INSERT INTO memory_history(memory_id,action,previous_content,content,provider,reason,created_at) VALUES (?,'DELETE',?,'',?,?,?)",
+                (memory_id, existing.content, provider, reason, utc_now()),
+            )
+            await self._connection.commit()
+        return True
+
+    async def memory_history(self, memory_id: str) -> list[dict[str, Any]]:
+        rows = await self._fetchall(
+            "SELECT * FROM memory_history WHERE memory_id = ? ORDER BY id", (memory_id,)
+        )
+        return [dict(row) for row in rows]
+
+    async def pending_migration_observations(self, scope: MemoryScope, *, limit: int = 100) -> list[Observation]:
+        rows = await self._fetchall(
+            "SELECT * FROM observations WHERE scope_key = ? AND migration_status = 'pending' ORDER BY created_at LIMIT ?",
+            (_scope_key(scope), limit),
+        )
+        return [Observation(
+            id=row["id"], kind=ObservationKind(row["kind"]), content=row["content"],
+            importance=float(row["importance"]), long_term=bool(row["long_term"]),
+            source_turn_ids=tuple(json.loads(row["source_turn_ids_json"] or "[]")),
+            created_at=row["created_at"],
+        ) for row in rows]
+
+    async def mark_observations_migrated(self, observation_ids: list[str]) -> None:
+        if not observation_ids:
+            return
+        placeholders = ",".join("?" for _ in observation_ids)
+        async with self._write_lock:
+            await self._connection.execute(
+                f"UPDATE observations SET migration_status = 'migrated' WHERE id IN ({placeholders})",
+                tuple(observation_ids),
+            )
+            await self._connection.commit()
+
+    async def set_provider_state(self, scope: MemoryScope, *, requested: str, effective: str,
+                                 fallback_reason: str = "", state: dict[str, Any] | None = None) -> None:
+        await self._execute_write(
+            """INSERT INTO provider_state(scope_key,requested_provider,effective_provider,fallback_reason,state_json,updated_at)
+            VALUES (?,?,?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET requested_provider=excluded.requested_provider,
+            effective_provider=excluded.effective_provider,fallback_reason=excluded.fallback_reason,
+            state_json=excluded.state_json,updated_at=excluded.updated_at""",
+            (_scope_key(scope), requested, effective, fallback_reason,
+             json.dumps(state or {}, ensure_ascii=False), utc_now()),
+        )
+
     async def search_bm25(self, scope: MemoryScope, query: str, *, limit: int = 10) -> list[MemoryRecord]:
         if not query.strip():
             return []
@@ -262,9 +346,11 @@ def _fts_query(query: str) -> str:
 
 
 def _record_from_row(row, scope: MemoryScope) -> MemoryRecord:
+    metadata = json.loads(row["metadata_json"] or "{}")
+    metadata.setdefault("index_status", row["index_status"])
     return MemoryRecord(
         id=row["id"], content=row["content"], kind=ObservationKind(row["kind"]),
         importance=float(row["importance"]), provider=row["provider"], scope=scope,
         created_at=row["created_at"], updated_at=row["updated_at"],
-        metadata=json.loads(row["metadata_json"] or "{}"),
+        metadata=metadata,
     )
