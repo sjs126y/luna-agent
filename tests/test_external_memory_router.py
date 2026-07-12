@@ -63,6 +63,26 @@ class HealthyProvider:
         pass
 
 
+class FlakySearchProvider(HealthyProvider):
+    def __init__(self, failures_by_user):
+        self.failures_by_user = failures_by_user
+        self.calls_by_user = {}
+
+    async def search(self, query, scope, *, limit=5):
+        calls = self.calls_by_user.get(scope.user_id, 0) + 1
+        self.calls_by_user[scope.user_id] = calls
+        if calls <= self.failures_by_user.get(scope.user_id, 0):
+            try:
+                raise RuntimeError("connection reset")
+            except RuntimeError as cause:
+                raise ResponseHandlingException() from cause
+        return []
+
+
+class ResponseHandlingException(RuntimeError):
+    pass
+
+
 @pytest.mark.asyncio
 async def test_router_falls_back_on_runtime_failure(tmp_path) -> None:
     archive = MemoryArchive(tmp_path / "memory.db")
@@ -124,4 +144,66 @@ async def test_router_recovers_before_foreground_migration(tmp_path) -> None:
     )
     assert state["effective_provider"] == "primary"
     assert state["fallback_reason"] == ""
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_router_retries_transient_search_without_fallback(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    fallback = FallbackMemoryProvider(archive, LLM())
+    registry = MemoryProviderRegistry()
+    provider = FlakySearchProvider({"u1": 1})
+    registry.register(
+        name="primary", plugin_key="memory/primary",
+        factory=lambda **kwargs: provider,
+        validator=lambda **kwargs: ProviderReadiness("primary", True),
+    )
+    router = ExternalMemoryRouter(
+        context=SimpleNamespace(requested_provider="primary"),
+        archive=archive,
+        fallback=fallback,
+        registry=registry,
+    )
+    await router.initialize()
+    scope = MemoryScope(user_id="u1")
+
+    assert await router.search("probe", scope) == []
+    assert provider.calls_by_user["u1"] == 2
+    assert router.health_snapshot(scope)["effective_provider"] == "primary"
+    assert router.health_snapshot(scope)["consecutive_failures"] == 0
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_router_fallback_is_isolated_by_scope_and_preserves_cause(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    fallback = FallbackMemoryProvider(archive, LLM())
+    registry = MemoryProviderRegistry()
+    provider = FlakySearchProvider({"u1": 2})
+    registry.register(
+        name="primary", plugin_key="memory/primary",
+        factory=lambda **kwargs: provider,
+        validator=lambda **kwargs: ProviderReadiness("primary", True),
+    )
+    router = ExternalMemoryRouter(
+        context=SimpleNamespace(requested_provider="primary"),
+        archive=archive,
+        fallback=fallback,
+        registry=registry,
+    )
+    await router.initialize()
+    failed_scope = MemoryScope(user_id="u1")
+    healthy_scope = MemoryScope(user_id="u2")
+
+    assert await router.search("probe", failed_scope) == []
+    assert router.health_snapshot(failed_scope)["effective_provider"] == "fallback"
+    reason = router.health_snapshot(failed_scope)["fallback_reason"]
+    assert "ResponseHandlingException" in reason
+    assert "connection reset" in reason
+
+    assert await router.search("probe", healthy_scope) == []
+    assert router.health_snapshot(healthy_scope)["effective_provider"] == "primary"
+    assert router.health_snapshot(failed_scope)["effective_provider"] == "fallback"
     await archive.close()

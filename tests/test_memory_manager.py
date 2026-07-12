@@ -37,7 +37,7 @@ class Router:
     async def migrate(self, observations, scope):
         return MemoryReviewResult(observations=observations, provider="fallback")
 
-    def health_snapshot(self):
+    def health_snapshot(self, scope=None):
         return {
             "requested_provider": self.requested_provider,
             "effective_provider": self.effective_provider,

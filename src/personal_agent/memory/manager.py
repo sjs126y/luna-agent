@@ -158,7 +158,7 @@ class MemoryManager:
 
     async def health_snapshot(self) -> dict[str, Any]:
         if self.router is not None:
-            external = self.router.health_snapshot()
+            external = self.router.health_snapshot(self.scope())
             snapshot = self.internal.snapshot() if self.internal is not None else None
             pending = await self.archive.pending_buffer_count(self.scope()) if self.archive else 0
             return {
@@ -193,10 +193,16 @@ class MemoryManager:
 
     def _external_record(self, record) -> dict[str, Any]:
         data = record.as_dict()
+        scope = getattr(record, "scope", None)
+        effective_provider = (
+            self.router.effective_provider_for(scope)
+            if scope is not None and hasattr(self.router, "effective_provider_for")
+            else getattr(self.router, "effective_provider", "")
+        )
         return {
             **data,
             "source_provider": data.get("provider", ""),
-            "effective_provider": str(getattr(self.router, "effective_provider", "") or ""),
+            "effective_provider": str(effective_provider or ""),
             "target": "external",
         }
 
