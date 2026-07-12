@@ -1151,6 +1151,52 @@ async def test_tool_end_event_includes_guard_metadata_for_success():
     assert event.data["permission_category"] == "read"
 
 
+@pytest.mark.asyncio
+async def test_structured_tool_output_keeps_artifacts_in_memory_and_redacts_events():
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    recorder = EventRecorder()
+
+    async def handler():
+        return ToolHandlerOutput(
+            text="[image: image/png]",
+            artifacts=[ToolArtifact(kind="image", mime_type="image/png", data="base64-secret")],
+            metadata={
+                "mcp_server": "images",
+                "remote_tool": "render",
+                "structured_content": {"private": "value"},
+            },
+        )
+
+    tool_registry.register(ToolEntry(
+        name="structured_artifact_demo",
+        description="structured artifact",
+        schema={},
+        handler=handler,
+        permission_category="read",
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {"id": "artifact-1", "name": "structured_artifact_demo", "input": {}},
+            event_sink=recorder,
+        )
+    finally:
+        tool_registry.unregister("structured_artifact_demo")
+
+    event = recorder.events[-1]
+    serialized = result.as_dict()
+    assert result.artifacts[0].data == "base64-secret"
+    assert serialized["artifacts"][0]["has_data"] is True
+    assert "data" not in serialized["artifacts"][0]
+    assert serialized["result_metadata"]["structured_content_present"] is True
+    assert event.data["artifact_count"] == 1
+    assert "base64-secret" not in str(event.as_dict())
+    assert "private" not in str(event.as_dict())
+
+
 # ── Executor _exec_one integration ─────────────────────
 
 

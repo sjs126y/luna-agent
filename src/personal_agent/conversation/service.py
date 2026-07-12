@@ -874,6 +874,8 @@ def _tool_runs_from_events(
             "output_summary": str(data.get("output_summary") or ""),
             "full_output": str(data.get("full_output") or ""),
             "output_truncated": bool(data.get("output_truncated", False)),
+            "artifacts": list(data.get("artifacts") or []),
+            "result_metadata": dict(data.get("result_metadata") or {}),
             "error": str(data.get("error") or ""),
             "guard_stage": str(data.get("guard_stage") or ""),
             "reason_code": str(data.get("guard_reason_code") or data.get("reason_code") or ""),

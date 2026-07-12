@@ -129,6 +129,27 @@ auth:
 | `session` | 会话过期和会话 override |
 | `auth` | 平台用户认证和白名单 |
 
+## MCP Server
+
+MCP server 支持显式 transport。现有只包含 `command` 的配置继续按 `stdio` 处理：
+
+```yaml
+mcp:
+  enabled: true
+  servers:
+    - name: filesystem
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    - name: remote-tools
+      transport: streamable_http
+      url: https://example.com/mcp
+      headers_env:
+        Authorization: REMOTE_MCP_AUTH
+```
+
+`headers_env` 的值是环境变量名，不是凭据本身；doctor 只检查配置结构，不回显环境变量值。
+
 ## 执行模式与权限
 
 `execution.mode` 是默认执行模式，启动时生效；运行中可以用 `/mode` 临时切换当前会话的执行模式。可选值：

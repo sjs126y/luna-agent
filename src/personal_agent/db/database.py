@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS tool_runs (
     output_summary      TEXT DEFAULT '',
     full_output         TEXT DEFAULT '',
     output_truncated    INTEGER DEFAULT 0,
+    artifact_summary_json TEXT DEFAULT '[]',
+    result_metadata_json TEXT DEFAULT '{}',
     error               TEXT DEFAULT '',
     guard_stage         TEXT DEFAULT '',
     reason_code         TEXT DEFAULT '',
@@ -128,6 +130,8 @@ class Database:
             "grant_scope": "ALTER TABLE tool_runs ADD COLUMN grant_scope TEXT DEFAULT ''",
             "grant_expires_at": "ALTER TABLE tool_runs ADD COLUMN grant_expires_at REAL DEFAULT 0",
             "temporary_grant_ttl_seconds": "ALTER TABLE tool_runs ADD COLUMN temporary_grant_ttl_seconds INTEGER DEFAULT 0",
+            "artifact_summary_json": "ALTER TABLE tool_runs ADD COLUMN artifact_summary_json TEXT DEFAULT '[]'",
+            "result_metadata_json": "ALTER TABLE tool_runs ADD COLUMN result_metadata_json TEXT DEFAULT '{}'",
         }.items():
             if name not in columns:
                 await self._conn.execute(ddl)
@@ -328,6 +332,8 @@ class Database:
                 clean_text(str(run.get("output_summary") or "")),
                 clean_text(str(run.get("full_output") or "")),
                 1 if run.get("output_truncated") else 0,
+                json.dumps(clean_payload(run.get("artifacts") or []), ensure_ascii=False, sort_keys=True),
+                json.dumps(clean_payload(run.get("result_metadata") or {}), ensure_ascii=False, sort_keys=True),
                 clean_text(str(run.get("error") or "")),
                 str(run.get("guard_stage") or ""),
                 str(run.get("reason_code") or ""),
@@ -348,11 +354,12 @@ class Database:
                 """INSERT INTO tool_runs (
                     session_id, session_key, turn_id, tool_use_id, tool_name,
                     status, category, duration, input_summary, output_summary,
-                    full_output, output_truncated, error, guard_stage, reason_code,
+                    full_output, output_truncated, artifact_summary_json,
+                    result_metadata_json, error, guard_stage, reason_code,
                     permission_category, permission_decision, required_allow,
                     execution_mode, grant_matched, grant_scope, grant_expires_at,
                     temporary_grant_ttl_seconds, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 rows,
             )
             await self._conn.commit()
@@ -554,6 +561,8 @@ def _tool_run_row(row) -> dict[str, Any]:
         "output_summary": str(row["output_summary"] or ""),
         "full_output": str(row["full_output"] or ""),
         "output_truncated": bool(row["output_truncated"]),
+        "artifacts": _loads_list(row["artifact_summary_json"]),
+        "result_metadata": _loads_object(row["result_metadata_json"]),
         "error": str(row["error"] or ""),
         "guard_stage": str(row["guard_stage"] or ""),
         "reason_code": str(row["reason_code"] or ""),
@@ -616,6 +625,16 @@ def _loads_object(value: Any) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _loads_list(value: Any) -> list[Any]:
+    if not value:
+        return []
+    try:
+        decoded = json.loads(str(value))
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return decoded if isinstance(decoded, list) else []
 
 
 def _empty_turn_report_persistence_summary() -> dict[str, Any]:

@@ -94,7 +94,7 @@ async def test_client_connect_and_discover(mock_server_script: Path):
         assert client.connected is True
         health = client.health_snapshot()
         assert health["connected"] is True
-        assert health["pid"]
+        assert health["pid"] is None  # official SDK does not expose its child process handle
         assert health["tool_count"] == 2
         assert health["server_name"] == "mock"
         assert health["last_error"] == ""
@@ -293,6 +293,16 @@ async def test_manager_no_servers():
     manager = MCPManager([])
     count = await manager.start()
     assert count == 0
+
+
+def test_manager_rejects_duplicate_server_names():
+    from personal_agent.mcp.manager import MCPManager
+
+    with pytest.raises(ValueError, match="Duplicate MCP server"):
+        MCPManager([
+            {"name": "same", "command": "one"},
+            {"name": "same", "command": "two"},
+        ])
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ import json
 import logging
 import shutil
 import time as _time_module
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,6 +25,7 @@ from personal_agent.tools.execution_guard import (
     tool_decision_from_guard,
     tool_permission_category,
 )
+from personal_agent.tools.entry import ToolArtifact, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -58,9 +59,14 @@ class ToolExecutionResult:
     grant_scope: str = ""
     grant_expires_at: float = 0.0
     temporary_grant_ttl_seconds: int = 0
+    artifacts: list[ToolArtifact] = field(default_factory=list)
+    result_metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["artifacts"] = [item.safe_summary() for item in (self.artifacts or [])]
+        data["result_metadata"] = _safe_result_metadata(self.result_metadata or {})
+        return data
 
 # ── Interrupt support ────────────────────────────────
 # Long-running tools (bash, execute_code) check this to abort early.
@@ -275,6 +281,9 @@ async def execute_tool_call_result(
             timeout_seconds=tool_decision.timeout_seconds if tool_decision else None,
             method=tool_decision.method if tool_decision else "",
             process_label=tool_decision.process_label if tool_decision else "",
+            artifact_count=len(result.artifacts or []),
+            artifacts=[item.safe_summary() for item in (result.artifacts or [])],
+            result_metadata=_safe_result_metadata(result.result_metadata or {}),
         )
         return result
 
@@ -399,7 +408,8 @@ async def execute_tool_call_result(
             ))
         try:
             raw_result = await _run_handler(entry.handler, tc["input"], timeout=timeout)
-            result = _coerce_tool_output(raw_result)
+            handler_output = _normalize_handler_output(raw_result)
+            result = handler_output.text
             break
         except asyncio.TimeoutError:
             return await _finish(_result(
@@ -447,6 +457,11 @@ async def execute_tool_call_result(
     status: ToolExecutionStatus = "success"
     category = ""
     error = ""
+    if handler_output.is_error:
+        status = "error"
+        category = "handler"
+        error = result or "MCP tool call failed"
+        result = ""
     if hooks:
         try:
             modified = await hooks.fire("on_after_tool_exec", tc, result)
@@ -465,6 +480,8 @@ async def execute_tool_call_result(
         category=category,
         content=result,
         error=error,
+        artifacts=handler_output.artifacts,
+        result_metadata=handler_output.metadata,
         attempts=attempts,
         started=started,
         output_truncated=output_truncated,
@@ -629,6 +646,8 @@ def _result(
     attempts: int = 0,
     started: float | None = None,
     output_truncated: bool = False,
+    artifacts: list[ToolArtifact] | None = None,
+    result_metadata: dict[str, Any] | None = None,
 ) -> ToolExecutionResult:
     normalized = _normalize_tool_call(tc)
     result_text = _coerce_tool_output(content) if content else ""
@@ -654,6 +673,8 @@ def _result(
         output_summary=_summarize_text(visible),
         attempts=attempts,
         output_truncated=output_truncated,
+        artifacts=list(artifacts or []),
+        result_metadata=dict(result_metadata or {}),
     )
 
 
@@ -666,6 +687,29 @@ def _coerce_tool_output(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
     except TypeError:
         return str(value)
+
+
+def _normalize_handler_output(value: Any) -> ToolHandlerOutput:
+    if isinstance(value, ToolHandlerOutput):
+        return ToolHandlerOutput(
+            text=_coerce_tool_output(value.text),
+            artifacts=list(value.artifacts),
+            metadata=dict(value.metadata),
+            is_error=bool(value.is_error),
+        )
+    return ToolHandlerOutput(text=_coerce_tool_output(value))
+
+
+def _safe_result_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "structured_content":
+            result["structured_content_present"] = item is not None
+        elif key in {"mcp_server", "remote_tool"}:
+            result[key] = str(item)[:200]
+        elif isinstance(item, (bool, int, float)) or item is None:
+            result[str(key)[:100]] = item
+    return result
 
 
 def _summarize_value(value: Any, max_chars: int = 500) -> str:

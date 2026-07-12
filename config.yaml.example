@@ -125,11 +125,13 @@ mcp:
   servers:
     # 如需 filesystem MCP，先安装 Node.js/npm，再启用本项。
     - name: "filesystem"
+      transport: "stdio"
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
       enabled: false
 
     - name: "github"
+      transport: "stdio"
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-github"]
       env:
@@ -137,11 +139,13 @@ mcp:
       enabled: false
 
     - name: "memory"
+      transport: "stdio"
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-memory", "--storage-path", "./data/mcp/memory.json"]
       enabled: true
 
     - name: "sequential-thinking"
+      transport: "stdio"
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
       enabled: true

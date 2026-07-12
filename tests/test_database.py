@@ -107,6 +107,8 @@ def test_tool_runs_roundtrip_and_summary(db):
             "output_summary": "/tmp",
             "full_output": "/tmp",
             "output_truncated": False,
+            "artifacts": [{"kind": "image", "mime_type": "image/png", "has_data": True}],
+            "result_metadata": {"mcp_server": "images", "structured_content_present": True},
             "created_at": 1000.0,
         },
         {
@@ -138,6 +140,8 @@ def test_tool_runs_roundtrip_and_summary(db):
     summary = _run(db.tool_run_summary(limit=10))
 
     assert [item["tool_name"] for item in recent] == ["bash", "write"]
+    assert recent[0]["artifacts"][0]["kind"] == "image"
+    assert recent[0]["result_metadata"]["mcp_server"] == "images"
     assert filtered == recent
     assert missing == []
     assert detail["tool_use_id"] == "call-2"
