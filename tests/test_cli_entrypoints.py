@@ -34,6 +34,7 @@ def _install_echo_agent(monkeypatch) -> None:
         memory_manager=None,
         plugin_manager=None,
         system_prompt_template="",
+        session_key="",
     ):
         provider = ProviderProfile(
             name="echo",
@@ -50,7 +51,7 @@ def _install_echo_agent(monkeypatch) -> None:
             memory_manager=memory_manager,
             max_iterations=settings.max_iterations,
             max_tool_calls_per_turn=settings.max_tool_calls_per_turn,
-            memory_review_interval=0,
+            memory_session_key=session_key,
             system_prompt_template=system_prompt_template,
             enabled_toolsets=settings.enabled_toolsets,
         )

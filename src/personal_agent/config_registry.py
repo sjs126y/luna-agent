@@ -246,8 +246,7 @@ LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter", "xai")
 LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 IMAGE_TEXT_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 COMPRESSION_ENGINES = ("compressor", "disabled", "none", "off", "simple")
-MEMORY_PROVIDERS = ("file",)
-EXTERNAL_MEMORY_PROVIDERS = ("fallback", "lumora", "mem0", "none", "embedding")
+EXTERNAL_MEMORY_PROVIDERS = ("fallback", "lumora", "mem0", "none")
 MULTIMODAL_MODES = ("auto", "native", "text", "off")
 MULTIMODAL_NON_NATIVE_MODES = ("auto", "text", "off")
 MULTIMODAL_NATIVE_FALLBACKS = ("notice", "text")
@@ -410,9 +409,7 @@ def _compression_fields() -> tuple[ConfigField, ...]:
 
 def _memory_fields() -> tuple[ConfigField, ...]:
     return (
-        _yaml_field("memory.provider", "memory_provider", "file", "str", "memory", "Built-in memory provider.", choices=MEMORY_PROVIDERS),
         _yaml_field("memory.external_provider", "memory_external_provider", "none", "str", "memory", "External memory provider.", choices=EXTERNAL_MEMORY_PROVIDERS),
-        _yaml_field("memory.review_interval", "memory_review_interval", 10, "int", "memory", "Memory review interval.", minimum=0),
         _yaml_field("memory.review.external_turn_interval", "memory_external_turn_interval", 10, "int", "memory", "External review turn interval.", minimum=0),
         _yaml_field("memory.review.internal_turn_interval", "memory_internal_turn_interval", 50, "int", "memory", "Internal consolidation turn interval.", minimum=0),
         _yaml_field("memory.review.internal_buffer_limit", "memory_internal_buffer_limit", 20, "int", "memory", "Pending observations before consolidation.", minimum=1),
@@ -428,10 +425,7 @@ def _memory_fields() -> tuple[ConfigField, ...]:
         _yaml_field("memory.embedding.base_url", "memory_embedding_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1", "str", "memory", "Embedding API base URL."),
         _yaml_field("memory.embedding.api_key_env", "memory_embedding_api_key_env", "DASHSCOPE_API_KEY", "str", "memory", "Environment variable containing the embedding API key."),
         _yaml_field("memory.embedding.dimensions", "memory_embedding_dimensions", 0, "int", "memory", "Embedding vector dimensions; 0 means detect.", minimum=0),
-        _yaml_field("memory.embedding.model", "memory_embedding_model", "BAAI/bge-small-zh-v1.5", "str", "memory", "Embedding model."),
-        _yaml_field("memory.embedding.relevance_threshold", "memory_embedding_relevance_threshold", 0.3, "float", "memory", "Embedding relevance threshold."),
-        _yaml_field("memory.embedding.max_prefetch", "memory_embedding_max_prefetch", 3, "int", "memory", "Embedding prefetch limit.", minimum=1),
-        _yaml_field("memory.embedding.chunk_size", "memory_embedding_chunk_size", 800, "int", "memory", "Embedding chunk size.", minimum=1),
+        _yaml_field("memory.embedding.model", "memory_embedding_model", "text-embedding-v4", "str", "memory", "Embedding model."),
         _env_field("MEMORY_EMBEDDING_API_KEY", "memory_embedding_api_key", "", "str", "memory", "Embedding API key override.", sensitive=True),
         _yaml_field("memory.qdrant.url", "memory_qdrant_url", "http://localhost:6333", "str", "memory", "Qdrant URL."),
         _yaml_field("memory.qdrant.collection", "memory_qdrant_collection", "lumora_memories", "str", "memory", "Qdrant collection."),

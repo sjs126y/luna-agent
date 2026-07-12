@@ -49,9 +49,33 @@ toolsets:
   enabled: ["all"]                # ["all"] 或 ["web","terminal","utility"] 等
 
 memory:
-  provider: "file"                # 内置记忆提供方
-  external_provider: "embedding"  # 外部记忆提供方："none" | "embedding"
-  review_interval: 10             # 每 N 轮自动 review，0 表示关闭
+  external_provider: "lumora"     # lumora | mem0 | fallback | none
+  review:
+    external_turn_interval: 10     # 每 N 轮整理外部记忆，0 表示关闭
+    internal_turn_interval: 50
+    internal_buffer_limit: 20
+    snapshot_refresh_turn_interval: 20
+    worker_concurrency: 2
+  llm:
+    provider: "inherit"            # 默认继承当前 Agent LLM
+    model: ""
+    api_mode: "auto"
+    max_tokens: 2048
+  embedding:
+    api_mode: "openai_compatible"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: "DASHSCOPE_API_KEY"
+    model: "text-embedding-v4"
+    dimensions: 0
+  qdrant:
+    url: "http://localhost:6333"
+    collection: "lumora_memories"
+    api_key_env: "QDRANT_API_KEY"
+    timeout_seconds: 10
+  providers:
+    lumora: {}
+    mem0:
+      options: {}
 
 multimodal:
   enabled: true                    # true = 接收平台附件并进入统一处理链路

@@ -39,7 +39,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
-        plugins_disabled=["memory/file", "memory/embedding"],
+        plugins_disabled=[],
         mcp_enabled=False,
     )
 
@@ -157,7 +157,7 @@ async def test_create_app_runtime_internal_memory_is_core(tmp_path):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
-        plugins_disabled=["memory/file", "memory/embedding"],
+        plugins_disabled=[],
         mcp_enabled=False,
     )
 
@@ -173,7 +173,7 @@ async def test_create_app_runtime_attaches_boot_report_on_failure(tmp_path, monk
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
-        plugins_disabled=["memory/file", "memory/embedding"],
+        plugins_disabled=[],
         mcp_enabled=False,
     )
 
@@ -220,7 +220,7 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
-        plugins_disabled=["memory/file", "memory/embedding"],
+        plugins_disabled=[],
         mcp_enabled=True,
         mcp_servers=[{"name": "config", "command": "python", "args": [], "enabled": True}],
     )
@@ -262,7 +262,7 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[plugins_dir],
         plugins_enabled=["user/mcp"],
-        plugins_disabled=["memory/file", "memory/embedding"],
+        plugins_disabled=[],
         mcp_enabled=True,
     )
 
@@ -281,7 +281,7 @@ async def test_app_runtime_gateway_lifecycle(tmp_path, monkeypatch):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
-        plugins_disabled=["memory/file", "memory/embedding"],
+        plugins_disabled=[],
         mcp_enabled=False,
     )
     started = []

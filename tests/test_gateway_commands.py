@@ -13,14 +13,13 @@ from personal_agent.db.database import Database
 from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
 from personal_agent.gateway.gateway import Gateway
 from personal_agent.gateway.state import PlatformRuntime
-from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import MessageEvent, MessagePart, PlatformCapabilities, SessionSource
 from personal_agent.plugins.models import CommandEntry
 from personal_agent.conversation import EMPTY_FINAL_RESPONSE_MESSAGE, ConversationTurnResult
 
 
-class Memory(MemoryProvider):
+class Memory:
     async def prefetch(self, user_message: str) -> list[dict]:
         return []
 

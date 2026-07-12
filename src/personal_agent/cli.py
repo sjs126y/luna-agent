@@ -60,14 +60,27 @@ plugins:
   disabled: []
 
 memory:
-  provider: file
   external_provider: none
-  review_interval: 10
+  review:
+    external_turn_interval: 10
+    internal_turn_interval: 50
+    internal_buffer_limit: 20
+    snapshot_refresh_turn_interval: 20
+    worker_concurrency: 2
+  llm:
+    provider: inherit
+    model: ""
+    api_mode: auto
+    max_tokens: 2048
   embedding:
-    model: BAAI/bge-small-zh-v1.5
-    relevance_threshold: 0.3
-    max_prefetch: 3
-    chunk_size: 800
+    api_mode: openai_compatible
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    model: text-embedding-v4
+    dimensions: 0
+  qdrant:
+    url: http://localhost:6333
+    collection: lumora_memories
 
 compression:
   threshold_ratio: 0.6
@@ -143,14 +156,25 @@ plugins:
   disabled: []
 
 memory:
-  provider: file
-  external_provider: embedding
-  review_interval: 10
+  external_provider: lumora
+  review:
+    external_turn_interval: 10
+    internal_turn_interval: 50
+    internal_buffer_limit: 20
+    snapshot_refresh_turn_interval: 20
+    worker_concurrency: 2
+  llm:
+    provider: inherit
+    max_tokens: 2048
   embedding:
-    model: BAAI/bge-small-zh-v1.5
-    relevance_threshold: 0.3
-    max_prefetch: 3
-    chunk_size: 800
+    api_mode: openai_compatible
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    model: text-embedding-v4
+    dimensions: 0
+  qdrant:
+    url: http://localhost:6333
+    collection: lumora_memories
 
 compression:
   threshold_ratio: 0.6
@@ -226,14 +250,25 @@ plugins:
   disabled: []
 
 memory:
-  provider: file
-  external_provider: embedding
-  review_interval: 10
+  external_provider: lumora
+  review:
+    external_turn_interval: 10
+    internal_turn_interval: 50
+    internal_buffer_limit: 20
+    snapshot_refresh_turn_interval: 20
+    worker_concurrency: 2
+  llm:
+    provider: inherit
+    max_tokens: 2048
   embedding:
-    model: BAAI/bge-small-zh-v1.5
-    relevance_threshold: 0.3
-    max_prefetch: 3
-    chunk_size: 800
+    api_mode: openai_compatible
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    model: text-embedding-v4
+    dimensions: 0
+  qdrant:
+    url: http://localhost:6333
+    collection: lumora_memories
 
 compression:
   threshold_ratio: 0.6
@@ -820,35 +855,6 @@ def memory_search(
     asyncio.run(_run())
 
 
-@memory_app.command("ingest")
-def memory_ingest(path: Path) -> None:
-    """Ingest a file into external memory."""
-    async def _run() -> None:
-        if not path.exists():
-            _exit_error(f"file not found: {path}")
-        from personal_agent.runtime import create_app_runtime
-
-        settings = Settings()
-        runtime = await create_app_runtime(settings)
-        try:
-            ext = await runtime.plugin_manager.invoke_hook(
-                "create_external_memory_provider",
-                settings=runtime.settings,
-                data_dir=runtime.data_dir / "memory",
-                force=True,
-            )
-            if ext is None:
-                _exit_error("external embedding memory provider is unavailable.")
-            count = await ext.ingest_file(str(path.resolve()))
-            typer.echo(f"Ingested {path.name}: {count} chunks stored.")
-        except ValueError as exc:
-            _exit_error(str(exc))
-        finally:
-            await runtime.close()
-
-    asyncio.run(_run())
-
-
 @protocol_app.command("schema")
 def protocol_schema(
     json_output: bool = typer.Option(True, "--json/--no-json", help="输出 JSON。当前协议契约以 JSON 为准。"),
@@ -942,7 +948,6 @@ async def _memory_report() -> dict[str, Any]:
     async def _collect(runtime):
         memory = await runtime.memory_manager.health_snapshot()
         memory.update({
-            "provider": runtime.settings.memory_provider,
             "external_provider_config": runtime.settings.memory_external_provider,
             "review_service": type(runtime.memory_review_service).__name__,
             "review_enabled": bool(getattr(runtime.memory_review_service, "enabled", False)),
@@ -1143,7 +1148,6 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
         })
         memory = await runtime.memory_manager.health_snapshot()
         memory.update({
-            "provider": settings.memory_provider,
             "external_provider_config": settings.memory_external_provider,
             "review_service": type(runtime.memory_review_service).__name__,
             "review_enabled": bool(getattr(runtime.memory_review_service, "enabled", False)),
@@ -1192,7 +1196,6 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
         return {
             "runtime": runtime_data,
             "memory": {
-                "provider": settings.memory_provider,
                 "external_provider_config": settings.memory_external_provider,
                 "builtin_available": False,
                 "builtin_provider": "",

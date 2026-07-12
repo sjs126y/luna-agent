@@ -38,7 +38,7 @@ DESTRUCTIVE_TOOLS = {
     "execute_code",
     "process_kill",
     "memory",
-    "memory_ingest",
+    "memory_buffer",
 }
 
 NEVER_DELEGATE = {

@@ -61,7 +61,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     "cron": {"enabled"},
     "execution": {"mode", "policy"},
     "mcp": {"enabled", "servers"},
-    "memory": {"provider", "external_provider", "review_interval", "review", "llm", "embedding", "qdrant", "providers"},
+    "memory": {"external_provider", "review", "llm", "embedding", "qdrant", "providers"},
     "multimodal": {
         "enabled",
         "image_mode",
@@ -114,8 +114,7 @@ PROVIDER_REQUIRED_ENV = {
 VALID_LLM_PROVIDERS = set(PROVIDER_REQUIRED_ENV)
 VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages", "responses", "codex_responses"}
 VALID_COMPRESSION_ENGINES = {"compressor", "simple", "none", "off", "disabled"}
-VALID_MEMORY_PROVIDERS = {"file"}
-VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "embedding", "fallback", "lumora", "mem0"}
+VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "fallback", "lumora", "mem0"}
 VALID_EXECUTION_POLICY_KEYS = VALID_PERMISSION_CATEGORIES | {"tool_permissions"}
 
 PLATFORM_ENV = {
@@ -462,7 +461,6 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     )
 
     memory = sections["memory"]
-    _enum_value(memory, "provider", "memory.provider", VALID_MEMORY_PROVIDERS, errors)
     _enum_value(
         memory,
         "external_provider",
@@ -470,26 +468,12 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         VALID_EXTERNAL_MEMORY_PROVIDERS,
         errors,
     )
-    _non_negative_int(memory, "review_interval", "memory.review_interval", errors)
-    legacy_embedding = memory.get("embedding")
-    if "external" in memory or (legacy_embedding is not None and not isinstance(legacy_embedding, dict)):
-        warnings.append(
-            "检测到旧 memory 配置，请使用 memory.external_provider: embedding 或 none。"
-        )
     embedding = memory.get("embedding")
     if embedding is not None:
         if not isinstance(embedding, dict):
             errors.append("memory.embedding 必须是对象。")
         else:
             _string_value(embedding, "model", "memory.embedding.model", errors)
-            _ratio_value(
-                embedding,
-                "relevance_threshold",
-                "memory.embedding.relevance_threshold",
-                errors,
-            )
-            _positive_int(embedding, "max_prefetch", "memory.embedding.max_prefetch", errors)
-            _positive_int(embedding, "chunk_size", "memory.embedding.chunk_size", errors)
 
     _bool_value(sections["cron"], "enabled", "cron.enabled", errors)
 
@@ -741,8 +725,6 @@ def _migration_hints(
         for old_key, env_name in llm_mapping.items():
             if old_key in llm:
                 hints.append(f"旧配置 llm.{old_key} 请迁移到 .env 的 {env_name}。")
-    if "external" in memory or (memory.get("embedding") is not None and not isinstance(memory.get("embedding"), dict)):
-        hints.append("旧 memory external/embedding 配置请改为 memory.external_provider: embedding 或 none。")
     if unknown_keys:
         hints.append(f"确认或移除未知顶层配置: {', '.join(unknown_keys)}。")
     if unknown_nested_keys:

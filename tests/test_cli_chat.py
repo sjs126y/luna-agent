@@ -11,14 +11,13 @@ from personal_agent.config import Settings
 from personal_agent.db.database import Database
 from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
-from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import NormalizedResponse
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.plugins.models import CommandEntry
 
 
-class StaticMemory(MemoryProvider):
+class StaticMemory:
     async def prefetch(self, user_message: str) -> list[dict]:
         return []
 
@@ -198,7 +197,7 @@ async def test_cli_memory_command_is_handled_locally(runtime, monkeypatch):
         called = True
         return "model"
 
-    async def list_entries(*, target="all"):
+    async def list_entries(*, target="all", session_key=""):
         return [{"id": "memory:1", "provider": "builtin", "target": target, "text": "remember cli"}]
 
     monkeypatch.setattr(runtime, "run_message", run_message)

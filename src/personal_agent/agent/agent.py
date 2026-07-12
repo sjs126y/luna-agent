@@ -179,6 +179,8 @@ def _pin_memory_snapshot(agent: Agent) -> None:
     manager = agent._memory_manager
     if manager is None or not hasattr(manager, "get_internal_snapshot"):
         return
+    if hasattr(manager, "internal") and manager.internal is None:
+        return
     agent._internal_memory_snapshot = manager.get_internal_snapshot(agent._memory_session_key)
     agent._memory_snapshot_turns = 0
 
