@@ -295,6 +295,16 @@ async def test_manager_no_servers():
     assert count == 0
 
 
+def test_manager_rejects_duplicate_server_names():
+    from personal_agent.mcp.manager import MCPManager
+
+    with pytest.raises(ValueError, match="Duplicate MCP server"):
+        MCPManager([
+            {"name": "same", "command": "one"},
+            {"name": "same", "command": "two"},
+        ])
+
+
 @pytest.mark.asyncio
 async def test_manager_bad_server_doesnt_block_others(mock_server_script: Path):
     """One bad server shouldn't prevent good ones from connecting."""
