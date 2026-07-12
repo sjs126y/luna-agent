@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS internal_buffer (
   observation_id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, content_hash TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending', target_file TEXT DEFAULT '', reason TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_buffer_dedupe ON internal_buffer(scope_key, content_hash);
 CREATE TABLE IF NOT EXISTS internal_revisions (
   profile TEXT PRIMARY KEY, revision INTEGER NOT NULL, file_hashes_json TEXT NOT NULL, created_at TEXT NOT NULL
 );
@@ -173,6 +174,36 @@ class MemoryArchive:
             (_scope_key(scope),),
         )
         return int(row["count"]) if row else 0
+
+    async def pending_buffer_observations(self, scope: MemoryScope, *, limit: int = 100) -> list[Observation]:
+        rows = await self._fetchall(
+            """SELECT o.* FROM internal_buffer b JOIN observations o ON o.id = b.observation_id
+            WHERE b.scope_key = ? AND b.status = 'pending' ORDER BY b.created_at LIMIT ?""",
+            (_scope_key(scope), limit),
+        )
+        return [Observation(
+            id=row["id"], kind=ObservationKind(row["kind"]), content=row["content"],
+            importance=float(row["importance"]), long_term=bool(row["long_term"]),
+            source_turn_ids=tuple(json.loads(row["source_turn_ids_json"] or "[]")),
+            created_at=row["created_at"],
+        ) for row in rows]
+
+    async def set_buffer_status(self, observation_id: str, status: str, *, target_file: str = "", reason: str = "") -> None:
+        if status not in {"pending", "applied", "skipped", "conflict"}:
+            raise ValueError(f"Invalid internal buffer status: {status}")
+        await self._execute_write(
+            "UPDATE internal_buffer SET status = ?, target_file = ?, reason = ?, updated_at = ? WHERE observation_id = ?",
+            (status, target_file, reason, utc_now(), observation_id),
+        )
+
+    async def list_buffer(self, scope: MemoryScope, *, status: str = "pending", limit: int = 100) -> list[dict[str, Any]]:
+        rows = await self._fetchall(
+            """SELECT b.*, o.kind, o.content, o.importance FROM internal_buffer b
+            JOIN observations o ON o.id = b.observation_id
+            WHERE b.scope_key = ? AND b.status = ? ORDER BY b.created_at LIMIT ?""",
+            (_scope_key(scope), status, limit),
+        )
+        return [dict(row) for row in rows]
 
     async def set_checkpoint(self, scope: MemoryScope, *, last_turn_id: str, reviewed_turns: int) -> None:
         await self._execute_write(
