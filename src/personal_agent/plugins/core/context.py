@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from personal_agent.platforms.core import PlatformEntry
-    from personal_agent.mcp.client import MCPServerConfig
+    from personal_agent.mcp.models import MCPServerConfig
     from personal_agent.plugins.core.manager import PluginManager
     from personal_agent.plugins.core.models import CommandEntry, LoadedPlugin
     from personal_agent.skills.entry import SkillEntry
