@@ -20,11 +20,13 @@ class MemoryManager:
         router=None,
         archive=None,
         internal_service=None,
+        internal_turn_interval: int = 50,
     ) -> None:
         self.internal = internal
         self.router = router
         self.archive = archive
         self.internal_service = internal_service
+        self.internal_turn_interval = internal_turn_interval
         self._legacy_builtin = builtin
         self._legacy_external = external
         self._last_errors: dict[str, str] = {}
@@ -62,7 +64,7 @@ class MemoryManager:
                 self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
         return []
 
-    async def review(self, messages: list[dict[str, Any]], scope: MemoryScope):
+    async def review(self, messages: list[dict[str, Any]], scope: MemoryScope, *, total_user_turns: int = 0):
         if self.router is None:
             return None
         result = await self.router.review(messages, scope)
@@ -70,6 +72,12 @@ class MemoryManager:
             await self.internal_service.enqueue(scope, result.observations, batch_id=result.batch_id)
             if await self.internal_service.should_consolidate(scope):
                 await self.internal_service.consolidate(scope)
+            elif (
+                self.internal_turn_interval > 0
+                and total_user_turns > 0
+                and total_user_turns % self.internal_turn_interval == 0
+            ):
+                await self.internal_service.consolidate(scope, force=True)
         await self.router.maybe_recover(scope)
         return result
 

@@ -13,7 +13,7 @@ import aiosqlite
 
 from personal_agent.memory.models import MemoryRecord, MemoryScope, Observation, ObservationKind, utc_now
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_schema (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS review_checkpoints (
@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS memory_history (
 );
 CREATE TABLE IF NOT EXISTS internal_buffer (
   observation_id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, content_hash TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending', target_file TEXT DEFAULT '', reason TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  status TEXT NOT NULL DEFAULT 'pending', target_file TEXT DEFAULT '', reason TEXT DEFAULT '',
+  proposed_action TEXT DEFAULT '', proposed_content TEXT DEFAULT '', entry_id TEXT DEFAULT '',
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_buffer_dedupe ON internal_buffer(scope_key, content_hash);
 CREATE TABLE IF NOT EXISTS internal_revisions (
@@ -70,9 +72,25 @@ class MemoryArchive:
         row = await self._fetchone("SELECT version FROM memory_schema LIMIT 1")
         if row is None:
             await self._conn.execute("INSERT INTO memory_schema(version) VALUES (?)", (SCHEMA_VERSION,))
-        elif int(row["version"]) != SCHEMA_VERSION:
+        elif int(row["version"]) < SCHEMA_VERSION:
+            await self._migrate(int(row["version"]))
+        elif int(row["version"]) > SCHEMA_VERSION:
             raise RuntimeError(f"Unsupported memory schema version: {row['version']}")
         await self._conn.commit()
+
+    async def _migrate(self, version: int) -> None:
+        if version == 1:
+            cursor = await self._connection.execute("PRAGMA table_info(internal_buffer)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            for name in ("proposed_action", "proposed_content", "entry_id"):
+                if name not in columns:
+                    await self._connection.execute(
+                        f"ALTER TABLE internal_buffer ADD COLUMN {name} TEXT DEFAULT ''"
+                    )
+            await self._connection.execute("UPDATE memory_schema SET version = 2")
+            version = 2
+        if version != SCHEMA_VERSION:
+            raise RuntimeError(f"Unsupported memory schema version: {version}")
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -272,12 +290,25 @@ class MemoryArchive:
             created_at=row["created_at"],
         ) for row in rows]
 
-    async def set_buffer_status(self, observation_id: str, status: str, *, target_file: str = "", reason: str = "") -> None:
+    async def set_buffer_status(
+        self,
+        observation_id: str,
+        status: str,
+        *,
+        target_file: str = "",
+        reason: str = "",
+        proposed_action: str = "",
+        proposed_content: str = "",
+        entry_id: str = "",
+    ) -> None:
         if status not in {"pending", "applied", "skipped", "conflict"}:
             raise ValueError(f"Invalid internal buffer status: {status}")
         await self._execute_write(
-            "UPDATE internal_buffer SET status = ?, target_file = ?, reason = ?, updated_at = ? WHERE observation_id = ?",
-            (status, target_file, reason, utc_now(), observation_id),
+            """UPDATE internal_buffer SET status = ?, target_file = ?, reason = ?,
+            proposed_action = ?, proposed_content = ?, entry_id = ?, updated_at = ?
+            WHERE observation_id = ?""",
+            (status, target_file, reason, proposed_action, proposed_content, entry_id,
+             utc_now(), observation_id),
         )
 
     async def list_buffer(self, scope: MemoryScope, *, status: str = "pending", limit: int = 100) -> list[dict[str, Any]]:

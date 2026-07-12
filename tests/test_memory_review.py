@@ -28,10 +28,10 @@ class Manager:
     def scope(self, *, session_key, user_id):
         return MemoryScope(user_id=user_id, session_key=session_key)
 
-    async def review(self, messages, scope):
+    async def review(self, messages, scope, *, total_user_turns=0):
         if self.error:
             raise self.error
-        self.reviews.append((messages, scope))
+        self.reviews.append((messages, scope, total_user_turns))
 
 
 def _messages(turns: int) -> list[dict]:
@@ -55,6 +55,7 @@ async def test_review_worker_uses_interval_and_persists_checkpoint() -> None:
 
     assert len(manager.reviews) == 1
     assert len(manager.reviews[0][0]) == 4
+    assert manager.reviews[0][2] == 2
     assert manager.archive.checkpoint == {"last_turn_id": "t2", "reviewed_turns": 2}
     assert service.health_snapshot()["completed"] == 1
     await service.close()

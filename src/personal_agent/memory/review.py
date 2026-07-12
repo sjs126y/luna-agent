@@ -64,7 +64,9 @@ class MemoryReviewService:
                 self.skipped += 1
                 return
             pending_messages = _messages_after_user_turn(job.messages, reviewed)
-            await self.memory_manager.review(pending_messages, scope)
+            await self.memory_manager.review(
+                pending_messages, scope, total_user_turns=len(user_turns)
+            )
             await self.memory_manager.archive.set_checkpoint(
                 scope, last_turn_id=job.turn_id, reviewed_turns=len(user_turns)
             )

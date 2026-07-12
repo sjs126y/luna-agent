@@ -581,6 +581,7 @@ async def create_memory_manager(
         router=router,
         archive=archive,
         internal_service=internal_service,
+        internal_turn_interval=context.review.internal_turn_interval,
     )
     from personal_agent.memory.tools import set_memory_manager
 
@@ -596,6 +597,7 @@ def ensure_system_files(system_dir: Path) -> None:
         "AGENT.md": "# 行为规则\n\n- 涉及实时数据时必须调用工具，不要凭记忆回答\n- 使用中文回复\n- 工具返回的结果要如实转述，不要编造\n- 优先使用工具而不是猜测\n",
         "USER.md": "# 用户偏好\n\n- 用户偏好从这里开始记录\n",
         "MEMORY.md": "# 用户画像\n\n- 从这里开始记录用户的重要信息\n",
+        "RELATIONSHIP.md": "# 关系状态\n\n<!-- 关系记忆需要更高置信度或人工确认 -->\n",
     }
     for name, content in defaults.items():
         path = system_dir / name

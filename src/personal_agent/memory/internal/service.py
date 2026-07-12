@@ -52,7 +52,13 @@ class InternalMemoryService:
             else:
                 status = "applied"
             await self.archive.set_buffer_status(
-                operation.observation_id, status, target_file=target, reason=operation.reason
+                operation.observation_id,
+                status,
+                target_file=target,
+                reason=operation.reason,
+                proposed_action=operation.action.value,
+                proposed_content=operation.content,
+                entry_id=operation.entry_id,
             )
             counts[status] += 1
         counts["pending"] = len(observations) - len(handled)
@@ -64,11 +70,11 @@ class InternalMemoryService:
             return False
         snapshot = self.store.snapshot(profile=scope.profile)
         await self.store.apply_operations(snapshot, [InternalPatchOperation(
-            action=InternalPatchAction.ADD,
+            action=InternalPatchAction(item["proposed_action"] or "ADD"),
             observation_id=observation_id,
-            entry_id=observation_id,
+            entry_id=item["entry_id"] or observation_id,
             target_file=item["target_file"],
-            content=item["content"],
+            content=item["proposed_content"] or item["content"],
             reason="manual confirmation",
         )], allow_review_files=True)
         await self.archive.set_buffer_status(

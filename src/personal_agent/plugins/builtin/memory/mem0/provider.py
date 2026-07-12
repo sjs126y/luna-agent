@@ -49,6 +49,7 @@ class Mem0MemoryProvider(ExternalMemoryProvider):
                 memory_id=str(item.get("id") or ""), content=content,
             ))
         await self.archive.save_observations(scope, tuple(observations))
+        await self._mirror(values, scope)
         return MemoryReviewResult(tuple(observations), tuple(changes), self.name)
 
     async def search(self, query: str, scope: MemoryScope, *, limit: int = 5) -> list[MemoryRecord]:
@@ -91,10 +92,44 @@ class Mem0MemoryProvider(ExternalMemoryProvider):
             observation_id="", memory_id=str(item.get("id") or ""),
             content=str(item.get("memory") or ""),
         ) for item in values)
+        await self._mirror(values, scope)
         return MemoryReviewResult(tuple(observations), changes, self.name)
 
     def health_snapshot(self) -> dict[str, Any]:
         return {"provider": self.name, "available": not self.last_error, "last_error": self.last_error}
+
+    async def _mirror(self, values: list[dict[str, Any]], scope: MemoryScope) -> None:
+        for item in values:
+            action = MemoryChangeAction(str(item.get("event") or "ADD").upper())
+            memory_id = str(item.get("id") or "")
+            if not memory_id:
+                continue
+            if action == MemoryChangeAction.DELETE:
+                await self.archive.delete_memory(memory_id, scope, provider=self.name, reason="mem0 mirror")
+                continue
+            if action == MemoryChangeAction.NONE:
+                continue
+            content = str(item.get("memory") or item.get("text") or "").strip()
+            if not content:
+                continue
+            existing = await self.archive.get_memory(memory_id, scope)
+            record_kwargs = {
+                "id": memory_id,
+                "content": content,
+                "provider": self.name,
+                "scope": scope,
+            }
+            created_at = existing.created_at if existing else str(item.get("created_at") or "")
+            if created_at:
+                record_kwargs["created_at"] = created_at
+            record = MemoryRecord(**record_kwargs)
+            await self.archive.upsert_memory(
+                scope,
+                record,
+                action=action.value,
+                previous_content=existing.content if existing else "",
+                reason="mem0 mirror",
+            )
 
 
 def _record(item: dict[str, Any], scope: MemoryScope) -> MemoryRecord:
