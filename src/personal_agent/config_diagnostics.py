@@ -131,7 +131,18 @@ PLATFORM_HINTS = {
     "qq": "填写 QQ_BOT_BASE_URL，确保 OneBot HTTP 服务地址可用。",
 }
 
-MCP_SERVER_KEYS = {"name", "command", "args", "env", "enabled"}
+MCP_SERVER_KEYS = {
+    "name",
+    "transport",
+    "command",
+    "args",
+    "env",
+    "url",
+    "headers_env",
+    "enabled",
+    "connect_timeout_seconds",
+    "call_timeout_seconds",
+}
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
@@ -572,6 +583,7 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw_servers, list):
         return {"servers": servers, "errors": ["mcp.servers 必须是列表。"], "warnings": []}
 
+    seen_names: set[str] = set()
     for index, raw in enumerate(raw_servers):
         label = f"mcp.servers[{index}]"
         if not isinstance(raw, dict):
@@ -581,22 +593,36 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
         if unknown:
             warnings.append(f"{label} 包含未知字段: {', '.join(unknown)}")
         command = str(raw.get("command") or "")
-        name = str(raw.get("name") or command or f"server-{index}")
+        url = str(raw.get("url") or "")
+        transport = str(raw.get("transport") or ("streamable_http" if url and not command else "stdio"))
+        name = str(raw.get("name") or command or url or f"server-{index}")
         enabled = bool(raw.get("enabled", True))
         command_found = bool(command and shutil.which(command))
+        duplicate_name = name in seen_names
+        seen_names.add(name)
         servers.append({
             "index": index,
             "name": name,
+            "transport": transport,
             "command": command,
+            "url": url,
             "enabled": enabled,
             "command_found": command_found,
-            "missing_command": not bool(command),
+            "missing_command": transport == "stdio" and not bool(command),
+            "missing_url": transport == "streamable_http" and not bool(url),
+            "duplicate_name": duplicate_name,
             "unknown_keys": unknown,
         })
-        if mcp_enabled and enabled and not command:
+        if transport not in {"stdio", "streamable_http"}:
+            errors.append(f"MCP 服务器 {name} 使用不支持的 transport: {transport}")
+        elif mcp_enabled and enabled and transport == "stdio" and not command:
             errors.append(f"MCP 服务器 {name} 缺少 command。")
-        elif mcp_enabled and enabled and not command_found:
+        elif mcp_enabled and enabled and transport == "stdio" and not command_found:
             warnings.append(f"MCP 服务器 {name} 的命令不可用: {command}")
+        elif mcp_enabled and enabled and transport == "streamable_http" and not url:
+            errors.append(f"MCP 服务器 {name} 缺少 url。")
+        if duplicate_name:
+            errors.append(f"MCP 服务器名称重复: {name}")
 
     return {"servers": servers, "errors": _dedupe(errors), "warnings": _dedupe(warnings)}
 
