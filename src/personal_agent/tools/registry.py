@@ -54,6 +54,10 @@ class ToolRegistry:
             del self._entries[name]
             self._generation += 1
 
+    def invalidate(self) -> None:
+        """Invalidate cached definitions when dynamic availability changes."""
+        self._generation += 1
+
     def get(self, name: str) -> ToolEntry | None:
         return self._entries.get(name)
 

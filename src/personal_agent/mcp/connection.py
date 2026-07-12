@@ -37,6 +37,8 @@ class MCPConnection(Protocol):
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> MCPCallResult: ...
 
+    async def ping(self) -> None: ...
+
     async def close(self) -> None: ...
 
 
@@ -143,6 +145,9 @@ class SDKMCPConnection:
             read_timeout_seconds=timedelta(seconds=self.config.call_timeout_seconds),
         )
         return _normalize_call_result(result)
+
+    async def ping(self) -> None:
+        await self._require_session().send_ping()
 
     async def close(self) -> None:
         async with self._connect_lock:
