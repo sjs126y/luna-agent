@@ -1,6 +1,6 @@
 # Backend Interface Contract
 
-更新时间：2026-07-08
+更新时间：2026-07-13
 
 本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
 
@@ -189,6 +189,7 @@
 - `dynamic_context_hash: string`
 - `stable_block_count: integer`
 - `dynamic_block_count: integer`
+- `turn_tail_block_count: integer`
 - `current_user_present: boolean`
 - `source: string`
 - `message_count: integer`
@@ -895,6 +896,15 @@ Memory doctor/health payload 提供：
 - `providers.internal.available: boolean`
 - `providers.external.provider.available: boolean`
 - `providers.external.last_primary_error: string`
+
+Memory `search` / `list` 的每条外部记录额外提供：
+
+- `provider: string`：兼容字段，表示该记录最初由哪个提供器写入。
+- `source_provider: string`：明确的记录来源提供器，语义与兼容字段 `provider` 相同。
+- `effective_provider: string`：当前 External Memory Router 实际使用的提供器。
+- `target: "external"`
+
+旧记录可以出现 `source_provider="fallback"` 且 `effective_provider="lumora"`；这表示记录历史来源是 fallback，不表示当前路由已经降级。Router 会在带 scope 的前台操作前按冷却时间尝试恢复主提供器，并在状态变化时更新 `provider_state`。
 
 Review worker payload 提供：
 

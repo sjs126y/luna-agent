@@ -21,6 +21,7 @@ class ExternalMemoryRouter:
         self.fallback_reason = ""
         self.last_primary_error = ""
         self._last_recovery_attempt = 0.0
+        self._persisted_states: dict[tuple[str, str, str], tuple[str, str, str]] = {}
 
     async def initialize(self) -> None:
         if self.requested_provider in {"none", "fallback"}:
@@ -45,59 +46,94 @@ class ExternalMemoryRouter:
             self._use_fallback(f"{type(exc).__name__}: {exc}")
 
     async def review(self, messages: list[dict[str, Any]], scope: MemoryScope) -> MemoryReviewResult:
+        await self._prepare_scope(scope)
         provider = self._effective()
         if provider is None:
             return MemoryReviewResult(provider="none")
         try:
             result = await provider.review(messages, scope)
-            await self.archive.set_provider_state(
-                scope, requested=self.requested_provider, effective=self.effective_provider,
-                fallback_reason=self.fallback_reason,
-            )
+            await self._persist_state(scope)
             return result
         except Exception as exc:
             if provider is self.fallback:
                 raise
             self.last_primary_error = f"{type(exc).__name__}: {exc}"
             self._use_fallback(self.last_primary_error)
-            return await self.fallback.review(messages, scope)
+            await self._persist_state(scope)
+            result = await self.fallback.review(messages, scope)
+            await self._persist_state(scope)
+            return result
 
     async def search(self, query: str, scope: MemoryScope, *, limit: int = 5):
+        await self._prepare_scope(scope)
         provider = self._effective()
         if provider is None:
             return []
         try:
-            return await provider.search(query, scope, limit=limit)
+            result = await provider.search(query, scope, limit=limit)
+            await self._persist_state(scope)
+            return result
         except Exception as exc:
             if provider is self.fallback:
                 raise
             self.last_primary_error = f"{type(exc).__name__}: {exc}"
             self._use_fallback(self.last_primary_error)
+            await self._persist_state(scope)
             return await self.fallback.search(query, scope, limit=limit)
 
     async def list(self, scope: MemoryScope, *, limit: int = 100):
+        await self._prepare_scope(scope)
         provider = self._effective()
-        return [] if provider is None else await provider.list(scope, limit=limit)
+        if provider is None:
+            return []
+        try:
+            result = await provider.list(scope, limit=limit)
+            await self._persist_state(scope)
+            return result
+        except Exception as exc:
+            if provider is self.fallback:
+                raise
+            self.last_primary_error = f"{type(exc).__name__}: {exc}"
+            self._use_fallback(self.last_primary_error)
+            await self._persist_state(scope)
+            return await self.fallback.list(scope, limit=limit)
 
     async def delete(self, memory_id: str, scope: MemoryScope) -> bool:
+        await self._prepare_scope(scope)
         provider = self._effective()
-        return False if provider is None else await provider.delete(memory_id, scope)
+        if provider is None:
+            return False
+        try:
+            result = await provider.delete(memory_id, scope)
+            await self._persist_state(scope)
+            return result
+        except Exception as exc:
+            if provider is self.fallback:
+                raise
+            self.last_primary_error = f"{type(exc).__name__}: {exc}"
+            self._use_fallback(self.last_primary_error)
+            await self._persist_state(scope)
+            return await self.fallback.delete(memory_id, scope)
 
     async def history(self, memory_id: str):
         provider = self._effective()
         return [] if provider is None else await provider.history(memory_id)
 
     async def migrate(self, observations, scope: MemoryScope):
+        await self._prepare_scope(scope)
         provider = self._effective()
         if provider is None:
             return MemoryReviewResult(observations=tuple(observations), provider="none")
         try:
-            return await provider.migrate(tuple(observations), scope)
+            result = await provider.migrate(tuple(observations), scope)
+            await self._persist_state(scope)
+            return result
         except Exception as exc:
             if provider is self.fallback:
                 raise
             self.last_primary_error = f"{type(exc).__name__}: {exc}"
             self._use_fallback(self.last_primary_error)
+            await self._persist_state(scope)
             return await self.fallback.migrate(tuple(observations), scope)
 
     def health_snapshot(self) -> dict[str, Any]:
@@ -159,3 +195,20 @@ class ExternalMemoryRouter:
     def _use_fallback(self, reason: str) -> None:
         self.effective_provider = self.fallback.name
         self.fallback_reason = reason or "provider unavailable"
+
+    async def _prepare_scope(self, scope: MemoryScope) -> None:
+        await self.maybe_recover(scope)
+        await self._persist_state(scope)
+
+    async def _persist_state(self, scope: MemoryScope) -> None:
+        scope_key = (scope.user_id, scope.session_key, scope.profile)
+        state = (self.requested_provider, self.effective_provider, self.fallback_reason)
+        if self._persisted_states.get(scope_key) == state:
+            return
+        await self.archive.set_provider_state(
+            scope,
+            requested=self.requested_provider,
+            effective=self.effective_provider,
+            fallback_reason=self.fallback_reason,
+        )
+        self._persisted_states[scope_key] = state

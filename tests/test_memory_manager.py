@@ -65,6 +65,9 @@ async def test_memory_manager_uses_profile_snapshot_and_external_router(tmp_path
 
     assert "Prefers concise answers" in snapshot.content
     assert "prefers Chinese" in injected[0]["content"][0]["text"]
+    records = await manager.search_entries("language", session_key="cli:work:u1")
+    assert records[0]["source_provider"] == "fallback"
+    assert records[0]["effective_provider"] == "fallback"
     assert health["requested_provider"] == "lumora"
     assert health["effective_provider"] == "fallback"
     assert health["fallback_reason"] == "qdrant unavailable"

@@ -120,13 +120,13 @@ class MemoryManager:
     async def list_entries(self, *, target: str = "all", session_key: str = "") -> list[dict[str, Any]]:
         if self.router is not None and target in {"all", "external"}:
             records = await self.router.list(self.scope(session_key=session_key))
-            return [{**item.as_dict(), "target": "external"} for item in records]
+            return [self._external_record(item) for item in records]
         return await self._legacy_list(target)
 
     async def search_entries(self, query: str, *, target: str = "all", session_key: str = "") -> list[dict[str, Any]]:
         if self.router is not None and target in {"all", "external"}:
             records = await self.router.search(query, self.scope(session_key=session_key))
-            return [{**item.as_dict(), "target": "external"} for item in records]
+            return [self._external_record(item) for item in records]
         if self._legacy_builtin is not None:
             entries = await self._legacy_builtin.search_entries(query, target=target)
             return [{**item, "provider": "builtin"} for item in entries]
@@ -190,6 +190,15 @@ class MemoryManager:
     @property
     def external(self):
         return self.router or self._legacy_external
+
+    def _external_record(self, record) -> dict[str, Any]:
+        data = record.as_dict()
+        return {
+            **data,
+            "source_provider": data.get("provider", ""),
+            "effective_provider": str(getattr(self.router, "effective_provider", "") or ""),
+            "target": "external",
+        }
 
     async def _legacy_list(self, target: str) -> list[dict[str, Any]]:
         result = []

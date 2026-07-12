@@ -387,7 +387,7 @@ def _fts_query(query: str) -> str:
 
 def _record_from_row(row, scope: MemoryScope) -> MemoryRecord:
     metadata = json.loads(row["metadata_json"] or "{}")
-    metadata.setdefault("index_status", row["index_status"])
+    metadata["index_status"] = row["index_status"]
     return MemoryRecord(
         id=row["id"], content=row["content"], kind=ObservationKind(row["kind"]),
         importance=float(row["importance"]), provider=row["provider"], scope=scope,
