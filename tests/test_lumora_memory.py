@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from personal_agent.memory.archive import MemoryArchive
-from personal_agent.memory.models import MemoryScope, Observation, ObservationKind
+from personal_agent.memory.models import MemoryRecord, MemoryScope, Observation, ObservationKind
 from personal_agent.plugins.builtin.memory.lumora.provider import LumoraMemoryProvider, reciprocal_rank_fusion
 from personal_agent.plugins.builtin.memory.lumora.qdrant_store import QdrantMemoryIndex
 
@@ -135,5 +135,34 @@ async def test_lumora_migrate_returns_applied_memory_id(tmp_path) -> None:
     stored = await archive.get_memory(observation.id, scope)
     assert stored is not None
     assert stored.provider == "lumora"
+    assert stored.metadata["index_status"] == "ready"
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_lumora_reindexes_pending_records(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    record = MemoryRecord(
+        id="m1",
+        content="repair vector",
+        provider="lumora",
+        scope=scope,
+        metadata={"index_status": "pending"},
+    )
+    await archive.upsert_memory(scope, record)
+    provider = LumoraMemoryProvider(
+        archive=archive,
+        context=SimpleNamespace(),
+        embedding=_Embedding(),
+        vector_index=_VectorIndex(),
+        llm=_ResolutionLLM(),
+    )
+
+    result = await provider.reindex([record], scope)
+
+    assert result == {"attempted": 1, "completed": 1, "failed": 0}
+    stored = await archive.get_memory("m1", scope)
     assert stored.metadata["index_status"] == "ready"
     await archive.close()

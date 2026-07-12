@@ -30,6 +30,8 @@ class MemoryReviewService:
         self.maintenance_runs = 0
         self.migrations_completed = 0
         self.migrations_failed = 0
+        self.indexes_completed = 0
+        self.indexes_failed = 0
         self.last_error = ""
 
     async def start(self) -> None:
@@ -62,10 +64,12 @@ class MemoryReviewService:
             scope = self.memory_manager.scope(session_key=job.session_key, user_id=job.user_id)
             maintain = getattr(self.memory_manager, "maintain", None)
             if maintain is not None:
-                maintenance = await maintain(scope, migration_limit=1)
+                maintenance = await maintain(scope, migration_limit=1, index_limit=1)
                 self.maintenance_runs += 1
                 self.migrations_completed += int(maintenance.get("migration_completed") or 0)
                 self.migrations_failed += int(maintenance.get("migration_failed") or 0)
+                self.indexes_completed += int(maintenance.get("index_completed") or 0)
+                self.indexes_failed += int(maintenance.get("index_failed") or 0)
             user_turns = [item for item in job.messages if item.get("role") == "user"]
             checkpoint = await self.memory_manager.archive.get_checkpoint(scope)
             reviewed = int(checkpoint["reviewed_turns"]) if checkpoint else 0
@@ -89,6 +93,8 @@ class MemoryReviewService:
             "maintenance_runs": self.maintenance_runs,
             "migrations_completed": self.migrations_completed,
             "migrations_failed": self.migrations_failed,
+            "indexes_completed": self.indexes_completed,
+            "indexes_failed": self.indexes_failed,
             "last_error": self.last_error,
         }
 

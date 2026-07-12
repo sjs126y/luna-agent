@@ -34,11 +34,13 @@ class Manager:
             raise self.error
         self.reviews.append((messages, scope, total_user_turns))
 
-    async def maintain(self, scope, *, migration_limit=1):
-        self.maintenance.append((scope, migration_limit))
+    async def maintain(self, scope, *, migration_limit=1, index_limit=1):
+        self.maintenance.append((scope, migration_limit, index_limit))
         return {
             "migration_completed": 1,
             "migration_failed": 0,
+            "index_completed": 1,
+            "index_failed": 0,
         }
 
 
@@ -69,6 +71,7 @@ async def test_review_worker_uses_interval_and_persists_checkpoint() -> None:
     assert service.health_snapshot()["completed"] == 1
     assert service.health_snapshot()["maintenance_runs"] == 1
     assert service.health_snapshot()["migrations_completed"] == 1
+    assert service.health_snapshot()["indexes_completed"] == 1
     await service.close()
     assert service.health_snapshot()["workers"] == 0
 

@@ -81,15 +81,34 @@ class MemoryManager:
         await self.router.maybe_recover(scope)
         return result
 
-    async def maintain(self, scope: MemoryScope, *, migration_limit: int = 1) -> dict[str, Any]:
+    async def maintain(
+        self,
+        scope: MemoryScope,
+        *,
+        migration_limit: int = 1,
+        index_limit: int = 1,
+    ) -> dict[str, Any]:
         if self.router is None:
             return {
                 "effective_provider": "none",
                 "migration_attempted": 0,
                 "migration_completed": 0,
                 "migration_failed": 0,
+                "index_attempted": 0,
+                "index_completed": 0,
+                "index_failed": 0,
             }
-        return await self.router.maintain(scope, migration_limit=migration_limit)
+        return await self.router.maintain(
+            scope,
+            migration_limit=migration_limit,
+            index_limit=index_limit,
+        )
+
+    async def probe(self, *, session_key: str = "", user_id: str = "") -> dict[str, Any]:
+        if self.router is None:
+            return {"effective_provider": "none", "last_probe_status": "skipped"}
+        scope = self.scope(session_key=session_key, user_id=user_id)
+        return await self.router.probe(scope)
 
     async def add_external(self, content: str, *, kind: str = "fact", session_key: str = ""):
         if self.router is None:
@@ -168,9 +187,30 @@ class MemoryManager:
 
     async def health_snapshot(self) -> dict[str, Any]:
         if self.router is not None:
-            external = self.router.health_snapshot(self.scope())
+            scope = self.scope()
+            external = self.router.health_snapshot(scope)
             snapshot = self.internal.snapshot() if self.internal is not None else None
-            pending = await self.archive.pending_buffer_count(self.scope()) if self.archive else 0
+            pending = await self.archive.pending_buffer_count(scope) if self.archive else 0
+            migration = (
+                await self.archive.migration_status_counts(scope)
+                if self.archive and hasattr(self.archive, "migration_status_counts")
+                else {}
+            )
+            index = (
+                await self.archive.index_status_counts(scope)
+                if self.archive and hasattr(self.archive, "index_status_counts")
+                else {}
+            )
+            migration_global = (
+                await self.archive.migration_status_counts()
+                if self.archive and hasattr(self.archive, "migration_status_counts")
+                else migration
+            )
+            index_global = (
+                await self.archive.index_status_counts()
+                if self.archive and hasattr(self.archive, "index_status_counts")
+                else index
+            )
             return {
                 "builtin_available": self.internal is not None,
                 "builtin_provider": "internal_markdown" if self.internal is not None else "",
@@ -182,6 +222,19 @@ class MemoryManager:
                 "internal_revision": snapshot.revision if snapshot else 0,
                 "internal_profile": snapshot.profile if snapshot else "",
                 "buffer_pending": pending,
+                "scope": scope.as_dict(),
+                "migration": {
+                    "status_counts": migration,
+                    "pending": int(migration.get("pending", 0)),
+                    "global_status_counts": migration_global,
+                    "global_pending": int(migration_global.get("pending", 0)),
+                },
+                "index": {
+                    "status_counts": index,
+                    "pending": int(index.get("pending", 0)),
+                    "global_status_counts": index_global,
+                    "global_pending": int(index_global.get("pending", 0)),
+                },
                 "providers": {"internal": {"available": self.internal is not None}, "external": external},
                 "last_errors": dict(self._last_errors),
             }

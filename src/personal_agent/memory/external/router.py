@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import inspect
 import logging
 from time import monotonic
 from typing import Any
 
-from personal_agent.memory.models import MemoryReviewResult, MemoryScope, ProviderReadiness
+from personal_agent.memory.models import MemoryReviewResult, MemoryScope, ProviderReadiness, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class ScopeRouteState:
     last_primary_error: str = ""
     consecutive_failures: int = 0
     last_recovery_attempt: float = 0.0
-    last_probe_at: float = 0.0
+    last_probe_at: str = ""
     last_probe_status: str = "not_run"
 
 
@@ -31,6 +32,8 @@ class ExternalMemoryRouter:
         self.fallback = fallback
         self.registry = registry
         self.primary = None
+        self._retired_primaries: list[Any] = []
+        self._recovery_lock = asyncio.Lock()
         self.requested_provider = context.requested_provider
         self._initial_effective_provider = (
             "none" if self.requested_provider == "none" else fallback.name
@@ -38,7 +41,7 @@ class ExternalMemoryRouter:
         self._initial_fallback_reason = ""
         self._states: dict[tuple[str, str, str], ScopeRouteState] = {}
         self._last_scope_key: tuple[str, str, str] | None = None
-        self._persisted_states: dict[tuple[str, str, str], tuple[str, str, str, int]] = {}
+        self._persisted_states: dict[tuple[str, str, str], tuple[Any, ...]] = {}
 
     @property
     def effective_provider(self) -> str:
@@ -191,9 +194,21 @@ class ExternalMemoryRouter:
     async def close(self) -> None:
         if self.primary is not None:
             await self.primary.close()
+        for provider in self._retired_primaries:
+            await provider.close()
+        self._retired_primaries.clear()
         await self.fallback.close()
 
     async def maybe_recover(self, scope: MemoryScope, *, cooldown_seconds: float = 300) -> bool:
+        async with self._recovery_lock:
+            return await self._maybe_recover_locked(scope, cooldown_seconds=cooldown_seconds)
+
+    async def _maybe_recover_locked(
+        self,
+        scope: MemoryScope,
+        *,
+        cooldown_seconds: float,
+    ) -> bool:
         state = self._state(scope)
         if state.effective_provider != self.fallback.name or self.requested_provider in {"none", "fallback"}:
             return False
@@ -214,12 +229,8 @@ class ExternalMemoryRouter:
                 return False
             candidate = registration.factory(context=self.context, archive=self.archive)
             candidate = await candidate if inspect.isawaitable(candidate) else candidate
-            probe = getattr(candidate, "probe", None)
-            if probe is not None:
-                await probe(scope)
-            else:
-                await candidate.search("memory provider health probe", scope, limit=1)
-            state.last_probe_at = now
+            await self._probe_provider(candidate, scope)
+            state.last_probe_at = utc_now()
             state.last_probe_status = "ok"
             old_primary = self.primary
             self.primary = candidate
@@ -228,10 +239,10 @@ class ExternalMemoryRouter:
             state.last_primary_error = ""
             state.consecutive_failures = 0
             if old_primary is not None and old_primary is not candidate:
-                await old_primary.close()
+                self._retired_primaries.append(old_primary)
             return True
         except Exception as exc:
-            state.last_probe_at = now
+            state.last_probe_at = utc_now()
             state.last_probe_status = "error"
             self._record_failure(state, exc, use_fallback=True)
             if candidate is not None and candidate is not self.primary:
@@ -241,13 +252,22 @@ class ExternalMemoryRouter:
                     logger.exception("Failed to close rejected memory provider candidate")
             return False
 
-    async def maintain(self, scope: MemoryScope, *, migration_limit: int = 1) -> dict[str, Any]:
+    async def maintain(
+        self,
+        scope: MemoryScope,
+        *,
+        migration_limit: int = 1,
+        index_limit: int = 1,
+    ) -> dict[str, Any]:
         state = await self._prepare_scope(scope)
         result = {
             "effective_provider": state.effective_provider,
             "migration_attempted": 0,
             "migration_completed": 0,
             "migration_failed": 0,
+            "index_attempted": 0,
+            "index_completed": 0,
+            "index_failed": 0,
         }
         if state.effective_provider != self.requested_provider or self.primary is None:
             return result
@@ -268,8 +288,40 @@ class ExternalMemoryRouter:
                 break
             await self.archive.mark_observations_migrated([observation.id])
             result["migration_completed"] += 1
+        pending_index = await self.archive.pending_index_memories(
+            scope, limit=max(0, index_limit)
+        )
+        reindex = getattr(self.primary, "reindex", None)
+        if pending_index and reindex is not None:
+            indexed = await reindex(pending_index, scope)
+            result["index_attempted"] += int(indexed.get("attempted") or 0)
+            result["index_completed"] += int(indexed.get("completed") or 0)
+            result["index_failed"] += int(indexed.get("failed") or 0)
         await self._persist_state(scope, state)
         return result
+
+    async def probe(self, scope: MemoryScope) -> dict[str, Any]:
+        state = self._state(scope)
+        if self.requested_provider in {"none", "fallback"}:
+            state.last_probe_at = utc_now()
+            state.last_probe_status = "skipped"
+            await self._persist_state(scope, state)
+            return self.health_snapshot(scope)
+        if state.effective_provider == self.fallback.name:
+            await self.maybe_recover(scope, cooldown_seconds=0)
+            await self._persist_state(scope, state)
+            return self.health_snapshot(scope)
+        try:
+            await self._probe_provider(self.primary, scope)
+            state.last_probe_at = utc_now()
+            state.last_probe_status = "ok"
+            self._record_success(state)
+        except Exception as exc:
+            state.last_probe_at = utc_now()
+            state.last_probe_status = "error"
+            self._record_failure(state, exc, use_fallback=True)
+        await self._persist_state(scope, state)
+        return self.health_snapshot(scope)
 
     async def _prepare_scope(self, scope: MemoryScope) -> ScopeRouteState:
         state = self._state(scope)
@@ -284,6 +336,8 @@ class ExternalMemoryRouter:
             state.effective_provider,
             state.fallback_reason,
             state.consecutive_failures,
+            state.last_probe_at,
+            state.last_probe_status,
         )
         if self._persisted_states.get(scope_key) == persisted:
             return
@@ -308,6 +362,23 @@ class ExternalMemoryRouter:
             logger.warning("External memory search failed, retrying once: %s", _exception_detail(first_error))
             try:
                 return await provider.search(query, scope, limit=limit)
+            except Exception as second_error:
+                raise second_error from first_error
+
+    async def _probe_provider(self, provider, scope: MemoryScope) -> None:
+        probe = getattr(provider, "probe", None)
+        try:
+            if probe is not None:
+                await probe(scope)
+            else:
+                await provider.search("memory provider health probe", scope, limit=1)
+        except Exception as first_error:
+            logger.warning("External memory probe failed, retrying once: %s", _exception_detail(first_error))
+            try:
+                if probe is not None:
+                    await probe(scope)
+                else:
+                    await provider.search("memory provider health probe", scope, limit=1)
             except Exception as second_error:
                 raise second_error from first_error
 

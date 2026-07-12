@@ -803,6 +803,8 @@ def test_format_memory_doctor_and_entries():
             "builtin": {"provider": "internal_markdown", "available": True, "entries": 2, "memory_entries": 1, "user_entries": 1},
             "external": {"provider": "", "available": False, "entries": 0},
         },
+        "migration": {"pending": 3},
+        "index": {"pending": 1},
         "review": {"enabled": True, "active": False, "spawn_count": 2, "saved_count": 1, "last_error": ""},
         "last_errors": {},
     }
@@ -814,6 +816,8 @@ def test_format_memory_doctor_and_entries():
     assert "Memory 诊断" in doctor_text
     assert "internal_markdown" in doctor_text
     assert "spawn count: 2" in doctor_text
+    assert "migration pending: 3" in doctor_text
+    assert "index pending: 1" in doctor_text
     assert "记忆列表: 1 条" in list_text
     assert "memory:1" in list_text
 

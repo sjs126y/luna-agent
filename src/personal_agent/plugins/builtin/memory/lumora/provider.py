@@ -96,6 +96,28 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             )
         return MemoryReviewResult(tuple(observations), tuple(changes), self.name)
 
+    async def reindex(self, records: list[MemoryRecord], scope: MemoryScope) -> dict[str, int]:
+        result = {"attempted": 0, "completed": 0, "failed": 0}
+        for record in records:
+            result["attempted"] += 1
+            try:
+                await self._write_index(
+                    record.id,
+                    record.content,
+                    record.kind.value,
+                    scope,
+                )
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                await self.archive.mark_memory_index_failed(record.id, self.last_error)
+                result["failed"] += 1
+                logger.warning("Lumora reindex deferred: %s", self.last_error)
+                continue
+            await self.archive.mark_memory_index_ready(record.id)
+            result["completed"] += 1
+            self.last_error = ""
+        return result
+
     def health_snapshot(self) -> dict[str, Any]:
         return {"provider": self.name, "available": not self.last_error, "last_error": self.last_error}
 
@@ -149,26 +171,32 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             previous_content=existing.content if existing else "", reason=change.reason,
         )
         try:
-            embedded_at = monotonic()
-            vector = (await self.embedding.embed([content]))[0]
-            upserted_at = monotonic()
-            await self.vector_index.upsert(memory_id, vector, {
-                "user_id": scope.user_id, "profile": scope.profile,
-                "kind": observation.kind.value, "content": content,
-            })
-            finished_at = monotonic()
-            logger.info(
-                "Lumora index write: embedding=%.3fs qdrant=%.3fs",
-                upserted_at - embedded_at,
-                finished_at - upserted_at,
-            )
+            await self._write_index(memory_id, content, observation.kind.value, scope)
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
+            await self.archive.mark_memory_index_failed(memory_id, self.last_error)
             logger.warning("Lumora index write pending: %s", self.last_error)
             return applied
-        await self.archive.set_memory_index_status(memory_id, "ready")
+        await self.archive.mark_memory_index_ready(memory_id)
         self.last_error = ""
         return applied
+
+    async def _write_index(self, memory_id: str, content: str, kind: str, scope: MemoryScope) -> None:
+        embedded_at = monotonic()
+        vector = (await self.embedding.embed([content]))[0]
+        upserted_at = monotonic()
+        await self.vector_index.upsert(memory_id, vector, {
+            "user_id": scope.user_id,
+            "profile": scope.profile,
+            "kind": kind,
+            "content": content,
+        })
+        finished_at = monotonic()
+        logger.info(
+            "Lumora index write: embedding=%.3fs qdrant=%.3fs",
+            upserted_at - embedded_at,
+            finished_at - upserted_at,
+        )
 
 
 def reciprocal_rank_fusion(semantic_ids: list[str], keyword_ids: list[str], *, k: int = 60,
