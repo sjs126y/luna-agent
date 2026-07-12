@@ -81,6 +81,16 @@ class MemoryManager:
         await self.router.maybe_recover(scope)
         return result
 
+    async def maintain(self, scope: MemoryScope, *, migration_limit: int = 1) -> dict[str, Any]:
+        if self.router is None:
+            return {
+                "effective_provider": "none",
+                "migration_attempted": 0,
+                "migration_completed": 0,
+                "migration_failed": 0,
+            }
+        return await self.router.maintain(scope, migration_limit=migration_limit)
+
     async def add_external(self, content: str, *, kind: str = "fact", session_key: str = ""):
         if self.router is None:
             raise RuntimeError("External memory is disabled")

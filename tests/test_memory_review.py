@@ -23,6 +23,7 @@ class Manager:
     def __init__(self, *, error=None):
         self.archive = Archive()
         self.reviews = []
+        self.maintenance = []
         self.error = error
 
     def scope(self, *, session_key, user_id):
@@ -32,6 +33,13 @@ class Manager:
         if self.error:
             raise self.error
         self.reviews.append((messages, scope, total_user_turns))
+
+    async def maintain(self, scope, *, migration_limit=1):
+        self.maintenance.append((scope, migration_limit))
+        return {
+            "migration_completed": 1,
+            "migration_failed": 0,
+        }
 
 
 def _messages(turns: int) -> list[dict]:
@@ -54,10 +62,13 @@ async def test_review_worker_uses_interval_and_persists_checkpoint() -> None:
     await service.queue.join()
 
     assert len(manager.reviews) == 1
+    assert len(manager.maintenance) == 1
     assert len(manager.reviews[0][0]) == 4
     assert manager.reviews[0][2] == 2
     assert manager.archive.checkpoint == {"last_turn_id": "t2", "reviewed_turns": 2}
     assert service.health_snapshot()["completed"] == 1
+    assert service.health_snapshot()["maintenance_runs"] == 1
+    assert service.health_snapshot()["migrations_completed"] == 1
     await service.close()
     assert service.health_snapshot()["workers"] == 0
 
@@ -73,6 +84,7 @@ async def test_review_worker_skips_until_enough_new_turns() -> None:
     await service.queue.join()
 
     assert manager.reviews == []
+    assert len(manager.maintenance) == 1
     assert service.health_snapshot()["skipped"] == 1
     await service.close()
 

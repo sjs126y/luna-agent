@@ -204,6 +204,7 @@ class ExternalMemoryRouter:
         registration = self.registry.get(self.requested_provider)
         if registration is None:
             return False
+        candidate = None
         try:
             readiness = registration.validator(context=self.context)
             if inspect.isawaitable(readiness):
@@ -213,10 +214,13 @@ class ExternalMemoryRouter:
                 return False
             candidate = registration.factory(context=self.context, archive=self.archive)
             candidate = await candidate if inspect.isawaitable(candidate) else candidate
-            pending = tuple(await self.archive.pending_migration_observations(scope))
-            if pending:
-                await candidate.migrate(pending, scope)
-                await self.archive.mark_observations_migrated([item.id for item in pending])
+            probe = getattr(candidate, "probe", None)
+            if probe is not None:
+                await probe(scope)
+            else:
+                await candidate.search("memory provider health probe", scope, limit=1)
+            state.last_probe_at = now
+            state.last_probe_status = "ok"
             old_primary = self.primary
             self.primary = candidate
             state.effective_provider = self.requested_provider
@@ -227,8 +231,45 @@ class ExternalMemoryRouter:
                 await old_primary.close()
             return True
         except Exception as exc:
+            state.last_probe_at = now
+            state.last_probe_status = "error"
             self._record_failure(state, exc, use_fallback=True)
+            if candidate is not None and candidate is not self.primary:
+                try:
+                    await candidate.close()
+                except Exception:
+                    logger.exception("Failed to close rejected memory provider candidate")
             return False
+
+    async def maintain(self, scope: MemoryScope, *, migration_limit: int = 1) -> dict[str, Any]:
+        state = await self._prepare_scope(scope)
+        result = {
+            "effective_provider": state.effective_provider,
+            "migration_attempted": 0,
+            "migration_completed": 0,
+            "migration_failed": 0,
+        }
+        if state.effective_provider != self.requested_provider or self.primary is None:
+            return result
+        pending = await self.archive.pending_migration_observations(
+            scope, limit=max(0, migration_limit)
+        )
+        for observation in pending:
+            result["migration_attempted"] += 1
+            try:
+                await self.primary.migrate((observation,), scope)
+            except Exception as exc:
+                detail = _exception_detail(exc)
+                state.last_primary_error = detail
+                state.consecutive_failures += 1
+                await self.archive.mark_observation_migration_failed(observation.id, detail)
+                result["migration_failed"] += 1
+                logger.warning("External memory migration deferred: %s", detail)
+                break
+            await self.archive.mark_observations_migrated([observation.id])
+            result["migration_completed"] += 1
+        await self._persist_state(scope, state)
+        return result
 
     async def _prepare_scope(self, scope: MemoryScope) -> ScopeRouteState:
         state = self._state(scope)

@@ -27,6 +27,9 @@ class MemoryReviewService:
         self.submitted = 0
         self.completed = 0
         self.skipped = 0
+        self.maintenance_runs = 0
+        self.migrations_completed = 0
+        self.migrations_failed = 0
         self.last_error = ""
 
     async def start(self) -> None:
@@ -57,6 +60,12 @@ class MemoryReviewService:
         lock = self._locks.setdefault(job.session_key, asyncio.Lock())
         async with lock:
             scope = self.memory_manager.scope(session_key=job.session_key, user_id=job.user_id)
+            maintain = getattr(self.memory_manager, "maintain", None)
+            if maintain is not None:
+                maintenance = await maintain(scope, migration_limit=1)
+                self.maintenance_runs += 1
+                self.migrations_completed += int(maintenance.get("migration_completed") or 0)
+                self.migrations_failed += int(maintenance.get("migration_failed") or 0)
             user_turns = [item for item in job.messages if item.get("role") == "user"]
             checkpoint = await self.memory_manager.archive.get_checkpoint(scope)
             reviewed = int(checkpoint["reviewed_turns"]) if checkpoint else 0
@@ -77,6 +86,9 @@ class MemoryReviewService:
         return {
             "enabled": self.enabled, "workers": len(self._tasks), "queue_size": self.queue.qsize(),
             "submitted": self.submitted, "completed": self.completed, "skipped": self.skipped,
+            "maintenance_runs": self.maintenance_runs,
+            "migrations_completed": self.migrations_completed,
+            "migrations_failed": self.migrations_failed,
             "last_error": self.last_error,
         }
 

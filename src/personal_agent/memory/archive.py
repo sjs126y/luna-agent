@@ -13,7 +13,7 @@ import aiosqlite
 
 from personal_agent.memory.models import MemoryRecord, MemoryScope, Observation, ObservationKind, utc_now
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_schema (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS review_checkpoints (
@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS review_batches (
 CREATE TABLE IF NOT EXISTS observations (
   id TEXT PRIMARY KEY, batch_id TEXT DEFAULT '', scope_key TEXT NOT NULL, kind TEXT NOT NULL,
   content TEXT NOT NULL, content_hash TEXT NOT NULL, importance REAL NOT NULL, long_term INTEGER NOT NULL,
-  source_turn_ids_json TEXT NOT NULL, migration_status TEXT DEFAULT '', created_at TEXT NOT NULL
+  source_turn_ids_json TEXT NOT NULL, migration_status TEXT DEFAULT '', migration_attempts INTEGER DEFAULT 0,
+  migration_error TEXT DEFAULT '', migration_updated_at TEXT DEFAULT '', created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_observations_scope ON observations(scope_key, created_at);
 CREATE TABLE IF NOT EXISTS memories (
@@ -89,6 +90,21 @@ class MemoryArchive:
                     )
             await self._connection.execute("UPDATE memory_schema SET version = 2")
             version = 2
+        if version == 2:
+            cursor = await self._connection.execute("PRAGMA table_info(observations)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            additions = {
+                "migration_attempts": "INTEGER DEFAULT 0",
+                "migration_error": "TEXT DEFAULT ''",
+                "migration_updated_at": "TEXT DEFAULT ''",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    await self._connection.execute(
+                        f"ALTER TABLE observations ADD COLUMN {name} {definition}"
+                    )
+            await self._connection.execute("UPDATE memory_schema SET version = 3")
+            version = 3
         if version != SCHEMA_VERSION:
             raise RuntimeError(f"Unsupported memory schema version: {version}")
 
@@ -214,7 +230,8 @@ class MemoryArchive:
 
     async def pending_migration_observations(self, scope: MemoryScope, *, limit: int = 100) -> list[Observation]:
         rows = await self._fetchall(
-            "SELECT * FROM observations WHERE scope_key = ? AND migration_status = 'pending' ORDER BY created_at LIMIT ?",
+            """SELECT * FROM observations WHERE scope_key = ? AND migration_status = 'pending'
+            ORDER BY migration_attempts, created_at LIMIT ?""",
             (_scope_key(scope), limit),
         )
         return [Observation(
@@ -230,10 +247,28 @@ class MemoryArchive:
         placeholders = ",".join("?" for _ in observation_ids)
         async with self._write_lock:
             await self._connection.execute(
-                f"UPDATE observations SET migration_status = 'migrated' WHERE id IN ({placeholders})",
-                tuple(observation_ids),
+                f"""UPDATE observations SET migration_status = 'migrated',
+                migration_attempts = migration_attempts + 1, migration_error = '',
+                migration_updated_at = ? WHERE id IN ({placeholders})""",
+                (utc_now(), *observation_ids),
             )
             await self._connection.commit()
+
+    async def mark_observation_migration_failed(self, observation_id: str, error: str) -> None:
+        await self._execute_write(
+            """UPDATE observations SET migration_status = 'pending',
+            migration_attempts = migration_attempts + 1, migration_error = ?,
+            migration_updated_at = ? WHERE id = ?""",
+            (error, utc_now(), observation_id),
+        )
+
+    async def migration_status_counts(self, scope: MemoryScope) -> dict[str, int]:
+        rows = await self._fetchall(
+            """SELECT COALESCE(NULLIF(migration_status, ''), 'legacy_empty') AS status,
+            COUNT(*) AS count FROM observations WHERE scope_key = ? GROUP BY status""",
+            (_scope_key(scope),),
+        )
+        return {str(row["status"]): int(row["count"]) for row in rows}
 
     async def set_provider_state(self, scope: MemoryScope, *, requested: str, effective: str,
                                  fallback_reason: str = "", state: dict[str, Any] | None = None) -> None:

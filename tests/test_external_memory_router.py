@@ -207,3 +207,40 @@ async def test_router_fallback_is_isolated_by_scope_and_preserves_cause(tmp_path
     assert router.health_snapshot(healthy_scope)["effective_provider"] == "primary"
     assert router.health_snapshot(failed_scope)["effective_provider"] == "fallback"
     await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_recovery_does_not_block_on_pending_migrations(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    fallback = FallbackMemoryProvider(archive, LLM())
+    scope = MemoryScope(user_id="u1")
+    observation = Observation(kind=ObservationKind.EVENT, content="pending item")
+    await fallback.migrate((observation,), scope)
+    registry = MemoryProviderRegistry()
+    available = {"value": False}
+    provider = HealthyProvider()
+    registry.register(
+        name="primary", plugin_key="memory/primary",
+        factory=lambda **kwargs: provider,
+        validator=lambda **kwargs: ProviderReadiness(
+            "primary", available["value"], "dependency unavailable"
+        ),
+    )
+    router = ExternalMemoryRouter(
+        context=SimpleNamespace(requested_provider="primary"),
+        archive=archive,
+        fallback=fallback,
+        registry=registry,
+    )
+    await router.initialize()
+
+    available["value"] = True
+    assert await router.maybe_recover(scope, cooldown_seconds=0) is True
+    assert router.health_snapshot(scope)["effective_provider"] == "primary"
+    assert (await archive.migration_status_counts(scope))["pending"] == 1
+
+    maintenance = await router.maintain(scope, migration_limit=1)
+    assert maintenance["migration_completed"] == 1
+    assert (await archive.migration_status_counts(scope))["migrated"] == 1
+    await archive.close()
