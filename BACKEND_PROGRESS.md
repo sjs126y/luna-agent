@@ -1,6 +1,27 @@
 # Backend Progress
 
-更新时间：2026-07-09 20:10 CST
+更新时间：2026-07-13 01:55 CST
+
+## 2026-07-13：真实联调收尾
+
+当前状态：本轮后端修复已合并回 `main`，合并提交为 `daaadf3 Merge agent tool loop and memory recovery fixes`。合并前完成 `python -m compileall -q src/personal_agent`、`git diff --check` 和全量测试，结果为 `864 passed`。
+
+已完成并经微信 Gateway 真实验证：
+
+- 修复 tool result 消息顺序、工具调用上限后的终止行为和重复工具循环，避免模型在收到配额拒绝后继续无休止调用。
+- 外部记忆 provider 状态按 scope 隔离；前台 search 失败会重试一次，连续故障才进入 fallback，后台迁移失败只延期，不切换当前会话 provider。
+- fallback observation 可由 `MemoryReviewService` 后台批量迁回 Lumora，不占用 Agent 主循环；迁移失败保留 attempts/error，后续继续恢复。
+- Lumora 会探测并修复 Qdrant collection/vector/payload index；本轮真实运行中 embedding 与 Qdrant query 均成功，当前微信 scope 保持 `lumora`，已有 pending observation 成功迁移。
+- MCP 的 `tool_search -> tool_call -> executor -> audit` 链路已真实验证，filesystem 与 fetch 调用成功；首次 `npx` 安装输出污染 stdio JSON-RPC 的问题未阻断本轮调用，但后续仍可统一收敛 npm 静默启动参数。
+- GitHub 官方远程 MCP 的 PAT 已真实联网验证成功，服务返回 `github-mcp-server`，可发现 44 个工具；本地 `.env` 中 `GITHUB_MCP_AUTH` 已修正为带引号的 dotenv 格式。
+
+下次优先处理：
+
+- GitHub MCP 的 `headers_env` 当前由 connection 直接读取 `os.environ`，与项目统一的 `ConfigLoader -> Settings` 边界不一致。普通 `uv run personal-agent serve` 因此无法使用 `.env` 中的动态 MCP header；临时可用 `uv run --env-file .env personal-agent serve` 启动。
+- 正式修复应由 Settings 解析动态 header secret，再经 runtime 显式注入 MCP connection；MCP 模块不得自行读取 `.env`，诊断和 health 不得回显 secret。
+- 修复后补 Settings/runtime/connection 聚焦测试，并用微信 Gateway 再验证 `tool_search` 能发现 `mcp__github__*`，随后调用只读仓库工具。
+
+工作区说明：`config.yaml` 仍有用户本机配置改动，不应覆盖或随文档提交；`.env` 为忽略的本机 secret 文件。
 
 ## 2026-07-12：MCP Runtime
 

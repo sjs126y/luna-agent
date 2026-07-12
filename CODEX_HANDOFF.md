@@ -1,6 +1,17 @@
 # Codex 交接记录
 
-更新时间：2026-07-07 10:55 CST
+更新时间：2026-07-13 01:55 CST
+
+## 2026-07-13 收工状态
+
+- 当前分支：`main`，本轮 Agent 工具循环与记忆恢复修复已通过 `daaadf3` 合并。
+- 最近一次完整验证：`python -m compileall -q src/personal_agent`、`git diff --check`、`uv run pytest -q`；结果为 `864 passed`。
+- 记忆重构和恢复链路已进入真实 Gateway 联调：Lumora embedding/Qdrant 查询成功，scope provider 保持 `lumora`，fallback observation 由后台 review worker 渐进迁移，不占用 Agent 主循环。
+- 工具循环已修复消息顺序、调用上限终止和重复调用问题；filesystem/fetch MCP 已产生真实成功审计记录。
+- GitHub 官方远程 MCP 使用当前 PAT 可成功连接并发现 44 个工具，但正常 Gateway 启动仍无法从 Settings 向 `headers_env` 注入该 secret。
+- 下一次后端工作的第一优先级：保持统一 `ConfigLoader -> Settings -> runtime -> MCP connection` 配置边界，修复 GitHub MCP 动态 header 注入；不要让 MCP connection 主动读取 `.env`。
+- 临时联调启动方式：`uv run --env-file .env personal-agent serve`。修复完成后应恢复普通 `uv run personal-agent serve` 即可工作。
+- 工作区存在用户本机 `config.yaml` 改动，必须保留；`.env` 是忽略的本机 secret 文件。
 
 ## 当前状态
 
