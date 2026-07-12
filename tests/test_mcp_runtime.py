@@ -22,6 +22,7 @@ class FakeConnection:
         self.tools = list(tools or [])
         self.connect_error = connect_error
         self.call_error = call_error
+        self.list_error = None
         self.closed = False
 
     async def connect(self):
@@ -30,6 +31,8 @@ class FakeConnection:
         return MCPServerInfo(name=self.config.name, version="1.0", protocol_version="test")
 
     async def list_tools(self):
+        if self.list_error:
+            raise self.list_error
         return list(self.tools)
 
     async def call_tool(self, name, arguments):
@@ -113,17 +116,50 @@ async def test_runtime_refreshes_tool_snapshot_from_notification():
     try:
         assert await runtime.start() == 1
         connection = created[0]
-        connection.tools = [tool("new")]
+        connection.tools = [tool("new", "updated")]
+        await connection.notify_tools_changed()
         await connection.notify_tools_changed()
         await wait_until(lambda: "mcp__dynamic__new" in runtime.registered_names)
 
         assert "mcp__dynamic__old" not in tool_registry.all_names
         assert runtime.health_snapshot()["tool_refresh_count"] == 1
-        assert runtime.health_snapshot()["notification_count"] == 1
+        assert runtime.health_snapshot()["notification_count"] == 2
+        assert tool_registry.get("mcp__dynamic__new").description.endswith("updated")
     finally:
         await runtime.stop()
 
     assert "mcp__dynamic__new" not in tool_registry.all_names
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_last_tool_snapshot_when_refresh_fails():
+    created = []
+
+    def factory(config, callback):
+        connection = FakeConnection(config, callback, tools=[tool("stable")])
+        created.append(connection)
+        return connection
+
+    runtime = MCPServerRuntime(
+        MCPServerConfig(name="degraded", command="python"),
+        connection_factory=factory,
+        health_interval_seconds=60,
+        refresh_debounce_seconds=0,
+    )
+    try:
+        await runtime.start()
+        connection = created[0]
+        connection.list_error = RuntimeError("refresh failed")
+        await connection.notify_tools_changed()
+        await wait_until(lambda: runtime.state == MCPRuntimeState.DEGRADED)
+
+        entry = tool_registry.get("mcp__degraded__stable")
+        assert runtime.ready is True
+        assert entry is not None
+        assert entry.check_fn is not None and entry.check_fn() is True
+        assert "refresh failed" in runtime.health_snapshot()["last_error"]
+    finally:
+        await runtime.stop()
 
 
 @pytest.mark.asyncio

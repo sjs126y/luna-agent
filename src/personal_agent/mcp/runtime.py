@@ -57,7 +57,7 @@ class MCPServerRuntime:
 
     @property
     def ready(self) -> bool:
-        return self.state == MCPRuntimeState.READY and self._connection is not None
+        return self.state in {MCPRuntimeState.READY, MCPRuntimeState.DEGRADED} and self._connection is not None
 
     @property
     def registered_names(self) -> set[str]:
@@ -107,7 +107,7 @@ class MCPServerRuntime:
         except Exception as exc:
             self._last_call_error = _error_text(exc, self.config)
             self._last_error = self._last_call_error
-            self.state = MCPRuntimeState.DEGRADED
+            self.state = MCPRuntimeState.RECONNECTING
             self._registrar.set_available(False)
             self._reconnect_event.set()
             return _unavailable_result(self.config.name, self._last_call_error)
