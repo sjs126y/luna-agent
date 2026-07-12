@@ -150,6 +150,7 @@ class PluginManager:
         from personal_agent.skills.registry import skill_registry
         from personal_agent.tools.registry import tool_registry
         from personal_agent.workflow.registry import workflow_registry
+        from personal_agent.memory.provider_registry import memory_provider_registry
 
         for name in list(plugin.tools_registered):
             tool_registry.unregister(name)
@@ -161,6 +162,7 @@ class PluginManager:
             platform_registry.unregister(name)
 
         self._mcp_servers.pop(key, None)
+        memory_provider_registry.unregister_plugin(key)
         plugin.tools_registered.clear()
         plugin.skills_registered.clear()
         plugin.workflows_registered.clear()
@@ -169,6 +171,7 @@ class PluginManager:
         plugin.hooks_registered.clear()
         plugin.commands_registered.clear()
         plugin.middleware_registered.clear()
+        plugin.memory_providers_registered.clear()
         plugin.module = None
         plugin.ctx = None
         plugin.error = None
@@ -679,6 +682,7 @@ class PluginManager:
             "hooks": list(plugin.hooks_registered),
             "commands": list(plugin.commands_registered),
             "middleware": list(plugin.middleware_registered),
+            "memory_providers": list(plugin.memory_providers_registered),
         }
 
     def _manifest_path(self, plugin: LoadedPlugin) -> str:

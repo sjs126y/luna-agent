@@ -206,6 +206,7 @@ class LoadedPlugin:
     hooks_registered: list[str] = field(default_factory=list)
     commands_registered: list[str] = field(default_factory=list)
     middleware_registered: list[str] = field(default_factory=list)
+    memory_providers_registered: list[str] = field(default_factory=list)
 
     def registration_counts(self) -> dict[str, int]:
         return {
@@ -217,4 +218,5 @@ class LoadedPlugin:
             "hooks": len(self.hooks_registered),
             "commands": len(self.commands_registered),
             "middleware": len(self.middleware_registered),
+            "memory_providers": len(self.memory_providers_registered),
         }
