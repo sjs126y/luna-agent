@@ -616,11 +616,8 @@ def _build_request_plan(agent, ctx, system_prompt: str, skill_injection: str | N
     messages = list(getattr(ctx, "messages", []) or [])
     current_idx = int(getattr(ctx, "current_turn_user_idx", max(0, len(messages) - 1)) or 0)
     current_user = messages[current_idx] if 0 <= current_idx < len(messages) else None
-    history = [
-        message
-        for index, message in enumerate(messages)
-        if index != current_idx
-    ]
+    history = messages[:current_idx] if current_user is not None else messages
+    turn_tail = messages[current_idx + 1:] if current_user is not None else []
     return LLMRequestPlan(
         stable_system=system_prompt,
         stable_tools=list(agent.tools or []),
@@ -628,6 +625,7 @@ def _build_request_plan(agent, ctx, system_prompt: str, skill_injection: str | N
         dynamic_context=dynamic_context,
         history=history,
         current_user=current_user,
+        turn_tail=turn_tail,
         metadata={"source": "agent_context"},
     )
 

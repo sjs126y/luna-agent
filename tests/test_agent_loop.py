@@ -423,6 +423,22 @@ async def test_tool_use_loop(provider):
                     and any(b.get("type") == "tool_result" for b in m["content"])]
     assert len(tool_results) >= 1
 
+    second_request = transport.call_messages[1]
+    user_index = next(
+        index for index, message in enumerate(second_request)
+        if message.get("role") == "user"
+        and _user_text([message]) == "Test"
+    )
+    tool_use_index = next(
+        index for index, message in enumerate(second_request)
+        if any(block.get("type") == "tool_use" for block in message.get("content", []))
+    )
+    tool_result_index = next(
+        index for index, message in enumerate(second_request)
+        if any(block.get("type") == "tool_result" for block in message.get("content", []))
+    )
+    assert user_index < tool_use_index < tool_result_index
+
 
 @pytest.mark.asyncio
 async def test_turn_report_records_denied_tool_decision(provider):
