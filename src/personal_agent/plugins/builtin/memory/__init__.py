@@ -1,18 +1,8 @@
-"""Built-in memory plugin entrypoint."""
-
-import importlib
+"""Built-in memory tool registration; storage lives behind MemoryManager."""
 
 
 def register(ctx) -> None:
-    from personal_agent.tools.registry import tool_registry
+    from personal_agent.memory.tools import memory_buffer_tool_entry, memory_tool_entry
 
-    module = importlib.import_module("personal_agent.plugins.builtin.memory.file.provider")
-    missing = [name for name in ("memory", "memory_ingest") if tool_registry.get(name) is None]
-    if missing:
-        importlib.reload(module)
-
-    for name in ("memory", "memory_ingest"):
-        entry = tool_registry.get(name)
-        if entry is None:
-            raise RuntimeError(f"Memory tool did not register: {name}")
-        ctx.register_tool(entry)
+    ctx.register_tool(memory_tool_entry())
+    ctx.register_tool(memory_buffer_tool_entry())

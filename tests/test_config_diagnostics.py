@@ -300,7 +300,7 @@ sandbox:
     assert any("plugins.enabled 必须是字符串列表" in error for error in report["errors"])
 
 
-def test_config_report_accepts_gateway_and_embedding_settings(tmp_path):
+def test_config_report_accepts_gateway_and_lumora_memory_settings(tmp_path):
     (tmp_path / "data" / "system").mkdir(parents=True)
     (tmp_path / ".env").write_text(
         "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\nLLM_BASE_URL=https://api.deepseek.com\nLLM_MODEL=deepseek-chat\n",
@@ -317,14 +317,22 @@ gateway:
   platform_message_dedupe_max_size: 2048
   platform_send_max_retries: 0
 memory:
-  provider: file
-  external_provider: embedding
-  review_interval: 10
+  external_provider: lumora
+  review:
+    external_turn_interval: 10
+    internal_turn_interval: 50
+    internal_buffer_limit: 20
+    snapshot_refresh_turn_interval: 20
+    worker_concurrency: 2
   embedding:
-    model: demo-model
-    relevance_threshold: 0.25
-    max_prefetch: 5
-    chunk_size: 512
+    api_mode: openai_compatible
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    model: text-embedding-v4
+    dimensions: 0
+  qdrant:
+    url: http://localhost:6333
+    collection: lumora_memories
 sandbox:
   roots: [./data]
   bash_work_dir: ./data

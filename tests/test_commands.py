@@ -186,7 +186,7 @@ class Runtime:
     async def memory_report(self):
         return {
             "providers": {
-                "builtin": {"provider": "FileMemoryProvider", "available": True, "entries": 1},
+                "builtin": {"provider": "internal_markdown", "available": True, "entries": 1},
                 "external": {"provider": "", "available": False, "entries": 0},
             },
             "last_errors": {},

@@ -539,15 +539,15 @@ def test_builtin_manifests_are_discovered_from_project_plugins(tmp_path):
     assert qq.manifest.path is not None
     assert "src/personal_agent/plugins/builtin/platforms/qq" in qq.manifest.path.as_posix()
 
-    memory_file = manager._plugins["memory/file"]
-    assert memory_file.manifest.entrypoint == "personal_agent.plugins.builtin.memory.file:register"
-    assert memory_file.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/memory/file" in memory_file.manifest.path.as_posix()
+    memory_lumora = manager._plugins["memory/lumora"]
+    assert memory_lumora.manifest.entrypoint == "personal_agent.plugins.builtin.memory.lumora:register"
+    assert memory_lumora.manifest.path is not None
+    assert "src/personal_agent/plugins/builtin/memory/lumora" in memory_lumora.manifest.path.as_posix()
 
-    memory_embedding = manager._plugins["memory/embedding"]
-    assert memory_embedding.manifest.entrypoint == "personal_agent.plugins.builtin.memory.embedding:register"
-    assert memory_embedding.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/memory/embedding" in memory_embedding.manifest.path.as_posix()
+    memory_mem0 = manager._plugins["memory/mem0"]
+    assert memory_mem0.manifest.entrypoint == "personal_agent.plugins.builtin.memory.mem0:register"
+    assert memory_mem0.manifest.path is not None
+    assert "src/personal_agent/plugins/builtin/memory/mem0" in memory_mem0.manifest.path.as_posix()
 
     from personal_agent.plugins.builtin.skills.builtin import register as skills_register
 
@@ -618,126 +618,35 @@ def test_builtin_skills_use_explicit_plugin_registration(tmp_path):
     assert "python-expert" in plugin.skills_registered
 
 
-def test_disable_memory_provider_plugin_removes_hooks(tmp_path):
+def test_disable_memory_provider_plugin_unregisters_provider(tmp_path):
+    from personal_agent.memory.provider_registry import memory_provider_registry
+
+    memory_provider_registry.clear()
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
-    manager.load_plugin("memory/file")
-    assert "on_session_selected" in manager.hooks
-    assert "create_builtin_memory_provider" in manager.hooks
+    manager.load_plugin("memory/lumora")
+    assert memory_provider_registry.get("lumora") is not None
 
-    manager.disable_plugin("memory/file")
-    assert "on_session_selected" not in manager.hooks
-    assert "create_builtin_memory_provider" not in manager.hooks
+    manager.disable_plugin("memory/lumora")
+    assert memory_provider_registry.get("lumora") is None
 
 
-@pytest.mark.asyncio
-async def test_builtin_memory_provider_is_created_by_hook(tmp_path):
+def test_memory_provider_doctor_reports_registered_provider(tmp_path):
+    from personal_agent.memory.provider_registry import memory_provider_registry
+
+    memory_provider_registry.clear()
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
-    manager.load_plugin("memory/file")
+    manager.load_plugin("memory/mem0")
 
-    provider = await manager.invoke_hook(
-        "create_builtin_memory_provider",
-        system_dir=tmp_path / "system",
-    )
-
-    assert provider is not None
-    assert provider.__class__.__name__ == "FileMemoryProvider"
-
-
-@pytest.mark.asyncio
-async def test_external_memory_provider_is_created_by_hook_and_removed_on_disable(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
-    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
-    manager.discover()
-    manager.load_plugin("memory/embedding")
-
-    provider = await manager.invoke_hook(
-        "create_external_memory_provider",
-        data_dir=tmp_path / "memory",
-        force=True,
-    )
-
-    assert provider is not None
-    assert provider.__class__.__name__ == "EmbeddingMemoryProvider"
-    assert "create_external_memory_provider" in manager.hooks
-
-    manager.disable_plugin("memory/embedding")
-    assert "create_external_memory_provider" not in manager.hooks
-    assert await manager.invoke_hook(
-        "create_external_memory_provider",
-        data_dir=tmp_path / "memory",
-        force=True,
-    ) is None
-
-
-@pytest.mark.asyncio
-async def test_external_memory_provider_uses_embedding_settings(tmp_path, monkeypatch):
-    (tmp_path / "data" / "system").mkdir(parents=True)
-    (tmp_path / "config.yaml").write_text(
-        """
-storage:
-  data_dir: ./data
-memory:
-  external_provider: embedding
-  embedding:
-    model: demo-model
-    relevance_threshold: 0.42
-    max_prefetch: 5
-    chunk_size: 512
-sandbox:
-  roots: [./data]
-  bash_work_dir: ./data
-""".strip(),
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-
-    settings = Settings()
-    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
-    manager.discover()
-    manager.load_plugin("memory/embedding")
-
-    provider = await manager.invoke_hook(
-        "create_external_memory_provider",
-        settings=settings,
-        data_dir=tmp_path / "memory",
-        force=True,
-    )
-
-    assert provider is not None
-    health = provider.health_snapshot()
-    assert health["model"] == "demo-model"
-    assert health["relevance_threshold"] == 0.42
-    assert health["max_prefetch"] == 5
-    assert health["chunk_size"] == 512
-
-
-def test_memory_provider_doctor_reports_registered_hooks(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
-    manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
-    manager.discover()
-    manager.load_plugin("memory/file")
-    manager.load_plugin("memory/embedding")
-
-    file_report = manager.doctor_plugin("memory/file")
-    assert file_report["status"] == "LOADED"
-    assert file_report["registered"]["hooks"] == 3
-    assert file_report["registered_items"]["hooks"] == [
-        "configure:10",
-        "on_session_selected:10",
-        "create_builtin_memory_provider:10",
-    ]
-
-    embedding_report = manager.doctor_plugin("memory/embedding")
-    assert embedding_report["status"] == "LOADED"
-    assert embedding_report["registered"]["hooks"] == 1
-    assert embedding_report["registered_items"]["hooks"] == [
-        "create_external_memory_provider:10",
-    ]
+    report = manager.doctor_plugin("memory/mem0")
+    assert report["status"] == "LOADED"
+    assert report["registered"]["memory_providers"] == 1
+    assert report["registered_items"]["memory_providers"] == ["mem0"]
+    memory_provider_registry.clear()
 
 
 def test_wechat_plugin_registers_login_hook(tmp_path):

@@ -74,3 +74,16 @@ class PluginContext:
         self.manager.register_command(entry)
         if entry.name not in self.plugin.commands_registered:
             self.plugin.commands_registered.append(entry.name)
+
+    def register_memory_provider(self, *, name: str, factory, validator) -> None:
+        from personal_agent.memory.provider_registry import memory_provider_registry
+
+        memory_provider_registry.register(
+            name=name,
+            plugin_key=self.plugin.key,
+            factory=factory,
+            validator=validator,
+        )
+        normalized = str(name).strip().lower()
+        if normalized not in self.plugin.memory_providers_registered:
+            self.plugin.memory_providers_registered.append(normalized)

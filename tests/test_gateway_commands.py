@@ -13,14 +13,13 @@ from personal_agent.db.database import Database
 from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
 from personal_agent.gateway.gateway import Gateway
 from personal_agent.gateway.state import PlatformRuntime
-from personal_agent.memory.base import MemoryProvider
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import MessageEvent, MessagePart, PlatformCapabilities, SessionSource
 from personal_agent.plugins.models import CommandEntry
 from personal_agent.conversation import EMPTY_FINAL_RESPONSE_MESSAGE, ConversationTurnResult
 
 
-class Memory(MemoryProvider):
+class Memory:
     async def prefetch(self, user_message: str) -> list[dict]:
         return []
 
@@ -362,7 +361,7 @@ async def test_gateway_commands_lists_slash_plugin_commands_only(gateway):
 
 
 @pytest.mark.asyncio
-async def test_gateway_before_send_and_memory_review_use_conversation_result(gateway, monkeypatch):
+async def test_gateway_before_send_does_not_spawn_separate_memory_review(gateway, monkeypatch):
     messages = [
         {"role": "user", "content": [{"type": "text", "text": "hello"}]},
         {"role": "assistant", "content": [{"type": "text", "text": "base"}]},
@@ -385,24 +384,12 @@ async def test_gateway_before_send_and_memory_review_use_conversation_result(gat
     async def before_send(text, source):
         return text + "!"
 
-    captured = []
     gateway.hooks.on_before_send.append(before_send)
     monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
-    monkeypatch.setattr(
-        gateway._memory_review_service,
-        "maybe_spawn",
-        lambda **kwargs: captured.append(kwargs) or True,
-    )
 
     result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
 
     assert result == "base!"
-    assert captured == [{
-        "agent": gateway._conversation_service.agent_cache["telegram:c1:u1"],
-        "messages": messages,
-        "should_review": True,
-        "final_response": "base!",
-    }]
 
 
 @pytest.mark.asyncio

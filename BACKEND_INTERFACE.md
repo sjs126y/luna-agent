@@ -882,7 +882,33 @@ Slash metadata：
 }
 ```
 
-## 12. Compatibility Notes
+## 12. Memory Runtime
+
+Memory doctor/health payload 提供：
+
+- `requested_provider: "lumora" | "mem0" | "fallback" | "none"`
+- `effective_provider: "lumora" | "mem0" | "fallback" | "none"`
+- `fallback_reason: string`
+- `internal_revision: integer`
+- `internal_profile: string`
+- `buffer_pending: integer`
+- `providers.internal.available: boolean`
+- `providers.external.provider.available: boolean`
+- `providers.external.last_primary_error: string`
+
+Review worker payload 提供：
+
+- `enabled: boolean`
+- `workers: integer`
+- `queue_size: integer`
+- `submitted: integer`
+- `completed: integer`
+- `skipped: integer`
+- `last_error: string`
+
+`should_review_memory` 为兼容字段，不再用于触发 review；前端不要依据它调度任务。Review 由 AppRuntime worker 自动提交和持久化 checkpoint。
+
+## 13. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

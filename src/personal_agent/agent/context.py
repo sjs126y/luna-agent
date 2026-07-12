@@ -84,18 +84,11 @@ async def build_turn_context(
     clear_interrupted()
 
     # Refresh tools (if registry changed)
-    from personal_agent.agent.agent import _refresh_tools, _build_system_prompt
+    from personal_agent.agent.agent import _refresh_tools, _build_system_prompt, _maybe_refresh_memory_snapshot
     _refresh_tools(agent)
+    _maybe_refresh_memory_snapshot(agent)
     if agent._cached_system_prompt is None:
         _build_system_prompt(agent, agent._system_prompt_template)
-
-    # Memory review nudge — every N turns
-    should_review = False
-    if agent._memory_review_interval > 0:
-        agent._turns_since_memory += 1
-        if agent._turns_since_memory >= agent._memory_review_interval:
-            should_review = True
-            agent._turns_since_memory = 0
 
     # Copy history
     conversation_history = list(history or [])
@@ -150,7 +143,7 @@ async def build_turn_context(
         skill_summaries=skill_summaries,
         memory_prefetch_messages=memory_prefetch_messages,
         memory_injections_text=memory_injections_text,
-        should_review_memory=should_review,
+        should_review_memory=False,
         resolved_input=resolved_input,
         processed_attachments=list(resolved_input.attachments) if resolved_input is not None else [],
         multimodal_diagnostics=dict(resolved_input.diagnostics) if resolved_input is not None else {},
@@ -217,7 +210,14 @@ async def _prefetch_memory(agent, user_message: str) -> tuple[list[dict], str]:
     try:
         from personal_agent.context_budget import message_text
 
-        prefetched = await memory_manager.prefetch(user_message)
+        try:
+            prefetched = await memory_manager.prefetch(
+                user_message, session_key=getattr(agent, "_memory_session_key", "")
+            )
+        except TypeError as exc:
+            if "session_key" not in str(exc):
+                raise
+            prefetched = await memory_manager.prefetch(user_message)
         messages = [item for item in prefetched if item]
         text = "\n".join(message_text(item) for item in messages)
         return messages, text

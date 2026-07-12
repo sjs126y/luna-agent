@@ -12,7 +12,7 @@ Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工
 2. **已完成**：MCP transport、单 server runtime、连接恢复、动态工具快照和结构化结果。
 3. **待推进**：完整的“入站媒体 -> 模型/工具 -> 出站媒体”路径。
 4. **待推进**：内部 turn 分发、Outbox/Delivery 和真正的主动决策系统。
-5. **待拆分**：长期记忆与知识 RAG 的领域和存储边界。
+5. **已完成**：长期记忆与知识 RAG 已拆分；RAG 不再由 memory provider 承担。
 
 ## 2. Hermes 的工具与插件模型
 
@@ -111,19 +111,16 @@ Lumora 已有结构化 `MessagePart` 与 `AttachmentRef`，架构上更好，应
 
 RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可更新的状态。
 
-Mem0 值得研究，因为它是 Python-first，并聚焦长期记忆 CRUD。其 `Memory.add(messages, scope)` 会规范化消息和 metadata，使用 LLM 提取候选事实，对相关旧记忆决定新增、更新或删除，写入向量存储和 SQLite 历史/审计，并可选地提取和关联实体。
+该方向已经完成第一阶段重构：
 
-`Memory.search(query, filters)` 会计算查询 embedding、做向量检索，并可加入关键词、实体和 reranker 信号，最后只返回少量相关记忆。
+- internal Markdown、buffer、managed block、revision 和 Agent 固定快照位于核心。
+- SQLite archive 保存 review checkpoint、observation、外部记忆历史、内部 buffer 和 provider 状态。
+- AppRuntime-owned asyncio worker 取代 daemon thread review。
+- `memory/lumora` 使用两次 Memory LLM 调用、百炼 embedding、Qdrant、FTS5/BM25 和 RRF。
+- `memory/mem0` 直接适配官方依赖。
+- 核心 fallback 在主 provider 不可用时保存 observation，并在恢复后迁移。
 
-最值得看的 Mem0 文件：
-
-- `mem0/memory/main.py`：`Memory.add/search/update/delete/history`。
-- `mem0/configs/prompts.py`：提取和更新 prompt。
-- `mem0/memory/storage.py`：SQLite 历史和审计存储。
-- `mem0/vector_stores/base.py`。
-- `mem0/configs/base.py`。
-
-在出现明确需求前，可以忽略 TypeScript SDK、Web UI、provider adapter 和其他集成。
+后续知识 RAG 作为独立通用插件设计，不恢复 `memory_ingest`，也不与个人记忆共用集合和更新语义。
 
 ## 7. 当前推进状态
 
@@ -133,7 +130,7 @@ Mem0 值得研究，因为它是 Python-first，并聚焦长期记忆 CRUD。其
 | 插件生命周期 | 已记录部分 Registry 注册项，支持基础 disable/unload | 事务回滚、覆盖恢复、异步资源关闭、版本代际 | 待设计 |
 | 出站多模态 | `OutboundMessage`、`PlatformCapabilities`、MCP/tool artifact 已有骨架 | TurnResult artifact、平台原生发送、降级、安全和投递审计 | 适合下一步讨论 |
 | 主动能力 | Cron 可复用会话和 Agent 主链路 | `InternalTurnRequest`、统一 dispatch、Delivery/Outbox、去重和策略 | 待推进 |
-| Memory / RAG | file memory、embedding 检索、memory review、文档 ingest | 长期记忆与知识 chunk 仍共用 external provider 语义 | 待拆分 |
+| Memory / RAG | internal snapshot、buffer、Lumora/Mem0、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件 | 记忆重构完成 |
 
 方向之间的关系：
 

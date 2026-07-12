@@ -83,18 +83,18 @@ examples/plugins/hello/
 必填字段：
 
 ```yaml
-key: memory/file
-name: File Memory Provider
-version: "0.1.0"
-entrypoint: personal_agent.plugins.builtin.memory.file:register
+key: memory/lumora
+name: Lumora Memory Provider
+version: "1.0.0"
+entrypoint: personal_agent.plugins.builtin.memory.lumora:register
 ```
 
 常用可选字段：
 
 ```yaml
-description: File-backed system prompt and profile memory provider package.
-kind: builtin
-provides: [memory]
+description: Hybrid semantic and BM25 external memory provider.
+kind: memory
+provides: [memory_provider:lumora]
 requires_env: []
 enabled_by_default: true
 source: builtin
@@ -102,7 +102,7 @@ deferred: false
 record_import_delta: false
 ```
 
-`key` 是启用/禁用插件时使用的稳定身份，不要用展示名代替。推荐类似 `platforms/telegram`、`memory/file`、`workflows/review` 这样的 key。
+`key` 是启用/禁用插件时使用的稳定身份，不要用展示名代替。推荐类似 `platforms/telegram`、`memory/lumora`、`workflows/review` 这样的 key。
 
 manifest 会做严格校验：
 
@@ -151,6 +151,7 @@ plugins/hello/
 - `register_workflow(WorkflowDef)`
 - `register_platform(PlatformEntry)`
 - `register_mcp_server(MCPServerConfig | dict)`
+- `register_memory_provider(name, factory, validator)`
 - `register_hook(name, callback, priority=100)`
 - `register_command(CommandEntry)`
 
@@ -168,10 +169,9 @@ Hook 由 `PluginManager` 直接管理：
 当前内置 hook 示例：
 
 - `configure`：把配置应用到插件自己的模块状态。
-- `on_session_selected`：更新当前会话对应的记忆 profile。
-- `create_builtin_memory_provider`：创建 file memory provider。
-- `create_external_memory_provider`：创建 embedding memory provider。
 - `wechat_qr_login`：触发微信扫码登录辅助流程。
+
+Memory provider 使用专用 registry 注册，不通过通用 hook 创建，避免多个插件互相覆盖。
 
 ## Command 规则
 
@@ -204,20 +204,22 @@ Hook 由 `PluginManager` 直接管理：
 
 ## 记忆提供器
 
-具体记忆提供器现在都在插件包里：
+记忆领域与编排位于核心 `src/personal_agent/memory/`：internal Markdown、Agent revision snapshot、observation buffer、SQLite archive、异步 review worker、router 和 fallback。
 
-- `memory/file`：拥有 `FileMemoryProvider` 和 profile 相关 hook。
-- `memory/embedding`：拥有 `EmbeddingMemoryProvider` 和 external memory hook。
-- `builtin/memory`：只注册 `memory` / `memory_ingest` 工具，运行时使用 provider 插件。
+可替换的外部提供器位于插件包：
 
-核心 `src/personal_agent/memory/` 只保留共享接口和编排对象，例如 `MemoryProvider`、`MemoryManager`。
+- `memory/lumora`：百炼 embedding、Qdrant 语义检索、SQLite FTS5/BM25 和 RRF。
+- `memory/mem0`：官方 `mem0ai` 依赖的薄适配层。
+- `builtin/memory`：只注册 `memory` / `memory_buffer` 工具。
+
+核心 fallback 不属于插件，主 provider 缺依赖、配置错误或运行失败时自动接管 SQLite + BM25 存储。
 
 ## 常用诊断命令
 
 ```bash
 uv run python -m personal_agent plugins list --load
-uv run python -m personal_agent plugins info memory/file --load
-uv run python -m personal_agent plugins doctor memory/embedding --json
+uv run python -m personal_agent plugins info memory/lumora --load
+uv run python -m personal_agent plugins doctor memory/mem0 --json
 uv run python -m personal_agent plugins validate examples/plugins/hello
 uv run python -m personal_agent doctor --json
 ```

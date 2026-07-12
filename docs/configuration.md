@@ -82,9 +82,26 @@ plugins:
   disabled: []
 
 memory:
-  provider: file
-  external_provider: none
-  review_interval: 10
+  external_provider: lumora
+  review:
+    external_turn_interval: 10
+    internal_turn_interval: 50
+    internal_buffer_limit: 20
+    snapshot_refresh_turn_interval: 20
+    worker_concurrency: 2
+  llm:
+    provider: inherit
+    max_tokens: 2048
+  embedding:
+    api_mode: openai_compatible
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    model: text-embedding-v4
+    dimensions: 0
+  qdrant:
+    url: http://localhost:6333
+    collection: lumora_memories
+    api_key_env: QDRANT_API_KEY
 
 multimodal:
   enabled: true
@@ -121,7 +138,7 @@ auth:
 | `agents` | 子 agent 并发、工具调用、token 和历史限制 |
 | `storage` | 数据目录和日志级别 |
 | `plugins` | 用户插件目录、显式启用/禁用插件 |
-| `memory` | 内置记忆 provider、外置记忆 provider 和 review 间隔 |
+| `memory` | 外部 provider、review/buffer、Memory LLM、百炼 embedding 和 Qdrant |
 | `multimodal` | 平台附件、多模态降级和原生图片输入策略 |
 | `compression` | 上下文压缩阈值和 tail budget |
 | `sandbox` | 文件、bash、审计的安全边界 |
@@ -262,7 +279,7 @@ uv run personal-agent doctor
 | profile | 行为 |
 | --- | --- |
 | `local` | 最小 CLI 配置，memory external 为 `none`，auth 关闭 |
-| `server` | 服务配置，memory external 为 `embedding`，auth 关闭 |
+| `server` | 服务配置，memory external 为 `lumora`，auth 关闭 |
 | `bot` | 通用 bot 配置，auth 开启，列出全部平台 env |
 | `telegram` | 启用 `platforms/telegram`，`.env.example` 只列 Telegram 平台字段 |
 | `feishu` | 启用 `platforms/feishu`，`.env.example` 只列飞书平台字段 |

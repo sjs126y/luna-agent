@@ -289,7 +289,7 @@ def test_memory_cli_commands(monkeypatch):
     async def report():
         return {
             "builtin_available": True,
-            "builtin_provider": "FileMemoryProvider",
+            "builtin_provider": "internal_markdown",
             "external_available": False,
             "external_provider": "",
             "provider": "file",
@@ -297,7 +297,7 @@ def test_memory_cli_commands(monkeypatch):
             "review_service": "MemoryReviewService",
             "review_enabled": True,
             "providers": {
-                "builtin": {"provider": "FileMemoryProvider", "available": True, "entries": 1},
+                "builtin": {"provider": "internal_markdown", "available": True, "entries": 1},
                 "external": {"provider": "", "available": False, "entries": 0},
             },
             "review": {"enabled": True, "active": False, "spawn_count": 1, "saved_count": 0},
@@ -792,7 +792,7 @@ def test_format_plugin_report_includes_deferred_reason():
 def test_format_memory_doctor_and_entries():
     report = {
         "builtin_available": True,
-        "builtin_provider": "FileMemoryProvider",
+        "builtin_provider": "internal_markdown",
         "external_available": False,
         "external_provider": "",
         "provider": "file",
@@ -800,7 +800,7 @@ def test_format_memory_doctor_and_entries():
         "review_service": "MemoryReviewService",
         "review_enabled": True,
         "providers": {
-            "builtin": {"provider": "FileMemoryProvider", "available": True, "entries": 2, "memory_entries": 1, "user_entries": 1},
+            "builtin": {"provider": "internal_markdown", "available": True, "entries": 2, "memory_entries": 1, "user_entries": 1},
             "external": {"provider": "", "available": False, "entries": 0},
         },
         "review": {"enabled": True, "active": False, "spawn_count": 2, "saved_count": 1, "last_error": ""},
@@ -812,7 +812,7 @@ def test_format_memory_doctor_and_entries():
     list_text = format_memory_entries(entries)
 
     assert "Memory 诊断" in doctor_text
-    assert "FileMemoryProvider" in doctor_text
+    assert "internal_markdown" in doctor_text
     assert "spawn count: 2" in doctor_text
     assert "记忆列表: 1 条" in list_text
     assert "memory:1" in list_text

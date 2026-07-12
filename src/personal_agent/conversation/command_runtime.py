@@ -49,16 +49,16 @@ class ConversationCommandRuntime:
         return await self.conversation_service.memory_manager.health_snapshot()
 
     async def memory_entries(self, *, target: str = "all") -> list[dict]:
-        return await self.conversation_service.memory_manager.list_entries(target=target)
+        return await self.conversation_service.memory_manager.list_entries(target=target, session_key=self.session_key)
 
     async def memory_search(self, query: str, *, target: str = "all") -> list[dict]:
-        return await self.conversation_service.memory_manager.search_entries(query, target=target)
+        return await self.conversation_service.memory_manager.search_entries(query, target=target, session_key=self.session_key)
 
     async def memory_entry(self, identifier: str, *, target: str = "all") -> dict | None:
         return await self.conversation_service.memory_manager.get_entry(identifier, target=target)
 
     async def memory_delete(self, identifier: str, *, target: str = "all") -> bool:
-        return await self.conversation_service.memory_manager.delete(identifier, target=target)
+        return await self.conversation_service.memory_manager.delete(identifier, target=target, session_key=self.session_key)
 
     async def activity_snapshot(self, *, limit: int = 20) -> dict:
         from personal_agent.activity import activity_snapshot

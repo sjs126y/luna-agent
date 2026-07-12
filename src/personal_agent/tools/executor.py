@@ -407,7 +407,7 @@ async def execute_tool_call_result(
                 started=started,
             ))
         try:
-            raw_result = await _run_handler(entry.handler, tc["input"], timeout=timeout)
+            raw_result = await _run_handler(entry.handler, tc["input"], timeout=timeout, agent=agent)
             handler_output = _normalize_handler_output(raw_result)
             result = handler_output.text
             break
@@ -734,12 +734,16 @@ def _classify_gate_error(message: str) -> str:
     return "scope_gate"
 
 
-async def _run_handler(handler: Any, kwargs: dict[str, Any], *, timeout: float) -> Any:
+async def _run_handler(handler: Any, kwargs: dict[str, Any], *, timeout: float, agent: Any = None) -> Any:
     global _active_tool_executions
+    from personal_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
+
     _active_tool_executions += 1
+    token = set_current_tool_agent(agent)
     try:
         return await asyncio.wait_for(handler(**kwargs), timeout=timeout)
     finally:
+        reset_current_tool_agent(token)
         _active_tool_executions = max(0, _active_tool_executions - 1)
 
 

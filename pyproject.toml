@@ -16,7 +16,6 @@ dependencies = [
     "croniter>=3.0",
     "pyyaml>=6.0.3",
     "python-dotenv>=1.2.2",
-    "fastembed>=0.8.0",
     "pip-system-certs>=5.3",
     "pymupdf>=1.27.2.3",
     "python-docx>=1.2.0",
@@ -32,6 +31,10 @@ dependencies = [
 
 [project.scripts]
 personal-agent = "personal_agent.cli:run"
+
+[project.optional-dependencies]
+memory-lumora = ["qdrant-client>=1.12"]
+memory-mem0 = ["mem0ai>=0.1"]
 
 [build-system]
 requires = ["hatchling"]

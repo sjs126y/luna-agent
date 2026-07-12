@@ -27,6 +27,7 @@ async def create_agent_runtime(
     memory_manager=None,
     plugin_manager=None,
     system_prompt_template: str = "",
+    session_key: str = "",
 ) -> AgentRuntime:
     """Resolve provider/transport/compressor and assemble an Agent."""
     provider_name = settings.llm_provider
@@ -43,7 +44,8 @@ async def create_agent_runtime(
         compressor=compressor,
         max_iterations=settings.max_iterations,
         max_tool_calls_per_turn=settings.max_tool_calls_per_turn,
-        memory_review_interval=settings.memory_review_interval,
+        memory_session_key=session_key,
+        memory_snapshot_refresh_interval=getattr(settings, "memory_snapshot_refresh_turn_interval", 20),
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
         execution_policy=getattr(settings, "execution_policy", None),
