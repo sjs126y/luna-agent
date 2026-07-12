@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 
 from personal_agent.agent.report import TurnReportRecorder
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=None, session_key: str = "") -> dict:
     """Execute the agent while loop. Returns final result dict."""
     just_executed_tools = False
+    successful_tool_calls: dict[str, object] = {}
     report_recorder = TurnReportRecorder(event_sink)
 
     def _with_turn_report(result: dict) -> dict:
@@ -364,6 +366,25 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             break
 
         # ── has tool_calls → execute ──
+        duplicate = next(
+            (
+                (tc, successful_tool_calls[_tool_call_signature(tc)])
+                for tc in response.tool_calls
+                if _tool_call_signature(tc) in successful_tool_calls
+            ),
+            None,
+        )
+        if duplicate is not None:
+            tc, previous_result = duplicate
+            final_message = _duplicate_tool_stop_message(tc, previous_result)
+            ctx.messages.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": final_message}],
+            })
+            await emit_event(report_recorder, "assistant_message", final_message)
+            logger.warning("Stopped duplicate tool call: %s", tc.get("name", ""))
+            break
+
         assistant_blocks = []
         if response.text:
             assistant_blocks.append({"type": "text", "text": response.text})
@@ -389,6 +410,10 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         )
         just_executed_tools = True
 
+        for tc, tool_result in zip(response.tool_calls, tool_results):
+            if tool_result.status == "success":
+                successful_tool_calls[_tool_call_signature(tc)] = tool_result
+
         permission_message = _permission_required_stop_message(tool_results)
         if permission_message:
             ctx.messages.append({
@@ -398,22 +423,33 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             await emit_event(report_recorder, "assistant_message", permission_message)
             break
 
+        quota_message = _quota_exceeded_stop_message(tool_results, agent._max_tool_calls_per_turn)
+        if quota_message:
+            ctx.messages.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": quota_message}],
+            })
+            await emit_event(report_recorder, "assistant_message", quota_message)
+            break
+
         # ── iteration budget check ──
         agent._iteration_budget -= 1
         if agent._iteration_budget <= 0:
+            limit_message = "已达到本轮处理迭代上限，已停止继续调用工具。"
             ctx.messages.append({
-                "role": "user",
-                "content": [{"type": "text", "text": "请总结一下已完成的操作。"}],
+                "role": "assistant",
+                "content": [{"type": "text", "text": limit_message}],
             })
             await emit_event(
                 report_recorder,
                 "retry",
-                "达到迭代上限，要求模型总结",
+                limit_message,
                 category="iteration_budget",
                 attempt=1,
                 max_attempts=1,
-                recoverable=True,
+                recoverable=False,
             )
+            await emit_event(report_recorder, "assistant_message", limit_message)
             break
 
     # ── final response ──
@@ -710,3 +746,29 @@ def _permission_required_categories(tool_results: list) -> list[str]:
         if category and category not in categories:
             categories.append(category)
     return categories
+
+
+def _tool_call_signature(tool_call: dict) -> str:
+    payload = {
+        "name": str(tool_call.get("name") or ""),
+        "input": tool_call.get("input") or {},
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _duplicate_tool_stop_message(tool_call: dict, previous_result: object) -> str:
+    name = str(tool_call.get("name") or "tool")
+    summary = str(
+        getattr(previous_result, "output_summary", "")
+        or getattr(previous_result, "content", "")
+        or "执行成功"
+    ).strip()
+    if len(summary) > 500:
+        summary = summary[:497].rstrip() + "..."
+    return f"工具 {name} 已成功执行；检测到相同调用被重复请求，已停止再次执行。上次结果：{summary}"
+
+
+def _quota_exceeded_stop_message(tool_results: list, maximum: int) -> str:
+    if not any(getattr(result, "reason_code", "") == "quota_exceeded" for result in tool_results):
+        return ""
+    return f"已达到本轮工具调用上限（{maximum}），已停止继续调用工具。"
