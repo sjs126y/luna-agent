@@ -486,6 +486,7 @@ class ConversationService:
             memory_manager=self.memory_manager,
             plugin_manager=self.plugin_manager,
             system_prompt_template=self.system_prompt_template,
+            session_key=session_key,
         )
         agent = runtime.agent
         if self.agent_cache_max is not None:

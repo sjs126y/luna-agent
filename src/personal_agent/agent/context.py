@@ -84,8 +84,9 @@ async def build_turn_context(
     clear_interrupted()
 
     # Refresh tools (if registry changed)
-    from personal_agent.agent.agent import _refresh_tools, _build_system_prompt
+    from personal_agent.agent.agent import _refresh_tools, _build_system_prompt, _maybe_refresh_memory_snapshot
     _refresh_tools(agent)
+    _maybe_refresh_memory_snapshot(agent)
     if agent._cached_system_prompt is None:
         _build_system_prompt(agent, agent._system_prompt_template)
 

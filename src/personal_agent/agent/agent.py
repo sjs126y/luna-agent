@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from personal_agent.memory.models import InternalMemorySnapshot
+
 from personal_agent.agent.hooks import Hooks
 from personal_agent.agent.retry import RetryState
 from personal_agent.llm.provider import ProviderProfile
@@ -39,6 +41,10 @@ class Agent:
 
     # ── memory ──
     _memory_manager: Any = None
+    _memory_session_key: str = ""
+    _internal_memory_snapshot: InternalMemorySnapshot | None = None
+    _memory_snapshot_turns: int = 0
+    _memory_snapshot_refresh_interval: int = 20
 
     # ── compressor ──
     _compressor: Any = None
@@ -89,6 +95,8 @@ def init_agent(
     max_iterations: int = 30,
     max_tool_calls_per_turn: int = 20,
     memory_review_interval: int = 10,
+    memory_session_key: str = "",
+    memory_snapshot_refresh_interval: int = 20,
     system_prompt_template: str = "",
     enabled_toolsets: list[str] | None = None,
     execution_policy=None,
@@ -106,6 +114,8 @@ def init_agent(
         _transport=transport,
         _provider=provider,
         _memory_manager=memory_manager,
+        _memory_session_key=memory_session_key,
+        _memory_snapshot_refresh_interval=memory_snapshot_refresh_interval,
         _compressor=compressor,
         enabled_toolsets=enabled_toolsets,
         _execution_policy=execution_policy,
@@ -115,6 +125,7 @@ def init_agent(
         _tool_pool=pool,  # shared pool for MVP, separate later
     )
     agent._system_prompt_template = system_prompt_template
+    _pin_memory_snapshot(agent)
     _refresh_tools(agent)
     _build_system_prompt(agent, system_prompt_template)
     _register_default_hooks(agent)
@@ -161,9 +172,34 @@ def _build_system_prompt(agent: Agent, template: str = "") -> str:
 
     # Memory
     if agent._memory_manager:
-        mem_text = agent._memory_manager.get_system_prompt_text()
+        snapshot = agent._internal_memory_snapshot
+        mem_text = snapshot.content if snapshot is not None else agent._memory_manager.get_system_prompt_text()
         if mem_text:
             parts.append(mem_text)
 
     agent._cached_system_prompt = "\n\n".join(parts)
     return agent._cached_system_prompt
+
+
+def _pin_memory_snapshot(agent: Agent) -> None:
+    manager = agent._memory_manager
+    if manager is None or not hasattr(manager, "get_internal_snapshot"):
+        return
+    agent._internal_memory_snapshot = manager.get_internal_snapshot(agent._memory_session_key)
+    agent._memory_snapshot_turns = 0
+
+
+def _maybe_refresh_memory_snapshot(agent: Agent) -> bool:
+    if agent._internal_memory_snapshot is None:
+        return False
+    agent._memory_snapshot_turns += 1
+    if agent._memory_snapshot_turns < agent._memory_snapshot_refresh_interval:
+        return False
+    manager = agent._memory_manager
+    latest = manager.get_internal_snapshot(agent._memory_session_key)
+    agent._memory_snapshot_turns = 0
+    if latest.revision == agent._internal_memory_snapshot.revision:
+        return False
+    agent._internal_memory_snapshot = latest
+    agent._cached_system_prompt = None
+    return True
