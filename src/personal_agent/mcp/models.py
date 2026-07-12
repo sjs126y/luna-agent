@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 
 class MCPTransport(str, Enum):
@@ -48,6 +49,13 @@ class MCPServerConfig:
             transport = MCPTransport(raw_transport)
         except ValueError as exc:
             raise ValueError(f"Unsupported MCP transport: {raw_transport}") from exc
+
+        if transport == MCPTransport.STDIO and not command:
+            raise ValueError("stdio MCP server requires command")
+        if transport == MCPTransport.STREAMABLE_HTTP:
+            parsed_url = urlparse(url)
+            if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+                raise ValueError("streamable_http MCP server requires an http(s) URL")
 
         name = str(value.get("name") or command or url or "unknown").strip()
         return cls(

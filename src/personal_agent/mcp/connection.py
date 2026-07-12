@@ -12,10 +12,11 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Any, Protocol
 
+import httpx
 import mcp.types as mcp_types
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from personal_agent.mcp.models import (
     MCPCallResult,
@@ -28,6 +29,7 @@ from personal_agent.mcp.models import (
 from personal_agent.tools.env_filter import filter_env
 
 NotificationCallback = Callable[[str], Awaitable[None] | None]
+HTTPClientFactory = Callable[[dict[str, str], float, float], httpx.AsyncClient]
 
 
 class MCPConnection(Protocol):
@@ -50,9 +52,11 @@ class SDKMCPConnection:
         config: MCPServerConfig,
         *,
         notification_callback: NotificationCallback | None = None,
+        http_client_factory: HTTPClientFactory | None = None,
     ) -> None:
         self.config = config
         self._notification_callback = notification_callback
+        self._http_client_factory = http_client_factory or _default_http_client
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
         self._connect_lock = asyncio.Lock()
@@ -94,11 +98,16 @@ class SDKMCPConnection:
                 stdio_client(params, errlog=self._stderr_file)
             )
         else:
+            http_client = self._http_client_factory(
+                _http_headers(self.config.headers_env),
+                self.config.connect_timeout_seconds,
+                self.config.call_timeout_seconds,
+            )
+            await stack.enter_async_context(http_client)
             read_stream, write_stream, _ = await stack.enter_async_context(
-                streamablehttp_client(
+                streamable_http_client(
                     self.config.url,
-                    headers=_http_headers(self.config.headers_env),
-                    timeout=self.config.connect_timeout_seconds,
+                    http_client=http_client,
                 )
             )
 
@@ -206,11 +215,18 @@ def _stdio_env(configured: dict[str, str]) -> dict[str, str]:
 
 
 def _http_headers(headers_env: dict[str, str]) -> dict[str, str]:
-    return {
-        header: os.environ[env_name]
-        for header, env_name in headers_env.items()
-        if env_name in os.environ
-    }
+    missing = sorted(env_name for env_name in headers_env.values() if env_name not in os.environ)
+    if missing:
+        raise ValueError(f"MCP header environment variable is not set: {', '.join(missing)}")
+    return {header: os.environ[env_name] for header, env_name in headers_env.items()}
+
+
+def _default_http_client(headers: dict[str, str], connect_timeout: float, call_timeout: float) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        headers=headers,
+        timeout=httpx.Timeout(call_timeout, connect=connect_timeout),
+        follow_redirects=False,
+    )
 
 
 def _normalize_call_result(result) -> MCPCallResult:

@@ -147,6 +147,7 @@ class MCPServerRuntime:
         first_attempt = True
         try:
             while not self._stop_event.is_set():
+                permanent_failure = False
                 self.state = MCPRuntimeState.CONNECTING if first_attempt else MCPRuntimeState.RECONNECTING
                 self._connection_attempts += 1
                 connection = self._connection_factory(self.config, self._on_notification)
@@ -173,7 +174,8 @@ class MCPServerRuntime:
                     raise
                 except Exception as exc:
                     self._last_error = _error_text(exc, self.config)
-                    self.state = MCPRuntimeState.RECONNECTING
+                    permanent_failure = _is_permanent_error(exc)
+                    self.state = MCPRuntimeState.FAILED if permanent_failure else MCPRuntimeState.RECONNECTING
                     self._registrar.set_available(False)
                     if first_attempt:
                         self._initial_attempt_done.set()
@@ -186,6 +188,8 @@ class MCPServerRuntime:
                         logger.debug("MCP server '%s' close failed", self.config.name, exc_info=True)
                     self._last_disconnected_at = _now()
 
+                if permanent_failure:
+                    break
                 if self._stop_event.is_set():
                     break
                 delay = self._reconnect_delays[min(failure_index, len(self._reconnect_delays) - 1)] + self._jitter()
@@ -278,6 +282,10 @@ def _error_text(exc: BaseException, config: MCPServerConfig) -> str:
     if isinstance(exc, FileNotFoundError):
         return f"command not found: {config.command}"
     return f"{type(exc).__name__}: {exc}"
+
+
+def _is_permanent_error(exc: BaseException) -> bool:
+    return isinstance(exc, ValueError)
 
 
 def _now() -> str:

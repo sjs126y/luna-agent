@@ -99,6 +99,31 @@ async def test_runtime_recovers_after_initial_connection_failure():
 
 
 @pytest.mark.asyncio
+async def test_runtime_does_not_retry_configuration_errors():
+    attempts = 0
+
+    def factory(config, callback):
+        nonlocal attempts
+        attempts += 1
+        return FakeConnection(config, callback, connect_error=ValueError("missing header env"))
+
+    runtime = MCPServerRuntime(
+        MCPServerConfig(name="invalid", command="python"),
+        connection_factory=factory,
+        reconnect_delays=(0.01,),
+        jitter=lambda: 0,
+    )
+    try:
+        await runtime.start()
+        await asyncio.sleep(0.03)
+
+        assert runtime.state == MCPRuntimeState.FAILED
+        assert attempts == 1
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_runtime_refreshes_tool_snapshot_from_notification():
     created = []
 

@@ -27,3 +27,8 @@ def test_http_config_can_be_inferred_from_url():
 def test_invalid_transport_is_rejected():
     with pytest.raises(ValueError, match="Unsupported MCP transport"):
         MCPServerConfig.from_mapping({"name": "bad", "transport": "websocket"})
+
+
+def test_http_transport_requires_http_url():
+    with pytest.raises(ValueError, match=r"http\(s\) URL"):
+        MCPServerConfig.from_mapping({"name": "bad", "transport": "streamable_http", "url": "file:///tmp/mcp"})

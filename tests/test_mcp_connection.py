@@ -4,6 +4,9 @@ import sys
 from pathlib import Path
 
 import pytest
+import httpx
+from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from personal_agent.mcp.connection import SDKMCPConnection
 from personal_agent.mcp.models import MCPServerConfig
@@ -83,3 +86,65 @@ async def test_sdk_connection_rejects_calls_before_connect():
 
     with pytest.raises(ConnectionError, match="not connected"):
         await connection.call_tool("echo", {})
+
+
+@pytest.mark.asyncio
+async def test_sdk_streamable_http_connection(monkeypatch):
+    server = FastMCP(
+        "http-mock",
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+
+    @server.tool()
+    def echo(text: str) -> str:
+        return text
+
+    app = server.streamable_http_app()
+    captured_headers = {}
+
+    def client_factory(headers, connect_timeout, call_timeout):
+        captured_headers.update(headers)
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers=headers,
+            timeout=httpx.Timeout(call_timeout, connect=connect_timeout),
+            follow_redirects=False,
+        )
+
+    monkeypatch.setenv("REMOTE_MCP_TOKEN", "secret-value")
+    connection = SDKMCPConnection(
+        MCPServerConfig.from_mapping({
+            "name": "remote",
+            "transport": "streamable_http",
+            "url": "http://testserver/mcp",
+            "headers_env": {"Authorization": "REMOTE_MCP_TOKEN"},
+        }),
+        http_client_factory=client_factory,
+    )
+    async with app.router.lifespan_context(app):
+        try:
+            info = await connection.connect()
+            result = await connection.call_tool("echo", {"text": "over http"})
+
+            assert info.name == "http-mock"
+            assert result.text == "over http"
+            assert captured_headers == {"Authorization": "secret-value"}
+        finally:
+            await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_sdk_http_connection_requires_configured_header_env(monkeypatch):
+    monkeypatch.delenv("MISSING_MCP_TOKEN", raising=False)
+    connection = SDKMCPConnection(MCPServerConfig.from_mapping({
+        "name": "remote",
+        "transport": "streamable_http",
+        "url": "https://example.com/mcp",
+        "headers_env": {"Authorization": "MISSING_MCP_TOKEN"},
+    }))
+
+    with pytest.raises(ValueError, match="MISSING_MCP_TOKEN"):
+        await connection.connect()
