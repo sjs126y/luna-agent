@@ -8,46 +8,6 @@ from personal_agent.config import Settings
 from personal_agent.runtime import boot_report_from_exception, create_app_runtime, start_mcp_manager
 
 
-def _write_memory_plugin(plugin_dir):
-    plugin_dir.mkdir(parents=True)
-    (plugin_dir / "plugin.yaml").write_text(
-        """
-key: user/memory
-name: User Memory
-version: 1.0.0
-entrypoint: memory_plugin:register
-enabled_by_default: true
-""".strip(),
-        encoding="utf-8",
-    )
-    (plugin_dir / "memory_plugin.py").write_text(
-        """
-class Memory:
-    async def prefetch(self, user_message):
-        return []
-
-    async def save(self, content):
-        return None
-
-    async def search(self, query):
-        return []
-
-    async def load_all(self):
-        return []
-
-    def get_system_prompt_text(self):
-        return "memory-ok"
-
-def create_builtin_memory_provider(system_dir=None, **kwargs):
-    return Memory()
-
-def register(ctx):
-    ctx.register_hook("create_builtin_memory_provider", create_builtin_memory_provider, priority=1)
-""".strip(),
-        encoding="utf-8",
-    )
-
-
 def _write_mcp_plugin(plugin_dir):
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.yaml").write_text(
@@ -76,12 +36,9 @@ def register(ctx):
 
 @pytest.mark.asyncio
 async def test_create_app_runtime_initializes_shared_resources(tmp_path):
-    plugins_dir = tmp_path / "plugins"
-    _write_memory_plugin(plugins_dir / "memory")
     settings = Settings(
         agent_data_dir=tmp_path / "data",
-        plugins_dirs=[plugins_dir],
-        plugins_enabled=["user/memory"],
+        plugins_dirs=[],
         plugins_disabled=["memory/file", "memory/embedding"],
         mcp_enabled=False,
     )
@@ -93,7 +50,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert runtime.db is not None
         assert runtime.session_store is not None
         assert runtime.compression_chain is not None
-        assert runtime.memory_manager.get_system_prompt_text() == "memory-ok"
+        assert "行为规则" in runtime.memory_manager.get_system_prompt_text()
         assert runtime.conversation_service.session_store is runtime.session_store
         assert runtime.conversation_service.memory_manager is runtime.memory_manager
         assert runtime.memory_review_service is not None
@@ -196,7 +153,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_create_app_runtime_requires_builtin_memory(tmp_path):
+async def test_create_app_runtime_internal_memory_is_core(tmp_path):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
@@ -204,12 +161,15 @@ async def test_create_app_runtime_requires_builtin_memory(tmp_path):
         mcp_enabled=False,
     )
 
-    with pytest.raises(RuntimeError, match="No built-in memory provider"):
-        await create_app_runtime(settings)
+    runtime = await create_app_runtime(settings)
+    try:
+        assert runtime.memory_manager.internal is not None
+    finally:
+        await runtime.close()
 
 
 @pytest.mark.asyncio
-async def test_create_app_runtime_attaches_boot_report_on_failure(tmp_path):
+async def test_create_app_runtime_attaches_boot_report_on_failure(tmp_path, monkeypatch):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
@@ -217,7 +177,11 @@ async def test_create_app_runtime_attaches_boot_report_on_failure(tmp_path):
         mcp_enabled=False,
     )
 
-    with pytest.raises(RuntimeError, match="No built-in memory provider") as exc_info:
+    async def fail_memory(*args, **kwargs):
+        raise RuntimeError("memory bootstrap failed")
+
+    monkeypatch.setattr("personal_agent.runtime.create_memory_manager", fail_memory)
+    with pytest.raises(RuntimeError, match="memory bootstrap failed") as exc_info:
         await create_app_runtime(settings)
 
     boot_report = boot_report_from_exception(exc_info.value)
@@ -249,6 +213,10 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
             stopped.append(True)
 
     monkeypatch.setattr("personal_agent.mcp.manager.MCPManager", FakeMCPManager)
+    async def fail_memory(*args, **kwargs):
+        raise RuntimeError("memory bootstrap failed")
+
+    monkeypatch.setattr("personal_agent.runtime.create_memory_manager", fail_memory)
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
@@ -257,7 +225,7 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
         mcp_servers=[{"name": "config", "command": "python", "args": [], "enabled": True}],
     )
 
-    with pytest.raises(RuntimeError, match="No built-in memory provider"):
+    with pytest.raises(RuntimeError, match="memory bootstrap failed"):
         await create_app_runtime(settings)
 
     assert stopped == [True]
@@ -266,7 +234,6 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
 @pytest.mark.asyncio
 async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "plugins"
-    _write_memory_plugin(plugins_dir / "memory")
     _write_mcp_plugin(plugins_dir / "mcp")
 
     class FakeMCPManager:
@@ -294,7 +261,7 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[plugins_dir],
-        plugins_enabled=["user/memory", "user/mcp"],
+        plugins_enabled=["user/mcp"],
         plugins_disabled=["memory/file", "memory/embedding"],
         mcp_enabled=True,
     )
@@ -311,12 +278,9 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_app_runtime_gateway_lifecycle(tmp_path, monkeypatch):
-    plugins_dir = tmp_path / "plugins"
-    _write_memory_plugin(plugins_dir / "memory")
     settings = Settings(
         agent_data_dir=tmp_path / "data",
-        plugins_dirs=[plugins_dir],
-        plugins_enabled=["user/memory"],
+        plugins_dirs=[],
         plugins_disabled=["memory/file", "memory/embedding"],
         mcp_enabled=False,
     )

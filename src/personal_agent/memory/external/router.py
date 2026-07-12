@@ -87,6 +87,19 @@ class ExternalMemoryRouter:
         provider = self._effective()
         return [] if provider is None else await provider.history(memory_id)
 
+    async def migrate(self, observations, scope: MemoryScope):
+        provider = self._effective()
+        if provider is None:
+            return MemoryReviewResult(observations=tuple(observations), provider="none")
+        try:
+            return await provider.migrate(tuple(observations), scope)
+        except Exception as exc:
+            if provider is self.fallback:
+                raise
+            self.last_primary_error = f"{type(exc).__name__}: {exc}"
+            self._use_fallback(self.last_primary_error)
+            return await self.fallback.migrate(tuple(observations), scope)
+
     def health_snapshot(self) -> dict[str, Any]:
         provider = self._effective()
         return {

@@ -72,11 +72,33 @@ class FallbackMemoryProvider(ExternalMemoryProvider):
         return [_history_change(item) for item in await self.archive.memory_history(memory_id)]
 
     async def migrate(self, observations, scope: MemoryScope) -> MemoryReviewResult:
-        await self.archive.save_observations(scope, tuple(observations), migration_status="pending")
-        return MemoryReviewResult(observations=tuple(observations), provider=self.name)
+        observations = tuple(observations)
+        await self.archive.save_observations(scope, observations, migration_status="pending")
+        changes = []
+        for observation in observations:
+            existing = await self.archive.find_memory_by_content(scope, observation.content)
+            if existing:
+                changes.append(MemoryChange(
+                    MemoryChangeAction.NONE, observation.id, existing.id,
+                    reason="exact duplicate",
+                ))
+                continue
+            record = MemoryRecord(
+                id=observation.id, content=observation.content, kind=observation.kind,
+                importance=observation.importance, provider=self.name, scope=scope,
+                created_at=observation.created_at, updated_at=observation.created_at,
+            )
+            await self.archive.upsert_memory(scope, record)
+            changes.append(MemoryChange(
+                MemoryChangeAction.ADD, observation.id, record.id, record.content
+            ))
+        return MemoryReviewResult(observations, tuple(changes), self.name)
 
     def health_snapshot(self) -> dict[str, Any]:
         return {"provider": self.name, "available": True, "last_error": self.last_error}
+
+    async def close(self) -> None:
+        await self.llm.close()
 
 
 def _history_change(item: dict[str, Any]) -> MemoryChange:

@@ -47,6 +47,7 @@ class ConversationService:
         session_store,
         compression_chain,
         memory_manager,
+        memory_review_service=None,
         system_prompt_template: str = "",
         agent_cache: dict[str, object] | OrderedDict[str, object] | None = None,
         agent_cache_max: int | None = None,
@@ -56,6 +57,7 @@ class ConversationService:
         self.session_store = session_store
         self.compression_chain = compression_chain
         self.memory_manager = memory_manager
+        self.memory_review_service = memory_review_service
         self.system_prompt_template = system_prompt_template
         self.agent_cache_max = agent_cache_max
         self.agent_cache: OrderedDict[str, object] = (
@@ -239,6 +241,13 @@ class ConversationService:
             recorder.events,
             turn_id=str(turn_report.get("turn_id") or ""),
         )
+        if status == "completed" and self.memory_review_service is not None:
+            self.memory_review_service.submit(
+                session_key=session_key,
+                user_id=str(getattr(source, "user_id", "") or ""),
+                messages=result.get("messages", []),
+                turn_id=turn_id,
+            )
 
         return ConversationTurnResult(
             final_response=final_response,

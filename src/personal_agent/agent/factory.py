@@ -44,7 +44,6 @@ async def create_agent_runtime(
         compressor=compressor,
         max_iterations=settings.max_iterations,
         max_tool_calls_per_turn=settings.max_tool_calls_per_turn,
-        memory_review_interval=settings.memory_review_interval,
         memory_session_key=session_key,
         memory_snapshot_refresh_interval=getattr(settings, "memory_snapshot_refresh_turn_interval", 20),
         system_prompt_template=system_prompt_template,

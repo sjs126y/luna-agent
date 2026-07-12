@@ -219,6 +219,7 @@ class AppRuntime:
         self.closed = True
         await self.stop_gateway()
         await self.memory_review_service.close()
+        await self.memory_manager.close()
         mcp_manager = self.mcp_manager
         self.mcp_manager = None
         if mcp_manager is not None:
@@ -325,7 +326,12 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         with boot_report.step("memory"):
             memory_manager = await create_memory_manager(settings, plugin_manager, system_dir, data_dir)
         with boot_report.step("memory_review"):
-            memory_review_service = MemoryReviewService()
+            memory_review_service = MemoryReviewService(
+                memory_manager,
+                interval=settings.memory_external_turn_interval,
+                concurrency=settings.memory_worker_concurrency,
+            )
+            await memory_review_service.start()
         with boot_report.step("conversation"):
             conversation_service = ConversationService(
                 settings=settings,
@@ -333,6 +339,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 session_store=session_store,
                 compression_chain=compression_chain,
                 memory_manager=memory_manager,
+                memory_review_service=memory_review_service,
             )
 
         with boot_report.step("runtime"):
@@ -537,28 +544,48 @@ async def create_memory_manager(
     system_dir: Path,
     data_dir: Path,
 ) -> MemoryManager:
-    builtin_memory = await plugin_manager.invoke_hook(
-        "create_builtin_memory_provider",
-        system_dir=system_dir,
+    from personal_agent.memory.archive import MemoryArchive
+    from personal_agent.memory.config import resolve_memory_context
+    from personal_agent.memory.external import ExternalMemoryRouter, FallbackMemoryProvider
+    from personal_agent.memory.internal import InternalMemoryService, InternalMemoryStore
+    from personal_agent.memory.internal.consolidator import InternalMemoryConsolidator
+    from personal_agent.memory.llm import MemoryLLMFacade
+    from personal_agent.memory.provider_registry import memory_provider_registry
+
+    context = resolve_memory_context(settings)
+    archive = MemoryArchive(data_dir / "memory" / "memory.db")
+    await archive.initialize()
+    internal = InternalMemoryStore(system_dir, profile_map=settings.profile_map)
+    memory_llm = MemoryLLMFacade(context.llm)
+    fallback = FallbackMemoryProvider(archive, memory_llm)
+    router = ExternalMemoryRouter(
+        context=context,
+        archive=archive,
+        fallback=fallback,
+        registry=memory_provider_registry,
     )
-    if builtin_memory is None:
-        raise RuntimeError("No built-in memory provider registered")
+    await router.initialize()
+    internal_service = InternalMemoryService(
+        archive=archive,
+        store=internal,
+        consolidator=InternalMemoryConsolidator(memory_llm),
+        buffer_limit=context.review.internal_buffer_limit,
+    )
+    logger.info(
+        "External memory: requested=%s effective=%s",
+        router.requested_provider,
+        router.effective_provider,
+    )
+    manager = MemoryManager(
+        internal=internal,
+        router=router,
+        archive=archive,
+        internal_service=internal_service,
+    )
+    from personal_agent.memory.tools import set_memory_manager
 
-    external_memory = None
-    if settings.memory_external_provider == "embedding":
-        try:
-            external_memory = await plugin_manager.invoke_hook(
-                "create_external_memory_provider",
-                settings=settings,
-                data_dir=data_dir / "memory",
-            )
-            if external_memory is not None:
-                logger.info("External memory: embedding (BAAI/bge-small-zh-v1.5)")
-        except Exception as exc:
-            logger.warning("External memory provider unavailable, falling back to file memory: %s", exc)
-            external_memory = None
-
-    return MemoryManager(builtin=builtin_memory, external=external_memory)
+    set_memory_manager(manager)
+    return manager
 
 
 def ensure_system_files(system_dir: Path) -> None:

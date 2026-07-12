@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from personal_agent.memory.internal.store import AUTO_FILES, InternalMemoryConflict, InternalMemoryStore
 from personal_agent.memory.models import InternalPatchAction, MemoryScope, Observation
+from personal_agent.memory.models import InternalPatchOperation
 
 
 class InternalMemoryService:
@@ -56,3 +57,21 @@ class InternalMemoryService:
             counts[status] += 1
         counts["pending"] = len(observations) - len(handled)
         return counts
+
+    async def apply_buffer_item(self, scope: MemoryScope, observation_id: str) -> bool:
+        item = await self.archive.get_buffer_item(scope, observation_id)
+        if item is None or item["status"] not in {"pending", "conflict"} or not item["target_file"]:
+            return False
+        snapshot = self.store.snapshot(profile=scope.profile)
+        await self.store.apply_operations(snapshot, [InternalPatchOperation(
+            action=InternalPatchAction.ADD,
+            observation_id=observation_id,
+            entry_id=observation_id,
+            target_file=item["target_file"],
+            content=item["content"],
+            reason="manual confirmation",
+        )], allow_review_files=True)
+        await self.archive.set_buffer_status(
+            observation_id, "applied", target_file=item["target_file"], reason="manual confirmation"
+        )
+        return True

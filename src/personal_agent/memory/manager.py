@@ -1,11 +1,11 @@
-"""MemoryManager — shell that wires builtin + optional external MemoryProvider."""
+"""Memory facade joining stable internal context and dynamic external memory."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from personal_agent.memory.base import MemoryProvider
+from personal_agent.memory.models import MemoryScope, Observation, ObservationKind
 
 logger = logging.getLogger(__name__)
 
@@ -13,206 +13,201 @@ logger = logging.getLogger(__name__)
 class MemoryManager:
     def __init__(
         self,
-        builtin: MemoryProvider,
-        external: MemoryProvider | None = None,
+        builtin=None,
+        external=None,
+        *,
+        internal=None,
+        router=None,
+        archive=None,
+        internal_service=None,
     ) -> None:
-        self._builtin = builtin
-        self._external = external
+        self.internal = internal
+        self.router = router
+        self.archive = archive
+        self.internal_service = internal_service
+        self._legacy_builtin = builtin
+        self._legacy_external = external
         self._last_errors: dict[str, str] = {}
 
-    # ── system prompt ─────────────────────────────────
+    def get_internal_snapshot(self, session_key: str):
+        if self.internal is None:
+            raise RuntimeError("Internal memory is unavailable")
+        return self.internal.snapshot(session_key=session_key)
 
     def get_system_prompt_text(self) -> str:
-        """Memory text injected into system prompt (builtin only)."""
-        return self._builtin.get_system_prompt_text()
+        if self.internal is not None:
+            return self.internal.snapshot().content
+        return self._legacy_builtin.get_system_prompt_text() if self._legacy_builtin else ""
 
-    # ── prefetch (external only, injects to api_messages) ──
+    def scope(self, *, session_key: str = "", user_id: str = "") -> MemoryScope:
+        resolved_user = user_id or _user_id_from_session(session_key)
+        profile = self.internal.profile_for_session(session_key) if self.internal is not None else "default"
+        return MemoryScope(user_id=resolved_user, session_key=session_key, profile=profile)
 
-    async def prefetch(self, user_message: str) -> list[dict]:
-        """External memory search results for api_messages injection."""
-        if self._external:
+    async def prefetch(self, user_message: str, *, session_key: str = "", user_id: str = "") -> list[dict]:
+        if self.router is not None:
             try:
-                results = await self._external.prefetch(user_message)
-                self._last_errors.pop("external", None)
-                return results
+                records = await self.router.search(
+                    user_message, self.scope(session_key=session_key, user_id=user_id), limit=5
+                )
+                text = "\n".join(f"- {item.content}" for item in records if item.content)
+                return [{"role": "user", "content": [{"type": "text", "text": "相关长期记忆：\n" + text}]}] if text else []
             except Exception as exc:
                 self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
-                logger.debug("External memory prefetch failed, falling back to builtin only: %s", exc)
+                return []
+        if self._legacy_external is not None:
+            try:
+                return await self._legacy_external.prefetch(user_message)
+            except Exception as exc:
+                self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
         return []
 
-    # ── save ──────────────────────────────────────────
+    async def review(self, messages: list[dict[str, Any]], scope: MemoryScope):
+        if self.router is None:
+            return None
+        result = await self.router.review(messages, scope)
+        if self.internal_service is not None and result.observations:
+            await self.internal_service.enqueue(scope, result.observations, batch_id=result.batch_id)
+            if await self.internal_service.should_consolidate(scope):
+                await self.internal_service.consolidate(scope)
+        await self.router.maybe_recover(scope)
+        return result
 
-    async def save(self, content: str) -> None:
-        await self._call_provider("builtin", self._builtin.save(content))
-        if self._external:
-            try:
-                await self._external.save(content)
-                self._last_errors.pop("external", None)
-            except Exception as exc:
-                self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
-                logger.warning("External memory save failed, continuing with builtin memory: %s", exc)
+    async def add_external(self, content: str, *, kind: str = "fact", session_key: str = ""):
+        if self.router is None:
+            raise RuntimeError("External memory is disabled")
+        scope = self.scope(session_key=session_key)
+        observation = Observation(kind=ObservationKind(kind), content=content, importance=0.7)
+        result = await self.router.migrate((observation,), scope)
+        if self.internal_service is not None:
+            await self.internal_service.enqueue(scope, (observation,))
+        return result
 
-    async def list_entries(self, *, target: str = "all") -> list[dict[str, Any]]:
-        target = _normalize_target(target)
-        entries: list[dict[str, Any]] = []
-        if target in {"all", "memory", "user", "builtin"}:
-            entries.extend(await self._provider_entries("builtin", self._builtin, target=target))
-        if target in {"all", "external"} and self._external is not None:
-            entries.extend(await self._provider_entries("external", self._external, target="external"))
-        return entries
+    async def history(self, memory_id: str) -> list[dict[str, Any]]:
+        if self.router is None:
+            return []
+        return [item.as_dict() for item in await self.router.history(memory_id)]
 
-    async def search_entries(self, query: str, *, target: str = "all") -> list[dict[str, Any]]:
-        target = _normalize_target(target)
-        entries: list[dict[str, Any]] = []
-        if target in {"all", "memory", "user", "builtin"}:
-            entries.extend(await self._provider_search("builtin", self._builtin, query, target=target))
-        if target in {"all", "external"} and self._external is not None:
-            entries.extend(await self._provider_search("external", self._external, query, target="external"))
-        return entries
+    async def buffer_entries(self, *, status: str = "pending", session_key: str = ""):
+        if self.archive is None:
+            return []
+        return await self.archive.list_buffer(self.scope(session_key=session_key), status=status)
+
+    async def consolidate_internal(self, *, force: bool = True, session_key: str = ""):
+        if self.internal_service is None:
+            return {"pending": 0, "applied": 0, "skipped": 0, "conflict": 0}
+        return await self.internal_service.consolidate(self.scope(session_key=session_key), force=force)
+
+    async def apply_internal(self, observation_id: str, *, session_key: str = "") -> bool:
+        return bool(self.internal_service and await self.internal_service.apply_buffer_item(
+            self.scope(session_key=session_key), observation_id
+        ))
+
+    async def discard_internal(self, observation_id: str, *, session_key: str = "") -> bool:
+        if self.archive is None or await self.archive.get_buffer_item(self.scope(session_key=session_key), observation_id) is None:
+            return False
+        await self.archive.set_buffer_status(observation_id, "skipped", reason="manual discard")
+        return True
+
+    async def list_entries(self, *, target: str = "all", session_key: str = "") -> list[dict[str, Any]]:
+        if self.router is not None and target in {"all", "external"}:
+            records = await self.router.list(self.scope(session_key=session_key))
+            return [{**item.as_dict(), "target": "external"} for item in records]
+        return await self._legacy_list(target)
+
+    async def search_entries(self, query: str, *, target: str = "all", session_key: str = "") -> list[dict[str, Any]]:
+        if self.router is not None and target in {"all", "external"}:
+            records = await self.router.search(query, self.scope(session_key=session_key))
+            return [{**item.as_dict(), "target": "external"} for item in records]
+        if self._legacy_builtin is not None:
+            entries = await self._legacy_builtin.search_entries(query, target=target)
+            return [{**item, "provider": "builtin"} for item in entries]
+        return []
 
     async def get_entry(self, identifier: str, *, target: str = "all") -> dict[str, Any] | None:
         for entry in await self.list_entries(target=target):
-            if _entry_matches(entry, identifier):
+            if str(entry.get("id")) == str(identifier) or str(entry.get("index")) == str(identifier):
                 return entry
         return None
 
-    async def delete(self, identifier: str, *, target: str = "all") -> bool:
-        target = _normalize_target(target)
-        deleted = False
-        if target in {"all", "memory", "user", "builtin"}:
-            deleted = await self._provider_delete("builtin", self._builtin, identifier, target=target)
-            if deleted:
-                return True
-        if target in {"all", "external"} and self._external is not None:
-            return await self._provider_delete("external", self._external, identifier, target="external")
+    async def delete(self, identifier: str, *, target: str = "all", session_key: str = "") -> bool:
+        if self.router is not None and target in {"all", "external"}:
+            return await self.router.delete(identifier, self.scope(session_key=session_key))
+        if self._legacy_builtin is not None and target in {"all", "memory", "user", "builtin"}:
+            return bool(await self._legacy_builtin.delete(identifier, target=target))
         return False
 
+    async def save(self, content: str) -> None:
+        if self._legacy_builtin is not None:
+            await self._legacy_builtin.save(content)
+            if self._legacy_external is not None:
+                try:
+                    await self._legacy_external.save(content)
+                except Exception as exc:
+                    self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
+            return
+        raise RuntimeError("Direct internal memory writes are disabled; use external review or buffer tools")
+
     async def health_snapshot(self) -> dict[str, Any]:
-        builtin = await self._provider_health("builtin", self._builtin)
-        external = await self._provider_health("external", self._external)
+        if self.router is not None:
+            external = self.router.health_snapshot()
+            snapshot = self.internal.snapshot() if self.internal is not None else None
+            pending = await self.archive.pending_buffer_count(self.scope()) if self.archive else 0
+            return {
+                "builtin_available": self.internal is not None,
+                "builtin_provider": "internal_markdown" if self.internal is not None else "",
+                "external_available": external["effective_provider"] != "none",
+                "external_provider": external["effective_provider"],
+                "requested_provider": external["requested_provider"],
+                "effective_provider": external["effective_provider"],
+                "fallback_reason": external["fallback_reason"],
+                "internal_revision": snapshot.revision if snapshot else 0,
+                "internal_profile": snapshot.profile if snapshot else "",
+                "buffer_pending": pending,
+                "providers": {"internal": {"available": self.internal is not None}, "external": external},
+                "last_errors": dict(self._last_errors),
+            }
+        return await self._legacy_health()
+
+    async def close(self) -> None:
+        if self.router is not None:
+            await self.router.close()
+        if self.archive is not None:
+            await self.archive.close()
+
+    @property
+    def builtin(self):
+        return self.internal or self._legacy_builtin
+
+    @property
+    def external(self):
+        return self.router or self._legacy_external
+
+    async def _legacy_list(self, target: str) -> list[dict[str, Any]]:
+        result = []
+        if self._legacy_builtin is not None and target in {"all", "memory", "user", "builtin"}:
+            result.extend({**item, "provider": "builtin"} for item in await self._legacy_builtin.list_entries(target=target))
+        if self._legacy_external is not None and target in {"all", "external"}:
+            try:
+                entries = await self._legacy_external.list_entries(target="external")
+                result.extend({**item, "provider": "external"} for item in entries)
+            except Exception as exc:
+                self._last_errors["external"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+    async def _legacy_health(self) -> dict[str, Any]:
+        builtin = self._legacy_builtin.health_snapshot() if self._legacy_builtin else {"available": False}
+        external = self._legacy_external.health_snapshot() if self._legacy_external else {"available": False}
         return {
-            "builtin_available": builtin.get("available", False),
+            "builtin_available": bool(builtin.get("available", True)),
             "builtin_provider": builtin.get("provider", ""),
-            "external_available": external.get("available", False),
+            "external_available": bool(external.get("available", False)),
             "external_provider": external.get("provider", ""),
-            "providers": {
-                "builtin": builtin,
-                "external": external,
-            },
+            "providers": {"builtin": builtin, "external": external},
             "last_errors": dict(self._last_errors),
         }
 
-    @property
-    def builtin(self) -> MemoryProvider:
-        return self._builtin
 
-    @property
-    def external(self) -> MemoryProvider | None:
-        return self._external
-
-    async def _provider_entries(
-        self,
-        label: str,
-        provider: MemoryProvider,
-        *,
-        target: str,
-    ) -> list[dict[str, Any]]:
-        try:
-            entries = await provider.list_entries(target=target)
-            self._last_errors.pop(label, None)
-            return [_with_provider(entry, label) for entry in entries]
-        except Exception as exc:
-            self._last_errors[label] = f"{type(exc).__name__}: {exc}"
-            return []
-
-    async def _provider_search(
-        self,
-        label: str,
-        provider: MemoryProvider,
-        query: str,
-        *,
-        target: str,
-    ) -> list[dict[str, Any]]:
-        try:
-            entries = await provider.search_entries(query, target=target)
-            self._last_errors.pop(label, None)
-            return [_with_provider(entry, label) for entry in entries]
-        except Exception as exc:
-            self._last_errors[label] = f"{type(exc).__name__}: {exc}"
-            return []
-
-    async def _provider_delete(
-        self,
-        label: str,
-        provider: MemoryProvider,
-        identifier: str,
-        *,
-        target: str,
-    ) -> bool:
-        try:
-            deleted = await provider.delete(identifier, target=target)
-            self._last_errors.pop(label, None)
-            return bool(deleted)
-        except Exception as exc:
-            self._last_errors[label] = f"{type(exc).__name__}: {exc}"
-            return False
-
-    async def _provider_health(
-        self,
-        label: str,
-        provider: MemoryProvider | None,
-    ) -> dict[str, Any]:
-        if provider is None:
-            return {
-                "provider": "",
-                "available": False,
-                "entries": 0,
-                "last_error": self._last_errors.get(label, ""),
-            }
-        try:
-            data = dict(provider.health_snapshot())
-            data.setdefault("entries", len(await provider.list_entries(target="all")))
-            data["available"] = bool(data.get("available", True))
-            if not data.get("last_error"):
-                data["last_error"] = self._last_errors.get(label, "")
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            self._last_errors[label] = error
-            data = {
-                "provider": type(provider).__name__,
-                "available": False,
-                "last_error": error,
-            }
-        data.setdefault("provider", type(provider).__name__)
-        return data
-
-    async def _call_provider(self, label: str, awaitable):
-        try:
-            value = await awaitable
-            self._last_errors.pop(label, None)
-            return value
-        except Exception as exc:
-            self._last_errors[label] = f"{type(exc).__name__}: {exc}"
-            raise
-
-
-def _normalize_target(target: str) -> str:
-    value = str(target or "all").strip().lower()
-    if value not in {"all", "memory", "user", "builtin", "external"}:
-        raise ValueError(f"Invalid memory target: {target}")
-    return value
-
-
-def _with_provider(entry: dict[str, Any], provider: str) -> dict[str, Any]:
-    result = dict(entry)
-    result.setdefault("provider", provider)
-    return result
-
-
-def _entry_matches(entry: dict[str, Any], identifier: str) -> bool:
-    value = str(identifier)
-    return value in {
-        str(entry.get("id", "")),
-        str(entry.get("index", "")),
-        f"{entry.get('target', '')}:{entry.get('index', '')}",
-    }
+def _user_id_from_session(session_key: str) -> str:
+    value = str(session_key or "default")
+    return value.rsplit(":", 1)[-1] or "default"

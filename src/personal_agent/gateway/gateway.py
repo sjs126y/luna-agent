@@ -50,6 +50,7 @@ class Gateway:
                 session_store=session_store,
                 compression_chain=compression_chain,
                 memory_manager=memory_manager,
+                memory_review_service=memory_review_service,
                 system_prompt_template=system_prompt_template,
                 agent_cache_max=128,
             )
@@ -360,15 +361,6 @@ class Gateway:
             hook_result = await self.plugin_manager.invoke_hook("on_before_send", final, event.source)
             if isinstance(hook_result, str):
                 final = hook_result
-
-        # Background memory review (Hermes-style nudge)
-        agent = self._conversation_service.get_cached_agent(session_key)
-        self._memory_review_service.maybe_spawn(
-            agent=agent,
-            messages=turn.messages,
-            should_review=turn.should_review_memory,
-            final_response=final,
-        )
 
         return final or EMPTY_FINAL_RESPONSE_MESSAGE
 

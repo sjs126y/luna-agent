@@ -1,156 +1,93 @@
-"""Background memory review service."""
+"""App-owned asynchronous memory review workers."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
-from personal_agent.memory.review import MemoryReviewService, _review_signature
+from personal_agent.memory.models import MemoryScope
+from personal_agent.memory.review import MemoryReviewService, _messages_after_user_turn
 
 
-class Transport:
-    def __init__(self, response=None, exc: Exception | None = None):
-        self.response = response or SimpleNamespace(tool_calls=[])
-        self.exc = exc
-        self.calls = []
+class Archive:
+    def __init__(self):
+        self.checkpoint = None
 
-    async def call(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.exc is not None:
-            raise self.exc
-        return self.response
+    async def get_checkpoint(self, scope):
+        return self.checkpoint
+
+    async def set_checkpoint(self, scope, *, last_turn_id, reviewed_turns):
+        self.checkpoint = {"last_turn_id": last_turn_id, "reviewed_turns": reviewed_turns}
 
 
-class Agent:
-    def __init__(self, transport):
-        self._transport = transport
-        self.tools = [{"name": "memory"}]
+class Manager:
+    def __init__(self, *, error=None):
+        self.archive = Archive()
+        self.reviews = []
+        self.error = error
+
+    def scope(self, *, session_key, user_id):
+        return MemoryScope(user_id=user_id, session_key=session_key)
+
+    async def review(self, messages, scope):
+        if self.error:
+            raise self.error
+        self.reviews.append((messages, scope))
 
 
-def _messages(count: int = 15) -> list[dict]:
-    return [
-        {"role": "user", "content": [{"type": "text", "text": f"m{i}"}]}
-        for i in range(count)
-    ]
-
-
-def test_memory_review_maybe_spawn_gates_and_starts_thread(monkeypatch):
-    started = []
-
-    class Thread:
-        def __init__(self, *, target, daemon, name):
-            self.target = target
-            self.daemon = daemon
-            self.name = name
-
-        def start(self):
-            started.append((self.daemon, self.name))
-
-    monkeypatch.setattr("threading.Thread", Thread)
-    service = MemoryReviewService()
-
-    assert service.maybe_spawn(
-        agent=None,
-        messages=[],
-        should_review=True,
-        final_response="ok",
-    ) is False
-    assert service.maybe_spawn(
-        agent=object(),
-        messages=[],
-        should_review=False,
-        final_response="ok",
-    ) is False
-    assert service.maybe_spawn(
-        agent=object(),
-        messages=[],
-        should_review=True,
-        final_response="",
-    ) is False
-    assert service.maybe_spawn(
-        agent=object(),
-        messages=[],
-        should_review=True,
-        final_response="ok",
-    ) is True
-    assert started == [(True, "mem-review")]
-    assert service.health_snapshot()["spawn_count"] == 1
-
-
-def test_memory_review_maybe_spawn_skips_when_active():
-    service = MemoryReviewService()
-    service.active = True
-
-    assert service.maybe_spawn(
-        agent=object(),
-        messages=_messages(1),
-        should_review=True,
-        final_response="ok",
-    ) is False
-    assert service.health_snapshot()["spawn_count"] == 0
-
-
-def test_memory_review_maybe_spawn_skips_duplicate_signature():
-    service = MemoryReviewService()
-    messages = _messages(2)
-    signature = _review_signature(messages, "ok", service.prompt)
-    service._last_completed_signature = signature
-
-    assert service.maybe_spawn(
-        agent=object(),
-        messages=messages,
-        should_review=True,
-        final_response="ok",
-    ) is False
-    assert service.health_snapshot()["spawn_count"] == 0
+def _messages(turns: int) -> list[dict]:
+    result = []
+    for index in range(turns):
+        result.extend([
+            {"role": "user", "content": f"u{index}"},
+            {"role": "assistant", "content": f"a{index}"},
+        ])
+    return result
 
 
 @pytest.mark.asyncio
-async def test_memory_review_calls_transport_with_recent_messages_and_tools(monkeypatch):
-    tool_calls = [{"id": "call-1", "name": "memory"}]
-    transport = Transport(SimpleNamespace(tool_calls=tool_calls))
-    agent = Agent(transport)
-    executed = []
+async def test_review_worker_uses_interval_and_persists_checkpoint() -> None:
+    manager = Manager()
+    service = MemoryReviewService(manager, interval=2, concurrency=1)
+    await service.start()
 
-    async def execute_tool_calls(calls, messages, *, agent):
-        executed.append((calls, messages, agent))
+    assert service.submit(session_key="cli:1", user_id="u1", messages=_messages(2), turn_id="t2")
+    await service.queue.join()
 
-    monkeypatch.setattr("personal_agent.tools.executor.execute_tool_calls", execute_tool_calls)
-
-    await MemoryReviewService().review(agent=agent, messages=_messages(15))
-
-    assert len(transport.calls) == 1
-    call = transport.calls[0]
-    assert len(call["messages"]) == 13
-    assert call["messages"][0]["content"][0]["text"] == "m3"
-    assert "Review this conversation" in call["messages"][-1]["content"][0]["text"]
-    assert call["system_prompt"] == "你是一个记忆管理助手。判断对话中是否有值得保存的信息。"
-    assert call["tools"] == agent.tools
-    assert call["max_tokens"] == 512
-    assert executed == [(tool_calls, call["messages"], agent)]
+    assert len(manager.reviews) == 1
+    assert len(manager.reviews[0][0]) == 4
+    assert manager.archive.checkpoint == {"last_turn_id": "t2", "reviewed_turns": 2}
+    assert service.health_snapshot()["completed"] == 1
+    await service.close()
+    assert service.health_snapshot()["workers"] == 0
 
 
 @pytest.mark.asyncio
-async def test_memory_review_records_status_and_errors():
-    ok_service = MemoryReviewService()
-    await ok_service.review(agent=Agent(Transport()), messages=_messages(1))
+async def test_review_worker_skips_until_enough_new_turns() -> None:
+    manager = Manager()
+    manager.archive.checkpoint = {"last_turn_id": "t2", "reviewed_turns": 2}
+    service = MemoryReviewService(manager, interval=2, concurrency=1)
+    await service.start()
 
-    assert ok_service.health_snapshot()["active"] is False
-    assert ok_service.health_snapshot()["last_finished"]
-    assert ok_service.health_snapshot()["last_error"] == ""
-    assert ok_service.health_snapshot()["last_completed_signature"]
+    service.submit(session_key="cli:1", user_id="u1", messages=_messages(3), turn_id="t3")
+    await service.queue.join()
 
-    bad_service = MemoryReviewService()
-    await bad_service.review(agent=Agent(Transport(exc=RuntimeError("boom"))), messages=_messages(1))
-
-    assert bad_service.health_snapshot()["last_error"] == "RuntimeError: boom"
-    assert bad_service.cancel() is False
-    assert bad_service.health_snapshot()["cancel_requested"] is True
+    assert manager.reviews == []
+    assert service.health_snapshot()["skipped"] == 1
+    await service.close()
 
 
 @pytest.mark.asyncio
-async def test_memory_review_swallows_transport_errors():
-    agent = Agent(Transport(exc=RuntimeError("boom")))
+async def test_review_worker_records_errors_without_dying() -> None:
+    manager = Manager(error=RuntimeError("boom"))
+    service = MemoryReviewService(manager, interval=1, concurrency=1)
+    await service.start()
+    service.submit(session_key="cli:1", user_id="u1", messages=_messages(1))
+    await service.queue.join()
 
-    await MemoryReviewService().review(agent=agent, messages=_messages(1))
+    assert service.health_snapshot()["last_error"] == "RuntimeError: boom"
+    assert service.health_snapshot()["workers"] == 1
+    await service.close()
+
+
+def test_messages_after_user_turn_keeps_unreviewed_suffix() -> None:
+    assert _messages_after_user_turn(_messages(3), 2) == _messages(3)[4:]

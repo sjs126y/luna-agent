@@ -289,6 +289,15 @@ class MemoryArchive:
         )
         return [dict(row) for row in rows]
 
+    async def get_buffer_item(self, scope: MemoryScope, observation_id: str) -> dict[str, Any] | None:
+        row = await self._fetchone(
+            """SELECT b.*, o.kind, o.content, o.importance FROM internal_buffer b
+            JOIN observations o ON o.id = b.observation_id
+            WHERE b.scope_key = ? AND b.observation_id = ?""",
+            (_scope_key(scope), observation_id),
+        )
+        return dict(row) if row else None
+
     async def set_checkpoint(self, scope: MemoryScope, *, last_turn_id: str, reviewed_turns: int) -> None:
         await self._execute_write(
             """INSERT INTO review_checkpoints(scope_key,last_turn_id,reviewed_turns,updated_at) VALUES (?,?,?,?)

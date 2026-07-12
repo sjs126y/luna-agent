@@ -77,10 +77,6 @@ class Agent:
     _last_memory_injections: str = ""
     _last_tool_results: list[dict] = field(default_factory=list)
 
-    # ── memory review (Hermes-style background nudge) ──
-    _turns_since_memory: int = 0
-    _memory_review_interval: int = 10  # nudge every N turns, 0=disabled
-
     # ── pool split (same pool for MVP, separate later) ──
     _llm_pool: Any = None
     _tool_pool: Any = None
@@ -94,7 +90,6 @@ def init_agent(
     compressor=None,
     max_iterations: int = 30,
     max_tool_calls_per_turn: int = 20,
-    memory_review_interval: int = 10,
     memory_session_key: str = "",
     memory_snapshot_refresh_interval: int = 20,
     system_prompt_template: str = "",
@@ -110,7 +105,6 @@ def init_agent(
         model=provider.model,
         max_iterations=max_iterations,
         _max_tool_calls_per_turn=max_tool_calls_per_turn,
-        _memory_review_interval=memory_review_interval,
         _transport=transport,
         _provider=provider,
         _memory_manager=memory_manager,
