@@ -61,7 +61,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     "cron": {"enabled"},
     "execution": {"mode", "policy"},
     "mcp": {"enabled", "servers"},
-    "memory": {"provider", "external_provider", "review_interval", "embedding"},
+    "memory": {"provider", "external_provider", "review_interval", "review", "llm", "embedding", "qdrant", "providers"},
     "multimodal": {
         "enabled",
         "image_mode",
@@ -115,7 +115,7 @@ VALID_LLM_PROVIDERS = set(PROVIDER_REQUIRED_ENV)
 VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages", "responses", "codex_responses"}
 VALID_COMPRESSION_ENGINES = {"compressor", "simple", "none", "off", "disabled"}
 VALID_MEMORY_PROVIDERS = {"file"}
-VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "embedding"}
+VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "embedding", "fallback", "lumora", "mem0"}
 VALID_EXECUTION_POLICY_KEYS = VALID_PERMISSION_CATEGORIES | {"tool_permissions"}
 
 PLATFORM_ENV = {
