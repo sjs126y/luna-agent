@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 
+_FILTER_PAYLOAD_INDEXES = ("user_id", "profile")
+
+
 class QdrantMemoryIndex:
     def __init__(self, config, *, dimensions: int = 0, client=None) -> None:
         if client is None:
@@ -26,6 +29,7 @@ class QdrantMemoryIndex:
         from qdrant_client.models import Distance, VectorParams
 
         exists = await self.client.collection_exists(self.collection)
+        payload_schema: dict[str, Any] = {}
         if not exists:
             await self.client.create_collection(
                 self.collection, vectors_config=VectorParams(size=dimensions, distance=Distance.COSINE)
@@ -37,8 +41,28 @@ class QdrantMemoryIndex:
                 raise RuntimeError(
                     f"Qdrant collection dimension mismatch: expected {configured}, got {dimensions}"
                 )
+            payload_schema = dict(getattr(info, "payload_schema", {}) or {})
+        await self._ensure_filter_indexes(payload_schema)
         self.dimensions = dimensions
         self._ready = True
+
+    async def _ensure_filter_indexes(self, payload_schema: dict[str, Any]) -> None:
+        for field_name in _FILTER_PAYLOAD_INDEXES:
+            current = payload_schema.get(field_name)
+            if current is not None:
+                current_type = _payload_schema_type(current)
+                if current_type != "keyword":
+                    raise RuntimeError(
+                        f"Qdrant payload index mismatch for {field_name}: "
+                        f"expected keyword, got {current_type or 'unknown'}"
+                    )
+                continue
+            await self.client.create_payload_index(
+                collection_name=self.collection,
+                field_name=field_name,
+                field_schema="keyword",
+                wait=True,
+            )
 
     async def upsert(self, memory_id: str, vector: list[float], payload: dict[str, Any]) -> None:
         from qdrant_client.models import PointStruct
@@ -76,3 +100,12 @@ class QdrantMemoryIndex:
 
     async def close(self) -> None:
         await self.client.close()
+
+
+def _payload_schema_type(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("data_type") or value.get("type") or ""
+    else:
+        value = getattr(value, "data_type", value)
+    value = getattr(value, "value", value)
+    return str(value or "").strip().lower()

@@ -167,6 +167,25 @@ mcp:
 
 `headers_env` 的值是环境变量名，不是凭据本身；doctor 只检查配置结构，不回显环境变量值。
 
+GitHub 官方远程 MCP 可以使用 PAT 认证：
+
+```yaml
+mcp:
+  enabled: true
+  servers:
+    - name: github
+      transport: streamable_http
+      url: https://api.githubcopilot.com/mcp/
+      headers_env:
+        Authorization: GITHUB_MCP_AUTH
+```
+
+`.env` 中保存完整的 Authorization header 值，不要把 token 写入 `config.yaml`：
+
+```dotenv
+GITHUB_MCP_AUTH=Bearer github_pat_xxx
+```
+
 ## 执行模式与权限
 
 `execution.mode` 是默认执行模式，启动时生效；运行中可以用 `/mode` 临时切换当前会话的执行模式。可选值：
