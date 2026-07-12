@@ -896,6 +896,18 @@ Memory doctor/health payload 提供：
 - `providers.internal.available: boolean`
 - `providers.external.provider.available: boolean`
 - `providers.external.last_primary_error: string`
+- `providers.external.consecutive_failures: integer`
+- `providers.external.last_probe_at: string`，ISO-8601 时间；尚未探测时为空。
+- `providers.external.last_probe_status: "not_run" | "ok" | "error" | "skipped"`
+- `scope: object`，当前诊断对应的 `user_id / session_key / profile / agent_id`。
+- `migration.pending: integer`，当前 scope 待迁移 observation 数量。
+- `migration.global_pending: integer`，所有 scope 待迁移 observation 数量。
+- `migration.status_counts: object`
+- `migration.global_status_counts: object`
+- `index.pending: integer`，当前 scope 待写入向量索引的 memory 数量。
+- `index.global_pending: integer`，所有 scope 待写入向量索引的 memory 数量。
+- `index.status_counts: object`
+- `index.global_status_counts: object`
 
 Memory `search` / `list` 的每条外部记录额外提供：
 
@@ -904,7 +916,11 @@ Memory `search` / `list` 的每条外部记录额外提供：
 - `effective_provider: string`：当前 External Memory Router 实际使用的提供器。
 - `target: "external"`
 
-旧记录可以出现 `source_provider="fallback"` 且 `effective_provider="lumora"`；这表示记录历史来源是 fallback，不表示当前路由已经降级。Router 会在带 scope 的前台操作前按冷却时间尝试恢复主提供器，并在状态变化时更新 `provider_state`。
+旧记录可以出现 `source_provider="fallback"` 且 `effective_provider="lumora"`；这表示记录历史来源是 fallback，不表示当前路由已经降级。
+
+Router 状态按 scope 隔离。幂等语义搜索遇到主提供器异常会重试一次；恢复时先真实 probe，成功后立即切回主提供器，不再用历史迁移阻塞前台请求。待迁移 observation 和待索引 memory 由现有 Memory Review worker 每次各处理一条，并逐条保存尝试次数、错误和完成状态。
+
+`personal-agent memory doctor` 会执行真实 embedding + 外部向量存储探测；普通配置诊断仍只表示配置/依赖 readiness。
 
 Review worker payload 提供：
 
@@ -915,6 +931,11 @@ Review worker payload 提供：
 - `completed: integer`
 - `skipped: integer`
 - `last_error: string`
+- `maintenance_runs: integer`
+- `migrations_completed: integer`
+- `migrations_failed: integer`
+- `indexes_completed: integer`
+- `indexes_failed: integer`
 
 `should_review_memory` 为兼容字段，不再用于触发 review；前端不要依据它调度任务。Review 由 AppRuntime worker 自动提交和持久化 checkpoint。
 

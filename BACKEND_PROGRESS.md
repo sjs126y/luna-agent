@@ -591,3 +591,23 @@ uv run pytest -q
 ```
 
 结果：工具循环聚焦 `95 passed`，Memory 聚焦 `29 passed`，全量 `858 passed`。
+
+### 后续实测修复：scope fallback、可续跑迁移与主动探测
+
+微信实测确认一次空消息的 `ResponseHandlingException` 会让全局 Router 粘在 fallback，恢复还会在前台同步迁移59条 observation。进一步完成：
+
+- provider route state 改为按 `user_id + session_key + profile` 隔离，一个 scope 降级不影响其他 scope。
+- 幂等主提供器搜索和健康 probe 都会重试一次，并保留异常 cause/context。
+- 主提供器恢复改为“readiness -> 真实 probe -> 立即切换”，不再同步迁移 backlog。
+- observations schema v4 记录逐条迁移尝试次数、最近错误和更新时间；review worker 每次后台迁移一条。
+- memories schema v4 记录逐条索引尝试次数、最近错误和更新时间；Lumora worker 每次后台修复一条 pending index。
+- `memory doctor` 执行真实百炼 embedding + Qdrant probe，同时显示当前 scope 和全局 backlog。
+- 不同 scope 并发恢复通过 recovery lock 串行切换 provider，旧 client 延迟到 Router 关闭时释放。
+
+阶段提交：
+
+- `91c58a8 Isolate memory provider state by scope`
+- `f26ae98 Resume memory migrations in background`
+- `97e1dfe Probe and repair Lumora memory health`
+
+真实配置验证：probe 状态为 `ok`，Lumora 可用；诊断准确报告全局 migration pending `59`、index pending `1`，未在前台自动迁移这些数据。
