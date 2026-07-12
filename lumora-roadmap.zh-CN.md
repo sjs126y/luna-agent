@@ -1,15 +1,18 @@
-# Hermes、Lumora、MCP 与插件笔记
+# Lumora 后续架构方向
+
+更新时间：2026-07-12
 
 ## 1. Lumora：已有基础与真实缺口
 
-Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工具披露；执行模式、权限、确认、沙箱与审计；平台 Gateway、会话路由、附件处理和压缩链；结构化多模态模型；Cron、后台进程、子 Agent、工作流和 stdio MCP client；以及可注册工具、平台、MCP、skill、工作流、hook 和命令的插件系统。
+Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工具披露；执行模式、权限、确认、沙箱与审计；平台 Gateway、会话路由、附件处理和压缩链；结构化多模态模型；Cron、后台进程、子 Agent、工作流和长期运行的 MCP runtime；以及可注册工具、平台、MCP、skill、工作流、hook 和命令的插件系统。
 
 下一阶段不该重写这些系统，而是改善生命周期边界：
 
-1. 插件资源归属，以及可靠的禁用和卸载。
-2. MCP transport 和连接生命周期，超越当前 stdio 的启动和发现。
-3. 完整的“入站媒体 -> 模型/工具 -> 出站媒体”路径。
-4. 真正的主动决策和投递系统。
+1. **待设计**：插件资源归属，以及可靠的禁用和卸载。
+2. **已完成**：MCP transport、单 server runtime、连接恢复、动态工具快照和结构化结果。
+3. **待推进**：完整的“入站媒体 -> 模型/工具 -> 出站媒体”路径。
+4. **待推进**：内部 turn 分发、Outbox/Delivery 和真正的主动决策系统。
+5. **待拆分**：长期记忆与知识 RAG 的领域和存储边界。
 
 ## 2. Hermes 的工具与插件模型
 
@@ -29,23 +32,45 @@ Hermes 将工具分成三层：
 
 ## 3. MCP
 
+状态：**核心 runtime 已完成（2026-07-12）**。
+
 Hermes 使用外部 MCP server 的路径：配置 `mcp_servers` -> connect、initialize、list_tools -> 包装为 `mcp__server__tool` -> 注册到 ToolRegistry -> 刷新 Agent 工具快照 -> 模型工具调用 -> MCP `call_tool`。
 
 它使用一个共享的 MCP event-loop 后台线程；每台 server 在这个 loop 内有自己的 asyncio task。HTTP/SSE 是异步网络 I/O；stdio 每台 server 会启动一个子进程，但不是一台 server 一个线程。
 
 Hermes 处理的长连接能力包括：握手超时、带降级的 keepalive ping、重试/重连、熔断、`tools/list_changed` 动态刷新、OAuth、sampling 与 elicitation。
 
-Lumora 当前保持更小的实现：
+Lumora 当前实现：
 
 ```text
 MCPManager
-  -> 并发创建 MCPClient
-  -> 每台 stdio server 一个子进程
-  -> JSON-RPC：initialize -> initialized -> tools/list -> tools/call
-  -> 注册到 ToolRegistry 的 mcp toolset
+  -> 每台 server 一个 MCPServerRuntime
+  -> SDK-backed MCPConnection
+     -> stdio / Streamable HTTP
+  -> MCPToolRegistrar
+     -> 快照 diff -> ToolRegistry
 ```
 
-已有能力是并发启动、环境变量过滤、stderr 诊断、统一工具注册和 tool-search 披露。尚缺 HTTP/SSE、keepalive、自动重连和动态工具列表变更。
+已完成能力：
+
+- 官方 MCP Python SDK 稳定 v1.x，Lumora connection contract 隔离 SDK 类型。
+- stdio 与 Streamable HTTP transport，旧 stdio 配置保持兼容。
+- 单 server 生命周期、故障隔离、keepalive ping、自动重连和退避。
+- `tools/list_changed` 通知、工具快照 diff 和 Registry generation 刷新。
+- 断线时保留工具归属并标记 unavailable，恢复后自动重新可见。
+- 环境变量 header、HTTP URL 校验、禁用重定向和凭据安全诊断。
+- text、image、audio、resource 与 structured content 的结构化结果；事件、审计和数据库只保存安全摘要。
+- doctor 展示 state、transport、工具数、重连次数、下一次重试和最近错误。
+
+暂不纳入核心完成范围：
+
+- OAuth 用户交互。
+- sampling 和 elicitation policy。
+- 旧 SSE transport 兼容。
+- MCP server 模式。
+- 将 MCP 用作多 Agent 控制平面。
+
+这些能力只有在出现明确 server 或产品需求时再单独设计，不影响当前 MCP runtime 的完成状态。具体决策见 `docs/mcp-runtime-design.md`。
 
 Hermes 作为 MCP server 时是消息/会话桥，不是多 Agent 控制平面。真正的控制平面应提供 `agent_submit`、`agent_status`、`agent_wait`、`agent_result`、`agent_cancel`、`task_claim`、`task_update`、`artifact_read` 和 `artifact_write` 等 API。
 
@@ -99,3 +124,31 @@ Mem0 值得研究，因为它是 Python-first，并聚焦长期记忆 CRUD。其
 - `mem0/configs/base.py`。
 
 在出现明确需求前，可以忽略 TypeScript SDK、Web UI、provider adapter 和其他集成。
+
+## 7. 当前推进状态
+
+| 方向 | 当前基础 | 主要缺口 | 状态 |
+| --- | --- | --- | --- |
+| MCP runtime | stdio、Streamable HTTP、重连、动态工具、结构化结果、诊断 | OAuth、sampling、elicitation 仅按需补充 | 核心完成 |
+| 插件生命周期 | 已记录部分 Registry 注册项，支持基础 disable/unload | 事务回滚、覆盖恢复、异步资源关闭、版本代际 | 待设计 |
+| 出站多模态 | `OutboundMessage`、`PlatformCapabilities`、MCP/tool artifact 已有骨架 | TurnResult artifact、平台原生发送、降级、安全和投递审计 | 适合下一步讨论 |
+| 主动能力 | Cron 可复用会话和 Agent 主链路 | `InternalTurnRequest`、统一 dispatch、Delivery/Outbox、去重和策略 | 待推进 |
+| Memory / RAG | file memory、embedding 检索、memory review、文档 ingest | 长期记忆与知识 chunk 仍共用 external provider 语义 | 待拆分 |
+
+方向之间的关系：
+
+```text
+结构化 tool artifact（已完成）
+  -> 出站消息与 Delivery
+     -> Outbox
+        -> 主动提醒和后台结果投递
+
+插件 ownership（独立设计）
+  -> 可靠 disable/unload
+
+Memory / RAG 拆分（独立领域）
+  -> 长期记忆更新审计
+  -> 外部知识证据检索
+```
+
+当前更自然的后续讨论方向是出站消息与 Delivery。MCP 已能产生结构化 artifact，平台侧也已有 `OutboundMessage` 和能力声明；补齐这条链路既能形成直接用户价值，也能为后续 Outbox 和主动能力提供统一投递边界。插件生命周期继续保留为独立设计议题，不在没有明确资源模型前仓促实现。
