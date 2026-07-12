@@ -25,6 +25,7 @@ class LLMRequestPlan:
     dynamic_context: list[dict] = field(default_factory=list)
     history: list[dict] = field(default_factory=list)
     current_user: dict | None = None
+    turn_tail: list[dict] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -50,6 +51,7 @@ class LLMRequestPlan:
         messages.extend(self.history)
         if self.current_user is not None:
             messages.append(self.current_user)
+        messages.extend(self.turn_tail)
         return messages
 
     def diagnostics(self) -> dict[str, Any]:
@@ -60,6 +62,7 @@ class LLMRequestPlan:
                 self.stable_context,
             ),
             "dynamic_block_count": len(self.dynamic_context),
+            "turn_tail_block_count": len(self.turn_tail),
             "stable_prefix_hash": stable_request_hash({
                 "system": self.stable_system,
                 "tools": self.stable_tools,

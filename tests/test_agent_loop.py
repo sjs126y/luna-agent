@@ -423,6 +423,131 @@ async def test_tool_use_loop(provider):
                     and any(b.get("type") == "tool_result" for b in m["content"])]
     assert len(tool_results) >= 1
 
+    second_request = transport.call_messages[1]
+    user_index = next(
+        index for index, message in enumerate(second_request)
+        if message.get("role") == "user"
+        and _user_text([message]) == "Test"
+    )
+    tool_use_index = next(
+        index for index, message in enumerate(second_request)
+        if any(block.get("type") == "tool_use" for block in message.get("content", []))
+    )
+    tool_result_index = next(
+        index for index, message in enumerate(second_request)
+        if any(block.get("type") == "tool_result" for block in message.get("content", []))
+    )
+    assert user_index < tool_use_index < tool_result_index
+
+
+@pytest.mark.asyncio
+async def test_duplicate_successful_tool_call_stops_without_reexecution(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c1", "name": "echo_once", "input": {"msg": "test"}}],
+        ),
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c2", "name": "echo_once", "input": {"msg": "test"}}],
+        ),
+        NormalizedResponse(text="should not run", finish_reason="end_turn"),
+    ])
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    executions = 0
+
+    async def _echo_once(msg: str = ""):
+        nonlocal executions
+        executions += 1
+        return f"Echo: {msg}"
+
+    tool_registry.register(ToolEntry(
+        name="echo_once", description="Echo once", schema={
+            "type": "object", "properties": {"msg": {"type": "string"}}
+        }, handler=_echo_once,
+    ))
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Test")
+
+    result = await run_conversation(agent, ctx)
+
+    assert transport.calls == 2
+    assert executions == 1
+    assert "相同调用被重复请求" in result["final_response"]
+    assert "Echo: test" in result["final_response"]
+    assert result["turn_report"]["tools"]["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_quota_denial_stops_agent_loop(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c1", "name": "quota_echo", "input": {"msg": "one"}}],
+        ),
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c2", "name": "quota_echo", "input": {"msg": "two"}}],
+        ),
+        NormalizedResponse(text="should not run", finish_reason="end_turn"),
+    ])
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _quota_echo(msg: str = ""):
+        return f"Echo: {msg}"
+
+    tool_registry.register(ToolEntry(
+        name="quota_echo", description="Quota echo", schema={
+            "type": "object", "properties": {"msg": {"type": "string"}}
+        }, handler=_quota_echo,
+    ))
+    agent = init_agent(transport, provider, max_tool_calls_per_turn=1)
+    ctx = await build_turn_context(agent, "Test")
+
+    result = await run_conversation(agent, ctx)
+
+    assert transport.calls == 2
+    assert "工具调用上限（1）" in result["final_response"]
+    assert result["turn_report"]["tools"]["total"] == 2
+    assert result["turn_report"]["tools"]["denied"] == 1
+
+
+@pytest.mark.asyncio
+async def test_iteration_limit_returns_nonempty_stop_message(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c1", "name": "iteration_echo", "input": {"msg": "one"}}],
+        ),
+        NormalizedResponse(text="should not run", finish_reason="end_turn"),
+    ])
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _iteration_echo(msg: str = ""):
+        return f"Echo: {msg}"
+
+    tool_registry.register(ToolEntry(
+        name="iteration_echo", description="Iteration echo", schema={
+            "type": "object", "properties": {"msg": {"type": "string"}}
+        }, handler=_iteration_echo,
+    ))
+    agent = init_agent(transport, provider, max_iterations=1)
+    ctx = await build_turn_context(agent, "Test")
+
+    result = await run_conversation(agent, ctx)
+
+    assert transport.calls == 1
+    assert result["final_response"] == "已达到本轮处理迭代上限，已停止继续调用工具。"
+    assert result["turn_report"]["retries"][-1]["category"] == "iteration_budget"
+    assert result["turn_report"]["retries"][-1]["recoverable"] is False
+
 
 @pytest.mark.asyncio
 async def test_turn_report_records_denied_tool_decision(provider):

@@ -32,5 +32,11 @@ class ExternalMemoryProvider(ABC):
     @abstractmethod
     def health_snapshot(self) -> dict[str, Any]: ...
 
+    async def probe(self, scope: MemoryScope) -> None:
+        await self.search("memory provider health probe", scope, limit=1)
+
+    async def reindex(self, records: list[MemoryRecord], scope: MemoryScope) -> dict[str, int]:
+        return {"attempted": 0, "completed": 0, "failed": 0}
+
     async def close(self) -> None:
         return None

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import logging
+from time import monotonic
 from typing import Any
 
 from personal_agent.memory.external.base import ExternalMemoryProvider
@@ -12,6 +14,8 @@ from personal_agent.memory.models import (
     MemoryChange, MemoryChangeAction, MemoryRecord, MemoryReviewResult, MemoryScope,
 )
 from personal_agent.memory.prompts import MEMORY_RESOLUTION_SYSTEM
+
+logger = logging.getLogger(__name__)
 
 
 class LumoraMemoryProvider(ExternalMemoryProvider):
@@ -33,8 +37,7 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
         for observation in observations:
             related = await self.search(observation.content, scope, limit=5)
             change = await self._resolve(observation, related)
-            await self._apply_change(scope, observation, change, related)
-            changes.append(change)
+            changes.append(await self._apply_change(scope, observation, change, related))
         await self.archive.finish_review_batch(batch_id, status="completed")
         return MemoryReviewResult(observations, tuple(changes), self.name, batch_id)
 
@@ -75,11 +78,45 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
     async def migrate(self, observations, scope: MemoryScope) -> MemoryReviewResult:
         changes: list[MemoryChange] = []
         for observation in observations:
+            started = monotonic()
             related = await self.search(observation.content, scope, limit=5)
+            searched_at = monotonic()
             change = await self._resolve(observation, related)
-            await self._apply_change(scope, observation, change, related)
-            changes.append(change)
+            resolved_at = monotonic()
+            applied = await self._apply_change(scope, observation, change, related)
+            finished_at = monotonic()
+            changes.append(applied)
+            logger.info(
+                "Lumora memory migrate: action=%s search=%.3fs resolve=%.3fs apply=%.3fs total=%.3fs",
+                applied.action.value,
+                searched_at - started,
+                resolved_at - searched_at,
+                finished_at - resolved_at,
+                finished_at - started,
+            )
         return MemoryReviewResult(tuple(observations), tuple(changes), self.name)
+
+    async def reindex(self, records: list[MemoryRecord], scope: MemoryScope) -> dict[str, int]:
+        result = {"attempted": 0, "completed": 0, "failed": 0}
+        for record in records:
+            result["attempted"] += 1
+            try:
+                await self._write_index(
+                    record.id,
+                    record.content,
+                    record.kind.value,
+                    scope,
+                )
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                await self.archive.mark_memory_index_failed(record.id, self.last_error)
+                result["failed"] += 1
+                logger.warning("Lumora reindex deferred: %s", self.last_error)
+                continue
+            await self.archive.mark_memory_index_ready(record.id)
+            result["completed"] += 1
+            self.last_error = ""
+        return result
 
     def health_snapshot(self) -> dict[str, Any]:
         return {"provider": self.name, "available": not self.last_error, "last_error": self.last_error}
@@ -103,16 +140,26 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             content=str(data.get("content") or observation.content), reason=str(data.get("reason") or ""),
         )
 
-    async def _apply_change(self, scope, observation, change, related) -> None:
+    async def _apply_change(self, scope, observation, change, related) -> MemoryChange:
         if change.action == MemoryChangeAction.NONE:
-            return
+            return change
         if change.action == MemoryChangeAction.DELETE:
+            existing = await self.archive.get_memory(change.memory_id, scope) if change.memory_id else None
             if change.memory_id:
                 await self.delete(change.memory_id, scope)
-            return
+            return replace(
+                change,
+                previous_content=existing.content if existing else change.previous_content,
+            )
         existing = await self.archive.get_memory(change.memory_id, scope) if change.memory_id else None
         memory_id = change.memory_id if existing else observation.id
         content = change.content or observation.content
+        applied = replace(
+            change,
+            memory_id=memory_id,
+            content=content,
+            previous_content=existing.content if existing else "",
+        )
         record = MemoryRecord(
             id=memory_id, content=content, kind=observation.kind,
             importance=observation.importance, provider=self.name, scope=scope,
@@ -124,16 +171,32 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             previous_content=existing.content if existing else "", reason=change.reason,
         )
         try:
-            vector = (await self.embedding.embed([content]))[0]
-            await self.vector_index.upsert(memory_id, vector, {
-                "user_id": scope.user_id, "profile": scope.profile,
-                "kind": observation.kind.value, "content": content,
-            })
+            await self._write_index(memory_id, content, observation.kind.value, scope)
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
-            return
-        await self.archive.set_memory_index_status(memory_id, "ready")
+            await self.archive.mark_memory_index_failed(memory_id, self.last_error)
+            logger.warning("Lumora index write pending: %s", self.last_error)
+            return applied
+        await self.archive.mark_memory_index_ready(memory_id)
         self.last_error = ""
+        return applied
+
+    async def _write_index(self, memory_id: str, content: str, kind: str, scope: MemoryScope) -> None:
+        embedded_at = monotonic()
+        vector = (await self.embedding.embed([content]))[0]
+        upserted_at = monotonic()
+        await self.vector_index.upsert(memory_id, vector, {
+            "user_id": scope.user_id,
+            "profile": scope.profile,
+            "kind": kind,
+            "content": content,
+        })
+        finished_at = monotonic()
+        logger.info(
+            "Lumora index write: embedding=%.3fs qdrant=%.3fs",
+            upserted_at - embedded_at,
+            finished_at - upserted_at,
+        )
 
 
 def reciprocal_rank_fusion(semantic_ids: list[str], keyword_ids: list[str], *, k: int = 60,

@@ -48,5 +48,68 @@ async def test_memory_archive_migrates_v1_internal_buffer(tmp_path) -> None:
 
     assert {"proposed_action", "proposed_content", "entry_id"} <= columns
     version = await archive._fetchone("SELECT version FROM memory_schema")
-    assert version["version"] == 2
+    assert version["version"] == 4
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_archive_checkpoints_migration_attempts(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    observation = Observation(kind=ObservationKind.EVENT, content="pending migration")
+    await archive.save_observations(scope, (observation,), migration_status="pending")
+
+    await archive.mark_observation_migration_failed(observation.id, "network reset")
+    failed = await archive._fetchone(
+        "SELECT migration_status,migration_attempts,migration_error FROM observations WHERE id = ?",
+        (observation.id,),
+    )
+    assert failed["migration_status"] == "pending"
+    assert failed["migration_attempts"] == 1
+    assert failed["migration_error"] == "network reset"
+    assert (await archive.migration_status_counts(scope))["pending"] == 1
+
+    await archive.mark_observations_migrated([observation.id])
+    migrated = await archive._fetchone(
+        "SELECT migration_status,migration_attempts,migration_error FROM observations WHERE id = ?",
+        (observation.id,),
+    )
+    assert migrated["migration_status"] == "migrated"
+    assert migrated["migration_attempts"] == 2
+    assert migrated["migration_error"] == ""
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_archive_tracks_pending_index_retries(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    record = MemoryRecord(
+        id="m1",
+        content="pending vector",
+        provider="lumora",
+        scope=scope,
+        metadata={"index_status": "pending"},
+    )
+    await archive.upsert_memory(scope, record)
+
+    await archive.mark_memory_index_failed("m1", "qdrant timeout")
+    failed = await archive._fetchone(
+        "SELECT index_status,index_attempts,index_error FROM memories WHERE id = 'm1'"
+    )
+    assert failed["index_status"] == "pending"
+    assert failed["index_attempts"] == 1
+    assert failed["index_error"] == "qdrant timeout"
+    assert [item.id for item in await archive.pending_index_memories(scope)] == ["m1"]
+    assert (await archive.index_status_counts(scope))["pending"] == 1
+
+    await archive.mark_memory_index_ready("m1")
+    ready = await archive._fetchone(
+        "SELECT index_status,index_attempts,index_error FROM memories WHERE id = 'm1'"
+    )
+    assert ready["index_status"] == "ready"
+    assert ready["index_attempts"] == 2
+    assert ready["index_error"] == ""
     await archive.close()

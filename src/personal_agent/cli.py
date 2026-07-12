@@ -946,6 +946,7 @@ async def _with_app_runtime(callback):
 
 async def _memory_report() -> dict[str, Any]:
     async def _collect(runtime):
+        await runtime.memory_manager.probe()
         memory = await runtime.memory_manager.health_snapshot()
         memory.update({
             "external_provider_config": runtime.settings.memory_external_provider,
@@ -2284,9 +2285,11 @@ def format_config_report(report: dict[str, Any]) -> str:
 
 def format_memory_doctor(report: dict[str, Any]) -> str:
     providers = report.get("providers", {})
-    builtin = providers.get("builtin", {})
+    builtin = providers.get("internal", providers.get("builtin", {}))
     external = providers.get("external", {})
     review = report.get("review", {})
+    migration = report.get("migration", {})
+    index = report.get("index", {})
     lines = [
         "Memory 诊断",
         f"builtin provider: {report.get('builtin_provider') or '-'} [{_status(bool(report.get('builtin_available')))}]",
@@ -2298,6 +2301,18 @@ def format_memory_doctor(report: dict[str, Any]) -> str:
         _format_memory_provider("builtin", builtin),
         _format_memory_provider("external", external),
         "",
+        "Probe:",
+        f"  status: {external.get('last_probe_status') or 'not_run'}",
+        f"  last probe: {external.get('last_probe_at') or '-'}",
+        f"  failures: {external.get('consecutive_failures', 0)}",
+        f"  last primary error: {external.get('last_primary_error') or '-'}",
+        "",
+        "Backlog:",
+        f"  migration pending: {migration.get('pending', 0)}",
+        f"  migration pending (all scopes): {migration.get('global_pending', migration.get('pending', 0))}",
+        f"  index pending: {index.get('pending', 0)}",
+        f"  index pending (all scopes): {index.get('global_pending', index.get('pending', 0))}",
+        "",
         "Review:",
         f"  service: {report.get('review_service') or '-'}",
         f"  enabled: {_yes(review.get('enabled', report.get('review_enabled', False)))}",
@@ -2305,6 +2320,11 @@ def format_memory_doctor(report: dict[str, Any]) -> str:
         f"  cancel requested: {_yes(review.get('cancel_requested', False))}",
         f"  spawn count: {review.get('spawn_count', 0)}",
         f"  saved count: {review.get('saved_count', 0)}",
+        f"  maintenance runs: {review.get('maintenance_runs', 0)}",
+        f"  migrations completed: {review.get('migrations_completed', 0)}",
+        f"  migrations failed: {review.get('migrations_failed', 0)}",
+        f"  indexes completed: {review.get('indexes_completed', 0)}",
+        f"  indexes failed: {review.get('indexes_failed', 0)}",
         f"  last started: {review.get('last_started') or '-'}",
         f"  last finished: {review.get('last_finished') or '-'}",
         f"  last error: {review.get('last_error') or '-'}",
@@ -2319,9 +2339,13 @@ def format_memory_doctor(report: dict[str, Any]) -> str:
 def _format_memory_provider(name: str, data: dict[str, Any]) -> str:
     if not data:
         return f"  - {name}: 未配置"
+    provider_data = data.get("provider")
+    nested = provider_data if isinstance(provider_data, dict) else {}
+    provider_name = nested.get("provider") if nested else provider_data
+    available = nested.get("available") if nested else data.get("available")
     parts = [
-        f"  - {name}: {data.get('provider') or '-'}",
-        f"available={_yes(bool(data.get('available')))}",
+        f"  - {name}: {provider_name or '-'}",
+        f"available={_yes(bool(available))}",
         f"entries={data.get('entries', 0)}",
     ]
     if data.get("memory_entries") is not None:

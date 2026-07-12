@@ -13,7 +13,7 @@ import aiosqlite
 
 from personal_agent.memory.models import MemoryRecord, MemoryScope, Observation, ObservationKind, utc_now
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_schema (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS review_checkpoints (
@@ -27,13 +27,16 @@ CREATE TABLE IF NOT EXISTS review_batches (
 CREATE TABLE IF NOT EXISTS observations (
   id TEXT PRIMARY KEY, batch_id TEXT DEFAULT '', scope_key TEXT NOT NULL, kind TEXT NOT NULL,
   content TEXT NOT NULL, content_hash TEXT NOT NULL, importance REAL NOT NULL, long_term INTEGER NOT NULL,
-  source_turn_ids_json TEXT NOT NULL, migration_status TEXT DEFAULT '', created_at TEXT NOT NULL
+  source_turn_ids_json TEXT NOT NULL, migration_status TEXT DEFAULT '', migration_attempts INTEGER DEFAULT 0,
+  migration_error TEXT DEFAULT '', migration_updated_at TEXT DEFAULT '', created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_observations_scope ON observations(scope_key, created_at);
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL,
   content_hash TEXT NOT NULL, importance REAL NOT NULL, provider TEXT NOT NULL,
-  index_status TEXT DEFAULT 'ready', metadata_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  index_status TEXT DEFAULT 'ready', index_attempts INTEGER DEFAULT 0,
+  index_error TEXT DEFAULT '', index_updated_at TEXT DEFAULT '',
+  metadata_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope_key, updated_at);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(memory_id UNINDEXED, scope_key UNINDEXED, content);
@@ -89,6 +92,36 @@ class MemoryArchive:
                     )
             await self._connection.execute("UPDATE memory_schema SET version = 2")
             version = 2
+        if version == 2:
+            cursor = await self._connection.execute("PRAGMA table_info(observations)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            additions = {
+                "migration_attempts": "INTEGER DEFAULT 0",
+                "migration_error": "TEXT DEFAULT ''",
+                "migration_updated_at": "TEXT DEFAULT ''",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    await self._connection.execute(
+                        f"ALTER TABLE observations ADD COLUMN {name} {definition}"
+                    )
+            await self._connection.execute("UPDATE memory_schema SET version = 3")
+            version = 3
+        if version == 3:
+            cursor = await self._connection.execute("PRAGMA table_info(memories)")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            additions = {
+                "index_attempts": "INTEGER DEFAULT 0",
+                "index_error": "TEXT DEFAULT ''",
+                "index_updated_at": "TEXT DEFAULT ''",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    await self._connection.execute(
+                        f"ALTER TABLE memories ADD COLUMN {name} {definition}"
+                    )
+            await self._connection.execute("UPDATE memory_schema SET version = 4")
+            version = 4
         if version != SCHEMA_VERSION:
             raise RuntimeError(f"Unsupported memory schema version: {version}")
 
@@ -187,10 +220,48 @@ class MemoryArchive:
         return _record_from_row(row, scope) if row else None
 
     async def set_memory_index_status(self, memory_id: str, status: str) -> None:
+        if status == "ready":
+            await self.mark_memory_index_ready(memory_id)
+            return
         await self._execute_write(
-            "UPDATE memories SET index_status = ?, updated_at = ? WHERE id = ?",
-            (status, utc_now(), memory_id),
+            """UPDATE memories SET index_status = ?, index_updated_at = ?,
+            updated_at = ? WHERE id = ?""",
+            (status, utc_now(), utc_now(), memory_id),
         )
+
+    async def mark_memory_index_ready(self, memory_id: str) -> None:
+        now = utc_now()
+        await self._execute_write(
+            """UPDATE memories SET index_status = 'ready', index_attempts = index_attempts + 1,
+            index_error = '', index_updated_at = ?, updated_at = ? WHERE id = ?""",
+            (now, now, memory_id),
+        )
+
+    async def mark_memory_index_failed(self, memory_id: str, error: str) -> None:
+        now = utc_now()
+        await self._execute_write(
+            """UPDATE memories SET index_status = 'pending', index_attempts = index_attempts + 1,
+            index_error = ?, index_updated_at = ?, updated_at = ? WHERE id = ?""",
+            (error, now, now, memory_id),
+        )
+
+    async def pending_index_memories(self, scope: MemoryScope, *, limit: int = 10) -> list[MemoryRecord]:
+        rows = await self._fetchall(
+            """SELECT * FROM memories WHERE scope_key = ? AND index_status = 'pending'
+            ORDER BY index_attempts, updated_at LIMIT ?""",
+            (_scope_key(scope), limit),
+        )
+        return [_record_from_row(row, scope) for row in rows]
+
+    async def index_status_counts(self, scope: MemoryScope | None = None) -> dict[str, int]:
+        where = "WHERE scope_key = ?" if scope is not None else ""
+        params = (_scope_key(scope),) if scope is not None else ()
+        rows = await self._fetchall(
+            f"""SELECT COALESCE(NULLIF(index_status, ''), 'unknown') AS status,
+            COUNT(*) AS count FROM memories {where} GROUP BY status""",
+            params,
+        )
+        return {str(row["status"]): int(row["count"]) for row in rows}
 
     async def delete_memory(self, memory_id: str, scope: MemoryScope, *, provider: str = "", reason: str = "") -> bool:
         existing = await self.get_memory(memory_id, scope)
@@ -214,7 +285,8 @@ class MemoryArchive:
 
     async def pending_migration_observations(self, scope: MemoryScope, *, limit: int = 100) -> list[Observation]:
         rows = await self._fetchall(
-            "SELECT * FROM observations WHERE scope_key = ? AND migration_status = 'pending' ORDER BY created_at LIMIT ?",
+            """SELECT * FROM observations WHERE scope_key = ? AND migration_status = 'pending'
+            ORDER BY migration_attempts, created_at LIMIT ?""",
             (_scope_key(scope), limit),
         )
         return [Observation(
@@ -230,10 +302,30 @@ class MemoryArchive:
         placeholders = ",".join("?" for _ in observation_ids)
         async with self._write_lock:
             await self._connection.execute(
-                f"UPDATE observations SET migration_status = 'migrated' WHERE id IN ({placeholders})",
-                tuple(observation_ids),
+                f"""UPDATE observations SET migration_status = 'migrated',
+                migration_attempts = migration_attempts + 1, migration_error = '',
+                migration_updated_at = ? WHERE id IN ({placeholders})""",
+                (utc_now(), *observation_ids),
             )
             await self._connection.commit()
+
+    async def mark_observation_migration_failed(self, observation_id: str, error: str) -> None:
+        await self._execute_write(
+            """UPDATE observations SET migration_status = 'pending',
+            migration_attempts = migration_attempts + 1, migration_error = ?,
+            migration_updated_at = ? WHERE id = ?""",
+            (error, utc_now(), observation_id),
+        )
+
+    async def migration_status_counts(self, scope: MemoryScope | None = None) -> dict[str, int]:
+        where = "WHERE scope_key = ?" if scope is not None else ""
+        params = (_scope_key(scope),) if scope is not None else ()
+        rows = await self._fetchall(
+            f"""SELECT COALESCE(NULLIF(migration_status, ''), 'legacy_empty') AS status,
+            COUNT(*) AS count FROM observations {where} GROUP BY status""",
+            params,
+        )
+        return {str(row["status"]): int(row["count"]) for row in rows}
 
     async def set_provider_state(self, scope: MemoryScope, *, requested: str, effective: str,
                                  fallback_reason: str = "", state: dict[str, Any] | None = None) -> None:
@@ -387,7 +479,7 @@ def _fts_query(query: str) -> str:
 
 def _record_from_row(row, scope: MemoryScope) -> MemoryRecord:
     metadata = json.loads(row["metadata_json"] or "{}")
-    metadata.setdefault("index_status", row["index_status"])
+    metadata["index_status"] = row["index_status"]
     return MemoryRecord(
         id=row["id"], content=row["content"], kind=ObservationKind(row["kind"]),
         importance=float(row["importance"]), provider=row["provider"], scope=scope,
