@@ -7,6 +7,7 @@ import logging
 import random
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Mapping
 
 from personal_agent.mcp.connection import MCPConnection, SDKMCPConnection
@@ -30,10 +31,16 @@ class MCPServerRuntime:
         refresh_debounce_seconds: float = 0.1,
         jitter: Callable[[], float] | None = None,
         env_values: Mapping[str, str] | None = None,
+        process_backend: str = "legacy",
+        sandbox_roots: list[Path] | None = None,
+        work_dir: Path | None = None,
     ) -> None:
         self.config = config
         self.state = MCPRuntimeState.DISABLED if not config.enabled else MCPRuntimeState.STOPPED
         self._env_values = dict(env_values or {})
+        self._process_backend = process_backend
+        self._sandbox_roots = list(sandbox_roots or [])
+        self._work_dir = Path(work_dir).resolve() if work_dir is not None else Path.cwd()
         self._connection_factory = connection_factory or self._create_connection
         self._reconnect_delays = reconnect_delays or DEFAULT_RECONNECT_DELAYS
         self._health_interval = health_interval_seconds
@@ -45,7 +52,11 @@ class MCPServerRuntime:
         self._reconnect_event = asyncio.Event()
         self._refresh_event = asyncio.Event()
         self._initial_attempt_done = asyncio.Event()
-        self._registrar = MCPToolRegistrar(config.name, self.call_tool)
+        self._registrar = MCPToolRegistrar(
+            config.name,
+            self.call_tool,
+            server_url=config.url,
+        )
         self._server_info: MCPServerInfo | None = None
         self._last_error = ""
         self._last_call_error = ""
@@ -267,6 +278,9 @@ class MCPServerRuntime:
             config,
             notification_callback=callback,
             env_values=self._env_values,
+            process_backend=self._process_backend,
+            sandbox_roots=self._sandbox_roots,
+            work_dir=self._work_dir,
         )
 
     def _reset_events(self) -> None:

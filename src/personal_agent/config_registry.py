@@ -245,7 +245,16 @@ class ConfigRegistry:
         )
 
 
-EXECUTION_MODES = ("guarded", "standard", "trusted", "sovereign")
+EXECUTION_MODES = (
+    "read-only",
+    "ask-first",
+    "local-auto",
+    "full-auto",
+    "guarded",
+    "standard",
+    "trusted",
+    "sovereign",
+)
 LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter", "xai")
 LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 IMAGE_TEXT_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
@@ -308,13 +317,31 @@ def _mixed_field(
 
 def _execution_fields() -> tuple[ConfigField, ...]:
     return (
-        _yaml_field("execution.mode", "execution_mode", "standard", "str", "execution", "Execution mode profile.", choices=EXECUTION_MODES),
+        _yaml_field("execution.mode", "execution_mode", "ask-first", "str", "execution", "Execution mode profile.", choices=EXECUTION_MODES),
         _yaml_field("execution.policy", "execution_policy_overrides", {}, "dict", "execution", "Execution policy overrides."),
     )
 
 
 def _permission_fields() -> tuple[ConfigField, ...]:
     return (
+        _yaml_field(
+            "permissions.grant_ttl_minutes",
+            "permission_grant_ttl_minutes",
+            60,
+            "int",
+            "permissions",
+            "Unified in-memory tool and resource grant TTL in minutes.",
+            minimum=1,
+            maximum=10080,
+        ),
+        _yaml_field(
+            "permissions.tool_approval",
+            "tool_approval_config",
+            {},
+            "dict",
+            "permissions",
+            "Tool approval defaults and exact tool or MCP server overrides.",
+        ),
         _yaml_field(
             "permissions.temporary_grant_ttl_hours",
             "permission_temporary_grant_ttl_hours",
@@ -487,6 +514,15 @@ def _sandbox_fields() -> tuple[ConfigField, ...]:
         _yaml_field("sandbox.bash_work_dir", "bash_work_dir", "./data", "path", "sandbox", "Bash working directory."),
         _yaml_field("sandbox.bash_restrict_paths", "bash_restrict_paths", True, "bool", "sandbox", "Restrict bash paths."),
         _yaml_field("sandbox.bash_allow_network", "bash_allow_network", False, "bool", "sandbox", "Allow bash network commands."),
+        _yaml_field(
+            "sandbox.process_backend",
+            "process_sandbox_backend",
+            "auto",
+            "str",
+            "sandbox",
+            "Process sandbox backend.",
+            choices=("auto", "bwrap", "legacy"),
+        ),
         _yaml_field("sandbox.file_max_write_bytes", "file_max_write_bytes", 100000, "int", "sandbox", "Maximum file write size.", minimum=1),
         _yaml_field("sandbox.audit_enabled", "audit_enabled", True, "bool", "sandbox", "Enable tool audit logging."),
     )

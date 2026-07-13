@@ -100,9 +100,15 @@ gateway:
   platform_send_max_retries: 2
 
 execution:
-  mode: standard
-  policy:
-    tool_permissions: {}
+  mode: ask-first
+
+permissions:
+  grant_ttl_minutes: 60
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: cached
+    tools: {}
+    mcp_servers: {}
 
 sandbox:
   roots:
@@ -114,6 +120,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  process_backend: auto
   file_max_write_bytes: 100000
   audit_enabled: true
 
@@ -194,9 +201,15 @@ gateway:
   platform_send_max_retries: 2
 
 execution:
-  mode: standard
-  policy:
-    tool_permissions: {}
+  mode: ask-first
+
+permissions:
+  grant_ttl_minutes: 60
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: cached
+    tools: {}
+    mcp_servers: {}
 
 sandbox:
   roots:
@@ -208,6 +221,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  process_backend: auto
   file_max_write_bytes: 100000
   audit_enabled: true
 
@@ -288,9 +302,15 @@ gateway:
   platform_send_max_retries: 2
 
 execution:
-  mode: standard
-  policy:
-    tool_permissions: {}
+  mode: ask-first
+
+permissions:
+  grant_ttl_minutes: 60
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: cached
+    tools: {}
+    mcp_servers: {}
 
 sandbox:
   roots:
@@ -302,6 +322,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  process_backend: auto
   file_max_write_bytes: 100000
   audit_enabled: true
 
@@ -1255,6 +1276,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
 
     from personal_agent.llm.token_counter import tokenizer_status
     from personal_agent.tools.registry import tool_registry
+    from personal_agent.tools.process_sandbox import process_sandbox_snapshot
 
     sandbox_roots = [
         {"path": str(root), "exists": Path(root).exists()}
@@ -1309,6 +1331,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
             "roots": sandbox_roots,
             "blocked_count": len(settings.sandbox_blocked),
             "bash_work_dir": str(settings.bash_work_dir),
+            "process": process_sandbox_snapshot(settings.process_sandbox_backend),
         },
         "mcp_servers": mcp_servers,
         "platforms": platform_plugins,
@@ -1787,6 +1810,22 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
         lines.append(f"  - {root['path']} [{_status(root['exists'])}]")
     lines.append(f"  blocked 规则: {report['sandbox']['blocked_count']}")
     lines.append(f"  bash 工作目录: {report['sandbox']['bash_work_dir']}")
+    process_sandbox = report["sandbox"].get("process") or {}
+    lines.append(
+        "  process backend: "
+        f"{process_sandbox.get('effective_backend', 'legacy')} "
+        f"(requested={process_sandbox.get('requested_backend', 'auto')})"
+    )
+    lines.append(
+        "  filesystem isolation: "
+        f"{_yes(process_sandbox.get('filesystem_isolated', False))}"
+    )
+    lines.append(
+        "  network namespace: "
+        f"{_yes(process_sandbox.get('network_namespace_available', False))}"
+    )
+    for warning in process_sandbox.get("warnings") or []:
+        lines.append(f"  warning: {warning}")
 
     lines.extend(["", "MCP 服务器:"])
     runtime_servers = {
@@ -2096,6 +2135,7 @@ def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str
         "sandbox.bash_work_dir",
         "sandbox.bash_allow_network",
         "sandbox.bash_restrict_paths",
+        "sandbox.process_backend",
         "sandbox.file_max_write_bytes",
         "sandbox.audit_enabled",
         "gateway.platform_send_max_retries",
@@ -2542,6 +2582,8 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
     for root in report["sandbox"]["roots"]:
         if not root["exists"]:
             issues.append(f"Sandbox root 不存在: {root['path']}")
+    for warning in (report.get("sandbox", {}).get("process", {}).get("warnings") or []):
+        issues.append(f"Process sandbox: {warning}")
 
     for server in report["mcp_servers"]:
         if (

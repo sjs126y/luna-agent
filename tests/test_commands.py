@@ -392,20 +392,20 @@ async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
     assert "Full Auto" in result.response
     assert {item["slug"] for item in result.payload["modes"]} >= {"read-only", "full-auto"}
 
-    result = await handle_slash_command(runtime, "/mode set Edit Freely")
-    assert "Edit Freely" in result.response
+    result = await handle_slash_command(runtime, "/mode set Local Auto")
+    assert "Local Auto" in result.response
     assert runtime.agent._execution_policy.mode == "trusted"
     assert result.payload["selected"]["profile"] == "trusted"
 
     result = await handle_slash_command(runtime, "/mode acceptEdits")
-    assert "Edit Freely" in result.response
+    assert "Local Auto" in result.response
     assert runtime.agent._execution_policy.mode == "trusted"
     assert runtime.agent._destructive_allowed == set()
 
     # Querying now reflects the policy, not any /allow grant.
     runtime.agent._destructive_allowed.add("write")
     result = await handle_slash_command(runtime, "/mode")
-    assert "当前模式: Edit Freely" in result.response
+    assert "当前模式: Local Auto" in result.response
 
     result = await handle_slash_command(runtime, "/mode auto")
     assert "Full Auto" in result.response
@@ -587,6 +587,24 @@ async def test_shared_command_tools_permissions_and_protocol(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_new_security_mode_rejects_category_allow_and_clears_all(tmp_path):
+    from personal_agent.security.session import SecurityStateStore
+
+    runtime = Runtime(tmp_path)
+    store = SecurityStateStore(runtime.settings)
+    context = store.context(runtime.session_key)
+    runtime.agent._security_context = context
+    context.state.grant_tool("core:bash", ttl_seconds=60)
+
+    allowed = await handle_slash_command(runtime, "/allow write")
+    denied = await handle_slash_command(runtime, "/deny all")
+
+    assert "不支持类别级预授权" in allowed.response
+    assert "已撤销当前会话" in denied.response
+    assert context.state.tool_grants == {}
+
+
+@pytest.mark.asyncio
 async def test_shared_command_tool_runs_queries(tmp_path):
     runtime = Runtime(tmp_path)
 
@@ -642,7 +660,7 @@ def test_command_registry_exports_structured_metadata(tmp_path):
     assert [choice["value"] for choice in mode_argument["choices"]] == [
         "Read Only",
         "Ask First",
-        "Edit Freely",
+        "Local Auto",
         "Full Auto",
     ]
     allow = next(item for item in data["commands"] if item["name"] == "allow")

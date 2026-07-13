@@ -126,6 +126,8 @@ def test_catalog_reports_metadata_and_availability(registry):
     assert catalog["writer"]["unavailable_reason"] == "check_fn returned False"
     assert catalog["writer"]["has_precheck"] is True
     assert catalog["writer"]["is_destructive"] is True
+    assert catalog["writer"]["approval_mode"] == "inherit"
+    assert catalog["writer"]["idempotent"] is None
     assert catalog["writer"]["tags"] == ["file", "write"]
     assert catalog["writer"]["risk_level"] == "high"
     assert catalog["writer"]["usage_hint"] == "Use carefully."

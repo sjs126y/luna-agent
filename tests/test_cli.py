@@ -71,6 +71,8 @@ def test_doctor_report_includes_execution_policy():
     assert effective_fields["execution.mode"]["value"] == "sovereign"
     assert effective_fields["LLM_API_KEY"]["value"] == "<set>"
     assert report["tools"]["total"] >= 0
+    assert report["sandbox"]["process"]["effective_backend"] in {"bwrap", "legacy"}
+    assert "filesystem_isolated" in report["sandbox"]["process"]
     assert "by_permission" in report["tools"]
     assert "Lumora doctor" in summary
     assert "工具:" in summary

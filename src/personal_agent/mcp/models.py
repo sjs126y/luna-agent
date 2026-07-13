@@ -37,6 +37,14 @@ class MCPServerConfig:
     enabled: bool = True
     connect_timeout_seconds: float = 15.0
     call_timeout_seconds: float = 120.0
+    allow_insecure_http: bool = False
+    allow_private_network: bool = False
+    allow_network: bool = False
+    max_tools: int = 256
+    max_tool_pages: int = 20
+    max_schema_bytes: int = 65536
+    max_result_chars: int = 100000
+    max_artifact_bytes: int = 1048576
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "MCPServerConfig":
@@ -69,6 +77,14 @@ class MCPServerConfig:
             enabled=bool(value.get("enabled", True)),
             connect_timeout_seconds=_positive_float(value.get("connect_timeout_seconds"), 15.0),
             call_timeout_seconds=_positive_float(value.get("call_timeout_seconds"), 120.0),
+            allow_insecure_http=bool(value.get("allow_insecure_http", False)),
+            allow_private_network=bool(value.get("allow_private_network", False)),
+            allow_network=bool(value.get("allow_network", False)),
+            max_tools=_positive_int(value.get("max_tools"), 256),
+            max_tool_pages=_positive_int(value.get("max_tool_pages"), 20),
+            max_schema_bytes=_positive_int(value.get("max_schema_bytes"), 65536),
+            max_result_chars=_positive_int(value.get("max_result_chars"), 100000),
+            max_artifact_bytes=_positive_int(value.get("max_artifact_bytes"), 1048576),
         )
 
 
@@ -127,4 +143,13 @@ def _positive_float(value: Any, default: float) -> float:
     result = float(value)
     if result <= 0:
         raise ValueError("MCP timeouts must be positive")
+    return result
+
+
+def _positive_int(value: Any, default: int) -> int:
+    if value in (None, ""):
+        return default
+    result = int(value)
+    if result <= 0:
+        raise ValueError("MCP limits must be positive")
     return result

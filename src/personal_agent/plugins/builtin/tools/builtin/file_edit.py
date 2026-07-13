@@ -12,7 +12,7 @@ async def _file_edit(action: str, path: str, content: str = "",
     try:
         sandbox = get_sandbox()
         full = sandbox.resolve(path)
-        error = sandbox.check_path(full)
+        error = sandbox.check_path(full, access="write")
         if error:
             return error
 

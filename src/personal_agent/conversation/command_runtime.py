@@ -140,12 +140,17 @@ class ConversationCommandRuntime:
         )
 
     async def current_execution_mode(self) -> str:
-        from personal_agent.commands.runtime import current_mode, current_mode_from_policy
+        from personal_agent.security.modes import mode_preset
 
-        agent = self.conversation_service.get_cached_agent(self.session_key)
-        if agent is None:
-            return current_mode_from_policy(getattr(self.settings, "execution_policy", None))
-        return current_mode(agent)
+        context = self.conversation_service.security_context(self.session_key)
+        return mode_preset(context.mode_id).label
+
+    async def set_mode(self, mode: str) -> str:
+        from personal_agent.security.modes import mode_preset
+
+        state = self.conversation_service.set_security_mode(self.session_key, mode)
+        preset = mode_preset(state.mode_id)
+        return f"执行模式已切换: {preset.label}（{preset.id}）。"
 
     async def allow_category(self, category: str) -> str:
         if self.allow_all_cached_agents:

@@ -48,5 +48,8 @@ class ToolEntry:
     usage_hint: str = ""
     check_fn: Callable[[], bool] | None = None  # dependency check → True/False
     precheck: Callable[[dict[str, Any]], str | None] | None = None
+    approval_mode: str = "inherit"  # auto | cached | prompt | deny | inherit
+    resource_resolver: Callable[[dict[str, Any]], list[Any]] | None = None
+    idempotent: bool | None = None
     is_parallel_safe: bool = True
     is_destructive: bool = False

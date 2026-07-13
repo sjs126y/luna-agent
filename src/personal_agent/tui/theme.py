@@ -59,7 +59,7 @@ RISK_HIGH = "1;31"
 MODE_STYLES = {
     "Read Only": "32",
     "Ask First": "36",
-    "Edit Freely": "33",
+    "Local Auto": "33",
     "Full Auto": "1;31",
     # Legacy names are kept for old cached/runtime values.
     "normal": "36",

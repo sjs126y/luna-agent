@@ -77,7 +77,7 @@ _MODE_ARGUMENT = CommandArgumentSpec(
     choices=(
         ArgumentChoiceSpec("Read Only", "Read Only", "只读"),
         ArgumentChoiceSpec("Ask First", "Ask First", "执行前确认"),
-        ArgumentChoiceSpec("Edit Freely", "Edit Freely", "可编辑"),
+        ArgumentChoiceSpec("Local Auto", "Local Auto", "工作区自动"),
         ArgumentChoiceSpec("Full Auto", "Full Auto", "全自动"),
     ),
 )
@@ -177,7 +177,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("export", "导出当前会话 JSONL", "/export", category="session"),
     CommandSpec(
         "allow",
-        "限时授权工具权限",
+        "兼容命令；新安全模式请在具体工具确认中授权",
         "/allow [write|bash|background|network|destructive|all]",
         category="execution",
         mutates_state=True,
@@ -186,7 +186,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         "deny",
-        "撤销限时工具授权",
+        "撤销限时工具授权；新安全模式支持 /deny all",
         "/deny [write|bash|background|network|destructive|all]",
         category="execution",
         mutates_state=True,
@@ -196,7 +196,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "mode",
         "查看或切换执行模式",
-        "/mode [Read Only|Ask First|Edit Freely|Full Auto]",
+        "/mode [Read Only|Ask First|Local Auto|Full Auto]",
         category="execution",
         mutates_state=True,
         requires_agent=True,

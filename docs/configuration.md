@@ -63,9 +63,15 @@ WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
 
 ```yaml
 execution:
-  mode: standard
-  policy:
-    tool_permissions: {}
+  mode: ask-first
+
+permissions:
+  grant_ttl_minutes: 60
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: cached
+    tools: {}
+    mcp_servers: {}
 
 llm:
   context_window: 0
@@ -161,6 +167,7 @@ mcp:
       transport: stdio
       command: npx
       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      allow_network: true
     - name: remote-tools
       transport: streamable_http
       url: https://example.com/mcp
@@ -169,6 +176,8 @@ mcp:
 ```
 
 `headers_env` 的值是环境变量名，不是凭据本身；doctor 只检查配置结构，不回显环境变量值。动态变量与普通 provider 配置一样统一由 `ConfigLoader` / `Settings` 解析：进程环境优先于项目 `.env`，MCP connection 不会自行读取环境文件。
+
+stdio server 在应用 Runtime 中会进入 `sandbox.process_backend` 指定的进程沙箱，默认工作目录为 `data/mcp`。需要联网的 stdio server 必须显式设置 `allow_network: true`。远程 transport 默认要求 HTTPS；连接明文 HTTP 或私网地址时，分别需要显式设置 `allow_insecure_http: true`、`allow_private_network: true`。MCP 还会限制工具数量/分页、schema、文本结果、结构化结果和 artifact 大小；对应 server 字段为 `max_tools`、`max_tool_pages`、`max_schema_bytes`、`max_result_chars`、`max_artifact_bytes`。
 
 GitHub 官方远程 MCP 可以使用 PAT 认证：
 
@@ -195,36 +204,33 @@ GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 
 | mode | UI 名称 | 行为 |
 | --- | --- | --- |
-| `guarded` | Read Only | 只允许读和搜索，写入、bash、后台任务、网络和破坏性操作拒绝 |
-| `standard` | Ask First | 日常模式，读和搜索允许，写入、bash、后台任务、网络和破坏性操作需要确认 |
-| `trusted` | Edit Freely | 信任本地项目，写入和 bash 允许，后台任务、网络和破坏性操作仍需确认 |
-| `sovereign` | Full Auto | sandbox 内大多数工具直接允许，破坏性操作仍需确认 |
+| `read-only` | Read Only | sandbox roots 内只读；扩权请求直接拒绝 |
+| `ask-first` | Ask First | sandbox roots 内只读；写入、网络及需审批工具按具体资源确认 |
+| `local-auto` | Local Auto | sandbox roots 内可读写；越界资源和需审批工具按需确认 |
+| `full-auto` | Full Auto | sandbox roots 内可读写并允许网络；仍受 blocked path、危险命令和载荷上限等硬边界约束 |
 
-可以用 `execution.policy.tool_permissions` 覆盖某类工具权限：
+`guarded`、`standard`、`trusted`、`sovereign` 仍可作为兼容别名，但新配置应使用上表 ID。`execution.policy` 只供旧运行时兼容，不再是新安全上下文的权威配置。
+
+工具审批使用 `permissions.tool_approval` 覆盖：
 
 ```yaml
-execution:
-  mode: standard
-  policy:
-    tool_permissions:
-      bash: ask
-      background: ask
-      network: deny
+permissions:
+  tool_approval:
+    default_external: cached
+    tools:
+      bash: prompt
+      dangerous_plugin_tool: deny
+    mcp_servers:
+      github: cached
 ```
 
-权限类别：
+审批模式：
 
 ```text
-default, read, search, write, bash, background, network, destructive
+auto, cached, prompt, deny
 ```
 
-权限决策：
-
-```text
-allow, ask, deny
-```
-
-`execution.policy` 只负责权限决策，不会关闭沙箱硬边界。密钥文件、blocked 路径、危险 bash 模式和系统路径逃逸仍会被 precheck/sandbox 拦截。
+`auto` 不单独询问工具身份，仍检查资源；`cached` 首次询问并在统一 TTL 内缓存；`prompt` 每次询问；`deny` 禁用。具体文件路径和网络 host 由资源权限单独判断，工具审批不能覆盖硬边界。
 
 ## 沙箱配置
 
@@ -237,20 +243,21 @@ allow, ask, deny
 | `bash_work_dir` | bash 默认工作目录 |
 | `bash_restrict_paths` | 是否限制 bash 路径在 `roots` 内 |
 | `bash_allow_network` | 是否允许 bash 运行 `curl` / `wget` / `pip` 等网络命令 |
+| `process_backend` | `auto` / `bwrap` / `legacy`；显式 `bwrap` 不可用时拒绝执行，`auto` 才会降级 |
 | `file_max_write_bytes` | `file_write` 单次最大写入字节数 |
 | `audit_enabled` | 是否记录工具审计日志到 `data/audit.log` |
 
-`/allow` 只解锁当前 mode/config 最终策略为 `ask` 的权限类别，不能覆盖 `deny`。`standard` 下普通网络工具为 `ask`，可用 `/allow network` 解锁 `web_search` / `web_fetch`；`guarded` 下 network 仍为 `deny`。`bash_allow_network: true` 只控制 bash 内部的 `curl` / `wget` / `pip` 等网络命令，不会被 `/allow network` 自动打开。
+新安全模式不接受 `/allow write` 这类类别级预授权，因为它无法表达最小路径或 host。应在具体工具确认中选择允许一次或限时允许。`/deny all` 可清空当前会话的全部限时工具/资源授权。
 
 临时授权由 `permissions` 控制：
 
 ```yaml
 permissions:
-  temporary_grant_ttl_hours: 24
+  grant_ttl_minutes: 60
   confirm_timeout_seconds: 120
 ```
 
-`/allow <category>` 和确认框里的 `Always 24h` 会写入当前运行时的限时授权，默认 24 小时后过期；`/deny <category>` 可撤销，`/deny all` 撤销全部。服务重启后这些运行时授权不会持久化。
+所有工具和资源授权共享 `grant_ttl_minutes`，只保存在当前会话的内存状态中；切换 Mode、重置/删除会话或服务重启都会清空。
 
 ## 多模态配置
 

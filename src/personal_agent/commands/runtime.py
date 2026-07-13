@@ -146,13 +146,13 @@ class ModeChoice:
 MODE_CHOICES: tuple[ModeChoice, ...] = (
     ModeChoice("read-only", "Read Only", "guarded"),
     ModeChoice("ask-first", "Ask First", "standard"),
-    ModeChoice("edit-freely", "Edit Freely", "trusted"),
+    ModeChoice("local-auto", "Local Auto", "trusted"),
     ModeChoice("full-auto", "Full Auto", "sovereign"),
 )
 
 _MODE_BY_SLUG = {choice.slug: choice for choice in MODE_CHOICES}
 _MODE_BY_PROFILE = {choice.profile: choice for choice in MODE_CHOICES}
-_MODE_USAGE = "/mode [Read Only|Ask First|Edit Freely|Full Auto]"
+_MODE_USAGE = "/mode [Read Only|Ask First|Local Auto|Full Auto]"
 _MODE_ALIASES = {
     "readonly": "read-only",
     "read": "read-only",
@@ -161,11 +161,13 @@ _MODE_ALIASES = {
     "ask": "ask-first",
     "standard": "ask-first",
     "normal": "ask-first",
-    "editfreely": "edit-freely",
-    "edit": "edit-freely",
-    "edits": "edit-freely",
-    "trusted": "edit-freely",
-    "acceptedits": "edit-freely",
+    "editfreely": "local-auto",
+    "edit": "local-auto",
+    "edits": "local-auto",
+    "trusted": "local-auto",
+    "acceptedits": "local-auto",
+    "autoedit": "local-auto",
+    "localauto": "local-auto",
     "fullauto": "full-auto",
     "full": "full-auto",
     "auto": "full-auto",
@@ -472,6 +474,13 @@ async def _allow(runtime: CommandRuntime, category: str) -> str:
     if category not in valid:
         return f"用法: /allow [write|bash|background|network|destructive|all]，当前有效类别: {', '.join(sorted(valid))}"
     agent = _runtime_cached_agent(runtime)
+    if agent is None:
+        agent = await runtime.get_agent()
+    if getattr(agent, "_security_context", None) is not None:
+        return (
+            "新安全模式不支持类别级预授权。请发起具体工具调用，"
+            "并在确认中选择单次授权或限时授权；授权只覆盖提示中列出的资源。"
+        )
     policy = getattr(agent, "_execution_policy", None) if agent is not None else getattr(runtime.settings, "execution_policy", None)
     denied = _allow_denied_categories(policy, category)
     if category != "all" and denied:
@@ -480,8 +489,6 @@ async def _allow(runtime: CommandRuntime, category: str) -> str:
         return _allow_denied_message(policy, category)
 
     warning = _allow_warning(denied)
-    if agent is None:
-        agent = await runtime.get_agent()
     ttl = temporary_grant_ttl_seconds(runtime.settings)
     if category == "all":
         expires_at = 0.0
@@ -506,6 +513,14 @@ async def _deny(runtime: CommandRuntime, category: str) -> str:
     agent = _runtime_cached_agent(runtime)
     if agent is None:
         return "当前没有可撤销的临时授权。"
+    security_context = getattr(agent, "_security_context", None)
+    if security_context is not None:
+        if category != "all":
+            return "新安全模式请使用 /deny all 清空当前会话的全部限时授权。"
+        state = security_context.state
+        changed = bool(state.tool_grants or state.resource_grants)
+        state.clear_grants()
+        return "已撤销当前会话的全部限时授权。" if changed else "当前没有可撤销的临时授权。"
     if category == "all":
         changed = remove_temporary_grant(agent, "all")
         return "已撤销全部临时授权。" if changed else "当前没有可撤销的临时授权。"
@@ -564,6 +579,11 @@ def _allow_warning(denied: list[str]) -> str:
 
 def current_mode(agent) -> str:
     """Return the user-facing execution mode label for an agent."""
+    security_context = getattr(agent, "_security_context", None)
+    if security_context is not None:
+        from personal_agent.security.modes import mode_preset
+
+        return mode_preset(getattr(security_context, "mode_id", "ask-first")).label
     return current_mode_from_policy(getattr(agent, "_execution_policy", None))
 
 
@@ -1141,7 +1161,30 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     turn_grants = sorted(str(item) for item in getattr(agent, "_turn_grants", set()) or [])
     legacy_grants = sorted(str(item) for item in getattr(agent, "_destructive_allowed", set()) or [])
     temporary_grants = temporary_grants_snapshot(agent)
+    security_context = getattr(agent, "_security_context", None)
+    security_tool_grants, security_resource_grants = _security_grants_snapshot(
+        security_context
+    )
     if action == "grants":
+        if security_context is not None:
+            lines = ["当前会话授权:"]
+            lines.extend(
+                f"- tool: {item['tool_key']} 至 {item['expires_at_iso']}"
+                for item in security_tool_grants
+            )
+            lines.extend(
+                f"- resource: {item['access']} {item['resource']} 至 {item['expires_at_iso']}"
+                for item in security_resource_grants
+            )
+            if len(lines) == 1:
+                lines.append("- 无")
+            return "\n".join(lines), {
+                "action": "grants",
+                "tool_grants": security_tool_grants,
+                "resource_grants": security_resource_grants,
+                "grants": turn_grants or legacy_grants,
+                "temporary_grants": temporary_grants,
+            }
         legacy_text = ", ".join(turn_grants or legacy_grants) if (turn_grants or legacy_grants) else "无"
         return "当前 grants: " + legacy_text, {
             "action": "grants",
@@ -1162,18 +1205,43 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     policy = getattr(agent, "_execution_policy", None)
     mode = str(getattr(policy, "mode", "") or "")
     permissions = getattr(policy, "permissions", {}) if policy is not None else {}
-    lines = [
-        f"权限策略: {current_mode(agent)} ({mode or 'standard'})",
-        "permissions:",
-    ]
+    lines = [f"权限策略: {current_mode(agent)} ({mode or 'standard'})"]
+    if security_context is not None:
+        profile = security_context.profile
+        lines.extend(
+            [
+                f"profile: {profile.name}",
+                f"approval policy: {security_context.approval_policy}",
+                "filesystem:",
+            ]
+        )
+        lines.extend(
+            f"- {rule.access}: {rule.path}" for rule in profile.filesystem
+        )
+        if not profile.filesystem:
+            lines.append("- 无")
+        lines.append(f"network: {'allow' if profile.network_enabled else 'restricted'}")
+        lines.append(
+            "tool approval: default_external="
+            f"{security_context.tool_approval_default_external}"
+        )
+    lines.append("permissions:")
     keys = ["default", "read", "search", "write", "bash", "background", "network", "destructive"]
     if isinstance(permissions, dict):
         for key in keys:
             if key in permissions:
                 lines.append(f"- {key}: {permissions[key]}")
-    ttl = temporary_grant_ttl_seconds(runtime.settings)
+    ttl = int(
+        getattr(agent, "_security_grant_ttl_seconds", 0)
+        or temporary_grant_ttl_seconds(runtime.settings)
+    )
     pending = await _call_optional(runtime, "pending_confirmation_status")
     lines.append(f"临时授权 TTL: {_format_ttl(ttl)}")
+    if security_context is not None:
+        lines.append(
+            f"当前会话授权: tool={len(security_tool_grants)}, "
+            f"resource={len(security_resource_grants)}"
+        )
     lines.append("当前 grants: " + _format_grants_text(temporary_grants, turn_grants or legacy_grants))
     if pending:
         lines.append(f"pending confirm: {pending.get('tool_name', '-')} ({pending.get('permission_category', '-')})")
@@ -1186,7 +1254,57 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
         "turn_grants": turn_grants or legacy_grants,
         "temporary_grants": temporary_grants,
         "temporary_grant_ttl_seconds": ttl,
+        "security": _security_context_snapshot(security_context),
+        "tool_grants": security_tool_grants,
+        "resource_grants": security_resource_grants,
         "pending_confirmation": pending or None,
+    }
+
+
+def _security_grants_snapshot(context: Any) -> tuple[list[dict], list[dict]]:
+    if context is None:
+        return [], []
+    state = context.state
+    state.prune_expired()
+    tools = [
+        {
+            "tool_key": grant.tool_key,
+            "expires_at": grant.expires_at,
+            "expires_at_iso": format_expiry(grant.expires_at),
+        }
+        for grant in sorted(state.tool_grants.values(), key=lambda item: item.tool_key)
+    ]
+    resources = [
+        {
+            **grant.requirement.as_dict(),
+            "key": grant.requirement.key,
+            "expires_at": grant.expires_at,
+            "expires_at_iso": format_expiry(grant.expires_at),
+        }
+        for grant in sorted(
+            state.resource_grants.values(), key=lambda item: item.requirement.key
+        )
+    ]
+    return tools, resources
+
+
+def _security_context_snapshot(context: Any) -> dict | None:
+    if context is None:
+        return None
+    return {
+        "mode_id": context.mode_id,
+        "profile": context.profile.name,
+        "approval_policy": context.approval_policy,
+        "filesystem": [
+            {"path": str(rule.path), "access": rule.access}
+            for rule in context.profile.filesystem
+        ],
+        "network_enabled": context.profile.network_enabled,
+        "tool_approval": {
+            "default_external": context.tool_approval_default_external,
+            "tools": dict(context.tool_approval_tools),
+            "mcp_servers": dict(context.tool_approval_mcp_servers),
+        },
     }
 
 

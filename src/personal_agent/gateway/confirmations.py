@@ -7,7 +7,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personal_agent.permissions import confirm_timeout_seconds, temporary_grant_ttl_seconds
+from personal_agent.permissions import (
+    confirm_timeout_seconds,
+    format_grant_duration,
+    temporary_grant_ttl_seconds,
+)
 
 
 @dataclass
@@ -17,7 +21,7 @@ class PendingConfirmation:
     decision: Any
     created_at: float
     expires_at: float
-    ttl_hours: int
+    ttl_seconds: int
     future: asyncio.Future[str] = field(repr=False)
 
     def snapshot(self) -> dict[str, Any]:
@@ -32,7 +36,8 @@ class PendingConfirmation:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "waiting_seconds": max(0.0, time.time() - self.created_at),
-            "temporary_grant_ttl_hours": self.ttl_hours,
+            "temporary_grant_ttl_seconds": self.ttl_seconds,
+            "temporary_grant_ttl_hours": self.ttl_seconds / 3600,
         }
 
 
@@ -68,7 +73,7 @@ class PendingConfirmationManager:
         if self.get(session_key) is not None:
             return "deny"
         timeout = confirm_timeout_seconds(settings)
-        ttl_hours = max(1, temporary_grant_ttl_seconds(settings) // 3600)
+        ttl_seconds = temporary_grant_ttl_seconds(settings)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         now = time.time()
@@ -78,11 +83,17 @@ class PendingConfirmationManager:
             decision=decision,
             created_at=now,
             expires_at=now + timeout,
-            ttl_hours=ttl_hours,
+            ttl_seconds=ttl_seconds,
             future=future,
         )
         self._pending[session_key] = pending
-        sent = await send(_format_confirmation_prompt(decision, ttl_hours=ttl_hours, timeout_seconds=timeout))
+        sent = await send(
+            _format_confirmation_prompt(
+                decision,
+                ttl_seconds=ttl_seconds,
+                timeout_seconds=timeout,
+            )
+        )
         if not sent:
             self._pending.pop(session_key, None)
             return "deny"
@@ -108,7 +119,8 @@ class PendingConfirmationManager:
         if answer == "allow":
             return True, "已允许一次，继续执行。"
         if answer == "always":
-            return True, f"已允许，{pending.ttl_hours}小时内同类工具不再询问。"
+            duration = format_grant_duration(pending.ttl_seconds)
+            return True, f"已允许，{duration}内同类工具不再询问。"
         return True, "已拒绝本次工具调用。"
 
     def cancel(self, session_key: str | None = None) -> int:
@@ -126,7 +138,7 @@ class PendingConfirmationManager:
         return count
 
 
-def _format_confirmation_prompt(decision: Any, *, ttl_hours: int, timeout_seconds: int) -> str:
+def _format_confirmation_prompt(decision: Any, *, ttl_seconds: int, timeout_seconds: int) -> str:
     tool = _decision_field(decision, "display_name") or _decision_field(decision, "tool_name") or "tool"
     category = _decision_field(decision, "permission_category") or "default"
     preview = _decision_field(decision, "input_preview") or _decision_field(decision, "risk_summary")
@@ -137,8 +149,9 @@ def _format_confirmation_prompt(decision: Any, *, ttl_hours: int, timeout_second
     ]
     if preview:
         lines.append(f"操作: {preview}")
+    duration = format_grant_duration(ttl_seconds)
     lines.extend([
-        f"回复 1 允许一次 / 2 拒绝 / 3 {ttl_hours}小时允许",
+        f"回复 1 允许一次 / 2 拒绝 / 3 {duration}允许",
         f"{timeout_seconds}秒内有效",
     ])
     return "\n".join(lines)

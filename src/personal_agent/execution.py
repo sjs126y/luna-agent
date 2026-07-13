@@ -9,7 +9,16 @@ ExecutionMode = Literal["guarded", "standard", "trusted", "sovereign"]
 PermissionDecision = Literal["allow", "ask", "deny"]
 NetworkPolicy = Literal["deny", "ask", "allow"]
 
-VALID_EXECUTION_MODES: set[str] = {"guarded", "standard", "trusted", "sovereign"}
+VALID_EXECUTION_MODES: set[str] = {
+    "read-only",
+    "ask-first",
+    "local-auto",
+    "full-auto",
+    "guarded",
+    "standard",
+    "trusted",
+    "sovereign",
+}
 VALID_PERMISSION_DECISIONS: set[str] = {"allow", "ask", "deny"}
 PERMISSION_CATEGORIES: tuple[str, ...] = (
     "default",
@@ -269,8 +278,9 @@ def _effective_network_policy(profile: ExecutionModeProfile, settings) -> Networ
 
 
 def _normalize_mode(value: object) -> str:
-    mode = str(value or "standard").strip().lower()
-    return mode if mode in VALID_EXECUTION_MODES else "standard"
+    from personal_agent.security.modes import mode_preset
+
+    return mode_preset(value).legacy_execution_mode
 
 
 def _normalize_policy_overrides(value: object) -> dict[str, dict[str, PermissionDecision]]:

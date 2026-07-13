@@ -19,9 +19,13 @@ from personal_agent.tools.redact import redact
 GuardStage = Literal["precheck", "permission", "runtime_guard"]
 DecisionStage = Literal["lookup", "precheck", "permission", "runtime_guard", "execution"]
 EXECUTION_MODE_LABELS = {
+    "read-only": "Read Only",
+    "ask-first": "Ask First",
+    "local-auto": "Local Auto",
+    "full-auto": "Full Auto",
     "guarded": "Read Only",
     "standard": "Ask First",
-    "trusted": "Edit Freely",
+    "trusted": "Local Auto",
     "sovereign": "Full Auto",
 }
 MAX_PREVIEW_CHARS = 500
@@ -40,6 +44,8 @@ class GuardDecision:
     grant_matched: str = ""
     grant_scope: str = ""
     grant_expires_at: float = 0.0
+    tool_approval_mode: str = ""
+    requested_resources: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,8 @@ class ToolDecision:
     timeout_seconds: float | None = None
     method: str = ""
     process_label: str = ""
+    tool_approval_mode: str = ""
+    requested_resources: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
     def as_dict(self) -> dict:
         return {
@@ -109,6 +117,8 @@ class ToolDecision:
             "timeout_seconds": self.timeout_seconds,
             "method": self.method,
             "process_label": self.process_label,
+            "tool_approval_mode": self.tool_approval_mode,
+            "requested_resources": list(self.requested_resources),
         }
 
 
@@ -136,6 +146,8 @@ def evaluate_execution_guards(tc: dict, entry: Any, agent: Any) -> GuardDecision
         grant_matched=permission.grant_matched,
         grant_scope=permission.grant_scope,
         grant_expires_at=permission.grant_expires_at,
+        tool_approval_mode=permission.tool_approval_mode,
+        requested_resources=permission.requested_resources,
     )
 
 
@@ -156,6 +168,8 @@ def tool_decision_from_guard(tc: dict, guard: GuardDecision) -> ToolDecision:
         grant_matched=guard.grant_matched,
         grant_scope=guard.grant_scope,
         grant_expires_at=guard.grant_expires_at,
+        tool_approval_mode=guard.tool_approval_mode,
+        requested_resources=guard.requested_resources,
         **display,
     )
 
@@ -208,7 +222,7 @@ def fallback_tool_category(name: str) -> str:
 def classify_guard_denial(decision: GuardDecision) -> str:
     if decision.stage == "precheck":
         return "precheck"
-    if decision.reason_code == "permission_required":
+    if decision.reason_code in {"permission_required", "security_approval_required"}:
         return "authorization"
     if decision.reason_code == "quota_exceeded":
         return "quota"
@@ -271,6 +285,31 @@ def check_hard_safety(tc: dict, entry: Any, category: str) -> GuardDecision:
             reason_code=_precheck_reason_code(error),
             message=error,
         )
+    try:
+        from pathlib import Path
+        from personal_agent.security.evaluator import prepare_tool_call
+        from personal_agent.tools.sandbox import get_sandbox
+
+        for requirement in prepare_tool_call(tc, entry).resources:
+            if requirement.kind != "filesystem":
+                continue
+            blocked = get_sandbox().check_blocked_path(Path(requirement.resource))
+            if blocked:
+                return GuardDecision(
+                    stage="precheck",
+                    allowed=False,
+                    category=category,
+                    reason_code="sandbox_blocked",
+                    message=blocked,
+                )
+    except Exception as exc:
+        return GuardDecision(
+            stage="precheck",
+            allowed=False,
+            category=category,
+            reason_code="precheck_error",
+            message=f"{type(exc).__name__}: {exc}",
+        )
     return GuardDecision(stage="precheck", allowed=True, category=category)
 
 
@@ -290,7 +329,7 @@ def run_precheck(tc: dict, entry: Any) -> str | None:
             from personal_agent.tools.sandbox import get_sandbox
 
             full = get_sandbox().resolve(path)
-            sandbox_err = get_sandbox().check_path(full)
+            sandbox_err = get_sandbox().check_blocked_path(full)
             if sandbox_err:
                 return sandbox_err
 
@@ -300,7 +339,7 @@ def run_precheck(tc: dict, entry: Any) -> str | None:
             from personal_agent.tools.sandbox import get_sandbox
 
             full = get_sandbox().resolve(path)
-            sandbox_err = get_sandbox().check_path(full)
+            sandbox_err = get_sandbox().check_blocked_path(full)
             if sandbox_err:
                 return sandbox_err
 
@@ -317,9 +356,30 @@ def run_precheck(tc: dict, entry: Any) -> str | None:
 
 
 def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDecision:
+    security_context = getattr(agent, "_security_context", None) if agent is not None else None
     if agent is None:
-        return GuardDecision(stage="permission", allowed=True, category=category)
+        from personal_agent.security.evaluator import unscoped_security_context
 
+        security_context = unscoped_security_context()
+    if security_context is not None:
+        from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+
+        security = evaluate_tool_security(prepare_tool_call(tc, entry), security_context)
+        preset_mode = str(getattr(security_context, "mode_id", ""))
+        return GuardDecision(
+            stage="permission",
+            allowed=security.allowed,
+            category=category,
+            reason_code="" if security.allowed else security.reason_code,
+            message="" if security.allowed else f"Error: {security.message}",
+            mode=preset_mode,
+            policy_decision=security.decision,
+            required_allow="security" if security.decision == "ask" else "",
+            grant_matched="tool" if security.tool_grant_matched else "",
+            grant_scope="cached" if security.tool_grant_matched else "",
+            tool_approval_mode=security.tool_approval_mode,
+            requested_resources=tuple(item.as_dict() for item in security.missing_resources),
+        )
     policy = getattr(agent, "_execution_policy", None)
     mode = str(getattr(policy, "mode", "")) if policy is not None else ""
     decision = "ask" if entry.is_destructive else "allow"
@@ -480,7 +540,7 @@ def _risk_summary(
 ) -> str:
     if guard.reason_code == "permission_denied":
         return "Execution mode denies this tool."
-    if guard.reason_code == "permission_required":
+    if guard.reason_code in {"permission_required", "security_approval_required"}:
         return f"Execution mode requires confirmation for {category} tools."
     if guard.stage == "precheck" and guard.message:
         return _shorten(redact(guard.message), 160)
@@ -498,9 +558,9 @@ def _risk_summary(
 
 
 def _default_action(category: str, guard: GuardDecision, risk_level: str) -> str:
-    if guard.policy_decision == "deny" or guard.reason_code not in {"", "permission_required"}:
+    if guard.policy_decision == "deny" or guard.reason_code not in {"", "permission_required", "security_approval_required"}:
         return "deny"
-    if guard.reason_code == "permission_required":
+    if guard.reason_code in {"permission_required", "security_approval_required"}:
         if category in {"bash", "background", "network", "destructive"} or risk_level == "high":
             return "none"
         return "allow"
@@ -508,7 +568,7 @@ def _default_action(category: str, guard: GuardDecision, risk_level: str) -> str
 
 
 def _available_actions(guard: GuardDecision) -> tuple[str, ...]:
-    if guard.reason_code == "permission_required":
+    if guard.reason_code in {"permission_required", "security_approval_required"}:
         return ("allow_once", "allow_always", "deny")
     if guard.allowed:
         return ()

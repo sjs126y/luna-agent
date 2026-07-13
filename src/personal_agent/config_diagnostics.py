@@ -81,7 +81,12 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "ocr_timeout_seconds",
         "ocr_language",
     },
-    "permissions": {"temporary_grant_ttl_hours", "confirm_timeout_seconds"},
+    "permissions": {
+        "grant_ttl_minutes",
+        "temporary_grant_ttl_hours",
+        "confirm_timeout_seconds",
+        "tool_approval",
+    },
     "plugins": {"dirs", "enabled", "disabled", "config"},
     "profiles": None,
     "sandbox": {
@@ -90,6 +95,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "bash_work_dir",
         "bash_restrict_paths",
         "bash_allow_network",
+        "process_backend",
         "file_max_write_bytes",
         "audit_enabled",
     },
@@ -142,6 +148,14 @@ MCP_SERVER_KEYS = {
     "enabled",
     "connect_timeout_seconds",
     "call_timeout_seconds",
+    "allow_insecure_http",
+    "allow_private_network",
+    "allow_network",
+    "max_tools",
+    "max_tool_pages",
+    "max_schema_bytes",
+    "max_result_chars",
+    "max_artifact_bytes",
 }
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -474,8 +488,13 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         _execution_policy_value(execution["policy"], "execution.policy", errors)
 
     permissions = sections["permissions"]
+    _range_int(permissions, "grant_ttl_minutes", "permissions.grant_ttl_minutes", 1, 10080, errors)
     _range_int(permissions, "temporary_grant_ttl_hours", "permissions.temporary_grant_ttl_hours", 1, 168, errors)
     _range_int(permissions, "confirm_timeout_seconds", "permissions.confirm_timeout_seconds", 10, 600, errors)
+    if "tool_approval" in permissions:
+        from personal_agent.security.config import tool_approval_config_errors
+
+        errors.extend(tool_approval_config_errors(permissions["tool_approval"]))
 
     sandbox = sections["sandbox"]
     _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)
@@ -483,6 +502,13 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     _string_value(sandbox, "bash_work_dir", "sandbox.bash_work_dir", errors)
     for key in ("bash_restrict_paths", "bash_allow_network", "audit_enabled"):
         _bool_value(sandbox, key, f"sandbox.{key}", errors)
+    _enum_value(
+        sandbox,
+        "process_backend",
+        "sandbox.process_backend",
+        {"auto", "bwrap", "legacy"},
+        errors,
+    )
     _positive_int(sandbox, "file_max_write_bytes", "sandbox.file_max_write_bytes", errors)
 
     session = sections["session"]
@@ -586,7 +612,26 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
             "missing_url": transport == "streamable_http" and not bool(url),
             "duplicate_name": duplicate_name,
             "unknown_keys": unknown,
+            "allow_insecure_http": bool(raw.get("allow_insecure_http", False)),
+            "allow_private_network": bool(raw.get("allow_private_network", False)),
+            "allow_network": bool(raw.get("allow_network", False)),
         })
+        for key in ("allow_insecure_http", "allow_private_network", "allow_network"):
+            if key in raw and not isinstance(raw[key], bool):
+                errors.append(f"{label}.{key} 必须是 true/false。")
+        for key in (
+            "max_tools",
+            "max_tool_pages",
+            "max_schema_bytes",
+            "max_result_chars",
+            "max_artifact_bytes",
+        ):
+            if key in raw and (
+                not isinstance(raw[key], int)
+                or isinstance(raw[key], bool)
+                or raw[key] <= 0
+            ):
+                errors.append(f"{label}.{key} 必须是正整数。")
         if transport not in {"stdio", "streamable_http"}:
             errors.append(f"MCP 服务器 {name} 使用不支持的 transport: {transport}")
         elif mcp_enabled and enabled and transport == "stdio" and not command:
@@ -599,6 +644,10 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
             parsed = urlparse(url)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 errors.append(f"MCP 服务器 {name} 的 url 必须是 http(s) URL。")
+            elif parsed.scheme == "http" and not raw.get("allow_insecure_http", False):
+                errors.append(
+                    f"MCP 服务器 {name} 使用 HTTP；如确认可信需显式设置 allow_insecure_http: true。"
+                )
         if duplicate_name:
             errors.append(f"MCP 服务器名称重复: {name}")
 

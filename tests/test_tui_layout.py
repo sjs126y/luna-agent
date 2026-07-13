@@ -362,7 +362,7 @@ def test_hint_bar_uses_distinct_mode_colors():
     from personal_agent.tui.layout import _hint_bar
 
     seen = set()
-    for mode in ("Read Only", "Ask First", "Edit Freely", "Full Auto"):
+    for mode in ("Read Only", "Ask First", "Local Auto", "Full Auto"):
         state = UIState()
         state.exec_mode = mode
         bar = _hint_bar(state)

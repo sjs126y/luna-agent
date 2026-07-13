@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from pathlib import Path
+import shlex
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
@@ -53,11 +55,17 @@ class SDKMCPConnection:
         notification_callback: NotificationCallback | None = None,
         http_client_factory: HTTPClientFactory | None = None,
         env_values: Mapping[str, str] | None = None,
+        process_backend: str = "legacy",
+        sandbox_roots: list[Path] | None = None,
+        work_dir: Path | None = None,
     ) -> None:
         self.config = config
         self._notification_callback = notification_callback
         self._http_client_factory = http_client_factory or _default_http_client
         self._env_values = dict(env_values or {})
+        self._process_backend = process_backend
+        self._sandbox_roots = list(sandbox_roots or [])
+        self._work_dir = Path(work_dir).resolve() if work_dir is not None else Path.cwd()
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
         self._connect_lock = asyncio.Lock()
@@ -90,15 +98,12 @@ class SDKMCPConnection:
         self._stack = stack
         if self.config.transport == MCPTransport.STDIO:
             self._stderr_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
-            params = StdioServerParameters(
-                command=self.config.command,
-                args=list(self.config.args),
-                env=_stdio_env(self.config.env),
-            )
+            params = self._stdio_parameters()
             read_stream, write_stream = await stack.enter_async_context(
                 stdio_client(params, errlog=self._stderr_file)
             )
         else:
+            _validate_http_target(self.config)
             http_client = self._http_client_factory(
                 _http_headers(self.config.headers_env, self._env_values),
                 self.config.connect_timeout_seconds,
@@ -129,20 +134,66 @@ class SDKMCPConnection:
         )
         return self._server_info
 
+    def _stdio_parameters(self) -> StdioServerParameters:
+        from personal_agent.tools.process_sandbox import build_process_launch
+
+        command = shlex.join([self.config.command, *self.config.args])
+        launch = build_process_launch(
+            command,
+            cwd=self._work_dir,
+            writable_roots=self._sandbox_roots,
+            allow_network=self.config.allow_network,
+            requested_backend=self._process_backend,
+        )
+        if launch.backend == "unavailable":
+            raise ValueError(launch.warning)
+        env = _stdio_env(self.config.env)
+        if launch.backend == "bwrap":
+            env["HOME"] = str(self._work_dir)
+            env["TMPDIR"] = "/tmp"
+            return StdioServerParameters(
+                command=launch.argv[0],
+                args=list(launch.argv[1:]),
+                env=env,
+            )
+        return StdioServerParameters(
+            command=self.config.command,
+            args=list(self.config.args),
+            env=env,
+        )
+
     async def list_tools(self) -> list[MCPToolSpec]:
         session = self._require_session()
         cursor: str | None = None
         tools: list[MCPToolSpec] = []
+        pages = 0
         while True:
-            result = await session.list_tools(cursor=cursor)
-            tools.extend(
-                MCPToolSpec(
-                    name=str(tool.name),
-                    description=str(tool.description or ""),
-                    input_schema=dict(tool.inputSchema or {}),
+            pages += 1
+            if pages > self.config.max_tool_pages:
+                raise ValueError(
+                    f"MCP tool pagination exceeded {self.config.max_tool_pages} pages"
                 )
-                for tool in result.tools
-            )
+            result = await session.list_tools(cursor=cursor)
+            for tool in result.tools:
+                schema = dict(tool.inputSchema or {})
+                schema_size = len(
+                    json.dumps(schema, ensure_ascii=False, default=str).encode("utf-8")
+                )
+                if schema_size > self.config.max_schema_bytes:
+                    raise ValueError(
+                        f"MCP tool schema exceeds {self.config.max_schema_bytes} bytes: {tool.name}"
+                    )
+                tools.append(
+                    MCPToolSpec(
+                        name=str(tool.name),
+                        description=_truncate_text(str(tool.description or ""), 8000),
+                        input_schema=schema,
+                    )
+                )
+                if len(tools) > self.config.max_tools:
+                    raise ValueError(
+                        f"MCP tool count exceeds configured limit {self.config.max_tools}"
+                    )
             cursor = result.nextCursor
             if not cursor:
                 return tools
@@ -154,7 +205,7 @@ class SDKMCPConnection:
             arguments,
             read_timeout_seconds=timedelta(seconds=self.config.call_timeout_seconds),
         )
-        return _normalize_call_result(result)
+        return _normalize_call_result(result, self.config)
 
     async def ping(self) -> None:
         await self._require_session().send_ping()
@@ -230,38 +281,115 @@ def _default_http_client(headers: dict[str, str], connect_timeout: float, call_t
     )
 
 
-def _normalize_call_result(result) -> MCPCallResult:
+def _validate_http_target(config: MCPServerConfig) -> None:
+    from urllib.parse import urlparse
+
+    from personal_agent.tools.url_safety import check_url
+
+    parsed = urlparse(config.url)
+    if parsed.scheme == "http" and not config.allow_insecure_http:
+        raise ValueError(
+            "MCP HTTP transport requires HTTPS; set allow_insecure_http: true "
+            "for an explicitly trusted endpoint"
+        )
+    error = check_url(config.url, allow_private=config.allow_private_network)
+    if error:
+        raise ValueError(f"Unsafe MCP HTTP endpoint: {error.removeprefix('Error: ')}")
+
+
+def _normalize_call_result(result, config: MCPServerConfig) -> MCPCallResult:
     blocks: list[MCPContentBlock] = []
     text_parts: list[str] = []
-    for item in result.content:
+    remaining_text = config.max_result_chars
+    for item in list(result.content)[:64]:
         raw = item.model_dump(by_alias=True, exclude_none=True)
         block_type = str(raw.get("type") or "unknown")
         if block_type == "text":
-            text = str(raw.get("text") or "")
+            text = _truncate_text(str(raw.get("text") or ""), remaining_text)
+            remaining_text = max(0, remaining_text - len(text))
             text_parts.append(text)
             blocks.append(MCPContentBlock(type=block_type, text=text))
         elif block_type in {"image", "audio"}:
             mime_type = str(raw.get("mimeType") or "")
             data = str(raw.get("data") or "")
+            data, truncated = _bounded_artifact(data, config.max_artifact_bytes)
             text_parts.append(f"[{block_type}: {mime_type or 'unknown'}]")
-            blocks.append(MCPContentBlock(type=block_type, mime_type=mime_type, data=data))
+            blocks.append(
+                MCPContentBlock(
+                    type=block_type,
+                    mime_type=mime_type,
+                    data=data,
+                    metadata={"truncated": True} if truncated else {},
+                )
+            )
         elif block_type == "resource":
             resource = raw.get("resource") if isinstance(raw.get("resource"), dict) else {}
             uri = str(resource.get("uri") or "")
             mime_type = str(resource.get("mimeType") or "")
-            text = str(resource.get("text") or "")
+            text = _truncate_text(str(resource.get("text") or ""), remaining_text)
+            remaining_text = max(0, remaining_text - len(text))
             text_parts.append(text or f"[resource: {uri or 'unknown'}]")
             data = str(resource.get("blob") or "")
-            blocks.append(MCPContentBlock(type=block_type, text=text, mime_type=mime_type, data=data, uri=uri))
+            data, truncated = _bounded_artifact(data, config.max_artifact_bytes)
+            blocks.append(
+                MCPContentBlock(
+                    type=block_type,
+                    text=text,
+                    mime_type=mime_type,
+                    data=data,
+                    uri=_truncate_text(uri, 2048),
+                    metadata={"truncated": True} if truncated else {},
+                )
+            )
         else:
-            blocks.append(MCPContentBlock(type=block_type, metadata=raw))
+            blocks.append(MCPContentBlock(type=block_type, metadata={"omitted": True}))
 
     structured = getattr(result, "structuredContent", None)
-    if not text_parts and structured is not None:
-        text_parts.append(json.dumps(structured, ensure_ascii=False))
+    bounded_structured, structured_truncated = _bounded_structured(
+        structured,
+        config.max_result_chars,
+    )
+    if not text_parts and bounded_structured is not None:
+        text_parts.append(json.dumps(bounded_structured, ensure_ascii=False))
     return MCPCallResult(
-        text="\n".join(part for part in text_parts if part),
+        text=_truncate_text(
+            "\n".join(part for part in text_parts if part),
+            config.max_result_chars,
+        ),
         content=blocks,
         is_error=bool(result.isError),
-        metadata={"structured_content": structured} if structured is not None else {},
+        metadata=(
+            {
+                "structured_content": bounded_structured,
+                "structured_content_truncated": structured_truncated,
+            }
+            if structured is not None
+            else {}
+        ),
     )
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    maximum = max(0, int(limit))
+    if len(value) <= maximum:
+        return value
+    marker = "\n...[truncated by MCP safety limit]"
+    if maximum <= len(marker):
+        return value[:maximum]
+    return value[: maximum - len(marker)] + marker
+
+
+def _bounded_artifact(data: str, max_bytes: int) -> tuple[str, bool]:
+    estimated_bytes = len(data.encode("utf-8")) * 3 // 4
+    if estimated_bytes <= max_bytes:
+        return data, False
+    return "", True
+
+
+def _bounded_structured(value: Any, max_chars: int) -> tuple[Any, bool]:
+    if value is None:
+        return None, False
+    encoded = json.dumps(value, ensure_ascii=False, default=str)
+    if len(encoded) <= max_chars:
+        return value, False
+    return {"truncated": True, "preview": _truncate_text(encoded, max_chars)}, True

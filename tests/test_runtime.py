@@ -212,7 +212,7 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
     stopped = []
 
     class FakeMCPManager:
-        def __init__(self, configs, *, env_values=None):
+        def __init__(self, configs, *, env_values=None, **kwargs):
             self.configs = configs
 
         async def start(self):
@@ -247,7 +247,7 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
     _write_mcp_plugin(plugins_dir / "mcp")
 
     class FakeMCPManager:
-        def __init__(self, configs, *, env_values=None):
+        def __init__(self, configs, *, env_values=None, **kwargs):
             self.configs = configs
             self.stopped = False
 
@@ -361,7 +361,7 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
     created = {}
 
     class FakeMCPManager:
-        def __init__(self, configs, *, env_values=None):
+        def __init__(self, configs, *, env_values=None, **kwargs):
             created["configs"] = configs
             created["env_values"] = env_values
             self.started = False

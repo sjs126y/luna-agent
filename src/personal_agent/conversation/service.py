@@ -76,6 +76,9 @@ class ConversationService:
             attachment_store=self.attachment_store,
         )
         self.steer_manager = SteerManager()
+        from personal_agent.security.session import SecurityStateStore
+
+        self.security_states = SecurityStateStore(settings)
         from personal_agent.conversation.query import ConversationQueryService
 
         self.queries = ConversationQueryService(self)
@@ -485,6 +488,7 @@ class ConversationService:
 
             if agent._tools_generation == tool_registry.generation:
                 self.agent_cache.move_to_end(session_key)
+                self._apply_security_context(agent, session_key)
                 return agent
             del self.agent_cache[session_key]
 
@@ -498,11 +502,41 @@ class ConversationService:
             session_key=session_key,
         )
         agent = runtime.agent
+        self._apply_security_context(agent, session_key)
         if self.agent_cache_max is not None:
             while len(self.agent_cache) >= self.agent_cache_max:
                 self.agent_cache.popitem(last=False)
         self.agent_cache[session_key] = agent
         return agent
+
+    def security_context(self, session_key: str):
+        return self.security_states.context(session_key)
+
+    def set_security_mode(self, session_key: str, mode: object):
+        state = self.security_states.set_mode(session_key, mode)
+        agent = self.get_cached_agent(session_key)
+        if agent is not None:
+            self._apply_security_context(agent, session_key)
+            for attr in ("_destructive_allowed", "_turn_grants"):
+                grants = getattr(agent, attr, None)
+                if hasattr(grants, "clear"):
+                    grants.clear()
+            temporary = getattr(agent, "_temporary_grants", None)
+            if hasattr(temporary, "clear"):
+                temporary.clear()
+        return state
+
+    def _apply_security_context(self, agent, session_key: str) -> None:
+        from personal_agent.execution import resolve_execution_policy_for_mode
+        from personal_agent.security.modes import mode_preset
+
+        context = self.security_context(session_key)
+        preset = mode_preset(context.mode_id)
+        agent._security_context = context
+        agent._security_grant_ttl_seconds = self.security_states.grant_ttl_seconds
+        agent._execution_policy = resolve_execution_policy_for_mode(
+            self.settings, preset.legacy_execution_mode
+        )
 
     async def _record_tool_runs(
         self,
@@ -561,12 +595,14 @@ class ConversationService:
     async def reset_session(self, session_key: str, source) -> str:
         new_id = await self.session_store.reset_session(session_key, source)
         self.clear_agent(session_key)
+        self.security_states.clear(session_key)
         return new_id
 
     async def rename_session(self, old_key: str, new_key: str) -> bool:
         ok = await self.session_store.rename_session(old_key, new_key)
         if ok:
             self.move_agent(old_key, new_key)
+            self.security_states.move(old_key, new_key)
         return ok
 
     async def delete_session(self, session_key: str) -> bool:
@@ -574,6 +610,7 @@ class ConversationService:
             return False
         await self.session_store.delete_session(session_key)
         self.delete_agent(session_key)
+        self.security_states.clear(session_key)
         return True
 
     async def session_list_summary(

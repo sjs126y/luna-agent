@@ -89,6 +89,59 @@ sandbox:
     assert any("execution.mode 不支持" in error for error in report["errors"])
 
 
+def test_config_report_validates_tool_approval_modes(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+permissions:
+  tool_approval:
+    default_external: sometimes
+    tools:
+      bash: prompt
+    mcp_servers:
+      github: deny
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any(
+        "permissions.tool_approval.default_external" in error
+        for error in report["errors"]
+    )
+
+
+def test_config_report_validates_process_sandbox_backend(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+  process_backend: containerish
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("sandbox.process_backend 不支持" in error for error in report["errors"])
+
+
 def test_config_report_includes_registry_field_summary(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """
@@ -519,6 +572,26 @@ mcp:
     report = build_config_report(tmp_path)
 
     assert any("url 必须是 http(s) URL" in error for error in report["errors"])
+
+
+def test_config_report_requires_explicit_insecure_mcp_and_valid_limits(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+mcp:
+  enabled: true
+  servers:
+    - name: remote
+      transport: streamable_http
+      url: http://localhost:9000/mcp
+      max_tools: 0
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("allow_insecure_http: true" in error for error in report["errors"])
+    assert any("max_tools 必须是正整数" in error for error in report["errors"])
 
 
 def test_ensure_config_dirs_creates_expected_directories(tmp_path):

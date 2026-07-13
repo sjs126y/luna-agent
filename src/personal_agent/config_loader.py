@@ -212,6 +212,10 @@ def convert_config_value(field: ConfigField, raw_value: Any) -> tuple[Any, list[
 
 def _validate_converted_value(field: ConfigField, value: Any) -> list[str]:
     errors: list[str] = []
+    if field.path == "permissions.tool_approval":
+        from personal_agent.security.config import tool_approval_config_errors
+
+        errors.extend(tool_approval_config_errors(value))
     if field.value_type == "str" and field.choices and value not in field.choices:
         errors.append(f"{field.path} 不支持: {value}，可选: {', '.join(str(item) for item in field.choices)}")
     if field.value_type in {"int", "float"}:

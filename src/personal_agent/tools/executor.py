@@ -215,6 +215,9 @@ async def execute_tool_call_result(
     name = tc["name"]
     guard_decision: GuardDecision | None = None
     tool_decision: ToolDecision | None = None
+    one_time_security_context = None
+    one_time_security_grants: tuple[set[str], set[str]] = (set(), set())
+    preserve_nested_guard = False
     await emit_event(
         event_sink,
         "tool_start",
@@ -225,7 +228,8 @@ async def execute_tool_call_result(
     )
 
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
-        if tool_decision is not None:
+        nonlocal one_time_security_grants
+        if tool_decision is not None and not preserve_nested_guard:
             result.guard_stage = tool_decision.stage
             result.reason_code = tool_decision.reason_code
             result.permission_category = tool_decision.permission_category
@@ -281,10 +285,21 @@ async def execute_tool_call_result(
             timeout_seconds=tool_decision.timeout_seconds if tool_decision else None,
             method=tool_decision.method if tool_decision else "",
             process_label=tool_decision.process_label if tool_decision else "",
+            tool_approval_mode=tool_decision.tool_approval_mode if tool_decision else "",
+            requested_resources=list(tool_decision.requested_resources) if tool_decision else [],
             artifact_count=len(result.artifacts or []),
             artifacts=[item.safe_summary() for item in (result.artifacts or [])],
             result_metadata=_safe_result_metadata(result.result_metadata or {}),
         )
+        if one_time_security_context is not None and any(one_time_security_grants):
+            from personal_agent.security.evaluator import revoke_grants
+
+            revoke_grants(
+                one_time_security_context,
+                tool_keys=one_time_security_grants[0],
+                resource_keys=one_time_security_grants[1],
+            )
+            one_time_security_grants = (set(), set())
         return result
 
     if is_interrupted():
@@ -307,6 +322,35 @@ async def execute_tool_call_result(
             error=f"unknown tool '{name}'",
             started=started,
         ))
+
+    # Proposal hooks may transform arguments, but the final call is frozen and
+    # evaluated only after those transformations have completed.
+    if hooks:
+        try:
+            hook_result = await hooks.fire("on_before_tool_exec", tc, entry)
+        except Exception as exc:
+            return await _finish(_result(
+                tc,
+                status="error",
+                category="hook",
+                error=f"before hook failed: {type(exc).__name__}: {exc}",
+                started=started,
+            ))
+        if hook_result is None:
+            return await _finish(_result(
+                tc, status="denied", category="hook", error="tool execution blocked", started=started
+            ))
+        if isinstance(hook_result, dict):
+            modified = _normalize_tool_call(hook_result)
+            if modified["name"] != name:
+                return await _finish(_result(
+                    tc,
+                    status="denied",
+                    category="hook",
+                    error="before hook cannot change tool name",
+                    started=started,
+                ))
+            tc = modified
 
     # ── guard decisions: hard safety → permission → runtime guard ──
     try:
@@ -332,11 +376,28 @@ async def execute_tool_call_result(
                 started=started,
             ))
         if answer in {"allow", "always"}:
-            added_grants = _add_confirm_grants(
-                agent,
-                tool_decision,
-                persist=answer == "always",
-            )
+            security_context = getattr(agent, "_security_context", None) if agent is not None else None
+            if security_context is not None and tool_decision.reason_code == "security_approval_required":
+                from personal_agent.security.evaluator import grant_prepared_call, prepare_tool_call
+
+                ttl = int(getattr(agent, "_security_grant_ttl_seconds", 3600) or 3600)
+                one_time = answer == "allow" or tool_decision.tool_approval_mode == "prompt"
+                if one_time:
+                    ttl = 60
+                security_grants = grant_prepared_call(
+                    prepare_tool_call(tc, entry), security_context, ttl_seconds=ttl
+                )
+                if one_time:
+                    one_time_security_context = security_context
+                    one_time_security_grants = security_grants
+                added_grants = set()
+            else:
+                security_grants = (set(), set())
+                added_grants = _add_confirm_grants(
+                    agent,
+                    tool_decision,
+                    persist=answer == "always",
+                )
             try:
                 guard_decision = evaluate_execution_guards(tc, entry, agent)
             except Exception as exc:
@@ -365,34 +426,11 @@ async def execute_tool_call_result(
     if name in ("write", "edit"):
         _checkpoint_file_write(tc)
 
-    # ── 1. pre-hook ──────────────────────────────────
-    if hooks:
-        try:
-            hook_result = await hooks.fire("on_before_tool_exec", tc, entry)
-        except Exception as exc:
-            return await _finish(_result(
-                tc,
-                status="error",
-                category="hook",
-                error=f"before hook failed: {type(exc).__name__}: {exc}",
-                started=started,
-            ))
-        if hook_result is None:
-            return await _finish(_result(tc, status="denied", category="hook", error="tool execution blocked", started=started))
-        if isinstance(hook_result, dict):
-            modified = _normalize_tool_call(hook_result)
-            if modified["name"] != name:
-                return await _finish(_result(
-                    tc,
-                    status="denied",
-                    category="hook",
-                    error="before hook cannot change tool name",
-                    started=started,
-                ))
-            tc = modified
-
     # ── 2. dispatch (with retry for idempotent tools) ──
-    max_attempts = 2 if not entry.is_destructive else 1  # retry safe tools once
+    from personal_agent.security.evaluator import prepare_tool_call
+
+    prepared = prepare_tool_call(tc, entry)
+    max_attempts = 2 if prepared.idempotent else 1
     last_exc = None
     attempts = 0
     for attempt in range(max_attempts):
@@ -407,8 +445,27 @@ async def execute_tool_call_result(
                 started=started,
             ))
         try:
-            raw_result = await _run_handler(entry.handler, tc["input"], timeout=timeout, agent=agent)
-            handler_output = _normalize_handler_output(raw_result)
+            raw_result = await _run_handler(
+                entry.handler,
+                tc["input"],
+                timeout=timeout,
+                agent=agent,
+                confirm=confirm,
+                hooks=hooks,
+                event_sink=event_sink,
+            )
+            nested_result = raw_result if isinstance(raw_result, ToolExecutionResult) else None
+            if nested_result is not None:
+                handler_output = ToolHandlerOutput(
+                    text=nested_result.content or nested_result.error,
+                    artifacts=list(nested_result.artifacts),
+                    metadata={
+                        **nested_result.result_metadata,
+                    },
+                    is_error=nested_result.status != "success",
+                )
+            else:
+                handler_output = _normalize_handler_output(raw_result)
             result = handler_output.text
             break
         except asyncio.TimeoutError:
@@ -457,7 +514,14 @@ async def execute_tool_call_result(
     status: ToolExecutionStatus = "success"
     category = ""
     error = ""
-    if handler_output.is_error:
+    if nested_result is not None:
+        status = nested_result.status
+        category = nested_result.category
+        error = nested_result.error
+        if status != "success":
+            error = error or result or f"nested tool '{nested_result.tool_name}' failed"
+            result = ""
+    elif handler_output.is_error:
         status = "error"
         category = "handler"
         error = result or "MCP tool call failed"
@@ -474,7 +538,7 @@ async def execute_tool_call_result(
             error = f"after hook failed: {type(exc).__name__}: {exc}"
 
     logger.debug("Tool '%s' done: %d chars", name, len(result))
-    return await _finish(_result(
+    final_result = _result(
         tc,
         status=status,
         category=category,
@@ -485,7 +549,20 @@ async def execute_tool_call_result(
         attempts=attempts,
         started=started,
         output_truncated=output_truncated,
-    ))
+    )
+    if nested_result is not None:
+        preserve_nested_guard = True
+        final_result.guard_stage = nested_result.guard_stage
+        final_result.reason_code = nested_result.reason_code
+        final_result.permission_category = nested_result.permission_category
+        final_result.permission_decision = nested_result.permission_decision
+        final_result.required_allow = nested_result.required_allow
+        final_result.execution_mode = nested_result.execution_mode
+        final_result.grant_matched = nested_result.grant_matched
+        final_result.grant_scope = nested_result.grant_scope
+        final_result.grant_expires_at = nested_result.grant_expires_at
+        final_result.temporary_grant_ttl_seconds = nested_result.temporary_grant_ttl_seconds
+    return await _finish(final_result)
 
 
 def format_tool_result(result: ToolExecutionResult) -> str:
@@ -499,7 +576,7 @@ def format_tool_result(result: ToolExecutionResult) -> str:
 def _needs_tool_confirm(decision: ToolDecision) -> bool:
     return (
         decision.stage == "permission"
-        and decision.reason_code == "permission_required"
+        and decision.reason_code in {"permission_required", "security_approval_required"}
         and decision.permission_decision == "ask"
         and not decision.allowed
     )
@@ -516,6 +593,11 @@ def _can_run_in_parallel(tc: dict, entry: Any, agent: Any = None, *, confirm: An
 def _would_need_permission_confirm(tc: dict, entry: Any, agent: Any = None) -> bool:
     if agent is None:
         return False
+    security_context = getattr(agent, "_security_context", None)
+    if security_context is not None:
+        from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+
+        return evaluate_tool_security(prepare_tool_call(tc, entry), security_context).decision == "ask"
     policy = getattr(agent, "_execution_policy", None)
     category = tool_permission_category(str(tc.get("name", "")), entry)
     decision = "ask" if entry.is_destructive else "allow"
@@ -574,7 +656,11 @@ def _agent_interrupt_requested(agent: Any) -> bool:
 def _with_agent_grant_metadata(decision: ToolDecision, agent: Any) -> ToolDecision:
     if agent is None:
         return decision
-    ttl = int(getattr(agent, "_permission_temporary_grant_ttl_seconds", 0) or 0)
+    ttl = int(
+        getattr(agent, "_security_grant_ttl_seconds", 0)
+        or getattr(agent, "_permission_temporary_grant_ttl_seconds", 0)
+        or 0
+    )
     if not ttl:
         return decision
     return replace(decision, temporary_grant_ttl_seconds=ttl)
@@ -734,16 +820,40 @@ def _classify_gate_error(message: str) -> str:
     return "scope_gate"
 
 
-async def _run_handler(handler: Any, kwargs: dict[str, Any], *, timeout: float, agent: Any = None) -> Any:
+async def _run_handler(
+    handler: Any,
+    kwargs: dict[str, Any],
+    *,
+    timeout: float,
+    agent: Any = None,
+    confirm: Any = None,
+    hooks: Any = None,
+    event_sink: Any = None,
+) -> Any:
     global _active_tool_executions
-    from personal_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
+    from personal_agent.tools.runtime_context import (
+        reset_current_tool_agent,
+        reset_current_tool_confirm,
+        reset_current_tool_event_sink,
+        reset_current_tool_hooks,
+        set_current_tool_agent,
+        set_current_tool_confirm,
+        set_current_tool_event_sink,
+        set_current_tool_hooks,
+    )
 
     _active_tool_executions += 1
-    token = set_current_tool_agent(agent)
+    agent_token = set_current_tool_agent(agent)
+    confirm_token = set_current_tool_confirm(confirm)
+    hooks_token = set_current_tool_hooks(hooks)
+    event_sink_token = set_current_tool_event_sink(event_sink)
     try:
         return await asyncio.wait_for(handler(**kwargs), timeout=timeout)
     finally:
-        reset_current_tool_agent(token)
+        reset_current_tool_event_sink(event_sink_token)
+        reset_current_tool_hooks(hooks_token)
+        reset_current_tool_confirm(confirm_token)
+        reset_current_tool_agent(agent_token)
         _active_tool_executions = max(0, _active_tool_executions - 1)
 
 

@@ -720,6 +720,8 @@ def _permission_required_stop_message(tool_results: list) -> str:
     if not tool_results or not all(_is_permission_required_denial(result) for result in tool_results):
         return ""
     categories = _permission_required_categories(tool_results)
+    if categories == ["security"]:
+        return "工具需要额外的工具或资源授权，本轮已停止。请在支持授权确认的入口重试。"
     if categories == ["network"]:
         return "网络工具需要授权，本轮已停止。请发送 /allow network 后重试。"
     if len(categories) == 1:
@@ -731,7 +733,7 @@ def _is_permission_required_denial(result) -> bool:
     return (
         getattr(result, "status", "") == "denied"
         and getattr(result, "category", "") == "authorization"
-        and getattr(result, "reason_code", "") == "permission_required"
+        and getattr(result, "reason_code", "") in {"permission_required", "security_approval_required"}
     )
 
 
