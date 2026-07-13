@@ -170,7 +170,17 @@ def test_config_registry_schema_is_stable():
     assert fields["multimodal.ocr_language"]["value_type"] == "str"
     assert fields["profiles"]["env_key"] == "PROFILES"
     assert fields["profiles"]["yaml_path"] == "profiles"
-    assert fields["execution.mode"]["choices"] == ["guarded", "standard", "trusted", "sovereign"]
+    assert fields["execution.mode"]["choices"] == [
+        "read-only",
+        "ask-first",
+        "local-auto",
+        "full-auto",
+        "guarded",
+        "standard",
+        "trusted",
+        "sovereign",
+    ]
+    assert fields["permissions.grant_ttl_minutes"]["default"] == 60
     assert fields["LLM_API_MODE"]["choices"] == [
         "anthropic_messages",
         "auto",

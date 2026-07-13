@@ -146,13 +146,13 @@ class ModeChoice:
 MODE_CHOICES: tuple[ModeChoice, ...] = (
     ModeChoice("read-only", "Read Only", "guarded"),
     ModeChoice("ask-first", "Ask First", "standard"),
-    ModeChoice("edit-freely", "Edit Freely", "trusted"),
+    ModeChoice("local-auto", "Local Auto", "trusted"),
     ModeChoice("full-auto", "Full Auto", "sovereign"),
 )
 
 _MODE_BY_SLUG = {choice.slug: choice for choice in MODE_CHOICES}
 _MODE_BY_PROFILE = {choice.profile: choice for choice in MODE_CHOICES}
-_MODE_USAGE = "/mode [Read Only|Ask First|Edit Freely|Full Auto]"
+_MODE_USAGE = "/mode [Read Only|Ask First|Local Auto|Full Auto]"
 _MODE_ALIASES = {
     "readonly": "read-only",
     "read": "read-only",
@@ -161,11 +161,13 @@ _MODE_ALIASES = {
     "ask": "ask-first",
     "standard": "ask-first",
     "normal": "ask-first",
-    "editfreely": "edit-freely",
-    "edit": "edit-freely",
-    "edits": "edit-freely",
-    "trusted": "edit-freely",
-    "acceptedits": "edit-freely",
+    "editfreely": "local-auto",
+    "edit": "local-auto",
+    "edits": "local-auto",
+    "trusted": "local-auto",
+    "acceptedits": "local-auto",
+    "autoedit": "local-auto",
+    "localauto": "local-auto",
     "fullauto": "full-auto",
     "full": "full-auto",
     "auto": "full-auto",
@@ -564,6 +566,11 @@ def _allow_warning(denied: list[str]) -> str:
 
 def current_mode(agent) -> str:
     """Return the user-facing execution mode label for an agent."""
+    security_context = getattr(agent, "_security_context", None)
+    if security_context is not None:
+        from personal_agent.security.modes import mode_preset
+
+        return mode_preset(getattr(security_context, "mode_id", "ask-first")).label
     return current_mode_from_policy(getattr(agent, "_execution_policy", None))
 
 

@@ -81,7 +81,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "ocr_timeout_seconds",
         "ocr_language",
     },
-    "permissions": {"temporary_grant_ttl_hours", "confirm_timeout_seconds"},
+    "permissions": {"grant_ttl_minutes", "temporary_grant_ttl_hours", "confirm_timeout_seconds"},
     "plugins": {"dirs", "enabled", "disabled", "config"},
     "profiles": None,
     "sandbox": {
@@ -474,6 +474,7 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         _execution_policy_value(execution["policy"], "execution.policy", errors)
 
     permissions = sections["permissions"]
+    _range_int(permissions, "grant_ttl_minutes", "permissions.grant_ttl_minutes", 1, 10080, errors)
     _range_int(permissions, "temporary_grant_ttl_hours", "permissions.temporary_grant_ttl_hours", 1, 168, errors)
     _range_int(permissions, "confirm_timeout_seconds", "permissions.confirm_timeout_seconds", 10, 600, errors)
 

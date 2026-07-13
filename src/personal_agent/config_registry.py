@@ -245,7 +245,16 @@ class ConfigRegistry:
         )
 
 
-EXECUTION_MODES = ("guarded", "standard", "trusted", "sovereign")
+EXECUTION_MODES = (
+    "read-only",
+    "ask-first",
+    "local-auto",
+    "full-auto",
+    "guarded",
+    "standard",
+    "trusted",
+    "sovereign",
+)
 LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter", "xai")
 LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
 IMAGE_TEXT_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
@@ -315,6 +324,16 @@ def _execution_fields() -> tuple[ConfigField, ...]:
 
 def _permission_fields() -> tuple[ConfigField, ...]:
     return (
+        _yaml_field(
+            "permissions.grant_ttl_minutes",
+            "permission_grant_ttl_minutes",
+            60,
+            "int",
+            "permissions",
+            "Unified in-memory tool and resource grant TTL in minutes.",
+            minimum=1,
+            maximum=10080,
+        ),
         _yaml_field(
             "permissions.temporary_grant_ttl_hours",
             "permission_temporary_grant_ttl_hours",
