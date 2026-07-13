@@ -9,6 +9,7 @@ import pytest
 from personal_agent.config import Settings
 from personal_agent.plugins.core.manager import PluginManager
 from personal_agent.plugins.models import CommandEntry, PluginManifest, PluginStatus
+from personal_agent.skills.registry import skill_registry
 from personal_agent.tools.registry import tool_registry
 
 
@@ -28,8 +29,10 @@ def _settings(tmp_path, plugins_dir):
         ("entrypoint", "sample-plugin:register", "field 'entrypoint'"),
         ("kind", "unknown", "field 'kind'"),
         ("source", "remote", "field 'source'"),
+        ("schema_version", 2, "schema_version"),
         ("requires_env", ["OK", ""], "requires_env"),
         ("provides", 123, "provides"),
+        ("tags", ["valid", ""], "tags"),
         ("enabled_by_default", "true", "enabled_by_default"),
         ("deferred", 1, "deferred"),
         ("record_import_delta", "yes", "record_import_delta"),
@@ -45,6 +48,20 @@ def test_plugin_manifest_schema_rejects_invalid_values(field, value, message):
     data[field] = value
 
     with pytest.raises(ValueError, match=message):
+        PluginManifest.from_mapping(data)
+
+
+def test_only_platform_plugins_can_be_deferred():
+    data = {
+        "key": "user/lazy-mcp",
+        "name": "Lazy MCP",
+        "version": "1.0.0",
+        "kind": "mcp",
+        "entrypoint": "lazy_mcp:register",
+        "deferred": True,
+    }
+
+    with pytest.raises(ValueError, match="only supported for platform"):
         PluginManifest.from_mapping(data)
 
 
@@ -78,6 +95,68 @@ enabled_by_default: true
     assert report["entrypoint_error"] == ""
     assert report["enabled"] is False
     assert any("修复插件 manifest" in hint for hint in report["diagnostic_hints"])
+
+
+def test_plugin_context_exposes_only_scoped_config(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "configured"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+schema_version: 1
+key: user/configured
+name: Configured
+version: 1.0.0
+entrypoint: configured:register
+kind: integration
+tags: [example, configured]
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "configured.py").write_text(
+        """
+from pydantic import BaseModel
+
+class Config(BaseModel):
+    timeout: int = 10
+
+def register(ctx):
+    parsed = ctx.parse_config(Config)
+    assert parsed.timeout == 42
+    assert ctx.config["timeout"] == 42
+    try:
+        ctx.config["timeout"] = 1
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("plugin config must be read-only")
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[plugins_dir],
+        plugins_config={
+            "user/configured": {"timeout": 42},
+            "user/other": {"private": True},
+        },
+    )
+    manager = PluginManager(
+        settings,
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    report = manager.doctor_plugin("user/configured")
+
+    assert report["status"] == "LOADED"
+    assert report["schema_version"] == 1
+    assert report["kind"] == "integration"
+    assert report["tags"] == ["example", "configured"]
+    assert report["source"] == "local"
 
 
 def test_non_object_manifest_is_preserved_for_doctor(tmp_path):
@@ -226,9 +305,9 @@ enabled_by_default: true
     manager.discover()
     report = manager.doctor_plugin("user/pretend-builtin")
 
-    assert report["source"] == "user"
+    assert report["source"] == "local"
     assert report["declared_source"] == "builtin"
-    assert report["source_boundary"] == "user"
+    assert report["source_boundary"] == "local"
     assert any("source=builtin" in item for item in report["boundary_warnings"])
     assert report["manifest_path"].endswith("plugin.yaml")
 
@@ -435,6 +514,305 @@ def register(ctx):
     assert "RuntimeError: doctor boom" in report["error"]
     assert "RuntimeError: doctor boom" in report["error_traceback"]
     assert report["registered_items"]["tools"] == []
+
+
+def test_plugin_registration_failure_rolls_back_all_contributions(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "partial"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/partial
+name: Partial Plugin
+version: 1.0.0
+entrypoint: partial_plugin:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "partial_plugin.py").write_text(
+        """
+from personal_agent.plugins.models import CommandEntry
+from personal_agent.tools.entry import ToolEntry
+
+async def handler(**kwargs):
+    return "ok"
+
+def register(ctx):
+    ctx.register_tool(ToolEntry(
+        name="partial_registration_tool",
+        description="partial",
+        schema={"type": "object", "properties": {}},
+        handler=handler,
+    ))
+    ctx.register_hook("partial_hook", handler)
+    ctx.register_command(CommandEntry(
+        name="partial-command",
+        description="partial",
+        handler=handler,
+    ))
+    raise RuntimeError("stop registration")
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/partial"]
+
+    assert plugin.status == PluginStatus.ERROR
+    assert tool_registry.get("partial_registration_tool") is None
+    assert manager.get_command("partial-command") is None
+    assert "partial_hook" not in manager.hooks
+    assert all(count == 0 for count in plugin.registration_counts().values())
+
+
+def test_plugin_registration_rejects_cross_plugin_tool_conflict(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    for key, module in (("first", "first_plugin"), ("second", "second_plugin")):
+        plugin_dir = plugins_dir / key
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.yaml").write_text(
+            f"""
+key: user/{key}
+name: {key.title()} Plugin
+version: 1.0.0
+entrypoint: {module}:register
+enabled_by_default: true
+""".strip(),
+            encoding="utf-8",
+        )
+        (plugin_dir / f"{module}.py").write_text(
+            f"""
+from personal_agent.tools.entry import ToolEntry
+
+async def handler(**kwargs):
+    return "{key}"
+
+def register(ctx):
+    ctx.register_tool(ToolEntry(
+        name="shared_plugin_tool",
+        description="{key}",
+        schema={{"type": "object", "properties": {{}}}},
+        handler=handler,
+    ))
+""".strip(),
+            encoding="utf-8",
+        )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+
+    first = manager._plugins["user/first"]
+    second = manager._plugins["user/second"]
+    assert first.status == PluginStatus.LOADED
+    assert second.status == PluginStatus.ERROR
+    assert "already registered by plugin 'user/first'" in (second.error or "")
+    assert tool_registry.get("shared_plugin_tool") is not None
+    assert tool_registry.get("shared_plugin_tool").description == "first"
+    manager.disable_plugin("user/first")
+
+
+def test_plugin_registers_flat_and_nested_skill_bundles(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "skill_bundle"
+    nested_dir = plugin_dir / "skills" / "review-pr"
+    nested_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/skill-bundle
+name: Skill Bundle
+version: 1.0.0
+entrypoint: skill_bundle:register
+provides: [skills]
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "skill_bundle.py").write_text(
+        "def register(ctx): ctx.register_skills('skills')\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "skills" / "flat.md").write_text(
+        "# Flat skill\n\nFlat body.",
+        encoding="utf-8",
+    )
+    (nested_dir / "SKILL.md").write_text(
+        """
+---
+name: review-pr
+description: Review a pull request safely
+triggers: [/review-pr]
+---
+
+# Review PR
+
+Inspect the diff before suggesting changes.
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/skill-bundle"]
+
+    assert plugin.status == PluginStatus.LOADED
+    assert plugin.skills_registered == ["flat", "review-pr"]
+    review = skill_registry.get("review-pr")
+    assert review is not None
+    assert review.plugin_key == "user/skill-bundle"
+    assert review.triggers == ["/review-pr"]
+    assert "Inspect the diff" in (skill_registry.load("review-pr") or "")
+    manager.disable_plugin("user/skill-bundle")
+    assert skill_registry.get("review-pr") is None
+
+
+def test_plugin_skill_bundle_cannot_escape_plugin_root(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "escaping_skill"
+    plugin_dir.mkdir(parents=True)
+    (plugins_dir / "outside").mkdir()
+    (plugins_dir / "outside" / "secret.md").write_text("# Secret", encoding="utf-8")
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/escaping-skill
+name: Escaping Skill
+version: 1.0.0
+entrypoint: escaping_skill:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "escaping_skill.py").write_text(
+        "def register(ctx): ctx.register_skills('../outside')\n",
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/escaping-skill"]
+
+    assert plugin.status == PluginStatus.ERROR
+    assert "escapes package root" in (plugin.error or "")
+    assert skill_registry.get("secret") is None
+
+
+def test_plugin_registers_mcp_config_bundle(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "mcp_bundle"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/mcp-bundle
+name: MCP Bundle
+version: 1.0.0
+entrypoint: mcp_bundle:register
+provides: [mcp]
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp_bundle.py").write_text(
+        "def register(ctx): ctx.register_mcp('mcp.yaml')\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp.yaml").write_text(
+        """
+servers:
+  - name: local-demo
+    transport: stdio
+    command: python
+    args: [-m, demo]
+  - name: remote-demo
+    transport: streamable_http
+    url: https://example.com/mcp
+    headers_env:
+      Authorization: REMOTE_DEMO_TOKEN
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/mcp-bundle"]
+    configs = manager.get_mcp_servers()
+
+    assert plugin.status == PluginStatus.LOADED
+    assert plugin.mcp_servers_registered == ["local-demo", "remote-demo"]
+    assert [config.name for config in configs] == ["local-demo", "remote-demo"]
+    assert manager.mcp_server_registry.revision == 2
+    manager.disable_plugin("user/mcp-bundle")
+    assert manager.get_mcp_servers() == []
+
+
+def test_plugin_mcp_bundle_conflict_rolls_back_all_servers(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "bad_mcp"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/bad-mcp
+name: Bad MCP
+version: 1.0.0
+entrypoint: bad_mcp:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "bad_mcp.py").write_text(
+        "def register(ctx): ctx.register_mcp('mcp.json')\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp.json").write_text(
+        """
+{
+  "servers": [
+    {"name": "duplicate", "command": "python"},
+    {"name": "duplicate", "command": "other"}
+  ]
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/bad-mcp"]
+
+    assert plugin.status == PluginStatus.ERROR
+    assert "already registered by this plugin" in (plugin.error or "")
+    assert manager.get_mcp_servers() == []
+    assert plugin.mcp_servers_registered == []
 
 
 def test_duplicate_plugin_key_marks_existing_error(tmp_path):

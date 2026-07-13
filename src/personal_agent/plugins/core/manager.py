@@ -19,6 +19,7 @@ import yaml
 
 from personal_agent.persistence.json_store import read_json_object, write_json_atomic
 from personal_agent.commands.registry import CORE_COMMAND_NAMES
+from personal_agent.mcp.server_registry import MCPServerRegistry
 from personal_agent.plugins.core.context import PluginContext
 from personal_agent.plugins.core.models import (
     CommandEntry,
@@ -48,7 +49,7 @@ class PluginManager:
         self._plugins: dict[str, LoadedPlugin] = {}
         self._hooks: dict[str, list[HookRegistration]] = {}
         self._commands: dict[str, CommandEntry] = {}
-        self._mcp_servers: dict[str, list[Any]] = {}
+        self.mcp_server_registry = MCPServerRegistry()
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -69,7 +70,7 @@ class PluginManager:
 
     def discover(self) -> list[LoadedPlugin]:
         for directory in self._plugin_dirs:
-            source = "builtin" if self._same_path(Path(directory), _BUILTIN_PLUGIN_DIR) else "user"
+            source = self._source_for_directory(Path(directory))
             self._discover_dir(Path(directory), source=source, recursive=True)
 
         for plugin in self._plugins.values():
@@ -116,9 +117,9 @@ class PluginManager:
         plugin.status = PluginStatus.LOADING
         plugin.error = None
         plugin.error_traceback = None
-        plugin.ctx = PluginContext(self, plugin)
-        before = self._registry_snapshot()
+        before = self._registration_snapshot()
         try:
+            plugin.ctx = PluginContext(self, plugin)
             module, register_fn = self._import_entrypoint(plugin.manifest)
             plugin.module = module
             if register_fn is not None:
@@ -129,15 +130,44 @@ class PluginManager:
                 result = module.register(plugin.ctx)
                 if inspect.isawaitable(result):
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
+            after = self._registration_snapshot()
+            self._assert_no_registry_replacements(before, after, plugin.key)
             if plugin.manifest.record_import_delta:
-                self._record_registry_delta(plugin, before, self._registry_snapshot())
+                self._record_registry_delta(plugin, before["names"], after["names"])
             plugin.status = PluginStatus.LOADED
         except Exception as exc:
+            self._restore_registration_snapshot(before)
+            self._clear_plugin_registrations(plugin)
+            plugin.module = None
+            plugin.ctx = None
             plugin.status = PluginStatus.ERROR
             plugin.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             plugin.error_traceback = traceback.format_exc()
             logger.exception("Plugin '%s' failed to load", key)
         return plugin
+
+    def ensure_registration_available(
+        self,
+        kind: str,
+        name: str,
+        existing: Any | None,
+        candidate: Any,
+        plugin_key: str,
+    ) -> bool:
+        """Reject cross-plugin replacement while allowing legacy idempotent registration."""
+        if existing is None:
+            return True
+        owner = self._registration_owner(kind, name) or str(
+            getattr(existing, "_plugin_key", "") or getattr(existing, "plugin_key", "")
+        )
+        if owner and owner != plugin_key:
+            raise ValueError(f"{kind.title()} '{name}' is already registered by plugin '{owner}'")
+        if owner == plugin_key:
+            return existing is not candidate
+        if existing is candidate or (not owner and existing == candidate):
+            return False
+        label = owner or "core runtime"
+        raise ValueError(f"{kind.title()} '{name}' is already registered by {label}")
 
     def unload_plugin(self, key: str) -> LoadedPlugin:
         plugin = self._plugins[key]
@@ -159,17 +189,9 @@ class PluginManager:
         for name in list(plugin.platforms_registered):
             platform_registry.unregister(name)
 
-        self._mcp_servers.pop(key, None)
+        self.mcp_server_registry.unregister_plugin(key)
         memory_provider_registry.unregister_plugin(key)
-        plugin.tools_registered.clear()
-        plugin.skills_registered.clear()
-        plugin.workflows_registered.clear()
-        plugin.platforms_registered.clear()
-        plugin.mcp_servers_registered.clear()
-        plugin.hooks_registered.clear()
-        plugin.commands_registered.clear()
-        plugin.middleware_registered.clear()
-        plugin.memory_providers_registered.clear()
+        self._clear_plugin_registrations(plugin)
         plugin.module = None
         plugin.ctx = None
         plugin.error = None
@@ -252,14 +274,11 @@ class PluginManager:
             value = await value
         return None if value is None else str(value)
 
-    def register_mcp_server(self, plugin_key: str, config: Any) -> None:
-        self._mcp_servers.setdefault(plugin_key, []).append(config)
+    def register_mcp_server(self, plugin_key: str, config: Any):
+        return self.mcp_server_registry.register(plugin_key, config)
 
     def get_mcp_servers(self) -> list[Any]:
-        result: list[Any] = []
-        for configs in self._mcp_servers.values():
-            result.extend(configs)
-        return result
+        return self.mcp_server_registry.configs()
 
     def list_plugins(self) -> list[LoadedPlugin]:
         return [self._plugins[key] for key in sorted(self._plugins)]
@@ -284,10 +303,12 @@ class PluginManager:
             "key": plugin.key,
             "name": plugin.manifest.name,
             "version": plugin.manifest.version,
+            "schema_version": plugin.manifest.schema_version,
             "description": plugin.manifest.description,
             "kind": plugin.manifest.kind,
             "entrypoint": plugin.manifest.entrypoint,
             "provides": plugin.manifest.provides,
+            "tags": plugin.manifest.tags,
             "enabled_by_default": plugin.manifest.enabled_by_default,
             "enabled": plugin.enabled,
             "status": plugin.status.value,
@@ -411,7 +432,7 @@ class PluginManager:
                 data = self._read_manifest_file(manifest_path)
                 manifest = PluginManifest.from_mapping(
                     data,
-                    source=source or "user",
+                    source=source or "local",
                     path=manifest_path.parent,
                 )
                 self._add_manifest(manifest)
@@ -422,7 +443,7 @@ class PluginManager:
                     name=manifest_path.parent.name,
                     version="0",
                     entrypoint="invalid",
-                    source=source or "user",
+                    source=source or "local",
                     path=manifest_path.parent,
                 )
                 self._plugins[key] = LoadedPlugin(
@@ -488,12 +509,9 @@ class PluginManager:
     def _deferred_reason(self, plugin: LoadedPlugin) -> str:
         if not plugin.deferred:
             return ""
-        provides = set(plugin.manifest.provides)
-        if "platform" in provides or plugin.manifest.kind == "platform":
+        if plugin.manifest.kind == "platform":
             return "平台插件会在网关解析平台适配器时加载"
-        if "mcp" in provides or plugin.manifest.kind == "mcp":
-            return "MCP 插件会在 MCP 服务器启动时加载"
-        return "插件 manifest 声明了延迟加载"
+        return ""
 
     def _diagnostic_hints(
         self,
@@ -528,12 +546,12 @@ class PluginManager:
         if manifest.unknown_fields:
             warnings.append(f"Manifest 包含未知字段: {', '.join(manifest.unknown_fields)}")
         provides = set(manifest.provides)
-        if manifest.kind == "platform" and "platform" not in provides:
+        if manifest.kind == "platform" and not provides.intersection({"platform", "platforms"}):
             warnings.append("kind 为 platform 时建议 provides 包含 platform。")
         if manifest.kind == "mcp" and "mcp" not in provides:
             warnings.append("kind 为 mcp 时建议 provides 包含 mcp。")
-        if (manifest.kind in {"platform", "mcp"} or provides.intersection({"platform", "mcp"})) and not manifest.deferred:
-            warnings.append("platform/MCP 插件建议设置 deferred: true，避免启动时 eager import。")
+        if manifest.kind == "platform" and not manifest.deferred:
+            warnings.append("platform 插件建议设置 deferred: true，避免启动时 eager import。")
         bad_env = [
             name for name in manifest.requires_env
             if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)
@@ -557,14 +575,14 @@ class PluginManager:
             warnings.append(
                 f"Manifest source={manifest.source} 与路径边界 {boundary} 不一致。"
             )
-        if manifest.source == "user" and manifest.kind == "builtin":
+        if manifest.source != "builtin" and manifest.kind == "builtin":
             warnings.append("用户插件不应声明 kind: builtin。")
-        if manifest.source == "user" and manifest.key.startswith("builtin/"):
+        if manifest.source != "builtin" and manifest.key.startswith("builtin/"):
             warnings.append("用户插件不能使用 builtin/* 插件 key。")
         return self._dedupe_strings(warnings)
 
     def _manifest_boundary_error(self, manifest: PluginManifest) -> str:
-        if manifest.source == "user" and manifest.key.startswith("builtin/"):
+        if manifest.source != "builtin" and manifest.key.startswith("builtin/"):
             return f"User plugin cannot use reserved builtin key: {manifest.key}"
         return ""
 
@@ -687,7 +705,21 @@ class PluginManager:
             return "unknown"
         if self._same_path(plugin.manifest.path, _BUILTIN_PLUGIN_DIR) or _BUILTIN_PLUGIN_DIR in plugin.manifest.path.parents:
             return "builtin"
-        return "user"
+        return self._source_for_directory(plugin.manifest.path)
+
+    def _source_for_directory(self, directory: Path) -> str:
+        if self._same_path(directory, _BUILTIN_PLUGIN_DIR) or _BUILTIN_PLUGIN_DIR in directory.parents:
+            return "builtin"
+        installed_root = Path(getattr(self.settings, "agent_data_dir", "data")) / "plugins"
+        try:
+            resolved = directory.resolve()
+            installed = installed_root.resolve()
+        except OSError:
+            resolved = directory.absolute()
+            installed = installed_root.absolute()
+        if resolved == installed or installed in resolved.parents:
+            return "installed"
+        return "local"
 
     def _registry_snapshot(self) -> dict[str, set[str]]:
         from personal_agent.platforms.core import platform_registry
@@ -702,6 +734,111 @@ class PluginManager:
             "platforms": {entry.name for entry in platform_registry.list()},
         }
 
+    def _registration_snapshot(self) -> dict[str, Any]:
+        from personal_agent.memory.provider_registry import memory_provider_registry
+        from personal_agent.platforms.core import platform_registry
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.tools.registry import tool_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        entries = {
+            "tools": {name: tool_registry.get(name) for name in tool_registry.all_names},
+            "skills": {entry.name: entry for entry in skill_registry.list()},
+            "workflows": {name: workflow_registry.get(name) for name in workflow_registry.list_names()},
+            "platforms": {entry.name: entry for entry in platform_registry.list()},
+            "memory_providers": {
+                name: memory_provider_registry.get(name) for name in memory_provider_registry.names()
+            },
+        }
+        return {
+            "entries": entries,
+            "names": {kind: set(values) for kind, values in entries.items() if kind != "memory_providers"},
+            "commands": dict(self._commands),
+            "hooks": {name: list(items) for name, items in self._hooks.items()},
+            "mcp_servers": self.mcp_server_registry.snapshot(),
+        }
+
+    def _restore_registration_snapshot(self, snapshot: dict[str, Any]) -> None:
+        from personal_agent.memory.provider_registry import memory_provider_registry
+        from personal_agent.platforms.core import platform_registry
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.tools.registry import tool_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        entries = snapshot["entries"]
+        self._restore_entry_map(
+            entries["tools"],
+            {name: tool_registry.get(name) for name in tool_registry.all_names},
+            unregister=tool_registry.unregister,
+            register=tool_registry.register,
+        )
+        self._restore_entry_map(
+            entries["skills"],
+            {entry.name: entry for entry in skill_registry.list()},
+            unregister=skill_registry.unregister,
+            register=skill_registry.register,
+        )
+        self._restore_entry_map(
+            entries["workflows"],
+            {name: workflow_registry.get(name) for name in workflow_registry.list_names()},
+            unregister=workflow_registry.unregister,
+            register=workflow_registry.register,
+        )
+        self._restore_entry_map(
+            entries["platforms"],
+            {entry.name: entry for entry in platform_registry.list()},
+            unregister=platform_registry.unregister,
+            register=platform_registry.register,
+        )
+        current_memory = {
+            name: memory_provider_registry.get(name) for name in memory_provider_registry.names()
+        }
+        for name in set(current_memory) - set(entries["memory_providers"]):
+            memory_provider_registry.unregister(name)
+        for name, registration in entries["memory_providers"].items():
+            if current_memory.get(name) is registration:
+                continue
+            memory_provider_registry.register(
+                name=registration.name,
+                plugin_key=registration.plugin_key,
+                factory=registration.factory,
+                validator=registration.validator,
+            )
+
+        self._commands = dict(snapshot["commands"])
+        self._hooks = {name: list(items) for name, items in snapshot["hooks"].items()}
+        self.mcp_server_registry.restore(snapshot["mcp_servers"])
+
+    @staticmethod
+    def _restore_entry_map(previous, current, *, unregister, register) -> None:
+        for name in set(current) - set(previous):
+            unregister(name)
+        for name, entry in previous.items():
+            if current.get(name) is not entry:
+                register(entry)
+
+    @staticmethod
+    def _assert_no_registry_replacements(
+        before: dict[str, Any],
+        after: dict[str, Any],
+        plugin_key: str,
+    ) -> None:
+        for kind, previous in before["entries"].items():
+            current = after["entries"].get(kind, {})
+            for name, entry in previous.items():
+                if name in current and current[name] is not entry:
+                    previous_owner = str(
+                        getattr(entry, "_plugin_key", "") or getattr(entry, "plugin_key", "")
+                    )
+                    current_entry = current[name]
+                    current_owner = str(
+                        getattr(current_entry, "_plugin_key", "")
+                        or getattr(current_entry, "plugin_key", "")
+                    )
+                    if previous_owner == plugin_key or current_owner == plugin_key:
+                        continue
+                    raise ValueError(f"Plugin replaced existing {kind.rstrip('s')} registration: {name}")
+
     def _record_registry_delta(
         self,
         plugin: LoadedPlugin,
@@ -712,6 +849,32 @@ class PluginManager:
         self._extend_unique(plugin.skills_registered, sorted(after["skills"] - before["skills"]))
         self._extend_unique(plugin.workflows_registered, sorted(after["workflows"] - before["workflows"]))
         self._extend_unique(plugin.platforms_registered, sorted(after["platforms"] - before["platforms"]))
+
+    def _registration_owner(self, kind: str, name: str) -> str:
+        attribute = {
+            "tool": "tools_registered",
+            "skill": "skills_registered",
+            "workflow": "workflows_registered",
+            "platform": "platforms_registered",
+        }.get(kind)
+        if attribute is None:
+            return ""
+        for plugin in self._plugins.values():
+            if name in getattr(plugin, attribute):
+                return plugin.key
+        return ""
+
+    @staticmethod
+    def _clear_plugin_registrations(plugin: LoadedPlugin) -> None:
+        plugin.tools_registered.clear()
+        plugin.skills_registered.clear()
+        plugin.workflows_registered.clear()
+        plugin.platforms_registered.clear()
+        plugin.mcp_servers_registered.clear()
+        plugin.hooks_registered.clear()
+        plugin.commands_registered.clear()
+        plugin.middleware_registered.clear()
+        plugin.memory_providers_registered.clear()
 
     def _extend_unique(self, target: list[str], values: list[str]) -> None:
         for value in values:

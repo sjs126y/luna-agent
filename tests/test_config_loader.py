@@ -73,6 +73,10 @@ sandbox:
   bash_allow_network: yes
 plugins:
   dirs: ./plugins,./more-plugins
+  config:
+    user/github:
+      default_repository: owner/repo
+      timeout_seconds: 30
 """.strip(),
         encoding="utf-8",
     )
@@ -104,6 +108,12 @@ plugins:
     assert snapshot.attr_values["sandbox_roots"] == [Path("./data"), Path("./workspace")]
     assert snapshot.attr_values["bash_allow_network"] is True
     assert snapshot.attr_values["plugins_dirs"] == [Path("./plugins"), Path("./more-plugins")]
+    assert snapshot.attr_values["plugins_config"] == {
+        "user/github": {
+            "default_repository": "owner/repo",
+            "timeout_seconds": 30,
+        }
+    }
     assert snapshot.sources["LLM_PROVIDER"] == ".env"
     assert snapshot.sources["llm.context_window"] == ".env"
     assert snapshot.sources["LLM_REASONING_EFFORT"] == ".env"

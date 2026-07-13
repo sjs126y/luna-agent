@@ -23,12 +23,18 @@ enabled_by_default: true
     (plugin_dir / "mcp_plugin.py").write_text(
         """
 def register(ctx):
-    ctx.register_mcp_server({
-        "name": "demo",
-        "command": "python",
-        "args": ["-m", "demo"],
-        "enabled": True,
-    })
+    ctx.register_mcp("mcp.yaml")
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp.yaml").write_text(
+        """
+servers:
+  - name: demo
+    transport: stdio
+    command: python
+    args: [-m, demo]
+    enabled: true
 """.strip(),
         encoding="utf-8",
     )
@@ -368,5 +374,5 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
     manager = await start_mcp_manager(settings, plugin_manager)
 
     assert manager.started
-    assert [item["name"] for item in created["configs"]] == ["config", "demo"]
+    assert [item.name if hasattr(item, "name") else item["name"] for item in created["configs"]] == ["config", "demo"]
     assert created["env_values"] == {"REMOTE_MCP_TOKEN": "resolved-secret"}

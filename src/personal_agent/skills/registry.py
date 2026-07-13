@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
+
 if TYPE_CHECKING:
     from personal_agent.skills.entry import SkillEntry
 
@@ -69,11 +71,13 @@ class SkillRegistry:
         try:
             # ── 1. Path resolution + traversal prevention ──
             path = Path(entry.path)
+            allowed_root = Path(entry.allowed_root) if entry.allowed_root else SKILLS_DIR
             if not path.is_absolute():
-                path = SKILLS_DIR / path
+                path = allowed_root / path
             path = path.resolve()
+            root = allowed_root.resolve()
 
-            if not str(path).startswith(str(SKILLS_DIR.resolve())):
+            if path != root and root not in path.parents:
                 logger.warning("Skill path traversal blocked: %s → %s", name, path)
                 return None
 
@@ -129,25 +133,33 @@ class SkillRegistry:
 skill_registry = SkillRegistry()
 
 
-def discover_skills(skills_dir: Path | None = None, registrar=None) -> int:
+def discover_skills(
+    skills_dir: Path | None = None,
+    registrar=None,
+    *,
+    recursive: bool = False,
+    plugin_key: str = "",
+    allowed_root: Path | None = None,
+) -> int:
     """Auto-register .md files from a directory. Returns count added."""
     from personal_agent.skills.entry import SkillEntry
     target = Path(skills_dir) if skills_dir else SKILLS_DIR
     if not target.exists():
         return 0
+    files = list(target.glob("*.md"))
+    if recursive:
+        files.extend(target.glob("*/SKILL.md"))
     count = 0
-    for f in sorted(target.glob("*.md")):
-        name = f.stem.lower().replace(" ", "-")
-        existing = skill_registry.get(name)
-        if existing is not None:
-            continue  # don't overwrite explicitly registered skills
-        text = f.read_text(encoding="utf-8").strip()
-        desc = text.split("\n")[0].lstrip("#").strip() if text else name
-        entry = SkillEntry(
-            name=name,
-            description=desc[:100],
-            path=str(f),
+    for f in sorted(set(files)):
+        entry = _entry_from_file(
+            f,
+            plugin_key=plugin_key,
+            allowed_root=allowed_root or target,
         )
+        name = entry.name
+        existing = skill_registry.get(name)
+        if existing is not None and registrar is None:
+            continue  # don't overwrite explicitly registered skills
         if registrar is not None:
             registrar.register_skill(entry)
         else:
@@ -155,3 +167,51 @@ def discover_skills(skills_dir: Path | None = None, registrar=None) -> int:
         count += 1
         logger.info("Auto-discovered skill: %s", name)
     return count
+
+
+def _entry_from_file(
+    path: Path,
+    *,
+    plugin_key: str = "",
+    allowed_root: Path,
+) -> SkillEntry:
+    from personal_agent.skills.entry import SkillEntry
+
+    if path.stat().st_size > MAX_SKILL_BYTES:
+        raise ValueError(f"Skill file is too large: {path}")
+    text = path.read_text(encoding="utf-8").strip()
+    metadata: dict = {}
+    body = text
+    if text.startswith("---\n"):
+        parts = text.split("\n---\n", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Skill frontmatter is not terminated: {path}")
+        raw_metadata = yaml.safe_load(parts[0][4:]) or {}
+        if not isinstance(raw_metadata, dict):
+            raise ValueError(f"Skill frontmatter must be an object: {path}")
+        metadata = raw_metadata
+        body = parts[1].strip()
+
+    default_name = path.parent.name if path.name == "SKILL.md" else path.stem
+    name = str(metadata.get("name") or default_name).strip().lower().replace(" ", "-")
+    if not name:
+        raise ValueError(f"Skill name is empty: {path}")
+    description = str(metadata.get("description") or "").strip()
+    if not description:
+        first_line = next((line for line in body.splitlines() if line.strip()), name)
+        description = first_line.lstrip("#").strip()
+    raw_triggers = metadata.get("triggers", [])
+    if isinstance(raw_triggers, str):
+        triggers = [raw_triggers]
+    elif isinstance(raw_triggers, list) and all(isinstance(item, str) for item in raw_triggers):
+        triggers = list(raw_triggers)
+    else:
+        raise ValueError(f"Skill triggers must be a string or list of strings: {path}")
+    return SkillEntry(
+        name=name,
+        description=description[:100],
+        path=str(path.resolve()),
+        triggers=triggers,
+        plugin_key=plugin_key,
+        allowed_root=str(allowed_root.resolve()),
+    )

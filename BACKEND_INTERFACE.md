@@ -939,7 +939,21 @@ Review worker payload 提供：
 
 `should_review_memory` 为兼容字段，不再用于触发 review；前端不要依据它调度任务。Review 由 AppRuntime worker 自动提交和持久化 checkpoint。
 
-## 13. Compatibility Notes
+## 13. Plugin Diagnostics
+
+`plugins list/info/doctor/validate --json` 的单插件诊断对象现在稳定提供：
+
+- `schema_version: integer`，当前为 `1`
+- `source: "builtin" | "local" | "installed"`
+- `kind: string`
+- `tags: list[string]`
+- `provides: list[string]`
+- `registered: object`，各类能力计数
+- `registered_items: object`，按 Tool、Skill、MCP Server、Hook 等分组的名称
+
+插件配置位于 `plugins.config.<plugin-key>`。配置诊断会递归遮蔽键名中的 token、secret、password、authorization 和 api key；前端不应尝试从诊断 payload 恢复真实密钥。
+
+## 14. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

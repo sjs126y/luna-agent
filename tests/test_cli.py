@@ -709,6 +709,7 @@ def test_format_plugin_report_includes_traceback_when_requested():
         "key": "user/demo",
         "name": "Demo",
         "version": "1.0.0",
+        "schema_version": 1,
         "description": "",
         "kind": "user",
         "source": "user",
@@ -719,6 +720,7 @@ def test_format_plugin_report_includes_traceback_when_requested():
         "deferred": False,
         "status": "ERROR",
         "provides": [],
+        "tags": ["demo"],
         "requires_env": [],
         "missing_env": [],
         "registered": {
@@ -747,6 +749,8 @@ def test_format_plugin_report_includes_traceback_when_requested():
     }
 
     text = format_plugin_report(report, include_traceback=True)
+    assert "Manifest Schema: 1" in text
+    assert "标签: demo" in text
     assert "诊断:" in text
     assert "入口不可导入" in text
     assert "加载错误: boom" in text

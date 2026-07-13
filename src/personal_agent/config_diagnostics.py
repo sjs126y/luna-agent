@@ -82,7 +82,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "ocr_language",
     },
     "permissions": {"temporary_grant_ttl_hours", "confirm_timeout_seconds"},
-    "plugins": {"dirs", "enabled", "disabled"},
+    "plugins": {"dirs", "enabled", "disabled", "config"},
     "profiles": None,
     "sandbox": {
         "roots",

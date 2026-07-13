@@ -59,7 +59,13 @@ def _ensure_module_entries(module_name: str, names: tuple[str, ...]) -> None:
     from personal_agent.tools.registry import tool_registry
 
     missing = [name for name in names if tool_registry.get(name) is None]
-    if not missing:
+    foreign = [
+        name
+        for name in names
+        if tool_registry.get(name) is not None
+        and getattr(tool_registry.get(name), "_plugin_key", "") != "builtin/tools"
+    ]
+    if not missing and not foreign:
         return
     module = importlib.import_module(module_name)
     importlib.reload(module)
