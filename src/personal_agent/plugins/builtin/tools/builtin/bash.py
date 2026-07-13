@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _work_dir: Path = Path("./data").resolve()
 _allow_network: bool = False
 _restrict_paths: bool = True
+_process_backend: str = "auto"
 _MAX_OUTPUT = 4000
 
 
@@ -47,6 +48,13 @@ def set_restrict_paths(restrict: bool) -> None:
 def set_allow_network(allowed: bool) -> None:
     global _allow_network
     _allow_network = allowed
+
+
+def set_process_backend(backend: str) -> None:
+    global _process_backend
+    from personal_agent.tools.process_sandbox import normalize_process_backend
+
+    _process_backend = normalize_process_backend(backend)
 
 
 # ── command whitelist ─────────────────────────────────
@@ -294,6 +302,41 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
         proc.kill()
 
 
+async def spawn_command(
+    command: str,
+    *,
+    cwd: Path,
+    stdout,
+    stderr,
+) -> asyncio.subprocess.Process:
+    from personal_agent.tools.env_filter import filter_env
+    from personal_agent.tools.process_sandbox import build_process_launch
+    from personal_agent.tools.sandbox import get_sandbox
+
+    launch = build_process_launch(
+        command,
+        cwd=cwd,
+        writable_roots=get_sandbox().roots,
+        allow_network=_allow_network,
+        requested_backend=_process_backend,
+    )
+    kwargs = {
+        "stdout": stdout,
+        "stderr": stderr,
+        "env": filter_env(),
+        **_subprocess_group_kwargs(),
+    }
+    if launch.backend == "unavailable":
+        raise RuntimeError(launch.warning)
+    if launch.backend == "bwrap":
+        return await asyncio.create_subprocess_exec(*launch.argv, **kwargs)
+    return await asyncio.create_subprocess_shell(
+        command,
+        cwd=str(launch.cwd),
+        **kwargs,
+    )
+
+
 # ── handler ──────────────────────────────────────────
 
 async def _bash(command: str, timeout: int = 30) -> str:
@@ -304,14 +347,11 @@ async def _bash(command: str, timeout: int = 30) -> str:
     started = time.monotonic()
     proc = None
     try:
-        from personal_agent.tools.env_filter import filter_env
-        proc = await asyncio.create_subprocess_shell(
+        proc = await spawn_command(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(_work_dir),
-            env=filter_env(),
-            **_subprocess_group_kwargs(),
+            cwd=_work_dir,
         )
 
         timeout = min(max(int(timeout or 30), 1), 60)

@@ -95,6 +95,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "bash_work_dir",
         "bash_restrict_paths",
         "bash_allow_network",
+        "process_backend",
         "file_max_write_bytes",
         "audit_enabled",
     },
@@ -493,6 +494,13 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     _string_value(sandbox, "bash_work_dir", "sandbox.bash_work_dir", errors)
     for key in ("bash_restrict_paths", "bash_allow_network", "audit_enabled"):
         _bool_value(sandbox, key, f"sandbox.{key}", errors)
+    _enum_value(
+        sandbox,
+        "process_backend",
+        "sandbox.process_backend",
+        {"auto", "bwrap", "legacy"},
+        errors,
+    )
     _positive_int(sandbox, "file_max_write_bytes", "sandbox.file_max_write_bytes", errors)
 
     session = sections["session"]

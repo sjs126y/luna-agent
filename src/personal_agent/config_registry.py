@@ -514,6 +514,15 @@ def _sandbox_fields() -> tuple[ConfigField, ...]:
         _yaml_field("sandbox.bash_work_dir", "bash_work_dir", "./data", "path", "sandbox", "Bash working directory."),
         _yaml_field("sandbox.bash_restrict_paths", "bash_restrict_paths", True, "bool", "sandbox", "Restrict bash paths."),
         _yaml_field("sandbox.bash_allow_network", "bash_allow_network", False, "bool", "sandbox", "Allow bash network commands."),
+        _yaml_field(
+            "sandbox.process_backend",
+            "process_sandbox_backend",
+            "auto",
+            "str",
+            "sandbox",
+            "Process sandbox backend.",
+            choices=("auto", "bwrap", "legacy"),
+        ),
         _yaml_field("sandbox.file_max_write_bytes", "file_max_write_bytes", 100000, "int", "sandbox", "Maximum file write size.", minimum=1),
         _yaml_field("sandbox.audit_enabled", "audit_enabled", True, "bool", "sandbox", "Enable tool audit logging."),
     )

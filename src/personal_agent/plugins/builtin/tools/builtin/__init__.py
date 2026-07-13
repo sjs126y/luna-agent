@@ -77,12 +77,14 @@ def _configure(settings=None, **kwargs) -> None:
 
     from personal_agent.plugins.builtin.tools.builtin.bash import (
         set_allow_network,
+        set_process_backend,
         set_restrict_paths,
         set_work_dir,
     )
     from personal_agent.plugins.builtin.tools.builtin.file_write import set_max_write_bytes
 
     set_allow_network(bool(settings.bash_allow_network))
+    set_process_backend(settings.process_sandbox_backend)
     set_restrict_paths(settings.bash_restrict_paths)
     set_work_dir(settings.bash_work_dir)
     set_max_write_bytes(settings.file_max_write_bytes)

@@ -120,6 +120,28 @@ sandbox:
     )
 
 
+def test_config_report_validates_process_sandbox_backend(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+  process_backend: containerish
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("sandbox.process_backend 不支持" in error for error in report["errors"])
+
+
 def test_config_report_includes_registry_field_summary(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

@@ -99,7 +99,6 @@ async def _waiter(pid: int, proc: asyncio.subprocess.Process) -> None:
 async def _process_start(command: str, cwd: str | None = None) -> str:
     """Start a background shell command and return its process id."""
     from personal_agent.plugins.builtin.tools.builtin import bash as bash_tool
-    from personal_agent.tools.env_filter import filter_env
 
     error = bash_tool._check_command(command)
     if error:
@@ -110,13 +109,11 @@ async def _process_start(command: str, cwd: str | None = None) -> str:
         return cwd_error
 
     try:
-        proc = await asyncio.create_subprocess_shell(
+        proc = await bash_tool.spawn_command(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(work_dir),
-            env=filter_env(),
-            **bash_tool._subprocess_group_kwargs(),
+            cwd=work_dir,
         )
         pid = _register(proc, command, cwd=str(work_dir))
         return _format_started(_processes[pid])
