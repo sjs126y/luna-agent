@@ -10,6 +10,7 @@ from personal_agent.agent.agent import init_agent
 from personal_agent.compression import compression_registry
 from personal_agent.llm.provider import ProviderProfile, provider_registry
 from personal_agent.llm.transport_registry import transport_registry
+from personal_agent.permissions import temporary_grant_ttl_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def create_agent_runtime(
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
         execution_policy=getattr(settings, "execution_policy", None),
-        permission_temporary_grant_ttl_seconds=int(getattr(settings, "permission_temporary_grant_ttl_hours", 24) * 60 * 60),
+        permission_temporary_grant_ttl_seconds=temporary_grant_ttl_seconds(settings),
         permission_confirm_timeout_seconds=int(getattr(settings, "permission_confirm_timeout_seconds", 120)),
     )
 

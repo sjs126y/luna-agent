@@ -58,6 +58,18 @@ def test_session_grants_use_one_ttl_and_mode_switch_clears(tmp_path):
     assert switched.resource_grants == {}
 
 
+def test_legacy_permission_helpers_use_unified_grant_ttl():
+    from personal_agent.permissions import format_grant_duration, temporary_grant_ttl_seconds
+
+    settings = SimpleNamespace(
+        permission_grant_ttl_minutes=90,
+        permission_temporary_grant_ttl_hours=24,
+    )
+
+    assert temporary_grant_ttl_seconds(settings) == 90 * 60
+    assert format_grant_duration(90 * 60) == "90分钟"
+
+
 def test_security_state_is_not_shared_between_sessions(tmp_path):
     from personal_agent.security.session import SecurityStateStore
 

@@ -453,7 +453,7 @@ async def test_gateway_async_confirmation_allows_once(gateway, monkeypatch):
     await _wait_until(lambda: adapter.sent_contents)
 
     assert "需要授权工具调用" in adapter.sent_contents[0]
-    assert "回复 1 允许一次 / 2 拒绝 / 3 24小时允许" in adapter.sent_contents[0]
+    assert "回复 1 允许一次 / 2 拒绝 / 3 1小时允许" in adapter.sent_contents[0]
     assert gateway.health_snapshot()["pending_confirmation_count"] == 1
 
     invalid = await gateway._handle_message_inner(_event("hello"))
@@ -498,7 +498,7 @@ async def test_gateway_async_confirmation_always_and_stop(gateway, monkeypatch):
     ack = await gateway._handle_message_inner(_event("3"))
     final = await asyncio.wait_for(task, timeout=1)
 
-    assert ack == "已允许，24小时内同类工具不再询问。"
+    assert ack == "已允许，1小时内同类工具不再询问。"
     assert final == "answer:always"
 
     task = asyncio.create_task(gateway._handle_message_inner(_event("run again")))

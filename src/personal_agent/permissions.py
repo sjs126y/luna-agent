@@ -12,11 +12,18 @@ DEFAULT_TEMPORARY_GRANT_TTL_SECONDS = 24 * 60 * 60
 def temporary_grant_ttl_seconds(settings_or_agent: Any = None) -> int:
     value = getattr(settings_or_agent, "permission_temporary_grant_ttl_seconds", None)
     if value is None:
-        hours = getattr(settings_or_agent, "permission_temporary_grant_ttl_hours", 24)
-        try:
-            value = float(hours) * 60 * 60
-        except (TypeError, ValueError):
-            return DEFAULT_TEMPORARY_GRANT_TTL_SECONDS
+        minutes = getattr(settings_or_agent, "permission_grant_ttl_minutes", None)
+        if minutes is not None:
+            try:
+                value = float(minutes) * 60
+            except (TypeError, ValueError):
+                return DEFAULT_TEMPORARY_GRANT_TTL_SECONDS
+        else:
+            hours = getattr(settings_or_agent, "permission_temporary_grant_ttl_hours", 24)
+            try:
+                value = float(hours) * 60 * 60
+            except (TypeError, ValueError):
+                return DEFAULT_TEMPORARY_GRANT_TTL_SECONDS
     try:
         seconds = int(float(value))
     except (TypeError, ValueError):
@@ -172,6 +179,15 @@ def format_expiry(ts: float) -> str:
     if not ts:
         return ""
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_grant_duration(seconds: int) -> str:
+    value = max(1, int(seconds))
+    if value % 3600 == 0:
+        return f"{value // 3600}小时"
+    if value % 60 == 0:
+        return f"{value // 60}分钟"
+    return f"{value}秒"
 
 
 def _ensure_set(agent: Any, attr: str) -> set[str]:
