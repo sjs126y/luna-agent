@@ -1,6 +1,12 @@
 # Backend Progress
 
-更新时间：2026-07-13 13:31 CST
+更新时间：2026-07-13 CST
+
+## 2026-07-13：被动插件 v1 与安全待办
+
+- 被动插件 v1 已合并到 `main`，合并提交为 `cfd809a Merge passive plugin v1`；全量回归 `878 passed`。
+- MCP 安全审查结果已写入根目录 `TODO.md`。后续执行顺序明确为先检查 Execution Mode 与权限模型，再在统一权限语义上收口 MCP 安全。
+- 本次仅记录待办，没有修改 Mode、MCP 或其他运行时行为；用户本机 `config.yaml` 保持原状。
 
 ## 2026-07-13：Settings 配置边界收口
 
