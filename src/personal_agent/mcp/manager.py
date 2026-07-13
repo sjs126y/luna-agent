@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from personal_agent.mcp.models import MCPServerConfig, MCPRuntimeState
@@ -18,6 +19,9 @@ class MCPManager:
         connection_factory: ConnectionFactory | None = None,
         reconnect_delays: tuple[float, ...] | None = None,
         env_values: Mapping[str, str] | None = None,
+        process_backend: str = "legacy",
+        sandbox_roots: list[Path] | None = None,
+        work_dir: Path | None = None,
     ) -> None:
         configs = [
             item if isinstance(item, MCPServerConfig) else MCPServerConfig.from_mapping(item)
@@ -35,6 +39,9 @@ class MCPManager:
             runtime_kwargs["reconnect_delays"] = reconnect_delays
         if env_values is not None:
             runtime_kwargs["env_values"] = env_values
+        runtime_kwargs["process_backend"] = process_backend
+        runtime_kwargs["sandbox_roots"] = list(sandbox_roots or [])
+        runtime_kwargs["work_dir"] = work_dir
         self._runtimes = {
             config.name: MCPServerRuntime(config, **runtime_kwargs)
             for config in configs

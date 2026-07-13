@@ -97,7 +97,7 @@ class MCPToolRegistrar:
                 else None
             ),
             idempotent=False,
-            is_parallel_safe=True,
+            is_parallel_safe=False,
             is_destructive=False,
         )
 

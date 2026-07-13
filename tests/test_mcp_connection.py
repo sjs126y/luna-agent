@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import httpx
@@ -118,7 +119,9 @@ async def test_sdk_streamable_http_connection():
         MCPServerConfig.from_mapping({
             "name": "remote",
             "transport": "streamable_http",
-            "url": "http://testserver/mcp",
+            "url": "http://localhost/mcp",
+            "allow_insecure_http": True,
+            "allow_private_network": True,
             "headers_env": {"Authorization": "REMOTE_MCP_TOKEN"},
         }),
         http_client_factory=client_factory,
@@ -147,3 +150,111 @@ async def test_sdk_http_connection_requires_configured_header_env():
 
     with pytest.raises(ValueError, match="MISSING_MCP_TOKEN"):
         await connection.connect()
+
+
+def test_mcp_http_requires_https_and_explicit_private_opt_in():
+    from personal_agent.mcp.connection import _validate_http_target
+
+    insecure = MCPServerConfig.from_mapping({
+        "name": "remote",
+        "url": "http://example.com/mcp",
+    })
+    private = MCPServerConfig.from_mapping({
+        "name": "local",
+        "url": "https://127.0.0.1/mcp",
+    })
+    opted_in = MCPServerConfig.from_mapping({
+        "name": "local",
+        "url": "http://127.0.0.1/mcp",
+        "allow_insecure_http": True,
+        "allow_private_network": True,
+    })
+
+    with pytest.raises(ValueError, match="requires HTTPS"):
+        _validate_http_target(insecure)
+    with pytest.raises(ValueError, match="Unsafe MCP HTTP endpoint"):
+        _validate_http_target(private)
+    _validate_http_target(opted_in)
+
+
+def test_stdio_connection_uses_process_sandbox(tmp_path, monkeypatch):
+    from personal_agent.tools import process_sandbox
+
+    monkeypatch.setattr(
+        process_sandbox,
+        "process_sandbox_capabilities",
+        lambda: {
+            "bwrap_available": True,
+            "bwrap_path": "/usr/bin/bwrap",
+            "network_namespace_available": True,
+        },
+    )
+    connection = SDKMCPConnection(
+        MCPServerConfig.from_mapping({
+            "name": "mock",
+            "command": "python",
+            "args": ["server.py"],
+        }),
+        process_backend="bwrap",
+        sandbox_roots=[tmp_path],
+        work_dir=tmp_path,
+    )
+
+    params = connection._stdio_parameters()
+
+    assert params.command == "/usr/bin/bwrap"
+    assert "--ro-bind" in params.args
+    assert "--unshare-net" in params.args
+    assert params.env["HOME"] == str(tmp_path.resolve())
+
+
+def test_mcp_result_payloads_are_bounded():
+    from personal_agent.mcp.connection import _normalize_call_result
+
+    class Block:
+        def __init__(self, value):
+            self.value = value
+
+        def model_dump(self, **_kwargs):
+            return dict(self.value)
+
+    result = SimpleNamespace(
+        content=[
+            Block({"type": "text", "text": "x" * 100}),
+            Block({"type": "image", "mimeType": "image/png", "data": "a" * 100}),
+        ],
+        structuredContent={"large": "y" * 100},
+        isError=False,
+    )
+    config = MCPServerConfig(
+        name="mock",
+        command="python",
+        max_result_chars=32,
+        max_artifact_bytes=8,
+    )
+
+    normalized = _normalize_call_result(result, config)
+
+    assert len(normalized.text) <= 32
+    assert normalized.content[1].data == ""
+    assert normalized.content[1].metadata == {"truncated": True}
+    assert normalized.metadata["structured_content_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_count_limit_is_enforced():
+    class Session:
+        async def list_tools(self, cursor=None):
+            tools = [
+                SimpleNamespace(name="one", description="", inputSchema={}),
+                SimpleNamespace(name="two", description="", inputSchema={}),
+            ]
+            return SimpleNamespace(tools=tools, nextCursor=None)
+
+    connection = SDKMCPConnection(
+        MCPServerConfig(name="mock", command="python", max_tools=1)
+    )
+    connection._session = Session()
+
+    with pytest.raises(ValueError, match="tool count"):
+        await connection.list_tools()

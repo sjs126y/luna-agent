@@ -534,7 +534,15 @@ async def start_mcp_manager(settings: Settings, plugin_manager: PluginManager):
         if str(env_name)
     }
     env_values = {name: settings.get_env(name) for name in env_names}
-    manager = MCPManager(mcp_servers, env_values=env_values)
+    mcp_work_dir = settings.agent_data_dir / "mcp"
+    mcp_work_dir.mkdir(parents=True, exist_ok=True)
+    manager = MCPManager(
+        mcp_servers,
+        env_values=env_values,
+        process_backend=settings.process_sandbox_backend,
+        sandbox_roots=list(settings.sandbox_roots),
+        work_dir=mcp_work_dir,
+    )
     await manager.start()
     return manager
 

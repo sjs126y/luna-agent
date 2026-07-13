@@ -148,6 +148,14 @@ MCP_SERVER_KEYS = {
     "enabled",
     "connect_timeout_seconds",
     "call_timeout_seconds",
+    "allow_insecure_http",
+    "allow_private_network",
+    "allow_network",
+    "max_tools",
+    "max_tool_pages",
+    "max_schema_bytes",
+    "max_result_chars",
+    "max_artifact_bytes",
 }
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -604,7 +612,26 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
             "missing_url": transport == "streamable_http" and not bool(url),
             "duplicate_name": duplicate_name,
             "unknown_keys": unknown,
+            "allow_insecure_http": bool(raw.get("allow_insecure_http", False)),
+            "allow_private_network": bool(raw.get("allow_private_network", False)),
+            "allow_network": bool(raw.get("allow_network", False)),
         })
+        for key in ("allow_insecure_http", "allow_private_network", "allow_network"):
+            if key in raw and not isinstance(raw[key], bool):
+                errors.append(f"{label}.{key} 必须是 true/false。")
+        for key in (
+            "max_tools",
+            "max_tool_pages",
+            "max_schema_bytes",
+            "max_result_chars",
+            "max_artifact_bytes",
+        ):
+            if key in raw and (
+                not isinstance(raw[key], int)
+                or isinstance(raw[key], bool)
+                or raw[key] <= 0
+            ):
+                errors.append(f"{label}.{key} 必须是正整数。")
         if transport not in {"stdio", "streamable_http"}:
             errors.append(f"MCP 服务器 {name} 使用不支持的 transport: {transport}")
         elif mcp_enabled and enabled and transport == "stdio" and not command:
@@ -617,6 +644,10 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
             parsed = urlparse(url)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 errors.append(f"MCP 服务器 {name} 的 url 必须是 http(s) URL。")
+            elif parsed.scheme == "http" and not raw.get("allow_insecure_http", False):
+                errors.append(
+                    f"MCP 服务器 {name} 使用 HTTP；如确认可信需显式设置 allow_insecure_http: true。"
+                )
         if duplicate_name:
             errors.append(f"MCP 服务器名称重复: {name}")
 

@@ -574,6 +574,26 @@ mcp:
     assert any("url 必须是 http(s) URL" in error for error in report["errors"])
 
 
+def test_config_report_requires_explicit_insecure_mcp_and_valid_limits(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+mcp:
+  enabled: true
+  servers:
+    - name: remote
+      transport: streamable_http
+      url: http://localhost:9000/mcp
+      max_tools: 0
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("allow_insecure_http: true" in error for error in report["errors"])
+    assert any("max_tools 必须是正整数" in error for error in report["errors"])
+
+
 def test_ensure_config_dirs_creates_expected_directories(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

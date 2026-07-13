@@ -281,7 +281,7 @@ async def test_manager_start_stop(mock_server_script: Path):
         echo_entry = tool_registry.get("mcp__mock__echo")
         assert echo_entry is not None
         assert echo_entry.toolset == "mcp"
-        assert echo_entry.is_parallel_safe is True
+        assert echo_entry.is_parallel_safe is False
 
     finally:
         await manager.stop()
