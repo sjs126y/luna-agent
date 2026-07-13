@@ -28,8 +28,10 @@ def _settings(tmp_path, plugins_dir):
         ("entrypoint", "sample-plugin:register", "field 'entrypoint'"),
         ("kind", "unknown", "field 'kind'"),
         ("source", "remote", "field 'source'"),
+        ("schema_version", 2, "schema_version"),
         ("requires_env", ["OK", ""], "requires_env"),
         ("provides", 123, "provides"),
+        ("tags", ["valid", ""], "tags"),
         ("enabled_by_default", "true", "enabled_by_default"),
         ("deferred", 1, "deferred"),
         ("record_import_delta", "yes", "record_import_delta"),
@@ -78,6 +80,68 @@ enabled_by_default: true
     assert report["entrypoint_error"] == ""
     assert report["enabled"] is False
     assert any("修复插件 manifest" in hint for hint in report["diagnostic_hints"])
+
+
+def test_plugin_context_exposes_only_scoped_config(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "configured"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+schema_version: 1
+key: user/configured
+name: Configured
+version: 1.0.0
+entrypoint: configured:register
+kind: integration
+tags: [example, configured]
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "configured.py").write_text(
+        """
+from pydantic import BaseModel
+
+class Config(BaseModel):
+    timeout: int = 10
+
+def register(ctx):
+    parsed = ctx.parse_config(Config)
+    assert parsed.timeout == 42
+    assert ctx.config["timeout"] == 42
+    try:
+        ctx.config["timeout"] = 1
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("plugin config must be read-only")
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[plugins_dir],
+        plugins_config={
+            "user/configured": {"timeout": 42},
+            "user/other": {"private": True},
+        },
+    )
+    manager = PluginManager(
+        settings,
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    report = manager.doctor_plugin("user/configured")
+
+    assert report["status"] == "LOADED"
+    assert report["schema_version"] == 1
+    assert report["kind"] == "integration"
+    assert report["tags"] == ["example", "configured"]
+    assert report["source"] == "local"
 
 
 def test_non_object_manifest_is_preserved_for_doctor(tmp_path):
@@ -226,9 +290,9 @@ enabled_by_default: true
     manager.discover()
     report = manager.doctor_plugin("user/pretend-builtin")
 
-    assert report["source"] == "user"
+    assert report["source"] == "local"
     assert report["declared_source"] == "builtin"
-    assert report["source_boundary"] == "user"
+    assert report["source_boundary"] == "local"
     assert any("source=builtin" in item for item in report["boundary_warnings"])
     assert report["manifest_path"].endswith("plugin.yaml")
 

@@ -519,6 +519,7 @@ def _plugin_fields() -> tuple[ConfigField, ...]:
         _yaml_field("plugins.dirs", "plugins_dirs", ["./plugins", "./data/plugins"], "list[path]", "plugins", "Plugin directories.", allow_csv=True),
         _yaml_field("plugins.enabled", "plugins_enabled", [], "list", "plugins", "Enabled plugins."),
         _yaml_field("plugins.disabled", "plugins_disabled", [], "list", "plugins", "Disabled plugins."),
+        _yaml_field("plugins.config", "plugins_config", {}, "dict", "plugins", "Per-plugin configuration."),
     )
 
 

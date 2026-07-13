@@ -69,7 +69,7 @@ class PluginManager:
 
     def discover(self) -> list[LoadedPlugin]:
         for directory in self._plugin_dirs:
-            source = "builtin" if self._same_path(Path(directory), _BUILTIN_PLUGIN_DIR) else "user"
+            source = self._source_for_directory(Path(directory))
             self._discover_dir(Path(directory), source=source, recursive=True)
 
         for plugin in self._plugins.values():
@@ -284,10 +284,12 @@ class PluginManager:
             "key": plugin.key,
             "name": plugin.manifest.name,
             "version": plugin.manifest.version,
+            "schema_version": plugin.manifest.schema_version,
             "description": plugin.manifest.description,
             "kind": plugin.manifest.kind,
             "entrypoint": plugin.manifest.entrypoint,
             "provides": plugin.manifest.provides,
+            "tags": plugin.manifest.tags,
             "enabled_by_default": plugin.manifest.enabled_by_default,
             "enabled": plugin.enabled,
             "status": plugin.status.value,
@@ -411,7 +413,7 @@ class PluginManager:
                 data = self._read_manifest_file(manifest_path)
                 manifest = PluginManifest.from_mapping(
                     data,
-                    source=source or "user",
+                    source=source or "local",
                     path=manifest_path.parent,
                 )
                 self._add_manifest(manifest)
@@ -422,7 +424,7 @@ class PluginManager:
                     name=manifest_path.parent.name,
                     version="0",
                     entrypoint="invalid",
-                    source=source or "user",
+                    source=source or "local",
                     path=manifest_path.parent,
                 )
                 self._plugins[key] = LoadedPlugin(
@@ -557,14 +559,14 @@ class PluginManager:
             warnings.append(
                 f"Manifest source={manifest.source} 与路径边界 {boundary} 不一致。"
             )
-        if manifest.source == "user" and manifest.kind == "builtin":
+        if manifest.source != "builtin" and manifest.kind == "builtin":
             warnings.append("用户插件不应声明 kind: builtin。")
-        if manifest.source == "user" and manifest.key.startswith("builtin/"):
+        if manifest.source != "builtin" and manifest.key.startswith("builtin/"):
             warnings.append("用户插件不能使用 builtin/* 插件 key。")
         return self._dedupe_strings(warnings)
 
     def _manifest_boundary_error(self, manifest: PluginManifest) -> str:
-        if manifest.source == "user" and manifest.key.startswith("builtin/"):
+        if manifest.source != "builtin" and manifest.key.startswith("builtin/"):
             return f"User plugin cannot use reserved builtin key: {manifest.key}"
         return ""
 
@@ -687,7 +689,21 @@ class PluginManager:
             return "unknown"
         if self._same_path(plugin.manifest.path, _BUILTIN_PLUGIN_DIR) or _BUILTIN_PLUGIN_DIR in plugin.manifest.path.parents:
             return "builtin"
-        return "user"
+        return self._source_for_directory(plugin.manifest.path)
+
+    def _source_for_directory(self, directory: Path) -> str:
+        if self._same_path(directory, _BUILTIN_PLUGIN_DIR) or _BUILTIN_PLUGIN_DIR in directory.parents:
+            return "builtin"
+        installed_root = Path(getattr(self.settings, "agent_data_dir", "data")) / "plugins"
+        try:
+            resolved = directory.resolve()
+            installed = installed_root.resolve()
+        except OSError:
+            resolved = directory.absolute()
+            installed = installed_root.absolute()
+        if resolved == installed or installed in resolved.parents:
+            return "installed"
+        return "local"
 
     def _registry_snapshot(self) -> dict[str, set[str]]:
         from personal_agent.platforms.core import platform_registry

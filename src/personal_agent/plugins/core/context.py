@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -21,10 +23,37 @@ class PluginContext:
         self.manager = manager
         self.plugin = plugin
         self.settings = manager.settings
+        all_config = getattr(manager.settings, "plugins_config", {}) or {}
+        plugin_config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
+        if not isinstance(plugin_config, dict):
+            raise ValueError(f"Plugin config must be an object: {plugin.key}")
+        self._config = MappingProxyType(deepcopy(plugin_config))
 
     @property
     def plugin_key(self) -> str:
         return self.plugin.key
+
+    @property
+    def config(self):
+        """Return this plugin's isolated, read-only configuration."""
+        return self._config
+
+    @property
+    def root(self):
+        """Return the discovered plugin package root."""
+        return self.plugin.manifest.path
+
+    def parse_config(self, model_type):
+        """Validate plugin configuration with a Pydantic model type."""
+        validator = getattr(model_type, "model_validate", None)
+        if not callable(validator):
+            raise TypeError("Plugin config model must provide model_validate()")
+        return validator(dict(self._config))
+
+    def get_env(self, name: str, default: str = "") -> str:
+        """Resolve an environment value through the Settings boundary."""
+        resolver = getattr(self.settings, "get_env", None)
+        return resolver(name, default) if callable(resolver) else default
 
     def register_tool(self, entry: ToolEntry) -> None:
         from personal_agent.tools.registry import tool_registry

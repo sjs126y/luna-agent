@@ -24,8 +24,13 @@ HookCallback = Callable[..., Any | Awaitable[Any]]
 
 PLUGIN_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*$")
 PLUGIN_KIND_VALUES = {
+    "automation",
     "builtin",
+    "development",
+    "general",
+    "integration",
     "platform",
+    "productivity",
     "tool",
     "tools",
     "skill",
@@ -36,8 +41,9 @@ PLUGIN_KIND_VALUES = {
     "mcp",
     "user",
 }
-PLUGIN_SOURCE_VALUES = {"builtin", "user"}
+PLUGIN_SOURCE_VALUES = {"builtin", "installed", "local", "user"}
 PLUGIN_MANIFEST_FIELDS = {
+    "schema_version",
     "key",
     "name",
     "version",
@@ -46,6 +52,7 @@ PLUGIN_MANIFEST_FIELDS = {
     "entrypoint",
     "requires_env",
     "provides",
+    "tags",
     "enabled_by_default",
     "source",
     "deferred",
@@ -58,13 +65,15 @@ class PluginManifest:
     key: str
     name: str
     version: str
+    schema_version: int = 1
     description: str = ""
     kind: str = "user"
     entrypoint: str = ""
     requires_env: list[str] = field(default_factory=list)
     provides: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     enabled_by_default: bool = False
-    source: str = "user"
+    source: str = "local"
     declared_source: str = ""
     path: Path | None = None
     deferred: bool = False
@@ -76,11 +85,15 @@ class PluginManifest:
         cls,
         data: dict[str, Any],
         *,
-        source: str = "user",
+        source: str = "local",
         path: Path | None = None,
     ) -> "PluginManifest":
         if not isinstance(data, dict):
             raise ValueError("Plugin manifest must be an object")
+
+        schema_version = data.get("schema_version", 1)
+        if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version != 1:
+            raise ValueError("Plugin manifest field 'schema_version' must be 1")
 
         missing = [name for name in ("key", "name", "version", "entrypoint") if not data.get(name)]
         if missing:
@@ -110,6 +123,7 @@ class PluginManifest:
 
         requires_env = _string_list(data["requires_env"] if "requires_env" in data else [], "requires_env")
         provides = _string_list(data["provides"] if "provides" in data else [], "provides")
+        tags = _string_list(data["tags"] if "tags" in data else [], "tags")
         enabled_by_default = _bool_field(data, "enabled_by_default", False)
         deferred = _bool_field(data, "deferred", False)
         record_import_delta = _bool_field(data, "record_import_delta", True)
@@ -119,11 +133,13 @@ class PluginManifest:
             key=key,
             name=str(data["name"]),
             version=str(data["version"]),
+            schema_version=schema_version,
             description=str(data.get("description", "")),
             kind=kind,
             entrypoint=entrypoint,
             requires_env=[str(item) for item in requires_env],
             provides=[str(item) for item in provides],
+            tags=[str(item) for item in tags],
             enabled_by_default=enabled_by_default,
             source=effective_source,
             declared_source=declared_source,
