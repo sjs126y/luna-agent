@@ -62,6 +62,8 @@ def build_process_launch(
     argv = [binary, "--die-with-parent", "--ro-bind", "/", "/"]
     if Path("/tmp").exists():
         argv.extend(["--tmpfs", "/tmp"])
+    if Path("/dev").exists():
+        argv.extend(["--dev", "/dev"])
     roots = {Path(root).resolve() for root in writable_roots}
     roots.add(work_dir)
     for root in sorted(roots, key=str):

@@ -242,6 +242,24 @@ async def test_client_stderr_tail_is_captured(tmp_path: Path):
         await client.disconnect()
 
 
+@pytest.mark.asyncio
+async def test_client_stderr_tail_survives_failed_connection(tmp_path: Path):
+    script = tmp_path / "failed_mcp_server.py"
+    script.write_text(
+        "import sys\n"
+        "sys.stderr.write('mcp startup failed\\n')\n"
+        "sys.stderr.flush()\n",
+        encoding="utf-8",
+    )
+    client = MCPClient(make_config(script))
+
+    assert await client.connect() == []
+    assert any(
+        "mcp startup failed" in line
+        for line in client.health_snapshot()["stderr_tail"]
+    )
+
+
 # ── MCPManager tests ────────────────────────────────────
 
 

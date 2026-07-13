@@ -2,6 +2,16 @@
 
 更新时间：2026-07-13 CST
 
+## 2026-07-13：安全兼容层收尾与 Fetch MCP 修复
+
+- 删除旧 `ExecutionPolicy`、permission category grant、旧 Mode 别名与 `/allow`；工具执行只使用 session `SecurityContext`、精确工具授权和精确资源授权。
+- `/deny all` 保留为当前 session 授权清理入口；Mode 切换、会话重置/删除和进程重启仍会清空授权。
+- Doctor execution 诊断改为直接展示 mode、permission profile、approval policy、filesystem/network、tool approval 与统一 TTL。
+- 前端/TUI 本轮不修改；所需 `/allow` 移除和 Security v4 payload 适配已记录到 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
+- 修复 Bubblewrap 只读绑定宿主 `/dev` 导致 `uvx` 无法检查 Python 的问题，改为创建最小隔离 `/dev`；Fetch MCP 实测达到 `runtime=ready`、1 个工具、0 次重连。
+- MCP 连接失败后会保留 stderr 尾部，`doctor --verbose` 可显示真实子进程退出原因，不再只报告 `Connection closed`。
+- 后端回归（排除由前端线负责的 `test_tui_*`）结果为 `782 passed`；安全/会话持久化/工具管道聚焦回归为 `100 passed`。
+
 ## 2026-07-13：被动插件 v1 与安全待办
 
 - 被动插件 v1 已合并到 `main`，合并提交为 `cfd809a Merge passive plugin v1`；全量回归 `878 passed`。
