@@ -584,7 +584,7 @@ Security evaluator 根据以下信息做决策：
 - ask。
 - deny。
 
-新安全上下文只在具体工具确认中扩权，授权对象是精确路径或 network host；类别级 `/allow` 仅保留旧运行时兼容。
+安全上下文只在具体工具确认中扩权，授权对象是精确工具、路径或 network host；类别级 `/allow` 及旧运行时兼容层已经删除。
 
 ### Sandbox
 

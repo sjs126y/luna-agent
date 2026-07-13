@@ -10,18 +10,21 @@ import pytest
 from personal_agent.conversation import ConversationCommandRuntime
 
 
-class Agent:
-    def __init__(self):
-        self._destructive_allowed = set()
-
-
 class Service:
     def __init__(self):
         self.agent_cache = {
-            "cli:default:local": Agent(),
-            "cli:other:local": Agent(),
+            "cli:default:local": SimpleNamespace(),
+            "cli:other:local": SimpleNamespace(),
         }
         self.usage_kwargs = None
+        from personal_agent.security.session import SecurityStateStore
+
+        self.security_states = SecurityStateStore(SimpleNamespace(
+            execution_mode="ask-first",
+            sandbox_roots=[Path.cwd()],
+            permission_grant_ttl_minutes=60,
+            tool_approval_config={},
+        ))
 
     async def get_or_create_agent(self, session_key):
         return self.agent_cache[session_key]
@@ -51,17 +54,8 @@ class Service:
         self.usage_kwargs = kwargs
         return "usage"
 
-    def allow_agent_category(self, session_key, category):
-        agent = self.agent_cache.get(session_key)
-        if agent is None:
-            return False
-        agent._destructive_allowed.add(category)
-        return True
-
-    def allow_all_cached_agents(self, category):
-        for agent in self.agent_cache.values():
-            agent._destructive_allowed.add(category)
-        return len(self.agent_cache)
+    def security_context(self, session_key):
+        return self.security_states.context(session_key)
 
     def request_stop(self, session_key=None):
         return 2
@@ -133,18 +127,14 @@ async def test_conversation_command_runtime_activity_uses_gateway_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_conversation_command_runtime_allow_current_or_all_cached_agents():
+async def test_conversation_command_runtime_clears_current_session_grants():
     service = Service()
     runtime = Runtime(service)
-    await runtime.allow_category("write")
+    current = service.security_context(runtime.session_key)
+    other = service.security_context("cli:other:local")
+    current.state.grant_tool("core:write", ttl_seconds=60)
+    other.state.grant_tool("core:bash", ttl_seconds=60)
 
-    assert service.agent_cache["cli:default:local"]._destructive_allowed == {"write"}
-    assert service.agent_cache["cli:other:local"]._destructive_allowed == set()
-
-    class AllRuntime(Runtime):
-        allow_all_cached_agents = True
-
-    await AllRuntime(service).allow_category("bash")
-
-    assert service.agent_cache["cli:default:local"]._destructive_allowed == {"write", "bash"}
-    assert service.agent_cache["cli:other:local"]._destructive_allowed == {"bash"}
+    assert await runtime.clear_security_grants() is True
+    assert current.state.tool_grants == {}
+    assert "core:bash" in other.state.tool_grants

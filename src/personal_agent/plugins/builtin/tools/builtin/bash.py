@@ -105,7 +105,7 @@ _WINDOWS_ALIASES: dict[str, str] = {
 
 # ── Hard blacklist — catastrophic commands, NEVER allowed ──
 # These are checked BEFORE the whitelist and cannot be overridden.
-# Even /allow bash does not bypass these.
+# Tool approval never bypasses these hard checks.
 
 _HARD_BLACKLIST: list[str] = [
     # Filesystem destruction (root paths)
@@ -161,7 +161,7 @@ def _check_command(cmd_line: str) -> str | None:
     if not parts:
         return "Error: empty command"
 
-    # ── 0. Hard blacklist (UNCONDITIONAL, even with /allow bash) ──
+    # ── 0. Hard blacklist (UNCONDITIONAL) ──
     cmd_lower = cmd_stripped.lower()
     for pattern in _HARD_BLACKLIST:
         if re.search(pattern, cmd_lower, re.IGNORECASE):

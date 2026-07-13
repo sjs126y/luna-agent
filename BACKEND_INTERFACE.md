@@ -233,8 +233,8 @@
 - `required_allow: string`
 - `decision_message: string`
 - `grant_matched: string`
-- `grant_scope: string` — `turn` 或 `temporary`
-- `grant_expires_at: number` — temporary grant 的 Unix 过期时间，非限时授权为 `0`
+- `grant_scope: string` — 当前为 `cached` 或空字符串；前端不应再解释旧 `turn` / category grant
+- `grant_expires_at: number` — 兼容持久化字段；精确授权过期时间以 `/permissions` 的 grant 条目为准
 - `temporary_grant_ttl_seconds: integer`
 - `tool_approval_mode: string`，`auto` / `cached` / `prompt` / `deny`
 - `requested_resources: list[object]`，需要本次确认的最小资源集合；元素包含 `kind`、`resource`、`access`、`reason`
@@ -519,7 +519,7 @@ async def confirm_callback(decision) -> str:
 - 只在 `permission_required + ask` 时调用 `confirm`。
 - `"allow"`：本次临时放行，执行后撤销临时 grant。
 - `"deny"`：不执行工具，返回 denied 工具结果。
-- `"always"`：放行，并加入当前 agent/session 的限时临时授权，默认 24 小时；显示文案建议为 `Always 24h`。
+- `"always"`：放行，并加入当前 agent/session 的限时精确授权；显示时长必须使用 `temporary_grant_ttl_seconds`，不能硬编码。
 - `/stop` 中断 pending confirm 时，后端会取消等待并按固定 denied 结果收口：
   - `tool_end.status="denied"`
   - `tool_end.category="authorization"`
@@ -626,12 +626,6 @@ Gateway / 平台行为：
 - `Local Auto` -> `workspace` + `on-request`
 - `Full Auto` -> `trusted` + `never`
 
-兼容旧别名：
-
-- `normal` -> `Ask First`
-- `acceptEdits` -> `Local Auto`
-- `auto` -> `Full Auto`
-
 切换 mode 会清空当前 session 的工具与资源 grants；重置/删除会话和服务重启也会清空。授权不会跨 session 或跨平台用户合并。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
 新安全上下文不接受 `/allow write` 这类类别级预授权。工具确认返回的授权由两部分组成：`tool_approval_mode` 控制工具身份是否需要确认，`requested_resources` 列出本次缺失的具体路径/host。允许一次只覆盖当前调用；限时允许使用全局 `permissions.grant_ttl_minutes`。
@@ -639,7 +633,7 @@ Gateway / 平台行为：
 新增命令：
 
 - `/deny all`：撤销当前 session 的全部工具/资源限时授权。
-- `/permissions` payload 提供 `security`、`tool_grants`、`resource_grants`、`temporary_grant_ttl_seconds`；旧 `grants` 字段暂时保留兼容。
+- `/permissions` payload 提供 `security`、`tool_grants`、`resource_grants`、`temporary_grant_ttl_seconds` 和 `pending_confirmation`；旧类别 grant 字段已删除。
 - `tool_decision` / `tool_end` 新增 `tool_approval_mode` 与 `requested_resources`，前端确认框应优先展示这些字段。
 
 Gateway 异步确认：

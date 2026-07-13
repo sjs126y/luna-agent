@@ -19,11 +19,7 @@ from personal_agent.config_registry import (
     registry_schema,
     validate_registry_config,
 )
-from personal_agent.execution import (
-    VALID_EXECUTION_MODES,
-    VALID_PERMISSION_CATEGORIES,
-    VALID_PERMISSION_DECISIONS,
-)
+from personal_agent.security.modes import MODE_PRESETS
 
 
 KNOWN_TOP_LEVEL_KEYS = {
@@ -59,7 +55,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "platform_send_max_retries",
     },
     "cron": {"enabled"},
-    "execution": {"mode", "policy"},
+    "execution": {"mode"},
     "mcp": {"enabled", "servers"},
     "memory": {"external_provider", "review", "llm", "embedding", "qdrant", "providers"},
     "multimodal": {
@@ -83,7 +79,6 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     },
     "permissions": {
         "grant_ttl_minutes",
-        "temporary_grant_ttl_hours",
         "confirm_timeout_seconds",
         "tool_approval",
     },
@@ -121,7 +116,7 @@ VALID_LLM_PROVIDERS = set(PROVIDER_REQUIRED_ENV)
 VALID_LLM_API_MODES = {"auto", "chat_completions", "anthropic_messages", "responses", "codex_responses"}
 VALID_COMPRESSION_ENGINES = {"compressor", "simple", "none", "off", "disabled"}
 VALID_EXTERNAL_MEMORY_PROVIDERS = {"none", "fallback", "lumora", "mem0"}
-VALID_EXECUTION_POLICY_KEYS = VALID_PERMISSION_CATEGORIES | {"tool_permissions"}
+VALID_EXECUTION_MODES = set(MODE_PRESETS)
 
 PLATFORM_ENV = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
@@ -482,14 +477,9 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
 
     execution = sections["execution"]
     _execution_mode_value(execution, "mode", "execution.mode", errors)
-    if "policy" in execution and not isinstance(execution["policy"], dict):
-        errors.append("execution.policy 必须是对象。")
-    elif "policy" in execution:
-        _execution_policy_value(execution["policy"], "execution.policy", errors)
 
     permissions = sections["permissions"]
     _range_int(permissions, "grant_ttl_minutes", "permissions.grant_ttl_minutes", 1, 10080, errors)
-    _range_int(permissions, "temporary_grant_ttl_hours", "permissions.temporary_grant_ttl_hours", 1, 168, errors)
     _range_int(permissions, "confirm_timeout_seconds", "permissions.confirm_timeout_seconds", 10, 600, errors)
     if "tool_approval" in permissions:
         from personal_agent.security.config import tool_approval_config_errors
@@ -955,45 +945,6 @@ def _enum_value(
 
 def _execution_mode_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
     _enum_value(section, key, label, VALID_EXECUTION_MODES, errors)
-
-
-def _execution_policy_value(policy: dict[str, Any], label: str, errors: list[str]) -> None:
-    for key, value in sorted(policy.items()):
-        child_label = f"{label}.{key}"
-        if key not in VALID_EXECUTION_POLICY_KEYS:
-            errors.append(
-                f"{child_label} 暂不支持；v1 只允许权限类别或 tool_permissions。"
-            )
-            continue
-        if key == "tool_permissions":
-            if not isinstance(value, dict):
-                errors.append(f"{child_label} 必须是对象。")
-                continue
-            _execution_tool_permissions_value(value, child_label, errors)
-            continue
-        _permission_decision_value(value, child_label, errors)
-
-
-def _execution_tool_permissions_value(
-    permissions: dict[str, Any],
-    label: str,
-    errors: list[str],
-) -> None:
-    for key, value in sorted(permissions.items()):
-        child_label = f"{label}.{key}"
-        if key not in VALID_PERMISSION_CATEGORIES:
-            errors.append(
-                f"{child_label} 不支持；可选: {', '.join(sorted(VALID_PERMISSION_CATEGORIES))}"
-            )
-            continue
-        _permission_decision_value(value, child_label, errors)
-
-
-def _permission_decision_value(value: Any, label: str, errors: list[str]) -> None:
-    if not isinstance(value, str) or value not in VALID_PERMISSION_DECISIONS:
-        errors.append(
-            f"{label} 必须是 allow/ask/deny，可选: {', '.join(sorted(VALID_PERMISSION_DECISIONS))}"
-        )
 
 
 def _bool_value(section: dict[str, Any], key: str, label: str, errors: list[str]) -> None:

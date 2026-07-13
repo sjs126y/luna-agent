@@ -408,7 +408,6 @@ def _command_health_snapshot(runtime: AppRuntime) -> dict[str, Any]:
         "has_tool_runs": "tool-runs" in command_names,
         "has_activity": "activity" in command_names,
         "has_mode_arguments": _command_has_arguments(commands, "mode", child="set"),
-        "has_allow_arguments": _command_has_arguments(commands, "allow"),
     }
 
 
@@ -424,15 +423,9 @@ def _query_health_snapshot(runtime: AppRuntime) -> dict[str, Any]:
 
 
 def _execution_health_snapshot(settings: Settings) -> dict[str, Any]:
-    policy = settings.execution_policy
-    profile = policy.profile
-    return {
-        "mode": policy.mode,
-        "label": profile.label,
-        "isolation": policy.isolation,
-        "network": policy.network,
-        "permissions": dict(policy.permissions),
-    }
+    from personal_agent.security.session import security_settings_snapshot
+
+    return security_settings_snapshot(settings)
 
 
 def _llm_cache_health_snapshot(settings: Settings, turns: dict[str, Any]) -> dict[str, Any]:

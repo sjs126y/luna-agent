@@ -115,7 +115,7 @@ auto, cached, prompt, deny
 filesystem(read/write), network(connect)
 ```
 
-`cached` 首次确认后按统一 TTL 缓存，`prompt` 每次确认，`deny` 禁止。资源授权始终记录具体路径或 host；`/allow <category>` 在新安全上下文中不再创建宽泛授权。
+`cached` 首次确认后按统一 TTL 缓存，`prompt` 每次确认，`deny` 禁止。资源授权始终记录具体路径或 host；类别级 `/allow` 命令已经删除。
 
 ### Sandbox 与硬预检
 
@@ -191,7 +191,6 @@ Lumora 的目标是尽量通过配置切换运行方式，而不是改代码。
 `config.yaml` 主要放本机行为配置：
 
 - `execution.mode`
-- `execution.policy.tool_permissions`
 - `permissions.grant_ttl_minutes`
 - `permissions.tool_approval`
 - `sandbox.process_backend`

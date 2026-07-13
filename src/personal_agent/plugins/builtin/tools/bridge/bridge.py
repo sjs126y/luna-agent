@@ -1,9 +1,9 @@
 """Bridge tools — registered on import as normal tools.
 When LLM calls tool_search/describe/call, these handlers manage deferrable tools.
 
-Flow: tool_search (discover) → tool_describe (get schema) → LLM calls tool directly
-tool_call is a fallback for tools that can't be surfaced mid-turn — but destructive
-tools are NOT callable through it (they must go through the full executor pipeline).
+Flow: tool_search (discover) → tool_describe (get schema) → LLM calls tool directly.
+tool_call is a fallback for tools that cannot be surfaced mid-turn and dispatches
+through the same executor security pipeline.
 """
 
 from personal_agent.tools.entry import ToolEntry
@@ -26,8 +26,7 @@ async def _tool_describe(name: str) -> str:
 
 
 async def _tool_call(name: str, arguments: dict) -> object:
-    """Fallback: execute a deferrable tool by name. Only works for safe tools —
-    destructive tools are blocked and must be called directly with /allow."""
+    """Execute a deferrable tool through the shared executor pipeline."""
     from personal_agent.tools.registry import tool_registry as _tr
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
     from personal_agent.tools.runtime_context import (
@@ -42,14 +41,6 @@ async def _tool_call(name: str, arguments: dict) -> object:
         return f"Error: unknown tool '{name}'"
     if name == "tool_call":
         return "Error: tool_call cannot call itself"
-
-    # Destructive tools must go through the full executor pipeline
-    # (scope gate + checkpoint + hooks), not through this shortcut
-    if entry.is_destructive:
-        return (
-            f"Error: destructive tool '{name}' cannot be called via tool_call. "
-            f"Send /allow to authorize it, then call '{name}' directly in your next response."
-        )
 
     agent = current_tool_agent()
     confirm = current_tool_confirm()
@@ -112,8 +103,7 @@ tool_registry.register(ToolEntry(
 
 tool_registry.register(ToolEntry(
     name="tool_call",
-    description="Execute a safe, non-destructive tool by name. "
-                "If the tool is destructive, it will be blocked — call it directly after /allow instead.",
+    description="Execute a discovered tool by name through the shared security and audit pipeline.",
     schema={
         "type": "object",
         "properties": {
@@ -126,6 +116,6 @@ tool_registry.register(ToolEntry(
     toolset="system",
     tags=["tooling", "dispatch"],
     risk_level="medium",
-    usage_hint="Use only for safe non-destructive tools; direct calls are preferred when the tool is known.",
+    usage_hint="Use for a discovered tool that is not directly visible; direct calls remain preferred.",
     is_parallel_safe=False,
 ))

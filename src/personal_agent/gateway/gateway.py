@@ -433,7 +433,6 @@ class Gateway:
 class _GatewayCommandRuntime(ConversationCommandRuntime):
     reset_session_response = "会话已重置。开始新的对话吧。（历史对话保留，可用 /session 查看）"
     usage_create_agent = False
-    allow_all_cached_agents = True
 
     def __init__(self, gateway: Gateway, event, session_key: str) -> None:
         self.gateway = gateway

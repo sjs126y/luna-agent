@@ -19,8 +19,6 @@ from personal_agent.tools.execution_guard import (
     ToolDecision,
     classify_guard_denial,
     evaluate_execution_guards,
-    fallback_tool_category,
-    run_precheck,
     tool_decision_for_unknown_tool,
     tool_decision_from_guard,
     tool_permission_category,
@@ -206,7 +204,7 @@ async def execute_tool_call_result(
 
     Order matters — hard rejections first, then user-facing gates:
       ① pre-check — hard blocks (never ask user): bash whitelist, ext, SSRF...
-      ② scope gate — may ask user: /allow for destructive tools
+      ② security gate — may ask for exact tool/resource approval
       ③ checkpoint — backup before destructive write
       ④ pre-hook → dispatch → post-process
     """
@@ -390,14 +388,6 @@ async def execute_tool_call_result(
                 if one_time:
                     one_time_security_context = security_context
                     one_time_security_grants = security_grants
-                added_grants = set()
-            else:
-                security_grants = (set(), set())
-                added_grants = _add_confirm_grants(
-                    agent,
-                    tool_decision,
-                    persist=answer == "always",
-                )
             try:
                 guard_decision = evaluate_execution_guards(tc, entry, agent)
             except Exception as exc:
@@ -408,9 +398,6 @@ async def execute_tool_call_result(
                     error=f"{type(exc).__name__}: {exc}",
                     started=started,
                 ))
-            finally:
-                if answer == "allow":
-                    _remove_confirm_grants(agent, added_grants)
             tool_decision = _with_agent_grant_metadata(tool_decision_from_guard(tc, guard_decision), agent)
     await _emit_tool_decision(event_sink, tool_decision)
     if not guard_decision.allowed:
@@ -591,26 +578,15 @@ def _can_run_in_parallel(tc: dict, entry: Any, agent: Any = None, *, confirm: An
 
 
 def _would_need_permission_confirm(tc: dict, entry: Any, agent: Any = None) -> bool:
-    if agent is None:
-        return False
-    security_context = getattr(agent, "_security_context", None)
-    if security_context is not None:
-        from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+    from personal_agent.security.evaluator import (
+        evaluate_tool_security,
+        prepare_tool_call,
+        unscoped_security_context,
+    )
 
-        return evaluate_tool_security(prepare_tool_call(tc, entry), security_context).decision == "ask"
-    policy = getattr(agent, "_execution_policy", None)
-    category = tool_permission_category(str(tc.get("name", "")), entry)
-    decision = "ask" if entry.is_destructive else "allow"
-    if policy is not None:
-        decision = policy.permission_for(category)
-        if decision == "allow" and entry.is_destructive and category == "default":
-            decision = policy.permission_for("destructive")
-    if decision != "ask":
-        return False
-    from personal_agent.permissions import matching_permission_grant
-
-    grant, _scope, _expires_at = matching_permission_grant(agent, category)
-    return not grant
+    context = getattr(agent, "_security_context", None) if agent is not None else None
+    context = context or unscoped_security_context()
+    return evaluate_tool_security(prepare_tool_call(tc, entry), context).decision == "ask"
 
 
 async def _confirm_tool_decision(confirm: Any, decision: ToolDecision, *, agent: Any = None) -> str:
@@ -656,40 +632,10 @@ def _agent_interrupt_requested(agent: Any) -> bool:
 def _with_agent_grant_metadata(decision: ToolDecision, agent: Any) -> ToolDecision:
     if agent is None:
         return decision
-    ttl = int(
-        getattr(agent, "_security_grant_ttl_seconds", 0)
-        or getattr(agent, "_permission_temporary_grant_ttl_seconds", 0)
-        or 0
-    )
+    ttl = int(getattr(agent, "_security_grant_ttl_seconds", 0) or 0)
     if not ttl:
         return decision
     return replace(decision, temporary_grant_ttl_seconds=ttl)
-
-
-def _add_confirm_grants(agent: Any, decision: ToolDecision, *, persist: bool) -> set[str]:
-    if agent is None:
-        return set()
-    category = str(decision.permission_category or "")
-    required = str(decision.required_allow or "")
-    tokens = {item for item in (required, category) if item}
-    if persist:
-        from personal_agent.permissions import add_temporary_grant, add_turn_grants
-
-        for token in tokens:
-            add_temporary_grant(agent, token)
-        add_turn_grants(agent, *tokens)
-        return set()
-    from personal_agent.permissions import add_turn_grants
-
-    return add_turn_grants(agent, *tokens)
-
-
-def _remove_confirm_grants(agent: Any, added: set[str]) -> None:
-    if not added or agent is None:
-        return
-    from personal_agent.permissions import remove_turn_grants
-
-    remove_turn_grants(agent, added)
 
 
 async def _emit_tool_decision(event_sink: Any, decision: ToolDecision) -> None:
@@ -809,17 +755,6 @@ def _summarize_text(value: Any, max_chars: int = 500) -> str:
     return text[: max(0, max_chars - 3)] + "..."
 
 
-def _classify_gate_error(message: str) -> str:
-    text = str(message).lower()
-    if "authorization" in text or "/allow" in text:
-        return "authorization"
-    if "limit" in text:
-        return "quota"
-    if "unavailable" in text or "dependency" in text:
-        return "dependency"
-    return "scope_gate"
-
-
 async def _run_handler(
     handler: Any,
     kwargs: dict[str, Any],
@@ -855,31 +790,6 @@ async def _run_handler(
         reset_current_tool_confirm(confirm_token)
         reset_current_tool_agent(agent_token)
         _active_tool_executions = max(0, _active_tool_executions - 1)
-
-
-# ── pre-check: hard blocks (NEVER ask user) ─────────
-
-
-def _pre_check(tc: dict, entry) -> str | None:
-    """Compatibility wrapper for hard precheck rules."""
-    return run_precheck(tc, entry)
-
-
-# ── scope gate ────────────────────────────────────────
-
-def _tool_category(name: str) -> str:
-    """Map tool name → destructive category for granular /allow."""
-    return fallback_tool_category(name)
-
-
-def _scope_gate(tc: dict, entry, agent: Any) -> str | None:
-    """Compatibility wrapper for execution guard checks."""
-    decision = evaluate_execution_guards(tc, entry, agent)
-    return None if decision.allowed else decision.message
-
-
-def _looks_destructive(name: str) -> bool:
-    return fallback_tool_category(name) == "write"
 
 
 # ── checkpoint ────────────────────────────────────────

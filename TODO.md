@@ -4,7 +4,7 @@
 
 ## 已完成：Execution Mode 与工具安全重构
 
-状态：已完成实现，等待真实 Gateway 场景复测。
+状态：已完成实现，并通过真实 Gateway 场景复测。
 
 1. 用户模式统一为 `Read Only`、`Ask First`、`Local Auto`、`Full Auto`，稳定 ID 分别为 `read-only`、`ask-first`、`local-auto`、`full-auto`。
 2. Mode 由 filesystem/network permission profile 与 `on-request/never` approval policy 组合，不再依赖工具类别长期授权。
@@ -16,7 +16,7 @@
 
 ## 已完成：MCP 安全收口
 
-状态：已完成实现，等待真实 GitHub MCP 与 stdio MCP 复测。
+状态：已完成实现，并通过真实 GitHub MCP、sequential-thinking 与 Fetch stdio MCP 复测。
 
 1. 未知 MCP 工具默认 `cached` 审批、不可并行、不可自动重试；支持 per-server 与 per-tool 本地覆盖。
 2. stdio MCP 在应用 Runtime 中复用进程沙箱，默认写目录为 `data/mcp`，网络需 server 显式配置 `allow_network: true`。
@@ -31,4 +31,3 @@
 2. DNS 校验仍存在解析检查与实际连接之间的 TOCTOU 窗口；如需更强保证，应让 transport 连接已校验 IP 并校验 Host/TLS。
 3. MCP 市场/自动安装尚未实现；未来需要版本固定、来源签名、安装预览与首次启用确认。
 4. MCP tool annotations 尚未消费；未来只能作为收紧策略的提示，不能放宽本地配置。
-5. `execution.policy`、旧 permission category 与 `/allow` 兼容代码待前端和真实配置迁移完成后删除。

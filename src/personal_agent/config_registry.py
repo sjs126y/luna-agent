@@ -250,10 +250,6 @@ EXECUTION_MODES = (
     "ask-first",
     "local-auto",
     "full-auto",
-    "guarded",
-    "standard",
-    "trusted",
-    "sovereign",
 )
 LLM_PROVIDERS = ("anthropic", "deepseek", "openai", "openrouter", "xai")
 LLM_API_MODES = ("anthropic_messages", "auto", "chat_completions", "codex_responses", "responses")
@@ -318,7 +314,6 @@ def _mixed_field(
 def _execution_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("execution.mode", "execution_mode", "ask-first", "str", "execution", "Execution mode profile.", choices=EXECUTION_MODES),
-        _yaml_field("execution.policy", "execution_policy_overrides", {}, "dict", "execution", "Execution policy overrides."),
     )
 
 
@@ -341,16 +336,6 @@ def _permission_fields() -> tuple[ConfigField, ...]:
             "dict",
             "permissions",
             "Tool approval defaults and exact tool or MCP server overrides.",
-        ),
-        _yaml_field(
-            "permissions.temporary_grant_ttl_hours",
-            "permission_temporary_grant_ttl_hours",
-            24,
-            "int",
-            "permissions",
-            "Temporary permission grant TTL in hours.",
-            minimum=1,
-            maximum=168,
         ),
         _yaml_field(
             "permissions.confirm_timeout_seconds",

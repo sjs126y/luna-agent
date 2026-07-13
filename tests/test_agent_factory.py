@@ -59,7 +59,7 @@ async def test_create_agent_runtime_resolves_transport_and_compressor(tmp_path):
     assert runtime.agent._compressor.threshold_tokens == int(
         runtime.provider.context_window * 0.42
     )
-    assert runtime.agent._permission_temporary_grant_ttl_seconds == 60 * 60
+    assert not hasattr(runtime.agent, "_permission_temporary_grant_ttl_seconds")
     assert runtime.agent._cached_system_prompt is not None
 
 

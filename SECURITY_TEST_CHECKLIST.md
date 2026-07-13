@@ -2,6 +2,12 @@
 
 更新时间：2026-07-13
 
+## 2026-07-13 实测记录
+
+当前真实 Gateway 验证已经覆盖并通过：Ask First 单次允许与拒绝、Read Only 硬拒绝、Local Auto 工作区写入与 blocked path、Full Auto 工作区写入与 blocked path、GitHub MCP 工具/host 审批及 TTL 复用、Mode 切换清理 grants、sequential-thinking 单次 stdio 调用，以及 Fetch MCP 启动。Fetch 修复后 `doctor --verbose` 显示 `runtime=ready`、`tools=1`、`reconnects=0`。
+
+前端/TUI 尚未适配 `/allow` 移除；该事项只记录在 `FRONTEND_INTERFACE_REQUIREMENTS.md`，不影响后端/Gateway 实测结论。
+
 ## 测试规则
 
 1. 不删除或重置现有会话、记忆、Qdrant collection 和 SQLite 数据。

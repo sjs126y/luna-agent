@@ -209,7 +209,7 @@ GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 | `local-auto` | Local Auto | sandbox roots 内可读写；越界资源和需审批工具按需确认 |
 | `full-auto` | Full Auto | sandbox roots 内可读写并允许网络；仍受 blocked path、危险命令和载荷上限等硬边界约束 |
 
-`guarded`、`standard`、`trusted`、`sovereign` 仍可作为兼容别名，但新配置应使用上表 ID。`execution.policy` 只供旧运行时兼容，不再是新安全上下文的权威配置。
+旧 Mode 名称和 `execution.policy` 已删除。配置必须使用上表稳定 ID；未知值会在配置检查阶段报错。
 
 工具审批使用 `permissions.tool_approval` 覆盖：
 

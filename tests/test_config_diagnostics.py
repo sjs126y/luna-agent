@@ -201,7 +201,7 @@ sandbox:
     assert set(report["registry_validation_errors"]).issubset(set(report["errors"]))
 
 
-def test_config_report_accepts_execution_policy_overrides(tmp_path):
+def test_config_report_rejects_removed_execution_compatibility(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """
 execution:
@@ -223,37 +223,9 @@ sandbox:
 
     report = build_config_report(tmp_path)
 
-    assert not any("execution.policy" in error for error in report["errors"])
-
-
-def test_config_report_rejects_invalid_execution_policy_overrides(tmp_path):
-    (tmp_path / "config.yaml").write_text(
-        """
-execution:
-  mode: standard
-  policy:
-    background: maybe
-    sandbox:
-      path_roots_enforced: false
-    tool_permissions:
-      unknown: allow
-      bash: always
-storage:
-  data_dir: ./data
-sandbox:
-  roots: [./data]
-  bash_work_dir: ./data
-""".strip(),
-        encoding="utf-8",
-    )
-    (tmp_path / ".env").write_text("LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n", encoding="utf-8")
-
-    report = build_config_report(tmp_path)
-
-    assert any("execution.policy.background 必须是 allow/ask/deny" in error for error in report["errors"])
-    assert any("execution.policy.sandbox 暂不支持" in error for error in report["errors"])
-    assert any("execution.policy.tool_permissions.unknown 不支持" in error for error in report["errors"])
-    assert any("execution.policy.tool_permissions.bash 必须是 allow/ask/deny" in error for error in report["errors"])
+    assert "execution.policy" in report["unknown_nested_keys"]
+    assert any("未知 config 配置: execution.policy" in warning for warning in report["warnings"])
+    assert any("execution.mode 不支持: standard" in error for error in report["errors"])
 
 
 def test_config_report_reports_deprecated_keys_and_platform_env(tmp_path):

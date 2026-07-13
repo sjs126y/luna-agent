@@ -517,26 +517,12 @@ class ConversationService:
         agent = self.get_cached_agent(session_key)
         if agent is not None:
             self._apply_security_context(agent, session_key)
-            for attr in ("_destructive_allowed", "_turn_grants"):
-                grants = getattr(agent, attr, None)
-                if hasattr(grants, "clear"):
-                    grants.clear()
-            temporary = getattr(agent, "_temporary_grants", None)
-            if hasattr(temporary, "clear"):
-                temporary.clear()
         return state
 
     def _apply_security_context(self, agent, session_key: str) -> None:
-        from personal_agent.execution import resolve_execution_policy_for_mode
-        from personal_agent.security.modes import mode_preset
-
         context = self.security_context(session_key)
-        preset = mode_preset(context.mode_id)
         agent._security_context = context
         agent._security_grant_ttl_seconds = self.security_states.grant_ttl_seconds
-        agent._execution_policy = resolve_execution_policy_for_mode(
-            self.settings, preset.legacy_execution_mode
-        )
 
     async def _record_tool_runs(
         self,
@@ -723,20 +709,6 @@ class ConversationService:
     def iter_cached_agents(self):
         return iter(self.agent_cache.values())
 
-    def allow_agent_category(self, session_key: str, category: str) -> bool:
-        agent = self.get_cached_agent(session_key)
-        if agent is None:
-            return False
-        self._allow_agent_category(agent, category)
-        return True
-
-    def allow_all_cached_agents(self, category: str) -> int:
-        count = 0
-        for agent in self.iter_cached_agents():
-            self._allow_agent_category(agent, category)
-            count += 1
-        return count
-
     def request_stop(self, session_key: str | None = None) -> int:
         agents = (
             [self.get_cached_agent(session_key)]
@@ -769,12 +741,6 @@ class ConversationService:
 
     def stop_all_agents(self) -> int:
         return self.request_stop(None)
-
-    @staticmethod
-    def _allow_agent_category(agent, category: str) -> None:
-        if hasattr(agent, "_destructive_allowed"):
-            agent._destructive_allowed.add(category)
-
 
 def _minimal_turn_messages(user_text: str, assistant_text: str) -> list[dict]:
     return [

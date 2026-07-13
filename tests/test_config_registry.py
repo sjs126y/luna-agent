@@ -27,7 +27,9 @@ def test_config_registry_keeps_field_order_and_metadata():
     paths = [field.path for field in CONFIG_FIELDS]
     fields = {field.path: field for field in CONFIG_FIELDS}
 
-    assert paths[:3] == ["execution.mode", "execution.policy", "LLM_PROVIDER"]
+    assert paths[:2] == ["execution.mode", "LLM_PROVIDER"]
+    assert "execution.policy" not in paths
+    assert "permissions.temporary_grant_ttl_hours" not in paths
     assert paths[-1] == "profiles"
     assert fields["LLM_API_KEY"].sensitive is True
     assert fields["LLM_REASONING_EFFORT"].source == ".env"
@@ -175,10 +177,6 @@ def test_config_registry_schema_is_stable():
         "ask-first",
         "local-auto",
         "full-auto",
-        "guarded",
-        "standard",
-        "trusted",
-        "sovereign",
     ]
     assert fields["permissions.grant_ttl_minutes"]["default"] == 60
     assert fields["permissions.tool_approval"]["default"] == {}

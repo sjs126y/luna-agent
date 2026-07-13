@@ -15,10 +15,11 @@ def _settings(tmp_path: Path, *, mode: str = "ask-first"):
 def test_mode_presets_have_one_stable_mapping():
     from personal_agent.security.modes import mode_preset
 
-    assert mode_preset("guarded").id == "read-only"
+    assert mode_preset("read-only").profile == "read-only"
+    assert mode_preset("ask-first").approval_policy == "on-request"
+    assert mode_preset("local-auto").profile == "workspace"
+    assert mode_preset("full-auto").profile == "trusted"
     assert mode_preset("standard").id == "ask-first"
-    assert mode_preset("trusted").label == "Local Auto"
-    assert mode_preset("sovereign").id == "full-auto"
 
 
 def test_permission_profiles_enforce_actual_roots(tmp_path):
@@ -58,12 +59,11 @@ def test_session_grants_use_one_ttl_and_mode_switch_clears(tmp_path):
     assert switched.resource_grants == {}
 
 
-def test_legacy_permission_helpers_use_unified_grant_ttl():
+def test_permission_helpers_use_unified_grant_ttl():
     from personal_agent.permissions import format_grant_duration, temporary_grant_ttl_seconds
 
     settings = SimpleNamespace(
         permission_grant_ttl_minutes=90,
-        permission_temporary_grant_ttl_hours=24,
     )
 
     assert temporary_grant_ttl_seconds(settings) == 90 * 60

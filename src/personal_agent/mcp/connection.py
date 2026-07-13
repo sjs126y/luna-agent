@@ -70,6 +70,7 @@ class SDKMCPConnection:
         self._session: ClientSession | None = None
         self._connect_lock = asyncio.Lock()
         self._stderr_file = None
+        self._stderr_history: list[str] = []
         self._server_info: MCPServerInfo | None = None
 
     @property
@@ -224,21 +225,14 @@ class SDKMCPConnection:
         stderr_file = self._stderr_file
         self._stderr_file = None
         if stderr_file is not None:
+            self._stderr_history = _read_stderr_tail(stderr_file)
             stderr_file.close()
 
     def stderr_tail(self, limit: int = 20) -> list[str]:
         stream = self._stderr_file
         if stream is None:
-            return []
-        try:
-            stream.flush()
-            position = stream.tell()
-            stream.seek(0)
-            lines = stream.read().splitlines()
-            stream.seek(position)
-            return lines[-limit:]
-        except (OSError, ValueError):
-            return []
+            return self._stderr_history[-limit:]
+        return _read_stderr_tail(stream, limit=limit)
 
     async def _handle_message(self, message) -> None:
         if isinstance(message, mcp_types.ToolListChangedNotification):
@@ -264,6 +258,18 @@ def _stdio_env(configured: dict[str, str]) -> dict[str, str]:
     result = {key: value for key, value in base.items() if key in safe_keys or key in configured}
     result.update(configured)
     return result
+
+
+def _read_stderr_tail(stream, *, limit: int = 20) -> list[str]:
+    try:
+        stream.flush()
+        position = stream.tell()
+        stream.seek(0)
+        lines = stream.read().splitlines()
+        stream.seek(position)
+        return lines[-limit:]
+    except (OSError, ValueError):
+        return []
 
 
 def _http_headers(headers_env: dict[str, str], env_values: Mapping[str, str]) -> dict[str, str]:

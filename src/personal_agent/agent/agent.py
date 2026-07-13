@@ -62,15 +62,11 @@ class Agent:
     _retry: RetryState = field(default_factory=RetryState)
     _interrupt_requested: bool = False
     _tool_calls_this_turn: int = 0
-    _destructive_allowed: set[str] = field(default_factory=set)  # legacy alias for per-turn grants
-    _turn_grants: set[str] = field(default_factory=set)
-    _temporary_grants: dict[str, float] = field(default_factory=dict)
-    _permission_temporary_grant_ttl_seconds: int = 24 * 60 * 60
-    _permission_confirm_timeout_seconds: int = 120
     _max_tool_calls_per_turn: int = 20
     _destructive_calls_this_turn: int = 0
     _max_destructive_per_turn: int = 3
-    _execution_policy: Any = None
+    _security_context: Any = None
+    _security_grant_ttl_seconds: int = 60 * 60
     _pending_skill_injection: str | None = None  # set by Gateway, consumed by context
     _last_skill_injection: str = ""
     _last_skill_summaries: str = ""
@@ -94,9 +90,6 @@ def init_agent(
     memory_snapshot_refresh_interval: int = 20,
     system_prompt_template: str = "",
     enabled_toolsets: list[str] | None = None,
-    execution_policy=None,
-    permission_temporary_grant_ttl_seconds: int = 24 * 60 * 60,
-    permission_confirm_timeout_seconds: int = 120,
 ) -> Agent:
     """Wire an Agent instance. Flat initialization — no 1700-line magic."""
     from concurrent.futures import ThreadPoolExecutor
@@ -112,9 +105,6 @@ def init_agent(
         _memory_snapshot_refresh_interval=memory_snapshot_refresh_interval,
         _compressor=compressor,
         enabled_toolsets=enabled_toolsets,
-        _execution_policy=execution_policy,
-        _permission_temporary_grant_ttl_seconds=permission_temporary_grant_ttl_seconds,
-        _permission_confirm_timeout_seconds=permission_confirm_timeout_seconds,
         _llm_pool=pool,
         _tool_pool=pool,  # shared pool for MVP, separate later
     )

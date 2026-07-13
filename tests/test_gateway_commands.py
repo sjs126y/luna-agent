@@ -1024,7 +1024,6 @@ class Agent:
     _provider = Provider()
 
     def __init__(self):
-        self._destructive_allowed = set()
         self._interrupt_requested = False
 
 
@@ -1103,18 +1102,15 @@ async def test_gateway_usage_does_not_create_agent(gateway):
 
 
 @pytest.mark.asyncio
-async def test_gateway_allow_and_stop_apply_to_cached_agents(gateway):
+async def test_gateway_removed_allow_is_unhandled_and_stop_applies_to_cached_agents(gateway):
     gateway._agent_cache["telegram:c1:u1"] = Agent()
     gateway._agent_cache["telegram:work:u1"] = Agent()
 
     allowed = await gateway._handle_command(_event("/allow write"), "telegram:c1:u1")
     stopped = await gateway._handle_command(_event("/stop"), "telegram:c1:u1")
 
-    assert "已授权 write" in allowed
+    assert allowed is None
     assert stopped == "已停止。"
-    assert "write" in gateway._agent_cache["telegram:c1:u1"]._destructive_allowed
-    assert "write" in gateway._agent_cache["telegram:c1:u1"]._temporary_grants
-    assert "write" not in gateway._agent_cache["telegram:work:u1"]._destructive_allowed
     assert all(agent._interrupt_requested for agent in gateway._agent_cache.values())
 
 

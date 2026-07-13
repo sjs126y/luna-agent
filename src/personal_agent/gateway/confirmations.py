@@ -37,7 +37,6 @@ class PendingConfirmation:
             "expires_at": self.expires_at,
             "waiting_seconds": max(0.0, time.time() - self.created_at),
             "temporary_grant_ttl_seconds": self.ttl_seconds,
-            "temporary_grant_ttl_hours": self.ttl_seconds / 3600,
         }
 
 

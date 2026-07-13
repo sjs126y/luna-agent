@@ -1,6 +1,6 @@
 # Frontend Interface Requirements
 
-更新时间：2026-07-07 22:45 CST
+更新时间：2026-07-13 CST
 
 本文给后端线使用，只记录 inline TUI / future desktop-web 前端仍需要后端配合或需要继续固化的接口事项。已经完成并被前端消费的需求不再保留在待办区，避免重复实现或误判优先级。
 
@@ -15,9 +15,21 @@
 - 协议 schema 入口：`frontend_protocol_schema()` 和 `personal-agent protocol schema --json`。
 - Slash command registry 和 `CommandResult v2`：inline TUI 补全使用 registry metadata，并能消费 `continue_text` 继续进入 inline event renderer。
 - Slash command argument metadata：registry 已提供 `arguments`，支持 `choice` 和 `dynamic`。
-- 静态参数候选：`/mode set <mode>` 和 `/allow <category>`。
+- 静态参数候选：`/mode set <mode>` 和 `/deny all`。
 - 动态参数候选入口：`slash_argument_choices(...)`，当前 provider 为 `tools` 和 `sessions`。
 - Tool Runs 查询入口：`ConversationQueryService` 和 `/tool-runs [recent|summary|show <id>]`，返回 `CommandResult.kind="tool_runs"` 与结构化 payload。
+
+## 待前端适配：Security v4
+
+后端已经完成安全兼容层清理，前端/TUI 本轮不修改。前端后续需要按以下契约适配：
+
+1. 从 slash 菜单、补全、帮助和本地命令处理移除 `/allow`；类别级预授权已经不存在。
+2. `/deny` 只接受 `/deny all`，用于清空当前 session 的精确工具与资源限时授权。
+3. Mode 只保留 `Read Only`、`Ask First`、`Local Auto`、`Full Auto`，稳定 ID 为 `read-only`、`ask-first`、`local-auto`、`full-auto`；不要再提交旧 Mode 名称或 UI 别名。
+4. `/mode` 的 `CommandResult.kind="mode"` payload 以 `current` / `modes[]` 为入口，每项字段为 `slug`、`label`、`profile`、`approval_policy`。
+5. `/permissions` payload 只依赖 `security`、`tool_grants`、`resource_grants`、`temporary_grant_ttl_seconds` 和 `pending_confirmation`；不要读取旧 `grants`、`turn_grants` 或类别级 `temporary_grants`。
+6. 确认动作仍为 allow / deny / always，但 always 的显示时长必须来自 `temporary_grant_ttl_seconds`，不能硬编码 24 小时。
+7. Doctor 的 execution 摘要字段为 `mode`、`label`、`profile`、`approval_policy`、`filesystem`、`network_enabled`、`tool_approval`、`grant_ttl_seconds`；旧 `policy_mode` 和 permission category 字段已删除。
 
 ## Future Desktop App 技术方向
 
@@ -398,7 +410,7 @@ Gateway detail 可以和列表基本一致，但应保留稳定 detail 入口，
 ```text
 /mode
 → /mode set
-→ Read Only / Ask First / Edit Freely / Full Auto
+→ Read Only / Ask First / Local Auto / Full Auto
 → /mode set Ask First
 ```
 
@@ -416,7 +428,7 @@ Gateway detail 可以和列表基本一致，但应保留稳定 detail 入口，
             "choices": [
                 {"value": "Read Only", "label": "Read Only", "description": "只读"},
                 {"value": "Ask First", "label": "Ask First", "description": "执行前确认"},
-                {"value": "Edit Freely", "label": "Edit Freely", "description": "可编辑"},
+                {"value": "Local Auto", "label": "Local Auto", "description": "工作区自动"},
                 {"value": "Full Auto", "label": "Full Auto", "description": "全自动"},
             ],
         }
@@ -426,8 +438,8 @@ Gateway detail 可以和列表基本一致，但应保留稳定 detail 入口，
 
 已提供静态候选：
 
-- `/mode set <mode>`: `Read Only`, `Ask First`, `Edit Freely`, `Full Auto`
-- `/allow <category>`: `write`, `bash`, `background`, `network`, `destructive`, `all`
+- `/mode set <mode>`: `Read Only`, `Ask First`, `Local Auto`, `Full Auto`
+- `/deny <scope>`: `all`
 
 已提供动态候选入口。registry 暴露 `kind="dynamic"` 和 `provider`，runtime 提供统一查询入口：
 

@@ -67,6 +67,7 @@ class MCPServerRuntime:
         self._reconnect_attempts = 0
         self._tool_refresh_count = 0
         self._notification_count = 0
+        self._stderr_tail: list[str] = []
 
     @property
     def ready(self) -> bool:
@@ -128,7 +129,11 @@ class MCPServerRuntime:
     def health_snapshot(self) -> dict[str, Any]:
         info = self._server_info
         connection = self._connection
-        stderr_tail = connection.stderr_tail() if isinstance(connection, SDKMCPConnection) else []
+        stderr_tail = (
+            connection.stderr_tail()
+            if isinstance(connection, SDKMCPConnection)
+            else self._stderr_tail
+        )
         return {
             "name": self.config.name,
             "transport": self.config.transport.value,
@@ -171,6 +176,7 @@ class MCPServerRuntime:
                     self._registrar.sync(tools)
                     self._server_info = info
                     self._last_error = ""
+                    self._stderr_tail = []
                     self._last_connected_at = _now()
                     self._next_retry_at = 0.0
                     self.state = MCPRuntimeState.READY
@@ -199,6 +205,8 @@ class MCPServerRuntime:
                         await connection.close()
                     except Exception:
                         logger.debug("MCP server '%s' close failed", self.config.name, exc_info=True)
+                    if isinstance(connection, SDKMCPConnection):
+                        self._stderr_tail = connection.stderr_tail()
                     self._last_disconnected_at = _now()
 
                 if permanent_failure:

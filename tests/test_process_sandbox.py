@@ -36,6 +36,9 @@ def test_bwrap_launch_is_read_only_except_configured_roots(tmp_path, monkeypatch
         "/",
         "/",
     )
+    assert ("--dev", "/dev") == tuple(
+        launch.argv[launch.argv.index("--dev") : launch.argv.index("--dev") + 2]
+    )
     assert ("--bind", str(root.resolve()), str(root.resolve())) == tuple(
         launch.argv[launch.argv.index("--bind") : launch.argv.index("--bind") + 3]
     )

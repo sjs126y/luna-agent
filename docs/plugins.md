@@ -220,7 +220,7 @@ Memory provider 使用专用 registry 注册，不通过通用 hook 创建，避
 插件不能覆盖核心 slash command：
 
 - `/stop`
-- `/allow`
+- `/deny`
 - `/new`
 - `/session`
 - `/usage`

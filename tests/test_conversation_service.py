@@ -49,7 +49,6 @@ class Agent:
     def __init__(self, generation: int | None = None):
         self._tools_generation = tool_registry.generation if generation is None else generation
         self._interrupt_requested = False
-        self._destructive_allowed = set()
 
 
 class Ctx:
@@ -378,7 +377,7 @@ async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
             permission_category="bash",
             permission_decision="allow",
             required_allow="",
-            execution_mode="sovereign",
+            execution_mode="full-auto",
             grant_matched="",
         )
         return {
@@ -901,21 +900,6 @@ def test_agent_cache_compat_methods_delegate_to_new_api(service, monkeypatch):
     assert "c" in svc.agent_cache
     assert svc.agent_cache["c"]._interrupt_requested is True
     assert isinstance(stopped, int)
-
-
-def test_agent_cache_allow_category_helpers(service):
-    svc, _manager, _db = service
-    svc.agent_cache.clear()
-    svc.agent_cache["a"] = Agent()
-    svc.agent_cache["b"] = Agent()
-
-    assert svc.allow_agent_category("a", "write") is True
-    assert svc.allow_agent_category("missing", "write") is False
-    count = svc.allow_all_cached_agents("bash")
-
-    assert count == 2
-    assert svc.agent_cache["a"]._destructive_allowed == {"write", "bash"}
-    assert svc.agent_cache["b"]._destructive_allowed == {"bash"}
 
 
 def test_request_stop_can_target_one_cached_agent(service, monkeypatch):
