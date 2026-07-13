@@ -77,7 +77,7 @@ _MODE_ARGUMENT = CommandArgumentSpec(
     choices=(
         ArgumentChoiceSpec("Read Only", "Read Only", "只读"),
         ArgumentChoiceSpec("Ask First", "Ask First", "执行前确认"),
-        ArgumentChoiceSpec("Edit Freely", "Edit Freely", "可编辑"),
+        ArgumentChoiceSpec("Local Auto", "Local Auto", "工作区自动"),
         ArgumentChoiceSpec("Full Auto", "Full Auto", "全自动"),
     ),
 )
@@ -196,7 +196,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "mode",
         "查看或切换执行模式",
-        "/mode [Read Only|Ask First|Edit Freely|Full Auto]",
+        "/mode [Read Only|Ask First|Local Auto|Full Auto]",
         category="execution",
         mutates_state=True,
         requires_agent=True,

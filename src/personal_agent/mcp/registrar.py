@@ -87,6 +87,8 @@ class MCPToolRegistrar:
             handler=handler,
             toolset="mcp",
             check_fn=lambda: self._available,
+            approval_mode="cached",
+            idempotent=False,
             is_parallel_safe=True,
             is_destructive=False,
         )

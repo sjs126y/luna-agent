@@ -48,7 +48,7 @@ async def _file_write(path: str, content: str) -> str:
     try:
         sandbox = get_sandbox()
         full = sandbox.resolve(path)
-        error = sandbox.check_path(full)
+        error = sandbox.check_path(full, access="write")
         if error:
             return error
 
@@ -67,7 +67,7 @@ def _precheck(input_: dict) -> str | None:
         if ext_error:
             return ext_error
         full = get_sandbox().resolve(path)
-        sandbox_error = get_sandbox().check_path(full)
+        sandbox_error = get_sandbox().check_blocked_path(full)
         if sandbox_error:
             return sandbox_error
 

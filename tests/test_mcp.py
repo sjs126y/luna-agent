@@ -398,7 +398,9 @@ async def test_mcp_tools_not_in_core_list():
 async def test_exec_mcp_tool_through_pipeline(mock_server_script: Path):
     """An MCP tool should be callable through the executor pipeline."""
     from personal_agent.mcp.manager import MCPManager
-    from personal_agent.tools.executor import _exec_one
+    from personal_agent.security.session import SecurityStateStore
+    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from types import SimpleNamespace
 
     manager = MCPManager([{
         "name": "mock",
@@ -411,7 +413,25 @@ async def test_exec_mcp_tool_through_pipeline(mock_server_script: Path):
         await manager.start()
 
         tc = {"name": "mcp__mock__echo", "input": {"msg": "from executor"}}
-        result = await _exec_one(tc)
+        settings = SimpleNamespace(
+            execution_mode="ask-first",
+            sandbox_roots=[mock_server_script.parent],
+            permission_grant_ttl_minutes=60,
+        )
+        agent = SimpleNamespace(
+            _security_context=SecurityStateStore(settings).context("mcp"),
+            _security_grant_ttl_seconds=3600,
+            _tool_calls_this_turn=0,
+            _max_tool_calls_per_turn=20,
+            _destructive_calls_this_turn=0,
+            _max_destructive_per_turn=3,
+            _interrupt_requested=False,
+        )
+
+        async def approve(_decision):
+            return "always"
+
+        result = format_tool_result(await execute_tool_call_result(tc, agent=agent, confirm=approve))
         assert result == "from executor"
 
     finally:
@@ -423,7 +443,9 @@ async def test_mcp_tool_search_integration(mock_server_script: Path):
     """End-to-end: search for MCP tool, then call it via executor."""
     from personal_agent.mcp.manager import MCPManager
     from personal_agent.tools.registry import dispatch_tool_search
-    from personal_agent.tools.executor import _exec_one
+    from personal_agent.security.session import SecurityStateStore
+    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from types import SimpleNamespace
 
     manager = MCPManager([{
         "name": "mock",
@@ -448,7 +470,25 @@ async def test_mcp_tool_search_integration(mock_server_script: Path):
 
         # 3. LLM calls the tool directly
         tc = {"name": "mcp__mock__add", "input": {"a": 10, "b": 32}}
-        result = await _exec_one(tc)
+        settings = SimpleNamespace(
+            execution_mode="ask-first",
+            sandbox_roots=[mock_server_script.parent],
+            permission_grant_ttl_minutes=60,
+        )
+        agent = SimpleNamespace(
+            _security_context=SecurityStateStore(settings).context("mcp-search"),
+            _security_grant_ttl_seconds=3600,
+            _tool_calls_this_turn=0,
+            _max_tool_calls_per_turn=20,
+            _destructive_calls_this_turn=0,
+            _max_destructive_per_turn=3,
+            _interrupt_requested=False,
+        )
+
+        async def approve(_decision):
+            return "always"
+
+        result = format_tool_result(await execute_tool_call_result(tc, agent=agent, confirm=approve))
         assert result == "42"
 
     finally:

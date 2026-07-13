@@ -65,7 +65,7 @@ class Sandbox:
             return (self.roots[0] / path).resolve()
         return Path(path).resolve()
 
-    def check_path(self, absolute_path: Path) -> str | None:
+    def check_path(self, absolute_path: Path, *, access: str = "read") -> str | None:
         """Check a resolved absolute path. Returns error or None if allowed.
 
         Used by file_read, file_write, file_edit, grep, glob.
@@ -78,6 +78,10 @@ class Sandbox:
         if err:
             return err
 
+        security_evaluated, security_error = self._check_runtime_profile(absolute_path, access=access)
+        if security_evaluated:
+            return security_error
+
         # 2. Must be under at least one root (if any configured)
         if self.roots:
             for root in self.roots:
@@ -87,6 +91,29 @@ class Sandbox:
             return f"Error: path is outside sandbox roots — use a path within the allowed directories"
 
         return None  # no roots configured, allow anything not blocked
+
+    def check_blocked_path(self, absolute_path: Path) -> str | None:
+        """Apply only non-expandable blocked-path rules during preflight."""
+        return self._check_blocked(str(absolute_path).replace("\\", "/"))
+
+    @staticmethod
+    def _check_runtime_profile(absolute_path: Path, *, access: str) -> tuple[bool, str | None]:
+        try:
+            from personal_agent.security.models import ResourceRequirement
+            from personal_agent.tools.runtime_context import current_tool_agent
+
+            agent = current_tool_agent()
+            context = getattr(agent, "_security_context", None) if agent is not None else None
+            if context is None:
+                return False, None
+            requirement = ResourceRequirement(
+                "filesystem", str(absolute_path.resolve()), access, "filesystem access"
+            )
+            if context.profile.allows(requirement) or context.state.has_resource_grant(requirement):
+                return True, None
+            return True, f"Error: {access} access is not granted for this path"
+        except Exception as exc:
+            return True, f"Error: failed to evaluate filesystem permission: {exc}"
 
     # ── Bash API ────────────────────────────────────
 

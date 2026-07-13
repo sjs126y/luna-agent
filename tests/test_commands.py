@@ -392,20 +392,20 @@ async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
     assert "Full Auto" in result.response
     assert {item["slug"] for item in result.payload["modes"]} >= {"read-only", "full-auto"}
 
-    result = await handle_slash_command(runtime, "/mode set Edit Freely")
-    assert "Edit Freely" in result.response
+    result = await handle_slash_command(runtime, "/mode set Local Auto")
+    assert "Local Auto" in result.response
     assert runtime.agent._execution_policy.mode == "trusted"
     assert result.payload["selected"]["profile"] == "trusted"
 
     result = await handle_slash_command(runtime, "/mode acceptEdits")
-    assert "Edit Freely" in result.response
+    assert "Local Auto" in result.response
     assert runtime.agent._execution_policy.mode == "trusted"
     assert runtime.agent._destructive_allowed == set()
 
     # Querying now reflects the policy, not any /allow grant.
     runtime.agent._destructive_allowed.add("write")
     result = await handle_slash_command(runtime, "/mode")
-    assert "当前模式: Edit Freely" in result.response
+    assert "当前模式: Local Auto" in result.response
 
     result = await handle_slash_command(runtime, "/mode auto")
     assert "Full Auto" in result.response
@@ -642,7 +642,7 @@ def test_command_registry_exports_structured_metadata(tmp_path):
     assert [choice["value"] for choice in mode_argument["choices"]] == [
         "Read Only",
         "Ask First",
-        "Edit Freely",
+        "Local Auto",
         "Full Auto",
     ]
     allow = next(item for item in data["commands"] if item["name"] == "allow")

@@ -30,6 +30,7 @@ async def _tool_call(name: str, arguments: dict) -> str:
     destructive tools are blocked and must be called directly with /allow."""
     from personal_agent.tools.registry import tool_registry as _tr
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from personal_agent.tools.runtime_context import current_tool_agent
 
     entry = _tr.get(name)
     if entry is None:
@@ -49,7 +50,7 @@ async def _tool_call(name: str, arguments: dict) -> str:
         "id": f"tool_call:{name}",
         "name": name,
         "input": arguments or {},
-    })
+    }, agent=current_tool_agent())
     return format_tool_result(result)
 
 

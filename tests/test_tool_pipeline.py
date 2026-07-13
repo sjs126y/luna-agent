@@ -1581,16 +1581,31 @@ async def test_executor_writes_decision_and_result_audit_without_handler_duplica
     from personal_agent.tools.audit import set_audit_path
     from personal_agent.tools.executor import execute_tool_call_result
     from personal_agent.tools.sandbox import init_sandbox
+    from personal_agent.security.session import SecurityStateStore
+    from types import SimpleNamespace
 
     audit_path = tmp_path / "audit.log"
     set_audit_path(audit_path)
     init_sandbox([tmp_path], [])
 
+    settings = SimpleNamespace(
+        execution_mode="full-auto",
+        sandbox_roots=[tmp_path],
+        permission_grant_ttl_minutes=60,
+    )
+    agent = SimpleNamespace(
+        _security_context=SecurityStateStore(settings).context("audit"),
+        _tool_calls_this_turn=0,
+        _max_tool_calls_per_turn=20,
+        _destructive_calls_this_turn=0,
+        _max_destructive_per_turn=3,
+        _interrupt_requested=False,
+    )
     result = await execute_tool_call_result({
         "id": "write-1",
         "name": "write",
         "input": {"path": "result-audit.txt", "content": "ok"},
-    })
+    }, agent=agent)
 
     lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
     events = [json.loads(line) for line in lines]

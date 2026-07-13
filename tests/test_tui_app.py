@@ -383,7 +383,7 @@ async def test_cycle_mode_advances_and_wraps():
 
     assert app.state.exec_mode == "Ask First"
     await app._cycle_mode()
-    assert app.state.exec_mode == "Edit Freely"
+    assert app.state.exec_mode == "Local Auto"
     await app._cycle_mode()
     assert app.state.exec_mode == "Full Auto"
     await app._cycle_mode()
@@ -1143,7 +1143,7 @@ def test_slash_menu_enter_can_continue_into_argument_choices():
     ] == [
         ("/mode set Read Only", "Read Only"),
         ("/mode set Ask First", "Ask First"),
-        ("/mode set Edit Freely", "Edit Freely"),
+        ("/mode set Local Auto", "Local Auto"),
         ("/mode set Full Auto", "Full Auto"),
     ]
 

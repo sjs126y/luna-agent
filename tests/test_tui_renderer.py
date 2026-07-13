@@ -184,13 +184,13 @@ async def test_tool_decision_updates_mode_label():
     await r.emit(ConversationEvent("tool_decision", data={
         "tool_name": "bash",
         "tool_use_id": "t1",
-        "execution_mode_label": "Edit Freely",
+        "execution_mode_label": "Local Auto",
         "display_name": "Shell command",
         "input_preview": "ls -la",
         "risk_level": "medium",
         "risk_summary": "Will execute a shell command.",
     }))
-    assert r.state.exec_mode == "Edit Freely"
+    assert r.state.exec_mode == "Local Auto"
     item = r.state.active_tools["t1"]
     assert item.display_name == "Shell command"
     assert item.input_preview == "ls -la"

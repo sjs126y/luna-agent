@@ -533,6 +533,7 @@ class ConversationService:
         context = self.security_context(session_key)
         preset = mode_preset(context.mode_id)
         agent._security_context = context
+        agent._security_grant_ttl_seconds = self.security_states.grant_ttl_seconds
         agent._execution_policy = resolve_execution_policy_for_mode(
             self.settings, preset.legacy_execution_mode
         )

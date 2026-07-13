@@ -166,6 +166,9 @@ class ToolRegistry:
                 "is_core": is_core_tool(entry.name),
                 "is_parallel_safe": entry.is_parallel_safe,
                 "is_destructive": entry.is_destructive,
+                "approval_mode": entry.approval_mode,
+                "idempotent": entry.idempotent,
+                "has_resource_resolver": entry.resource_resolver is not None,
                 "has_precheck": entry.precheck is not None,
                 "has_check_fn": entry.check_fn is not None,
                 "available": available,
@@ -187,6 +190,7 @@ class ToolRegistry:
         by_toolset = Counter(str(item["toolset"]) for item in items)
         by_permission = Counter(str(item["permission_category"]) for item in items)
         by_risk = Counter(str(item["risk_level"]) for item in items)
+        by_approval = Counter(str(item["approval_mode"]) for item in items)
         by_tag = Counter(tag for item in items for tag in item["tags"])
         high_risk_categories = {"write", "bash", "background", "network"}
         high_risk = [
@@ -213,6 +217,7 @@ class ToolRegistry:
             "by_toolset": dict(sorted(by_toolset.items())),
             "by_permission": dict(sorted(by_permission.items())),
             "by_risk": dict(sorted(by_risk.items())),
+            "by_approval": dict(sorted(by_approval.items())),
             "by_tag": dict(sorted(by_tag.items())),
             "high_risk": high_risk,
             "unavailable_tools": unavailable,
@@ -355,12 +360,13 @@ async def dispatch_tool_call(name: str, arguments: dict) -> str:
             f"Send /allow to authorize it, then call '{name}' directly in your next response."
         )
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from personal_agent.tools.runtime_context import current_tool_agent
 
     result = await execute_tool_call_result({
         "id": f"tool_call:{name}",
         "name": name,
         "input": arguments or {},
-    })
+    }, agent=current_tool_agent())
     return format_tool_result(result)
 
 

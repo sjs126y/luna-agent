@@ -1210,7 +1210,7 @@ class InlineTuiApp:
             return True
         return any(p.kind is p.VAR_KEYWORD for p in params.values())
 
-    _MODE_CYCLE = ("Read Only", "Ask First", "Edit Freely", "Full Auto")
+    _MODE_CYCLE = ("Read Only", "Ask First", "Local Auto", "Full Auto")
 
     async def _cycle_mode(self) -> None:
         """Advance to the next execution mode via the /mode command path."""

@@ -215,6 +215,8 @@ async def execute_tool_call_result(
     name = tc["name"]
     guard_decision: GuardDecision | None = None
     tool_decision: ToolDecision | None = None
+    one_time_security_context = None
+    one_time_security_grants: tuple[set[str], set[str]] = (set(), set())
     await emit_event(
         event_sink,
         "tool_start",
@@ -225,6 +227,7 @@ async def execute_tool_call_result(
     )
 
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
+        nonlocal one_time_security_grants
         if tool_decision is not None:
             result.guard_stage = tool_decision.stage
             result.reason_code = tool_decision.reason_code
@@ -281,10 +284,21 @@ async def execute_tool_call_result(
             timeout_seconds=tool_decision.timeout_seconds if tool_decision else None,
             method=tool_decision.method if tool_decision else "",
             process_label=tool_decision.process_label if tool_decision else "",
+            tool_approval_mode=tool_decision.tool_approval_mode if tool_decision else "",
+            requested_resources=list(tool_decision.requested_resources) if tool_decision else [],
             artifact_count=len(result.artifacts or []),
             artifacts=[item.safe_summary() for item in (result.artifacts or [])],
             result_metadata=_safe_result_metadata(result.result_metadata or {}),
         )
+        if one_time_security_context is not None and any(one_time_security_grants):
+            from personal_agent.security.evaluator import revoke_grants
+
+            revoke_grants(
+                one_time_security_context,
+                tool_keys=one_time_security_grants[0],
+                resource_keys=one_time_security_grants[1],
+            )
+            one_time_security_grants = (set(), set())
         return result
 
     if is_interrupted():
@@ -307,6 +321,35 @@ async def execute_tool_call_result(
             error=f"unknown tool '{name}'",
             started=started,
         ))
+
+    # Proposal hooks may transform arguments, but the final call is frozen and
+    # evaluated only after those transformations have completed.
+    if hooks:
+        try:
+            hook_result = await hooks.fire("on_before_tool_exec", tc, entry)
+        except Exception as exc:
+            return await _finish(_result(
+                tc,
+                status="error",
+                category="hook",
+                error=f"before hook failed: {type(exc).__name__}: {exc}",
+                started=started,
+            ))
+        if hook_result is None:
+            return await _finish(_result(
+                tc, status="denied", category="hook", error="tool execution blocked", started=started
+            ))
+        if isinstance(hook_result, dict):
+            modified = _normalize_tool_call(hook_result)
+            if modified["name"] != name:
+                return await _finish(_result(
+                    tc,
+                    status="denied",
+                    category="hook",
+                    error="before hook cannot change tool name",
+                    started=started,
+                ))
+            tc = modified
 
     # ── guard decisions: hard safety → permission → runtime guard ──
     try:
@@ -332,11 +375,27 @@ async def execute_tool_call_result(
                 started=started,
             ))
         if answer in {"allow", "always"}:
-            added_grants = _add_confirm_grants(
-                agent,
-                tool_decision,
-                persist=answer == "always",
-            )
+            security_context = getattr(agent, "_security_context", None) if agent is not None else None
+            if security_context is not None and tool_decision.reason_code == "security_approval_required":
+                from personal_agent.security.evaluator import grant_prepared_call, prepare_tool_call
+
+                ttl = int(getattr(agent, "_security_grant_ttl_seconds", 3600) or 3600)
+                if answer == "allow":
+                    ttl = 60
+                security_grants = grant_prepared_call(
+                    prepare_tool_call(tc, entry), security_context, ttl_seconds=ttl
+                )
+                if answer == "allow":
+                    one_time_security_context = security_context
+                    one_time_security_grants = security_grants
+                added_grants = set()
+            else:
+                security_grants = (set(), set())
+                added_grants = _add_confirm_grants(
+                    agent,
+                    tool_decision,
+                    persist=answer == "always",
+                )
             try:
                 guard_decision = evaluate_execution_guards(tc, entry, agent)
             except Exception as exc:
@@ -365,34 +424,11 @@ async def execute_tool_call_result(
     if name in ("write", "edit"):
         _checkpoint_file_write(tc)
 
-    # ── 1. pre-hook ──────────────────────────────────
-    if hooks:
-        try:
-            hook_result = await hooks.fire("on_before_tool_exec", tc, entry)
-        except Exception as exc:
-            return await _finish(_result(
-                tc,
-                status="error",
-                category="hook",
-                error=f"before hook failed: {type(exc).__name__}: {exc}",
-                started=started,
-            ))
-        if hook_result is None:
-            return await _finish(_result(tc, status="denied", category="hook", error="tool execution blocked", started=started))
-        if isinstance(hook_result, dict):
-            modified = _normalize_tool_call(hook_result)
-            if modified["name"] != name:
-                return await _finish(_result(
-                    tc,
-                    status="denied",
-                    category="hook",
-                    error="before hook cannot change tool name",
-                    started=started,
-                ))
-            tc = modified
-
     # ── 2. dispatch (with retry for idempotent tools) ──
-    max_attempts = 2 if not entry.is_destructive else 1  # retry safe tools once
+    from personal_agent.security.evaluator import prepare_tool_call
+
+    prepared = prepare_tool_call(tc, entry)
+    max_attempts = 2 if prepared.idempotent else 1
     last_exc = None
     attempts = 0
     for attempt in range(max_attempts):
@@ -499,7 +535,7 @@ def format_tool_result(result: ToolExecutionResult) -> str:
 def _needs_tool_confirm(decision: ToolDecision) -> bool:
     return (
         decision.stage == "permission"
-        and decision.reason_code == "permission_required"
+        and decision.reason_code in {"permission_required", "security_approval_required"}
         and decision.permission_decision == "ask"
         and not decision.allowed
     )
@@ -516,6 +552,11 @@ def _can_run_in_parallel(tc: dict, entry: Any, agent: Any = None, *, confirm: An
 def _would_need_permission_confirm(tc: dict, entry: Any, agent: Any = None) -> bool:
     if agent is None:
         return False
+    security_context = getattr(agent, "_security_context", None)
+    if security_context is not None:
+        from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+
+        return evaluate_tool_security(prepare_tool_call(tc, entry), security_context).decision == "ask"
     policy = getattr(agent, "_execution_policy", None)
     category = tool_permission_category(str(tc.get("name", "")), entry)
     decision = "ask" if entry.is_destructive else "allow"
@@ -574,7 +615,11 @@ def _agent_interrupt_requested(agent: Any) -> bool:
 def _with_agent_grant_metadata(decision: ToolDecision, agent: Any) -> ToolDecision:
     if agent is None:
         return decision
-    ttl = int(getattr(agent, "_permission_temporary_grant_ttl_seconds", 0) or 0)
+    ttl = int(
+        getattr(agent, "_security_grant_ttl_seconds", 0)
+        or getattr(agent, "_permission_temporary_grant_ttl_seconds", 0)
+        or 0
+    )
     if not ttl:
         return decision
     return replace(decision, temporary_grant_ttl_seconds=ttl)
