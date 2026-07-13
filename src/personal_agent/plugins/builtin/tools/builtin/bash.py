@@ -15,9 +15,11 @@ import logging
 import os
 import re
 import signal
+import shlex
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
@@ -401,6 +403,36 @@ def _precheck(input_: dict) -> str | None:
     return _check_command(command) if command else None
 
 
+def resource_requirements(input_: dict) -> list:
+    """Describe the shell's writable work directory and optional network target."""
+    from personal_agent.security.models import ResourceRequirement
+
+    requirements = [
+        ResourceRequirement("filesystem", str(_work_dir), "write", "bash working directory")
+    ]
+    command = str(input_.get("command") or "")
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.split()
+    if not parts:
+        return requirements
+    base = parts[0].lower().replace("\\", "/").split("/")[-1]
+    spec = WHITELIST.get(base)
+    if spec is None or not spec[1]:
+        return requirements
+    for value in parts[1:]:
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"} and parsed.hostname:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            target = f"{parsed.scheme}://{parsed.hostname}:{port}"
+            break
+    else:
+        target = f"command:{base}"
+    requirements.append(ResourceRequirement("network", target, "connect", f"bash {base}"))
+    return requirements
+
+
 tool_registry.register(ToolEntry(
     name="bash",
     description="Execute a short bounded shell command in the configured sandbox. "
@@ -421,6 +453,7 @@ tool_registry.register(ToolEntry(
     risk_level="high",
     usage_hint="Use for short bounded inspection or maintenance commands; use process_start for long-running work.",
     precheck=_precheck,
+    resource_resolver=resource_requirements,
     is_parallel_safe=False,
     is_destructive=False,  # whitelist constrains safety
 ))

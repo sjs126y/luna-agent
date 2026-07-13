@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from urllib.parse import urlparse
 
 from personal_agent.mcp.models import MCPCallResult, MCPToolSpec
+from personal_agent.security.models import ResourceRequirement
 from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 
@@ -14,9 +16,10 @@ ToolCaller = Callable[[str, dict], Awaitable[MCPCallResult]]
 
 
 class MCPToolRegistrar:
-    def __init__(self, server_name: str, call_tool: ToolCaller) -> None:
+    def __init__(self, server_name: str, call_tool: ToolCaller, *, server_url: str = "") -> None:
         self.server_name = server_name
         self._call_tool = call_tool
+        self._network_requirement = _network_requirement(server_url, server_name)
         self._registered: dict[str, str] = {}
         self._available = False
 
@@ -88,6 +91,11 @@ class MCPToolRegistrar:
             toolset="mcp",
             check_fn=lambda: self._available,
             approval_mode="cached",
+            resource_resolver=(
+                (lambda _input: [self._network_requirement])
+                if self._network_requirement is not None
+                else None
+            ),
             idempotent=False,
             is_parallel_safe=True,
             is_destructive=False,
@@ -107,4 +115,17 @@ def _tool_fingerprint(tool: MCPToolSpec) -> str:
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
+    )
+
+
+def _network_requirement(url: str, server_name: str) -> ResourceRequirement | None:
+    parsed = urlparse(str(url or ""))
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return ResourceRequirement(
+        "network",
+        f"{parsed.scheme}://{parsed.hostname}:{port}",
+        "connect",
+        f"MCP server {server_name}",
     )

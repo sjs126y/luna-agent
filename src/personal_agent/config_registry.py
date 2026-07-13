@@ -335,6 +335,14 @@ def _permission_fields() -> tuple[ConfigField, ...]:
             maximum=10080,
         ),
         _yaml_field(
+            "permissions.tool_approval",
+            "tool_approval_config",
+            {},
+            "dict",
+            "permissions",
+            "Tool approval defaults and exact tool or MCP server overrides.",
+        ),
+        _yaml_field(
             "permissions.temporary_grant_ttl_hours",
             "permission_temporary_grant_ttl_hours",
             24,

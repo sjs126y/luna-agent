@@ -84,6 +84,9 @@ class SecurityContext:
     approval_policy: ApprovalPolicy
     state: Any
     mode_id: str
+    tool_approval_default_external: ToolApprovalMode = "cached"
+    tool_approval_tools: dict[str, ToolApprovalMode] = field(default_factory=dict)
+    tool_approval_mcp_servers: dict[str, ToolApprovalMode] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -107,8 +110,9 @@ class PreparedToolCall:
     name: str
     input: dict[str, Any]
     tool_key: str
+    source: str
     approval_mode: ToolApprovalMode
+    approval_inherited: bool = False
     resources: tuple[ResourceRequirement, ...] = ()
     idempotent: bool = False
     parallel_safe: bool = False
-

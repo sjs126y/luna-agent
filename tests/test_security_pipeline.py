@@ -67,6 +67,90 @@ async def test_cached_tool_approval_uses_session_ttl(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_prompt_tool_approval_never_persists(tmp_path):
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    confirmations = 0
+
+    async def handler():
+        return "ok"
+
+    async def confirm(_decision):
+        nonlocal confirmations
+        confirmations += 1
+        return "always"
+
+    entry = ToolEntry("prompt_demo", "demo", {}, handler, approval_mode="prompt")
+    tool_registry.register(entry)
+    agent = _agent(tmp_path)
+    try:
+        first = await execute_tool_call_result(
+            {"id": "one", "name": entry.name, "input": {}}, agent=agent, confirm=confirm
+        )
+        second = await execute_tool_call_result(
+            {"id": "two", "name": entry.name, "input": {}}, agent=agent, confirm=confirm
+        )
+    finally:
+        tool_registry.unregister(entry.name)
+
+    assert first.status == second.status == "success"
+    assert confirmations == 2
+
+
+def test_tool_and_mcp_server_approval_overrides(tmp_path):
+    from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+    from personal_agent.security.session import SecurityStateStore
+    from personal_agent.tools.entry import ToolEntry
+
+    settings = SimpleNamespace(
+        execution_mode="ask-first",
+        sandbox_roots=[tmp_path],
+        permission_grant_ttl_minutes=60,
+        tool_approval_config={
+            "tools": {"local_demo": "deny"},
+            "mcp_servers": {"github": "prompt"},
+        },
+    )
+    context = SecurityStateStore(settings).context("session-a")
+    local = ToolEntry("local_demo", "demo", {}, lambda: None)
+    github = ToolEntry("mcp__github__issues", "demo", {}, lambda: None, approval_mode="cached")
+
+    local_decision = evaluate_tool_security(
+        prepare_tool_call({"name": local.name, "input": {}}, local), context
+    )
+    github_decision = evaluate_tool_security(
+        prepare_tool_call({"name": github.name, "input": {}}, github), context
+    )
+
+    assert local_decision.reason_code == "tool_approval_denied"
+    assert github_decision.tool_approval_mode == "prompt"
+
+
+def test_bash_declares_working_directory_and_network_resources(tmp_path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import bash
+
+    monkeypatch.setattr(bash, "_work_dir", tmp_path.resolve())
+
+    local = bash.resource_requirements({"command": "ls -la"})
+    remote = bash.resource_requirements(
+        {"command": "curl https://api.github.com/repos/openai/codex"}
+    )
+
+    assert [item.as_dict() for item in local] == [
+        {
+            "kind": "filesystem",
+            "resource": str(tmp_path.resolve()),
+            "access": "write",
+            "reason": "bash working directory",
+        }
+    ]
+    assert remote[1].resource == "https://api.github.com:443"
+    assert remote[1].access == "connect"
+
+
+@pytest.mark.asyncio
 async def test_unscoped_external_tool_fails_closed():
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_call_result

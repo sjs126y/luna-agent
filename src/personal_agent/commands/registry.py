@@ -177,7 +177,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("export", "导出当前会话 JSONL", "/export", category="session"),
     CommandSpec(
         "allow",
-        "限时授权工具权限",
+        "兼容命令；新安全模式请在具体工具确认中授权",
         "/allow [write|bash|background|network|destructive|all]",
         category="execution",
         mutates_state=True,
@@ -186,7 +186,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         "deny",
-        "撤销限时工具授权",
+        "撤销限时工具授权；新安全模式支持 /deny all",
         "/deny [write|bash|background|network|destructive|all]",
         category="execution",
         mutates_state=True,

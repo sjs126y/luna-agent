@@ -380,12 +380,13 @@ async def execute_tool_call_result(
                 from personal_agent.security.evaluator import grant_prepared_call, prepare_tool_call
 
                 ttl = int(getattr(agent, "_security_grant_ttl_seconds", 3600) or 3600)
-                if answer == "allow":
+                one_time = answer == "allow" or tool_decision.tool_approval_mode == "prompt"
+                if one_time:
                     ttl = 60
                 security_grants = grant_prepared_call(
                     prepare_tool_call(tc, entry), security_context, ttl_seconds=ttl
                 )
-                if answer == "allow":
+                if one_time:
                     one_time_security_context = security_context
                     one_time_security_grants = security_grants
                 added_grants = set()

@@ -16,6 +16,7 @@ from personal_agent.security.models import (
     ToolGrant,
 )
 from personal_agent.security.modes import mode_preset, normalize_mode_id
+from personal_agent.security.config import normalize_tool_approval_config
 
 
 @dataclass
@@ -105,12 +106,18 @@ class SecurityStateStore:
     def context(self, session_key: str) -> SecurityContext:
         state = self.get(session_key)
         preset = mode_preset(state.mode_id)
+        tool_approval = normalize_tool_approval_config(
+            getattr(self.settings, "tool_approval_config", {})
+        )
         return SecurityContext(
             session_key=session_key,
             profile=_profile_for(self.settings, preset.profile),
             approval_policy=preset.approval_policy,
             state=state,
             mode_id=preset.id,
+            tool_approval_default_external=tool_approval["default_external"],
+            tool_approval_tools=tool_approval["tools"],
+            tool_approval_mcp_servers=tool_approval["mcp_servers"],
         )
 
 

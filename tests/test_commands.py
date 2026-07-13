@@ -587,6 +587,24 @@ async def test_shared_command_tools_permissions_and_protocol(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_new_security_mode_rejects_category_allow_and_clears_all(tmp_path):
+    from personal_agent.security.session import SecurityStateStore
+
+    runtime = Runtime(tmp_path)
+    store = SecurityStateStore(runtime.settings)
+    context = store.context(runtime.session_key)
+    runtime.agent._security_context = context
+    context.state.grant_tool("core:bash", ttl_seconds=60)
+
+    allowed = await handle_slash_command(runtime, "/allow write")
+    denied = await handle_slash_command(runtime, "/deny all")
+
+    assert "不支持类别级预授权" in allowed.response
+    assert "已撤销当前会话" in denied.response
+    assert context.state.tool_grants == {}
+
+
+@pytest.mark.asyncio
 async def test_shared_command_tool_runs_queries(tmp_path):
     runtime = Runtime(tmp_path)
 

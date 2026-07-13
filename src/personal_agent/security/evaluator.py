@@ -15,9 +15,8 @@ from personal_agent.security.models import (
     SecurityContext,
     SecurityDecision,
 )
+from personal_agent.security.config import TOOL_APPROVAL_MODES
 from personal_agent.security.session import SecuritySessionState
-
-TOOL_APPROVAL_MODES = {"auto", "cached", "prompt", "deny"}
 
 
 def unscoped_security_context() -> SecurityContext:
@@ -40,7 +39,7 @@ def prepare_tool_call(tc: dict[str, Any], entry: Any) -> PreparedToolCall:
     if not isinstance(inp, dict):
         inp = {}
     source = str(getattr(entry, "_plugin_key", "") or "core")
-    approval_mode = _approval_mode(entry, source)
+    approval_mode, approval_inherited = _approval_mode(entry, source)
     resolver = getattr(entry, "resource_resolver", None)
     if callable(resolver):
         resources = tuple(resolver(deepcopy(inp)) or ())
@@ -54,7 +53,9 @@ def prepare_tool_call(tc: dict[str, Any], entry: Any) -> PreparedToolCall:
         name=name,
         input=inp,
         tool_key=f"{source}:{name}",
+        source=source,
         approval_mode=approval_mode,
+        approval_inherited=approval_inherited,
         resources=resources,
         idempotent=bool(idempotent),
         parallel_safe=bool(getattr(entry, "is_parallel_safe", False)),
@@ -67,18 +68,18 @@ def evaluate_tool_security(
 ) -> SecurityDecision:
     state = context.state
     state.prune_expired()
-    if prepared.approval_mode == "deny":
+    approval_mode = _effective_approval_mode(prepared, context)
+    if approval_mode == "deny":
         return SecurityDecision(
             decision="deny",
             reason_code="tool_approval_denied",
             message=f"Tool '{prepared.name}' is disabled by local tool approval policy.",
-            tool_approval_mode=prepared.approval_mode,
+            tool_approval_mode=approval_mode,
         )
 
     tool_granted = state.has_tool_grant(prepared.tool_key)
     tool_needs_approval = (
-        prepared.approval_mode == "prompt"
-        or (prepared.approval_mode == "cached" and not tool_granted)
+        approval_mode in {"prompt", "cached"} and not tool_granted
     )
     missing = tuple(
         requirement
@@ -97,14 +98,14 @@ def evaluate_tool_security(
             decision="allow",
             reason_code="security_allowed",
             message="Tool and resource permissions are available.",
-            tool_approval_mode=prepared.approval_mode,
+            tool_approval_mode=approval_mode,
             tool_grant_matched=tool_granted,
             resource_grants_matched=matched,
         )
 
     details: list[str] = []
     if tool_needs_approval:
-        details.append(f"tool approval ({prepared.approval_mode})")
+        details.append(f"tool approval ({approval_mode})")
     details.extend(
         f"{item.access} {item.resource}" for item in missing
     )
@@ -113,7 +114,7 @@ def evaluate_tool_security(
             decision="deny",
             reason_code="resource_permission_denied",
             message="Permission profile does not allow: " + ", ".join(details),
-            tool_approval_mode=prepared.approval_mode,
+            tool_approval_mode=approval_mode,
             missing_resources=missing,
             tool_grant_matched=tool_granted,
             resource_grants_matched=matched,
@@ -122,7 +123,7 @@ def evaluate_tool_security(
         decision="ask",
         reason_code="security_approval_required",
         message="Approval required for: " + ", ".join(details),
-        tool_approval_mode=prepared.approval_mode,
+        tool_approval_mode=approval_mode,
         missing_resources=missing,
         tool_grant_matched=tool_granted,
         resource_grants_matched=matched,
@@ -137,7 +138,7 @@ def grant_prepared_call(
 ) -> tuple[set[str], set[str]]:
     tool_keys: set[str] = set()
     resource_keys: set[str] = set()
-    if prepared.approval_mode in {"cached", "prompt"}:
+    if _effective_approval_mode(prepared, context) in {"cached", "prompt"}:
         context.state.grant_tool(prepared.tool_key, ttl_seconds=ttl_seconds)
         tool_keys.add(prepared.tool_key)
     for requirement in prepared.resources:
@@ -160,13 +161,34 @@ def revoke_grants(
         context.state.resource_grants.pop(key, None)
 
 
-def _approval_mode(entry: Any, source: str) -> str:
+def _approval_mode(entry: Any, source: str) -> tuple[str, bool]:
     configured = str(getattr(entry, "approval_mode", "inherit") or "inherit").strip().lower()
     if configured in TOOL_APPROVAL_MODES:
-        return configured
+        return configured, False
     if source == "core" or source.startswith("builtin/"):
-        return "auto"
-    return "cached"
+        return "auto", True
+    return "cached", True
+
+
+def _effective_approval_mode(
+    prepared: PreparedToolCall,
+    context: SecurityContext,
+) -> str:
+    tools = context.tool_approval_tools
+    configured = tools.get(prepared.name) or tools.get(prepared.tool_key)
+    if configured in TOOL_APPROVAL_MODES:
+        return configured
+    if prepared.name.startswith("mcp__"):
+        parts = prepared.name.split("__", 2)
+        server = parts[1] if len(parts) > 2 else ""
+        configured = context.tool_approval_mcp_servers.get(server)
+        if configured in TOOL_APPROVAL_MODES:
+            return configured
+    if prepared.approval_inherited and not (
+        prepared.source == "core" or prepared.source.startswith("builtin/")
+    ):
+        return context.tool_approval_default_external
+    return prepared.approval_mode
 
 
 def _builtin_resources(name: str, inp: dict[str, Any]) -> list[ResourceRequirement]:

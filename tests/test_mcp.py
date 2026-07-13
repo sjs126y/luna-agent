@@ -78,6 +78,31 @@ def make_config(mock_server_script: Path) -> MCPServerConfig:
     )
 
 
+def test_http_mcp_tools_declare_server_network_resource():
+    from personal_agent.mcp.models import MCPCallResult, MCPToolSpec
+    from personal_agent.mcp.registrar import MCPToolRegistrar
+    from personal_agent.tools.registry import tool_registry
+
+    async def call_tool(_name, _arguments):
+        return MCPCallResult()
+
+    registrar = MCPToolRegistrar(
+        "github",
+        call_tool,
+        server_url="https://mcp.github.example/api",
+    )
+    registrar.sync([MCPToolSpec(name="issues")])
+    try:
+        entry = tool_registry.get("mcp__github__issues")
+        resources = entry.resource_resolver({})
+    finally:
+        registrar.unregister_all()
+
+    assert len(resources) == 1
+    assert resources[0].resource == "https://mcp.github.example:443"
+    assert resources[0].access == "connect"
+
+
 # ── MCPClient tests ─────────────────────────────────────
 
 

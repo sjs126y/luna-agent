@@ -81,7 +81,12 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "ocr_timeout_seconds",
         "ocr_language",
     },
-    "permissions": {"grant_ttl_minutes", "temporary_grant_ttl_hours", "confirm_timeout_seconds"},
+    "permissions": {
+        "grant_ttl_minutes",
+        "temporary_grant_ttl_hours",
+        "confirm_timeout_seconds",
+        "tool_approval",
+    },
     "plugins": {"dirs", "enabled", "disabled", "config"},
     "profiles": None,
     "sandbox": {
@@ -477,6 +482,10 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     _range_int(permissions, "grant_ttl_minutes", "permissions.grant_ttl_minutes", 1, 10080, errors)
     _range_int(permissions, "temporary_grant_ttl_hours", "permissions.temporary_grant_ttl_hours", 1, 168, errors)
     _range_int(permissions, "confirm_timeout_seconds", "permissions.confirm_timeout_seconds", 10, 600, errors)
+    if "tool_approval" in permissions:
+        from personal_agent.security.config import tool_approval_config_errors
+
+        errors.extend(tool_approval_config_errors(permissions["tool_approval"]))
 
     sandbox = sections["sandbox"]
     _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)

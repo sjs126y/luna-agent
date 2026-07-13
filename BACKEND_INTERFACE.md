@@ -227,7 +227,7 @@
 - `stage: string`，如 `lookup` / `precheck` / `permission` / `runtime_guard` / `execution`
 - `status: string`，如 `allowed` / `denied` / `error`
 - `permission_category: string`，如 `write` / `bash` / `background` / `network`
-- `execution_mode: string`，内部 profile，如 `standard` / `trusted`
+- `execution_mode: string`，当前会话模式 ID，如 `read-only` / `ask-first` / `local-auto` / `full-auto`
 - `permission_decision: string`，`allow` / `ask` / `deny`
 - `reason_code: string`
 - `required_allow: string`
@@ -236,6 +236,8 @@
 - `grant_scope: string` — `turn` 或 `temporary`
 - `grant_expires_at: number` — temporary grant 的 Unix 过期时间，非限时授权为 `0`
 - `temporary_grant_ttl_seconds: integer`
+- `tool_approval_mode: string`，`auto` / `cached` / `prompt` / `deny`
+- `requested_resources: list[object]`，需要本次确认的最小资源集合；元素包含 `kind`、`resource`、`access`、`reason`
 - `display_name: string`，给 UI 直接展示的工具名
 - `execution_mode_label: string`，给 UI 直接展示的模式名，如 `Ask First`
 - `risk_level: string`，`low` / `medium` / `high`
@@ -288,6 +290,8 @@
 - `required_allow: string`
 - `execution_mode: string`
 - `grant_matched: string`
+- `tool_approval_mode: string`
+- `requested_resources: list[object]`
 - `display_name: string`
 - `execution_mode_label: string`
 - `risk_level: string`

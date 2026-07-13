@@ -137,6 +137,19 @@ def _process_start_precheck(input_: dict) -> str | None:
     return cwd_error
 
 
+def _process_start_resources(input_: dict) -> list:
+    from personal_agent.plugins.builtin.tools.builtin import bash as bash_tool
+    from personal_agent.security.models import ResourceRequirement
+
+    work_dir, _ = _resolve_cwd(input_.get("cwd"))
+    resources = [
+        ResourceRequirement("filesystem", str(work_dir), "write", "background process cwd")
+    ]
+    shell_resources = bash_tool.resource_requirements(input_)
+    resources.extend(item for item in shell_resources if item.kind == "network")
+    return resources
+
+
 async def _process_list(status: str = "all", limit: int | None = None) -> str:
     """List all tracked background processes."""
     if status not in {"running", "done", "killed", "all"}:
@@ -507,6 +520,7 @@ tool_registry.register(ToolEntry(
     risk_level="high",
     usage_hint="Use for long-running tests, builds, servers, watchers, or commands that need polling.",
     precheck=_process_start_precheck,
+    resource_resolver=_process_start_resources,
     is_parallel_safe=False,
 ))
 

@@ -45,7 +45,11 @@ class MCPServerRuntime:
         self._reconnect_event = asyncio.Event()
         self._refresh_event = asyncio.Event()
         self._initial_attempt_done = asyncio.Event()
-        self._registrar = MCPToolRegistrar(config.name, self.call_tool)
+        self._registrar = MCPToolRegistrar(
+            config.name,
+            self.call_tool,
+            server_url=config.url,
+        )
         self._server_info: MCPServerInfo | None = None
         self._last_error = ""
         self._last_call_error = ""

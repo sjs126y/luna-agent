@@ -181,6 +181,7 @@ def test_config_registry_schema_is_stable():
         "sovereign",
     ]
     assert fields["permissions.grant_ttl_minutes"]["default"] == 60
+    assert fields["permissions.tool_approval"]["default"] == {}
     assert fields["LLM_API_MODE"]["choices"] == [
         "anthropic_messages",
         "auto",
