@@ -41,6 +41,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         plugins_dirs=[],
         plugins_disabled=[],
         mcp_enabled=False,
+        memory_external_provider="none",
     )
 
     runtime = await create_app_runtime(settings)
@@ -159,6 +160,7 @@ async def test_create_app_runtime_internal_memory_is_core(tmp_path):
         plugins_dirs=[],
         plugins_disabled=[],
         mcp_enabled=False,
+        memory_external_provider="none",
     )
 
     runtime = await create_app_runtime(settings)
@@ -175,6 +177,7 @@ async def test_create_app_runtime_attaches_boot_report_on_failure(tmp_path, monk
         plugins_dirs=[],
         plugins_disabled=[],
         mcp_enabled=False,
+        memory_external_provider="none",
     )
 
     async def fail_memory(*args, **kwargs):
@@ -203,7 +206,7 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
     stopped = []
 
     class FakeMCPManager:
-        def __init__(self, configs):
+        def __init__(self, configs, *, env_values=None):
             self.configs = configs
 
         async def start(self):
@@ -223,6 +226,7 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
         plugins_disabled=[],
         mcp_enabled=True,
         mcp_servers=[{"name": "config", "command": "python", "args": [], "enabled": True}],
+        memory_external_provider="none",
     )
 
     with pytest.raises(RuntimeError, match="memory bootstrap failed"):
@@ -237,7 +241,7 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
     _write_mcp_plugin(plugins_dir / "mcp")
 
     class FakeMCPManager:
-        def __init__(self, configs):
+        def __init__(self, configs, *, env_values=None):
             self.configs = configs
             self.stopped = False
 
@@ -264,6 +268,7 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
         plugins_enabled=["user/mcp"],
         plugins_disabled=[],
         mcp_enabled=True,
+        memory_external_provider="none",
     )
 
     runtime = await create_app_runtime(settings)
@@ -283,6 +288,7 @@ async def test_app_runtime_gateway_lifecycle(tmp_path, monkeypatch):
         plugins_dirs=[],
         plugins_disabled=[],
         mcp_enabled=False,
+        memory_external_provider="none",
     )
     started = []
     stopped = []
@@ -325,12 +331,19 @@ async def test_app_runtime_gateway_lifecycle(tmp_path, monkeypatch):
 async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "plugins"
     _write_mcp_plugin(plugins_dir / "mcp")
+    monkeypatch.setenv("REMOTE_MCP_TOKEN", "resolved-secret")
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[plugins_dir],
         plugins_enabled=["user/mcp"],
         mcp_enabled=True,
-        mcp_servers=[{"name": "config", "command": "python", "args": [], "enabled": True}],
+        mcp_servers=[{
+            "name": "config",
+            "command": "python",
+            "args": [],
+            "headers_env": {"Authorization": "REMOTE_MCP_TOKEN"},
+            "enabled": True,
+        }],
     )
 
     from personal_agent.plugins.core.manager import PluginManager
@@ -342,8 +355,9 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
     created = {}
 
     class FakeMCPManager:
-        def __init__(self, configs):
+        def __init__(self, configs, *, env_values=None):
             created["configs"] = configs
+            created["env_values"] = env_values
             self.started = False
 
         async def start(self):
@@ -355,3 +369,4 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
 
     assert manager.started
     assert [item["name"] for item in created["configs"]] == ["config", "demo"]
+    assert created["env_values"] == {"REMOTE_MCP_TOKEN": "resolved-secret"}

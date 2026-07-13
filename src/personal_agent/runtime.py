@@ -521,21 +521,29 @@ async def start_mcp_manager(settings: Settings, plugin_manager: PluginManager):
         if isinstance(cfg, dict):
             mcp_servers.append(cfg)
         else:
-            mcp_servers.append({
-                "name": getattr(cfg, "name", ""),
-                "command": getattr(cfg, "command", ""),
-                "args": getattr(cfg, "args", []),
-                "env": getattr(cfg, "env", {}),
-                "enabled": getattr(cfg, "enabled", True),
-            })
+            mcp_servers.append(cfg)
     if not settings.mcp_enabled or not mcp_servers:
         return None
 
     from personal_agent.mcp.manager import MCPManager
 
-    manager = MCPManager(mcp_servers)
+    env_names = {
+        str(env_name)
+        for server in mcp_servers
+        for env_name in _mcp_headers_env(server).values()
+        if str(env_name)
+    }
+    env_values = {name: settings.get_env(name) for name in env_names}
+    manager = MCPManager(mcp_servers, env_values=env_values)
     await manager.start()
     return manager
+
+
+def _mcp_headers_env(server: Any) -> dict[str, str]:
+    value = server.get("headers_env", {}) if isinstance(server, dict) else getattr(server, "headers_env", {})
+    if not isinstance(value, dict):
+        return {}
+    return {str(header): str(env_name) for header, env_name in value.items()}
 
 
 async def create_memory_manager(

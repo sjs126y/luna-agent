@@ -165,7 +165,7 @@ mcp:
         Authorization: REMOTE_MCP_AUTH
 ```
 
-`headers_env` 的值是环境变量名，不是凭据本身；doctor 只检查配置结构，不回显环境变量值。
+`headers_env` 的值是环境变量名，不是凭据本身；doctor 只检查配置结构，不回显环境变量值。动态变量与普通 provider 配置一样统一由 `ConfigLoader` / `Settings` 解析：进程环境优先于项目 `.env`，MCP connection 不会自行读取环境文件。
 
 GitHub 官方远程 MCP 可以使用 PAT 认证：
 
@@ -183,7 +183,7 @@ mcp:
 `.env` 中保存完整的 Authorization header 值，不要把 token 写入 `config.yaml`：
 
 ```dotenv
-GITHUB_MCP_AUTH=Bearer github_pat_xxx
+GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 ```
 
 ## 执行模式与权限

@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-import os
 import tempfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Any, Protocol
@@ -53,10 +52,12 @@ class SDKMCPConnection:
         *,
         notification_callback: NotificationCallback | None = None,
         http_client_factory: HTTPClientFactory | None = None,
+        env_values: Mapping[str, str] | None = None,
     ) -> None:
         self.config = config
         self._notification_callback = notification_callback
         self._http_client_factory = http_client_factory or _default_http_client
+        self._env_values = dict(env_values or {})
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
         self._connect_lock = asyncio.Lock()
@@ -99,7 +100,7 @@ class SDKMCPConnection:
             )
         else:
             http_client = self._http_client_factory(
-                _http_headers(self.config.headers_env),
+                _http_headers(self.config.headers_env, self._env_values),
                 self.config.connect_timeout_seconds,
                 self.config.call_timeout_seconds,
             )
@@ -214,11 +215,11 @@ def _stdio_env(configured: dict[str, str]) -> dict[str, str]:
     return result
 
 
-def _http_headers(headers_env: dict[str, str]) -> dict[str, str]:
-    missing = sorted(env_name for env_name in headers_env.values() if env_name not in os.environ)
+def _http_headers(headers_env: dict[str, str], env_values: Mapping[str, str]) -> dict[str, str]:
+    missing = sorted(env_name for env_name in headers_env.values() if not env_values.get(env_name))
     if missing:
         raise ValueError(f"MCP header environment variable is not set: {', '.join(missing)}")
-    return {header: os.environ[env_name] for header, env_name in headers_env.items()}
+    return {header: env_values[env_name] for header, env_name in headers_env.items()}
 
 
 def _default_http_client(headers: dict[str, str], connect_timeout: float, call_timeout: float) -> httpx.AsyncClient:

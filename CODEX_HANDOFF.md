@@ -1,6 +1,15 @@
 # Codex 交接记录
 
-更新时间：2026-07-13 01:55 CST
+更新时间：2026-07-13 13:31 CST
+
+## 2026-07-13 Settings 收口完成
+
+- 昨晚记录的 GitHub MCP 配置边界问题已解决：普通 `uv run personal-agent serve` / `doctor` 会通过 `ConfigLoader -> Settings -> runtime -> MCP connection` 注入动态 Authorization header。
+- Memory embedding、Qdrant、plugin requirements、LLM API mode 和 doctor 已同步收口，不再各自读取环境变量或 `.env`。
+- GitHub 官方 MCP 实测 `ready`，发现 44 个工具；doctor 不再把 Streamable HTTP 误判为缺少本地 command。
+- 所有 `.env` 诊断值现在统一脱敏，包括不在 registry 中的动态 MCP/plugin key。
+- 最近验证：聚焦 `139 passed`，全量 `868 passed`，compileall 和 diff check 通过。
+- `config.yaml` 仍是用户本机改动，不应纳入功能提交。
 
 ## 2026-07-13 收工状态
 

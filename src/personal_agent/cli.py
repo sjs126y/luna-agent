@@ -1263,9 +1263,16 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
     mcp_servers = []
     for server in settings.mcp_servers:
         command = str(server.get("command", ""))
+        url = str(server.get("url", ""))
+        transport = str(
+            server.get("transport")
+            or ("streamable_http" if url and not command else "stdio")
+        )
         mcp_servers.append({
-            "name": server.get("name", command or "unknown"),
+            "name": server.get("name", command or url or "unknown"),
+            "transport": transport,
             "command": command,
+            "url": url,
             "enabled": bool(server.get("enabled", True)),
             "command_found": bool(command and shutil.which(command)),
         })
