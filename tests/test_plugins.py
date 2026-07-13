@@ -501,6 +501,113 @@ def register(ctx):
     assert report["registered_items"]["tools"] == []
 
 
+def test_plugin_registration_failure_rolls_back_all_contributions(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "partial"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/partial
+name: Partial Plugin
+version: 1.0.0
+entrypoint: partial_plugin:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "partial_plugin.py").write_text(
+        """
+from personal_agent.plugins.models import CommandEntry
+from personal_agent.tools.entry import ToolEntry
+
+async def handler(**kwargs):
+    return "ok"
+
+def register(ctx):
+    ctx.register_tool(ToolEntry(
+        name="partial_registration_tool",
+        description="partial",
+        schema={"type": "object", "properties": {}},
+        handler=handler,
+    ))
+    ctx.register_hook("partial_hook", handler)
+    ctx.register_command(CommandEntry(
+        name="partial-command",
+        description="partial",
+        handler=handler,
+    ))
+    raise RuntimeError("stop registration")
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/partial"]
+
+    assert plugin.status == PluginStatus.ERROR
+    assert tool_registry.get("partial_registration_tool") is None
+    assert manager.get_command("partial-command") is None
+    assert "partial_hook" not in manager.hooks
+    assert all(count == 0 for count in plugin.registration_counts().values())
+
+
+def test_plugin_registration_rejects_cross_plugin_tool_conflict(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    for key, module in (("first", "first_plugin"), ("second", "second_plugin")):
+        plugin_dir = plugins_dir / key
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.yaml").write_text(
+            f"""
+key: user/{key}
+name: {key.title()} Plugin
+version: 1.0.0
+entrypoint: {module}:register
+enabled_by_default: true
+""".strip(),
+            encoding="utf-8",
+        )
+        (plugin_dir / f"{module}.py").write_text(
+            f"""
+from personal_agent.tools.entry import ToolEntry
+
+async def handler(**kwargs):
+    return "{key}"
+
+def register(ctx):
+    ctx.register_tool(ToolEntry(
+        name="shared_plugin_tool",
+        description="{key}",
+        schema={{"type": "object", "properties": {{}}}},
+        handler=handler,
+    ))
+""".strip(),
+            encoding="utf-8",
+        )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+
+    first = manager._plugins["user/first"]
+    second = manager._plugins["user/second"]
+    assert first.status == PluginStatus.LOADED
+    assert second.status == PluginStatus.ERROR
+    assert "already registered by plugin 'user/first'" in (second.error or "")
+    assert tool_registry.get("shared_plugin_tool") is not None
+    assert tool_registry.get("shared_plugin_tool").description == "first"
+    manager.disable_plugin("user/first")
+
+
 def test_duplicate_plugin_key_marks_existing_error(tmp_path):
     plugins_dir = tmp_path / "plugins"
     for name in ("one", "two"):

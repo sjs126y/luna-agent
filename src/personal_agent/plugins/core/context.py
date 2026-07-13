@@ -58,28 +58,44 @@ class PluginContext:
     def register_tool(self, entry: ToolEntry) -> None:
         from personal_agent.tools.registry import tool_registry
 
-        tool_registry.register(entry)
+        should_register = self.manager.ensure_registration_available(
+            "tool", entry.name, tool_registry.get(entry.name), entry, self.plugin.key,
+        )
+        if should_register:
+            tool_registry.register(entry)
         if entry.name not in self.plugin.tools_registered:
             self.plugin.tools_registered.append(entry.name)
 
     def register_skill(self, entry: SkillEntry) -> None:
         from personal_agent.skills.registry import skill_registry
 
-        skill_registry.register(entry)
+        should_register = self.manager.ensure_registration_available(
+            "skill", entry.name, skill_registry.get(entry.name), entry, self.plugin.key,
+        )
+        if should_register:
+            skill_registry.register(entry)
         if entry.name not in self.plugin.skills_registered:
             self.plugin.skills_registered.append(entry.name)
 
     def register_workflow(self, defn: WorkflowDef) -> None:
         from personal_agent.workflow.registry import workflow_registry
 
-        workflow_registry.register(defn)
+        should_register = self.manager.ensure_registration_available(
+            "workflow", defn.name, workflow_registry.get(defn.name), defn, self.plugin.key,
+        )
+        if should_register:
+            workflow_registry.register(defn)
         if defn.name not in self.plugin.workflows_registered:
             self.plugin.workflows_registered.append(defn.name)
 
     def register_platform(self, entry: PlatformEntry) -> None:
         from personal_agent.platforms.core import platform_registry
 
-        platform_registry.register(entry)
+        should_register = self.manager.ensure_registration_available(
+            "platform", entry.name, platform_registry.get(entry.name), entry, self.plugin.key,
+        )
+        if should_register:
+            platform_registry.register(entry)
         if entry.name not in self.plugin.platforms_registered:
             self.plugin.platforms_registered.append(entry.name)
 

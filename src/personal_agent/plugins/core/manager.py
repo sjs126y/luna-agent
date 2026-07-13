@@ -116,9 +116,9 @@ class PluginManager:
         plugin.status = PluginStatus.LOADING
         plugin.error = None
         plugin.error_traceback = None
-        plugin.ctx = PluginContext(self, plugin)
-        before = self._registry_snapshot()
+        before = self._registration_snapshot()
         try:
+            plugin.ctx = PluginContext(self, plugin)
             module, register_fn = self._import_entrypoint(plugin.manifest)
             plugin.module = module
             if register_fn is not None:
@@ -129,15 +129,40 @@ class PluginManager:
                 result = module.register(plugin.ctx)
                 if inspect.isawaitable(result):
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
+            after = self._registration_snapshot()
+            self._assert_no_registry_replacements(before, after)
             if plugin.manifest.record_import_delta:
-                self._record_registry_delta(plugin, before, self._registry_snapshot())
+                self._record_registry_delta(plugin, before["names"], after["names"])
             plugin.status = PluginStatus.LOADED
         except Exception as exc:
+            self._restore_registration_snapshot(before)
+            self._clear_plugin_registrations(plugin)
+            plugin.module = None
+            plugin.ctx = None
             plugin.status = PluginStatus.ERROR
             plugin.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             plugin.error_traceback = traceback.format_exc()
             logger.exception("Plugin '%s' failed to load", key)
         return plugin
+
+    def ensure_registration_available(
+        self,
+        kind: str,
+        name: str,
+        existing: Any | None,
+        candidate: Any,
+        plugin_key: str,
+    ) -> bool:
+        """Reject cross-plugin replacement while allowing legacy idempotent registration."""
+        if existing is None:
+            return True
+        owner = self._registration_owner(kind, name)
+        if owner and owner != plugin_key:
+            raise ValueError(f"{kind.title()} '{name}' is already registered by plugin '{owner}'")
+        if existing is candidate or (owner in {"", plugin_key} and existing == candidate):
+            return False
+        label = owner or "core runtime"
+        raise ValueError(f"{kind.title()} '{name}' is already registered by {label}")
 
     def unload_plugin(self, key: str) -> LoadedPlugin:
         plugin = self._plugins[key]
@@ -161,15 +186,7 @@ class PluginManager:
 
         self._mcp_servers.pop(key, None)
         memory_provider_registry.unregister_plugin(key)
-        plugin.tools_registered.clear()
-        plugin.skills_registered.clear()
-        plugin.workflows_registered.clear()
-        plugin.platforms_registered.clear()
-        plugin.mcp_servers_registered.clear()
-        plugin.hooks_registered.clear()
-        plugin.commands_registered.clear()
-        plugin.middleware_registered.clear()
-        plugin.memory_providers_registered.clear()
+        self._clear_plugin_registrations(plugin)
         plugin.module = None
         plugin.ctx = None
         plugin.error = None
@@ -718,6 +735,79 @@ class PluginManager:
             "platforms": {entry.name for entry in platform_registry.list()},
         }
 
+    def _registration_snapshot(self) -> dict[str, Any]:
+        from personal_agent.memory.provider_registry import memory_provider_registry
+        from personal_agent.platforms.core import platform_registry
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.tools.registry import tool_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        entries = {
+            "tools": {name: tool_registry.get(name) for name in tool_registry.all_names},
+            "skills": {entry.name: entry for entry in skill_registry.list()},
+            "workflows": {name: workflow_registry.get(name) for name in workflow_registry.list_names()},
+            "platforms": {entry.name: entry for entry in platform_registry.list()},
+            "memory_providers": {
+                name: memory_provider_registry.get(name) for name in memory_provider_registry.names()
+            },
+        }
+        return {
+            "entries": entries,
+            "names": {kind: set(values) for kind, values in entries.items() if kind != "memory_providers"},
+            "commands": dict(self._commands),
+            "hooks": {name: list(items) for name, items in self._hooks.items()},
+            "mcp_servers": {key: list(items) for key, items in self._mcp_servers.items()},
+        }
+
+    def _restore_registration_snapshot(self, snapshot: dict[str, Any]) -> None:
+        from personal_agent.memory.provider_registry import memory_provider_registry
+        from personal_agent.platforms.core import platform_registry
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.tools.registry import tool_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        entries = snapshot["entries"]
+        for name in list(tool_registry.all_names):
+            tool_registry.unregister(name)
+        for entry in entries["tools"].values():
+            tool_registry.register(entry)
+
+        for entry in list(skill_registry.list()):
+            skill_registry.unregister(entry.name)
+        for entry in entries["skills"].values():
+            skill_registry.register(entry)
+
+        for name in list(workflow_registry.list_names()):
+            workflow_registry.unregister(name)
+        for defn in entries["workflows"].values():
+            workflow_registry.register(defn)
+
+        for entry in list(platform_registry.list()):
+            platform_registry.unregister(entry.name)
+        for entry in entries["platforms"].values():
+            platform_registry.register(entry)
+
+        memory_provider_registry.clear()
+        for registration in entries["memory_providers"].values():
+            memory_provider_registry.register(
+                name=registration.name,
+                plugin_key=registration.plugin_key,
+                factory=registration.factory,
+                validator=registration.validator,
+            )
+
+        self._commands = dict(snapshot["commands"])
+        self._hooks = {name: list(items) for name, items in snapshot["hooks"].items()}
+        self._mcp_servers = {key: list(items) for key, items in snapshot["mcp_servers"].items()}
+
+    @staticmethod
+    def _assert_no_registry_replacements(before: dict[str, Any], after: dict[str, Any]) -> None:
+        for kind, previous in before["entries"].items():
+            current = after["entries"].get(kind, {})
+            for name, entry in previous.items():
+                if name in current and current[name] is not entry:
+                    raise ValueError(f"Plugin replaced existing {kind.rstrip('s')} registration: {name}")
+
     def _record_registry_delta(
         self,
         plugin: LoadedPlugin,
@@ -728,6 +818,32 @@ class PluginManager:
         self._extend_unique(plugin.skills_registered, sorted(after["skills"] - before["skills"]))
         self._extend_unique(plugin.workflows_registered, sorted(after["workflows"] - before["workflows"]))
         self._extend_unique(plugin.platforms_registered, sorted(after["platforms"] - before["platforms"]))
+
+    def _registration_owner(self, kind: str, name: str) -> str:
+        attribute = {
+            "tool": "tools_registered",
+            "skill": "skills_registered",
+            "workflow": "workflows_registered",
+            "platform": "platforms_registered",
+        }.get(kind)
+        if attribute is None:
+            return ""
+        for plugin in self._plugins.values():
+            if name in getattr(plugin, attribute):
+                return plugin.key
+        return ""
+
+    @staticmethod
+    def _clear_plugin_registrations(plugin: LoadedPlugin) -> None:
+        plugin.tools_registered.clear()
+        plugin.skills_registered.clear()
+        plugin.workflows_registered.clear()
+        plugin.platforms_registered.clear()
+        plugin.mcp_servers_registered.clear()
+        plugin.hooks_registered.clear()
+        plugin.commands_registered.clear()
+        plugin.middleware_registered.clear()
+        plugin.memory_providers_registered.clear()
 
     def _extend_unique(self, target: list[str], values: list[str]) -> None:
         for value in values:
