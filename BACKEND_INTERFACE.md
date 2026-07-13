@@ -616,42 +616,41 @@ Gateway / 平台行为：
 
 - `Read Only`
 - `Ask First`
-- `Edit Freely`
+- `Local Auto`
 - `Full Auto`
 
-内部 profile 映射：
+稳定 mode ID 与 profile/policy 映射：
 
-- `Read Only` -> `guarded`
-- `Ask First` -> `standard`
-- `Edit Freely` -> `trusted`
-- `Full Auto` -> `sovereign`
+- `Read Only` -> `read-only` + `never`
+- `Ask First` -> `read-only` + `on-request`
+- `Local Auto` -> `workspace` + `on-request`
+- `Full Auto` -> `trusted` + `never`
 
 兼容旧别名：
 
 - `normal` -> `Ask First`
-- `acceptEdits` -> `Edit Freely`
+- `acceptEdits` -> `Local Auto`
 - `auto` -> `Full Auto`
 
-切换 mode 会清空当前 agent 的本轮 grants，限时授权仍受 mode/config 的 `deny` 最高优先级约束。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
+切换 mode 会清空当前 session 的工具与资源 grants；重置/删除会话和服务重启也会清空。授权不会跨 session 或跨平台用户合并。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
-`/allow` 是 mode/config 策略上的限时临时 grant：只解锁最终权限决策为 `ask` 的类别，不能覆盖 `deny`。`standard / Ask First` 下 `network=ask`，因此 `/allow network` 可用于 `web_search` / `web_fetch`；`guarded / Read Only` 下 `network=deny`，后端会返回“不能覆盖”的文本提示。`/allow network` 不会打开 bash 内部的 `curl` / `wget` 等网络命令，bash 网络仍由 `sandbox.bash_allow_network` 控制。
+新安全上下文不接受 `/allow write` 这类类别级预授权。工具确认返回的授权由两部分组成：`tool_approval_mode` 控制工具身份是否需要确认，`requested_resources` 列出本次缺失的具体路径/host。允许一次只覆盖当前调用；限时允许使用全局 `permissions.grant_ttl_minutes`。
 
 新增命令：
 
-- `/deny <category>`：撤销当前 agent/session 的某类限时授权。
-- `/deny all`：撤销全部限时授权。
-- `/permissions` payload 新增 `temporary_grants`、`turn_grants`、`temporary_grant_ttl_seconds`，每个临时授权包含 `category`、`expires_at`、`expires_at_iso`。
-- `tool_decision` / `tool_end` / Turn Report / Tool Runs 现在都会透出 `grant_scope`、`grant_expires_at`、`temporary_grant_ttl_seconds`，用于解释工具为什么被放行以及限时授权何时失效。
+- `/deny all`：撤销当前 session 的全部工具/资源限时授权。
+- `/permissions` payload 提供 `security`、`tool_grants`、`resource_grants`、`temporary_grant_ttl_seconds`；旧 `grants` 字段暂时保留兼容。
+- `tool_decision` / `tool_end` 新增 `tool_approval_mode` 与 `requested_resources`，前端确认框应优先展示这些字段。
 
 Gateway 异步确认：
 
 - 微信/QQ/飞书/Telegram 等 gateway 平台遇到 `permission_required + ask` 时，会发送确认文本，不再立即 denied。
-- 用户回复 `1` = 允许一次，`2` = 拒绝，`3` = 按 `permissions.temporary_grant_ttl_hours` 限时允许。
+- 用户回复 `1` = 允许一次，`2` = 拒绝，`3` = 按 `permissions.grant_ttl_minutes` 限时允许。
 - pending confirm 期间，非 `1/2/3` 普通文本会被消费并提示 `请回复 1、2 或 3；发送 /stop 可取消。`
 - `/stop` 会取消 pending confirm，并让等待中的工具确认返回 `interrupted`。
 - `Gateway.health_snapshot()` 新增 `pending_confirmations` 与 `pending_confirmation_count`；`/permissions` payload 的 `pending_confirmation` 会返回当前 session 的 pending 状态。
 
-当一批工具调用全部因为 `permission_required` 被拒绝时，后端会结束当前 turn 并发送一条 `assistant_message` 提示需要 `/allow <category>` 后重试，避免模型在同一轮里反复调用未授权工具。对应 `tool_end` / Tool Runs / Turn Reports 仍会记录实际 denied 工具结果。
+当一批工具调用全部因为新安全审批被拒绝时，后端会结束当前 turn，并提示用户在支持授权确认的入口重试，避免模型反复调用。对应 `tool_end` / Tool Runs / Turn Reports 仍记录真实 denied 结果。
 
 ## 7. Usage / Context Summary
 

@@ -100,9 +100,15 @@ gateway:
   platform_send_max_retries: 2
 
 execution:
-  mode: standard
-  policy:
-    tool_permissions: {}
+  mode: ask-first
+
+permissions:
+  grant_ttl_minutes: 60
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: cached
+    tools: {}
+    mcp_servers: {}
 
 sandbox:
   roots:
@@ -114,6 +120,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  process_backend: auto
   file_max_write_bytes: 100000
   audit_enabled: true
 
@@ -194,9 +201,15 @@ gateway:
   platform_send_max_retries: 2
 
 execution:
-  mode: standard
-  policy:
-    tool_permissions: {}
+  mode: ask-first
+
+permissions:
+  grant_ttl_minutes: 60
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: cached
+    tools: {}
+    mcp_servers: {}
 
 sandbox:
   roots:
@@ -208,6 +221,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  process_backend: auto
   file_max_write_bytes: 100000
   audit_enabled: true
 
@@ -288,9 +302,15 @@ gateway:
   platform_send_max_retries: 2
 
 execution:
-  mode: standard
-  policy:
-    tool_permissions: {}
+  mode: ask-first
+
+permissions:
+  grant_ttl_minutes: 60
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: cached
+    tools: {}
+    mcp_servers: {}
 
 sandbox:
   roots:
@@ -302,6 +322,7 @@ sandbox:
   bash_work_dir: ./data
   bash_restrict_paths: true
   bash_allow_network: false
+  process_backend: auto
   file_max_write_bytes: 100000
   audit_enabled: true
 

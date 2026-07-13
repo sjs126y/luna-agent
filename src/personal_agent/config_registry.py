@@ -317,7 +317,7 @@ def _mixed_field(
 
 def _execution_fields() -> tuple[ConfigField, ...]:
     return (
-        _yaml_field("execution.mode", "execution_mode", "standard", "str", "execution", "Execution mode profile.", choices=EXECUTION_MODES),
+        _yaml_field("execution.mode", "execution_mode", "ask-first", "str", "execution", "Execution mode profile.", choices=EXECUTION_MODES),
         _yaml_field("execution.policy", "execution_policy_overrides", {}, "dict", "execution", "Execution policy overrides."),
     )
 

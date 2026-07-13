@@ -650,3 +650,39 @@ uv run pytest -q
 - `97e1dfe Probe and repair Lumora memory health`
 
 真实配置验证：probe 状态为 `ok`，Lumora 可用；诊断准确报告全局 migration pending `59`、index pending `1`，未在前台自动迁移这些数据。
+
+## 2026-07-13：Execution Security Pipeline v2
+
+状态：已完成实现并通过全量验证。
+
+背景：旧 `ModeProfile -> ExecutionPolicy -> permission category -> /allow` 同时表达自动化程度、沙箱与临时授权，Mode 名称和 policy 发生分裂；工具 hooks、嵌套 `tool_call`、MCP 和 Bash/后台进程也缺少统一的资源审批语义。
+
+已完成：
+
+- Mode 统一为 `Read Only / Ask First / Local Auto / Full Auto`，稳定 ID 为 `read-only / ask-first / local-auto / full-auto`；每个 session 持有独立内存安全状态，Mode 切换清空 grants。
+- 新增 filesystem/network permission profile、`on-request/never` approval policy、`auto/cached/prompt/deny` tool approval 与统一 `permissions.grant_ttl_minutes`。
+- 工具调用在 proposal hooks 后冻结参数，再执行 hard precheck、工具/资源审批与 dispatch；确认后不重新调用模型，`tool_call` 嵌套调用继续进入统一 executor。
+- 文件、网络、Bash、后台进程和 HTTP MCP 暴露具体资源；`/permissions` 和前端事件新增 tool/resource grant 与 `requested_resources` 诊断。
+- Bash 与后台进程支持 Bubblewrap 文件系统隔离；`auto` 可诊断降级，显式 `bwrap` 不可用时失败关闭。
+- MCP 默认 cached 审批、不可并行、不可自动重试；stdio 复用进程沙箱，HTTP 默认 HTTPS 并检查所有 DNS 地址；工具列表、schema、文本、structured content 和 artifact 都有硬上限。
+- 配置模板、README、配置/架构/能力文档、`BACKEND_INTERFACE.md` 和根目录 `TODO.md` 已同步新语义；旧 execution policy/category 仅保留兼容。
+
+阶段提交：
+
+- `bcbcc5d Document security refactor prerequisites`
+- `ff0041b Define permission profiles and session security state`
+- `9d20e3d Refactor tool security and approval pipeline`
+- `fe563f5 Add resource-scoped tool approvals`
+- `8e04989 Isolate shell processes with bubblewrap`
+- `8e90ff7 Harden MCP transports and payloads`
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
+
+结果：`904 passed`。
+
+真实环境待复测：GitHub HTTP MCP、需要联网安装/运行的 stdio MCP，以及宿主是否支持 Bubblewrap network namespace。`doctor` 会报告 network namespace 降级；DNS 检查到实际连接之间的 TOCTOU 风险已记录在 `TODO.md`。

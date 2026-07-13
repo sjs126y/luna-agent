@@ -571,12 +571,11 @@ Execution guard 是执行前门控。
 
 ### Permission manager
 
-Permission manager 根据以下信息做决策：
+Security evaluator 根据以下信息做决策：
 
-- execution mode。
-- `execution.policy.tool_permissions`。
-- 临时授权。
-- turn-scoped `/allow`。
+- execution mode 对应的 filesystem/network profile。
+- `permissions.tool_approval` 的工具审批策略。
+- 当前 session 内存中的工具/资源限时授权。
 - Gateway/CLI/TUI 确认结果。
 
 决策结果：
@@ -585,7 +584,7 @@ Permission manager 根据以下信息做决策：
 - ask。
 - deny。
 
-`/allow` 只能放开 `ask`，不能覆盖 `deny`。
+新安全上下文只在具体工具确认中扩权，授权对象是精确路径或 network host；类别级 `/allow` 仅保留旧运行时兼容。
 
 ### Sandbox
 
