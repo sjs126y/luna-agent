@@ -25,12 +25,17 @@ async def _tool_describe(name: str) -> str:
     return await dispatch_tool_describe(name)
 
 
-async def _tool_call(name: str, arguments: dict) -> str:
+async def _tool_call(name: str, arguments: dict) -> object:
     """Fallback: execute a deferrable tool by name. Only works for safe tools —
     destructive tools are blocked and must be called directly with /allow."""
     from personal_agent.tools.registry import tool_registry as _tr
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
-    from personal_agent.tools.runtime_context import current_tool_agent
+    from personal_agent.tools.runtime_context import (
+        current_tool_agent,
+        current_tool_confirm,
+        current_tool_event_sink,
+        current_tool_hooks,
+    )
 
     entry = _tr.get(name)
     if entry is None:
@@ -46,12 +51,24 @@ async def _tool_call(name: str, arguments: dict) -> str:
             f"Send /allow to authorize it, then call '{name}' directly in your next response."
         )
 
-    result = await execute_tool_call_result({
-        "id": f"tool_call:{name}",
-        "name": name,
-        "input": arguments or {},
-    }, agent=current_tool_agent())
-    return format_tool_result(result)
+    agent = current_tool_agent()
+    confirm = current_tool_confirm()
+    hooks = current_tool_hooks()
+    event_sink = current_tool_event_sink()
+    result = await execute_tool_call_result(
+        {
+            "id": f"tool_call:{name}",
+            "name": name,
+            "input": arguments or {},
+        },
+        agent=agent,
+        confirm=confirm,
+        hooks=hooks,
+        event_sink=event_sink,
+    )
+    if agent is None and confirm is None and hooks is None and event_sink is None:
+        return format_tool_result(result)
+    return result
 
 
 tool_registry.register(ToolEntry(

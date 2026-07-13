@@ -67,6 +67,113 @@ async def test_cached_tool_approval_uses_session_ttl(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_nested_tool_call_inherits_confirm_and_cached_grant(tmp_path):
+    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    calls = 0
+    confirmations = 0
+
+    async def handler(value: str):
+        nonlocal calls
+        calls += 1
+        return f"nested:{value}"
+
+    async def confirm(_decision):
+        nonlocal confirmations
+        confirmations += 1
+        return "always"
+
+    entry = ToolEntry(
+        "nested_cached_demo",
+        "demo",
+        {"type": "object", "properties": {"value": {"type": "string"}}},
+        handler,
+        approval_mode="cached",
+        idempotent=False,
+    )
+    tool_registry.register(entry)
+    agent = _agent(tmp_path)
+    try:
+        first = await execute_tool_call_result(
+            {
+                "id": "outer-one",
+                "name": "tool_call",
+                "input": {"name": entry.name, "arguments": {"value": "one"}},
+            },
+            agent=agent,
+            confirm=confirm,
+        )
+        second = await execute_tool_call_result(
+            {
+                "id": "outer-two",
+                "name": "tool_call",
+                "input": {"name": entry.name, "arguments": {"value": "two"}},
+            },
+            agent=agent,
+            confirm=confirm,
+        )
+    finally:
+        tool_registry.unregister(entry.name)
+
+    assert first.status == second.status == "success"
+    assert first.content == "nested:one"
+    assert second.content == "nested:two"
+    assert calls == 2
+    assert confirmations == 1
+
+
+@pytest.mark.asyncio
+async def test_nested_tool_call_preserves_authorization_denial(tmp_path):
+    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    called = False
+
+    async def handler():
+        nonlocal called
+        called = True
+        return "should not run"
+
+    async def deny(_decision):
+        return "deny"
+
+    entry = ToolEntry(
+        "nested_denied_demo",
+        "demo",
+        {"type": "object", "properties": {}},
+        handler,
+        approval_mode="cached",
+        idempotent=False,
+    )
+    tool_registry.register(entry)
+    try:
+        result = await execute_tool_call_result(
+            {
+                "id": "outer-denied",
+                "name": "tool_call",
+                "input": {"name": entry.name, "arguments": {}},
+            },
+            agent=_agent(tmp_path),
+            confirm=deny,
+        )
+    finally:
+        tool_registry.unregister(entry.name)
+
+    assert result.status == "denied"
+    assert result.category == "authorization"
+    assert result.reason_code == "security_approval_required"
+    assert result.permission_decision == "ask"
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_prompt_tool_approval_never_persists(tmp_path):
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_call_result

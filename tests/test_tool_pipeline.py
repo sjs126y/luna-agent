@@ -119,6 +119,8 @@ async def test_file_write_path_traversal():
 
 @pytest.mark.asyncio
 async def test_bridge_tool_call_blocks_destructive():
+    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+
     from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
 
     # file_write is destructive — should be blocked via tool_call

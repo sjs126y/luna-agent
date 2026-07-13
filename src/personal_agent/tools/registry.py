@@ -347,7 +347,7 @@ async def dispatch_tool_describe(name: str) -> str:
     return json.dumps({"error": f"Tool not found: {name}"}, ensure_ascii=False)
 
 
-async def dispatch_tool_call(name: str, arguments: dict) -> str:
+async def dispatch_tool_call(name: str, arguments: dict) -> object:
     """Execute a tool by name."""
     entry = tool_registry.get(name)
     if entry is None:
@@ -360,14 +360,31 @@ async def dispatch_tool_call(name: str, arguments: dict) -> str:
             f"Send /allow to authorize it, then call '{name}' directly in your next response."
         )
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
-    from personal_agent.tools.runtime_context import current_tool_agent
+    from personal_agent.tools.runtime_context import (
+        current_tool_agent,
+        current_tool_confirm,
+        current_tool_event_sink,
+        current_tool_hooks,
+    )
 
-    result = await execute_tool_call_result({
-        "id": f"tool_call:{name}",
-        "name": name,
-        "input": arguments or {},
-    }, agent=current_tool_agent())
-    return format_tool_result(result)
+    agent = current_tool_agent()
+    confirm = current_tool_confirm()
+    hooks = current_tool_hooks()
+    event_sink = current_tool_event_sink()
+    result = await execute_tool_call_result(
+        {
+            "id": f"tool_call:{name}",
+            "name": name,
+            "input": arguments or {},
+        },
+        agent=agent,
+        confirm=confirm,
+        hooks=hooks,
+        event_sink=event_sink,
+    )
+    if agent is None and confirm is None and hooks is None and event_sink is None:
+        return format_tool_result(result)
+    return result
 
 
 # ── BM25 ──────────────────────────────────────────────

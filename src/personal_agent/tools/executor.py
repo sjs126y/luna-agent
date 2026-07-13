@@ -217,6 +217,7 @@ async def execute_tool_call_result(
     tool_decision: ToolDecision | None = None
     one_time_security_context = None
     one_time_security_grants: tuple[set[str], set[str]] = (set(), set())
+    preserve_nested_guard = False
     await emit_event(
         event_sink,
         "tool_start",
@@ -228,7 +229,7 @@ async def execute_tool_call_result(
 
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
         nonlocal one_time_security_grants
-        if tool_decision is not None:
+        if tool_decision is not None and not preserve_nested_guard:
             result.guard_stage = tool_decision.stage
             result.reason_code = tool_decision.reason_code
             result.permission_category = tool_decision.permission_category
@@ -444,8 +445,27 @@ async def execute_tool_call_result(
                 started=started,
             ))
         try:
-            raw_result = await _run_handler(entry.handler, tc["input"], timeout=timeout, agent=agent)
-            handler_output = _normalize_handler_output(raw_result)
+            raw_result = await _run_handler(
+                entry.handler,
+                tc["input"],
+                timeout=timeout,
+                agent=agent,
+                confirm=confirm,
+                hooks=hooks,
+                event_sink=event_sink,
+            )
+            nested_result = raw_result if isinstance(raw_result, ToolExecutionResult) else None
+            if nested_result is not None:
+                handler_output = ToolHandlerOutput(
+                    text=nested_result.content or nested_result.error,
+                    artifacts=list(nested_result.artifacts),
+                    metadata={
+                        **nested_result.result_metadata,
+                    },
+                    is_error=nested_result.status != "success",
+                )
+            else:
+                handler_output = _normalize_handler_output(raw_result)
             result = handler_output.text
             break
         except asyncio.TimeoutError:
@@ -494,7 +514,14 @@ async def execute_tool_call_result(
     status: ToolExecutionStatus = "success"
     category = ""
     error = ""
-    if handler_output.is_error:
+    if nested_result is not None:
+        status = nested_result.status
+        category = nested_result.category
+        error = nested_result.error
+        if status != "success":
+            error = error or result or f"nested tool '{nested_result.tool_name}' failed"
+            result = ""
+    elif handler_output.is_error:
         status = "error"
         category = "handler"
         error = result or "MCP tool call failed"
@@ -511,7 +538,7 @@ async def execute_tool_call_result(
             error = f"after hook failed: {type(exc).__name__}: {exc}"
 
     logger.debug("Tool '%s' done: %d chars", name, len(result))
-    return await _finish(_result(
+    final_result = _result(
         tc,
         status=status,
         category=category,
@@ -522,7 +549,20 @@ async def execute_tool_call_result(
         attempts=attempts,
         started=started,
         output_truncated=output_truncated,
-    ))
+    )
+    if nested_result is not None:
+        preserve_nested_guard = True
+        final_result.guard_stage = nested_result.guard_stage
+        final_result.reason_code = nested_result.reason_code
+        final_result.permission_category = nested_result.permission_category
+        final_result.permission_decision = nested_result.permission_decision
+        final_result.required_allow = nested_result.required_allow
+        final_result.execution_mode = nested_result.execution_mode
+        final_result.grant_matched = nested_result.grant_matched
+        final_result.grant_scope = nested_result.grant_scope
+        final_result.grant_expires_at = nested_result.grant_expires_at
+        final_result.temporary_grant_ttl_seconds = nested_result.temporary_grant_ttl_seconds
+    return await _finish(final_result)
 
 
 def format_tool_result(result: ToolExecutionResult) -> str:
@@ -780,16 +820,40 @@ def _classify_gate_error(message: str) -> str:
     return "scope_gate"
 
 
-async def _run_handler(handler: Any, kwargs: dict[str, Any], *, timeout: float, agent: Any = None) -> Any:
+async def _run_handler(
+    handler: Any,
+    kwargs: dict[str, Any],
+    *,
+    timeout: float,
+    agent: Any = None,
+    confirm: Any = None,
+    hooks: Any = None,
+    event_sink: Any = None,
+) -> Any:
     global _active_tool_executions
-    from personal_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
+    from personal_agent.tools.runtime_context import (
+        reset_current_tool_agent,
+        reset_current_tool_confirm,
+        reset_current_tool_event_sink,
+        reset_current_tool_hooks,
+        set_current_tool_agent,
+        set_current_tool_confirm,
+        set_current_tool_event_sink,
+        set_current_tool_hooks,
+    )
 
     _active_tool_executions += 1
-    token = set_current_tool_agent(agent)
+    agent_token = set_current_tool_agent(agent)
+    confirm_token = set_current_tool_confirm(confirm)
+    hooks_token = set_current_tool_hooks(hooks)
+    event_sink_token = set_current_tool_event_sink(event_sink)
     try:
         return await asyncio.wait_for(handler(**kwargs), timeout=timeout)
     finally:
-        reset_current_tool_agent(token)
+        reset_current_tool_event_sink(event_sink_token)
+        reset_current_tool_hooks(hooks_token)
+        reset_current_tool_confirm(confirm_token)
+        reset_current_tool_agent(agent_token)
         _active_tool_executions = max(0, _active_tool_executions - 1)
 
 
