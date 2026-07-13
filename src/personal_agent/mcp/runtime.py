@@ -7,7 +7,7 @@ import logging
 import random
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Mapping
 
 from personal_agent.mcp.connection import MCPConnection, SDKMCPConnection
 from personal_agent.mcp.models import MCPCallResult, MCPRuntimeState, MCPServerConfig, MCPServerInfo
@@ -29,10 +29,12 @@ class MCPServerRuntime:
         health_interval_seconds: float = 30.0,
         refresh_debounce_seconds: float = 0.1,
         jitter: Callable[[], float] | None = None,
+        env_values: Mapping[str, str] | None = None,
     ) -> None:
         self.config = config
         self.state = MCPRuntimeState.DISABLED if not config.enabled else MCPRuntimeState.STOPPED
-        self._connection_factory = connection_factory or _default_connection_factory
+        self._env_values = dict(env_values or {})
+        self._connection_factory = connection_factory or self._create_connection
         self._reconnect_delays = reconnect_delays or DEFAULT_RECONNECT_DELAYS
         self._health_interval = health_interval_seconds
         self._refresh_debounce = refresh_debounce_seconds
@@ -260,15 +262,18 @@ class MCPServerRuntime:
         if name == "tools/list_changed":
             self._refresh_event.set()
 
+    def _create_connection(self, config: MCPServerConfig, callback) -> MCPConnection:
+        return SDKMCPConnection(
+            config,
+            notification_callback=callback,
+            env_values=self._env_values,
+        )
+
     def _reset_events(self) -> None:
         self._stop_event = asyncio.Event()
         self._reconnect_event = asyncio.Event()
         self._refresh_event = asyncio.Event()
         self._initial_attempt_done = asyncio.Event()
-
-
-def _default_connection_factory(config: MCPServerConfig, callback) -> MCPConnection:
-    return SDKMCPConnection(config, notification_callback=callback)
 
 
 def _unavailable_result(server_name: str, detail: str = "") -> MCPCallResult:

@@ -36,6 +36,20 @@ sandbox:
     assert any("确认或移除未知顶层配置" in hint for hint in report["migration_hints"])
 
 
+def test_config_report_uses_process_environment_over_dotenv(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=openai\nLLM_API_KEY=\nLLM_MODEL=file-model\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LLM_API_KEY", "process-secret")
+    monkeypatch.setenv("LLM_MODEL", "process-model")
+
+    report = build_config_report(tmp_path)
+
+    assert report["env"]["missing_llm_env"] == []
+    assert report["env"]["llm_model"] == "process-model"
+
+
 def test_config_report_recommends_copy_env_when_env_missing(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

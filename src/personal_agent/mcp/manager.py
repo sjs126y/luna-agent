@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 
 from personal_agent.mcp.models import MCPServerConfig, MCPRuntimeState
@@ -16,6 +17,7 @@ class MCPManager:
         *,
         connection_factory: ConnectionFactory | None = None,
         reconnect_delays: tuple[float, ...] | None = None,
+        env_values: Mapping[str, str] | None = None,
     ) -> None:
         configs = [
             item if isinstance(item, MCPServerConfig) else MCPServerConfig.from_mapping(item)
@@ -31,6 +33,8 @@ class MCPManager:
             runtime_kwargs["connection_factory"] = connection_factory
         if reconnect_delays is not None:
             runtime_kwargs["reconnect_delays"] = reconnect_delays
+        if env_values is not None:
+            runtime_kwargs["env_values"] = env_values
         self._runtimes = {
             config.name: MCPServerRuntime(config, **runtime_kwargs)
             for config in configs

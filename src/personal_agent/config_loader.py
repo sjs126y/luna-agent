@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ class ConfigLoader:
         overrides = overrides or {}
         raw_config, config_error = load_yaml_config(self.base_dir / "config.yaml")
         raw_env = load_env_config(self.base_dir / ".env")
+        environment = {**raw_env, **os.environ}
         fields: list[dict[str, Any]] = []
         values: dict[str, Any] = {}
         attr_values: dict[str, Any] = {}
@@ -49,12 +51,12 @@ class ConfigLoader:
             errors.append(f"config.yaml 解析失败: {config_error}")
 
         for field in self.registry.fields:
-            source, raw_value = self._resolve_raw_value(field, raw_config, raw_env, overrides)
+            source, raw_value = self._resolve_raw_value(field, raw_config, environment, overrides)
             if field.path == "profiles":
-                value, field_errors = self._resolve_profiles(field, raw_config, raw_env, overrides)
+                value, field_errors = self._resolve_profiles(field, raw_config, environment, overrides)
                 field_warnings: list[str] = []
                 if not field_errors:
-                    source = _profile_source(raw_config, raw_env, overrides, field)
+                    source = _profile_source(raw_config, environment, overrides, field)
             else:
                 value, field_errors, field_warnings = convert_config_value(field, raw_value)
             if field_errors:
@@ -84,6 +86,7 @@ class ConfigLoader:
             },
             raw_env=raw_env,
             raw_config=raw_config,
+            environment=environment,
             errors=tuple(_dedupe(errors)),
             warnings=tuple(_dedupe(warnings)),
         )

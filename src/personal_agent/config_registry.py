@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +68,7 @@ class ConfigSnapshot:
     sections: dict[str, tuple[dict[str, Any], ...]]
     raw_env: dict[str, str]
     raw_config: dict[str, Any]
+    environment: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
@@ -238,6 +239,7 @@ class ConfigRegistry:
             sections=sorted_sections,
             raw_env=getattr(settings, "raw_env", {}),
             raw_config=getattr(settings, "raw_config", {}),
+            environment=getattr(settings, "_environment", {}),
         )
 
 
@@ -743,15 +745,9 @@ def _masked_attr_values(fields: tuple[dict[str, Any], ...], values: dict[str, An
 
 
 def _masked_raw_env(fields: tuple[dict[str, Any], ...], env: dict[str, str]) -> dict[str, str]:
-    sensitive_keys = {
-        str(field.get("env_key") or field.get("path"))
-        for field in fields
-        if field.get("sensitive") and ".env" in str(field.get("source", ""))
-    }
-    return {
-        key: str(_masked_value(value)) if key in sensitive_keys else value
-        for key, value in env.items()
-    }
+    # A .env file may contain dynamic plugin or MCP credentials that are not
+    # registered fields. Never expose any raw value through diagnostics.
+    return {key: str(_masked_value(value)) for key, value in env.items()}
 
 
 def _masked_value(value: Any) -> str:

@@ -170,6 +170,40 @@ def test_config_loader_masks_sensitive_values(tmp_path):
     assert "'LLM_API_KEY': 'secret'" not in str(snapshot.as_dict())
 
 
+def test_config_loader_masks_unregistered_dynamic_env_values(tmp_path):
+    from personal_agent.config_loader import ConfigLoader
+
+    (tmp_path / ".env").write_text(
+        "GITHUB_MCP_AUTH=Bearer secret\nDISPLAY_NAME=Lumora\n",
+        encoding="utf-8",
+    )
+
+    snapshot = ConfigLoader(base_dir=tmp_path).load()
+
+    assert snapshot.environment["GITHUB_MCP_AUTH"] == "Bearer secret"
+    assert snapshot.as_dict()["raw_env"] == {
+        "GITHUB_MCP_AUTH": "<set>",
+        "DISPLAY_NAME": "<set>",
+    }
+    assert "Bearer secret" not in str(snapshot.as_dict())
+
+
+def test_config_loader_process_environment_overrides_dotenv(tmp_path, monkeypatch):
+    from personal_agent.config_loader import ConfigLoader
+
+    (tmp_path / ".env").write_text(
+        "LLM_MODEL=file-model\nDYNAMIC_TOKEN=file-secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LLM_MODEL", "process-model")
+    monkeypatch.setenv("DYNAMIC_TOKEN", "process-secret")
+
+    snapshot = ConfigLoader(base_dir=tmp_path).load()
+
+    assert snapshot.attr_values["llm_model"] == "process-model"
+    assert snapshot.environment["DYNAMIC_TOKEN"] == "process-secret"
+
+
 def test_config_loader_collects_errors_and_strict_raises(tmp_path):
     from personal_agent.config_loader import ConfigLoader, ConfigLoaderError
 

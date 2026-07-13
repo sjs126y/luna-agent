@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import os
 from typing import Any
 
 
@@ -57,16 +56,21 @@ def resolve_memory_context(settings) -> MemoryProviderContext:
     requested = str(getattr(settings, "memory_external_provider", "none") or "none").lower()
     configured_llm = str(getattr(settings, "memory_llm_provider", "inherit") or "inherit")
     inherit = configured_llm == "inherit"
-    env = {**getattr(settings, "raw_env", {}), **os.environ}
     llm_key = str(getattr(settings, "memory_llm_api_key", "") or "")
     if not llm_key:
         llm_key = str(getattr(settings, "llm_api_key", "") or "")
     embedding_key = str(getattr(settings, "memory_embedding_api_key", "") or "")
     if not embedding_key:
-        embedding_key = str(env.get(getattr(settings, "memory_embedding_api_key_env", "DASHSCOPE_API_KEY"), ""))
+        embedding_key = _settings_env(
+            settings,
+            str(getattr(settings, "memory_embedding_api_key_env", "DASHSCOPE_API_KEY")),
+        )
     qdrant_key = str(getattr(settings, "memory_qdrant_api_key", "") or "")
     if not qdrant_key:
-        qdrant_key = str(env.get(getattr(settings, "memory_qdrant_api_key_env", "QDRANT_API_KEY"), ""))
+        qdrant_key = _settings_env(
+            settings,
+            str(getattr(settings, "memory_qdrant_api_key_env", "QDRANT_API_KEY")),
+        )
     options = getattr(settings, "memory_provider_options", {})
     selected_options = options.get(requested, {}) if isinstance(options, dict) else {}
     return MemoryProviderContext(
@@ -101,3 +105,10 @@ def resolve_memory_context(settings) -> MemoryProviderContext:
         ),
         provider_options=dict(selected_options) if isinstance(selected_options, dict) else {},
     )
+
+
+def _settings_env(settings, name: str) -> str:
+    resolver = getattr(settings, "get_env", None)
+    if not callable(resolver):
+        return ""
+    return str(resolver(name, "") or "")

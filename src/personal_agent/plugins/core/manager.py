@@ -7,7 +7,6 @@ import importlib
 import inspect
 import json
 import logging
-import os
 import re
 import sys
 import traceback
@@ -50,7 +49,6 @@ class PluginManager:
         self._hooks: dict[str, list[HookRegistration]] = {}
         self._commands: dict[str, CommandEntry] = {}
         self._mcp_servers: dict[str, list[Any]] = {}
-        self._env = self._load_env_file()
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -618,21 +616,11 @@ class PluginManager:
     def _save_state(self) -> None:
         write_json_atomic(self._state_path, self._state)
 
-    def _load_env_file(self) -> dict[str, str]:
-        env_path = Path(".env")
-        if not env_path.exists():
-            return {}
-        try:
-            from dotenv import dotenv_values
-
-            return {key: value or "" for key, value in dotenv_values(env_path).items()}
-        except Exception:
-            return {}
-
     def _missing_env(self, manifest: PluginManifest) -> list[str]:
         missing = []
         for name in manifest.requires_env:
-            value = os.environ.get(name) or self._env.get(name)
+            resolver = getattr(self.settings, "get_env", None)
+            value = resolver(name, "") if callable(resolver) else ""
             if value:
                 continue
             setting_name = name.lower()

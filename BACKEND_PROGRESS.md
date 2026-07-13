@@ -1,6 +1,18 @@
 # Backend Progress
 
-更新时间：2026-07-13 01:55 CST
+更新时间：2026-07-13 13:31 CST
+
+## 2026-07-13：Settings 配置边界收口
+
+- `ConfigLoader` 统一合并项目 `.env` 与进程环境，进程环境优先；`Settings.get_env()` 成为动态命名配置值的唯一运行时解析入口。
+- MCP Streamable HTTP 的 `headers_env` 由 Settings 在 runtime 装配阶段解析并显式注入 connection，connection 不再读取 `os.environ` 或 `.env`。
+- Memory embedding/Qdrant 的 `api_key_env` 改为通过 Settings 解析；专用 `MEMORY_*_API_KEY`、动态 key 名和继承主 LLM key 的优先级保持不变。
+- PluginManager 的 `requires_env`、LLM API mode 和 doctor 配置报告移除重复环境读取，统一消费 Settings/ConfigLoader 结果。
+- 配置快照对所有 `.env` 值统一脱敏，未注册的 MCP/plugin 动态 token 也只显示 `<set>` / `<unset>`。
+- 修正 doctor 对 Streamable HTTP MCP 的误报；普通 `uv run personal-agent doctor --verbose` 已验证 GitHub `runtime=ready`、44 个工具，Lumora memory 正常，不再需要 `--env-file` 启动参数。
+- 测试隔离补充：runtime 单测显式关闭真实 external memory，避免继承本机 Lumora/Qdrant 配置。
+
+验证：配置/MCP/memory/runtime/doctor 聚焦回归 `139 passed`；全量回归 `868 passed`；`python -m compileall -q src/personal_agent` 与 `git diff --check` 通过。
 
 ## 2026-07-13：真实联调收尾
 

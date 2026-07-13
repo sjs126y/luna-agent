@@ -15,6 +15,7 @@ class Settings:
         self.config_snapshot = snapshot
         self.raw_env: dict[str, str] = snapshot.raw_env
         self.raw_config: dict[str, Any] = snapshot.raw_config
+        self._environment: dict[str, str] = snapshot.environment
         for attr, value in snapshot.attr_values.items():
             setattr(self, attr, value)
 
@@ -23,3 +24,8 @@ class Settings:
         from personal_agent.execution import resolve_execution_policy
 
         self.execution_policy = resolve_execution_policy(self)
+
+    def get_env(self, name: str, default: str = "") -> str:
+        """Resolve an environment-backed value through the settings boundary."""
+        value = self._environment.get(str(name), default)
+        return str(value or default)

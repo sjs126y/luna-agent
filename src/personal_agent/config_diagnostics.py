@@ -152,7 +152,8 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     env_path = base / ".env"
     env_example_path = base / ".env.example"
     config, config_error = _read_yaml(config_path)
-    env = _read_env(env_path)
+    registry_snapshot = ConfigLoader(base_dir=base).load(strict=False)
+    env = registry_snapshot.environment
 
     llm_provider = str(env.get("LLM_PROVIDER") or "deepseek").strip()
     llm_api_mode = str(env.get("LLM_API_MODE") or "auto").strip()
@@ -176,7 +177,6 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     ]
     validation = _validate_config(config)
     registry_validation = validate_registry_config(config)
-    registry_snapshot = ConfigLoader(base_dir=base).load(strict=False)
     coverage = registry_coverage(config)
     env_validation = _validate_env(
         llm_provider=llm_provider,
@@ -338,17 +338,6 @@ def _read_yaml(path: Path) -> tuple[dict[str, Any], str]:
         return data, ""
     except Exception as exc:
         return {}, f"{type(exc).__name__}: {exc}"
-
-
-def _read_env(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    try:
-        from dotenv import dotenv_values
-
-        return {key: value or "" for key, value in dotenv_values(path).items()}
-    except Exception:
-        return {}
 
 
 def _validate_env(

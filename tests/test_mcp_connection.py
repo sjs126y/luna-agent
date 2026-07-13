@@ -89,7 +89,7 @@ async def test_sdk_connection_rejects_calls_before_connect():
 
 
 @pytest.mark.asyncio
-async def test_sdk_streamable_http_connection(monkeypatch):
+async def test_sdk_streamable_http_connection():
     server = FastMCP(
         "http-mock",
         stateless_http=True,
@@ -114,7 +114,6 @@ async def test_sdk_streamable_http_connection(monkeypatch):
             follow_redirects=False,
         )
 
-    monkeypatch.setenv("REMOTE_MCP_TOKEN", "secret-value")
     connection = SDKMCPConnection(
         MCPServerConfig.from_mapping({
             "name": "remote",
@@ -123,6 +122,7 @@ async def test_sdk_streamable_http_connection(monkeypatch):
             "headers_env": {"Authorization": "REMOTE_MCP_TOKEN"},
         }),
         http_client_factory=client_factory,
+        env_values={"REMOTE_MCP_TOKEN": "secret-value"},
     )
     async with app.router.lifespan_context(app):
         try:
@@ -137,14 +137,13 @@ async def test_sdk_streamable_http_connection(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sdk_http_connection_requires_configured_header_env(monkeypatch):
-    monkeypatch.delenv("MISSING_MCP_TOKEN", raising=False)
+async def test_sdk_http_connection_requires_configured_header_env():
     connection = SDKMCPConnection(MCPServerConfig.from_mapping({
         "name": "remote",
         "transport": "streamable_http",
         "url": "https://example.com/mcp",
         "headers_env": {"Authorization": "MISSING_MCP_TOKEN"},
-    }))
+    }), env_values={})
 
     with pytest.raises(ValueError, match="MISSING_MCP_TOKEN"):
         await connection.connect()
