@@ -19,6 +19,7 @@ import yaml
 
 from personal_agent.persistence.json_store import read_json_object, write_json_atomic
 from personal_agent.commands.registry import CORE_COMMAND_NAMES
+from personal_agent.mcp.server_registry import MCPServerRegistry
 from personal_agent.plugins.core.context import PluginContext
 from personal_agent.plugins.core.models import (
     CommandEntry,
@@ -48,7 +49,7 @@ class PluginManager:
         self._plugins: dict[str, LoadedPlugin] = {}
         self._hooks: dict[str, list[HookRegistration]] = {}
         self._commands: dict[str, CommandEntry] = {}
-        self._mcp_servers: dict[str, list[Any]] = {}
+        self.mcp_server_registry = MCPServerRegistry()
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -184,7 +185,7 @@ class PluginManager:
         for name in list(plugin.platforms_registered):
             platform_registry.unregister(name)
 
-        self._mcp_servers.pop(key, None)
+        self.mcp_server_registry.unregister_plugin(key)
         memory_provider_registry.unregister_plugin(key)
         self._clear_plugin_registrations(plugin)
         plugin.module = None
@@ -269,14 +270,11 @@ class PluginManager:
             value = await value
         return None if value is None else str(value)
 
-    def register_mcp_server(self, plugin_key: str, config: Any) -> None:
-        self._mcp_servers.setdefault(plugin_key, []).append(config)
+    def register_mcp_server(self, plugin_key: str, config: Any):
+        return self.mcp_server_registry.register(plugin_key, config)
 
     def get_mcp_servers(self) -> list[Any]:
-        result: list[Any] = []
-        for configs in self._mcp_servers.values():
-            result.extend(configs)
-        return result
+        return self.mcp_server_registry.configs()
 
     def list_plugins(self) -> list[LoadedPlugin]:
         return [self._plugins[key] for key in sorted(self._plugins)]
@@ -756,7 +754,7 @@ class PluginManager:
             "names": {kind: set(values) for kind, values in entries.items() if kind != "memory_providers"},
             "commands": dict(self._commands),
             "hooks": {name: list(items) for name, items in self._hooks.items()},
-            "mcp_servers": {key: list(items) for key, items in self._mcp_servers.items()},
+            "mcp_servers": self.mcp_server_registry.snapshot(),
         }
 
     def _restore_registration_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -798,7 +796,7 @@ class PluginManager:
 
         self._commands = dict(snapshot["commands"])
         self._hooks = {name: list(items) for name, items in snapshot["hooks"].items()}
-        self._mcp_servers = {key: list(items) for key, items in snapshot["mcp_servers"].items()}
+        self.mcp_server_registry.restore(snapshot["mcp_servers"])
 
     @staticmethod
     def _assert_no_registry_replacements(before: dict[str, Any], after: dict[str, Any]) -> None:

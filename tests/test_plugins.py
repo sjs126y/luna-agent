@@ -703,6 +703,104 @@ enabled_by_default: true
     assert skill_registry.get("secret") is None
 
 
+def test_plugin_registers_mcp_config_bundle(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "mcp_bundle"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/mcp-bundle
+name: MCP Bundle
+version: 1.0.0
+entrypoint: mcp_bundle:register
+provides: [mcp]
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp_bundle.py").write_text(
+        "def register(ctx): ctx.register_mcp('mcp.yaml')\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp.yaml").write_text(
+        """
+servers:
+  - name: local-demo
+    transport: stdio
+    command: python
+    args: [-m, demo]
+  - name: remote-demo
+    transport: streamable_http
+    url: https://example.com/mcp
+    headers_env:
+      Authorization: REMOTE_DEMO_TOKEN
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/mcp-bundle"]
+    configs = manager.get_mcp_servers()
+
+    assert plugin.status == PluginStatus.LOADED
+    assert plugin.mcp_servers_registered == ["local-demo", "remote-demo"]
+    assert [config.name for config in configs] == ["local-demo", "remote-demo"]
+    assert manager.mcp_server_registry.revision == 2
+    manager.disable_plugin("user/mcp-bundle")
+    assert manager.get_mcp_servers() == []
+
+
+def test_plugin_mcp_bundle_conflict_rolls_back_all_servers(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "bad_mcp"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/bad-mcp
+name: Bad MCP
+version: 1.0.0
+entrypoint: bad_mcp:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "bad_mcp.py").write_text(
+        "def register(ctx): ctx.register_mcp('mcp.json')\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp.json").write_text(
+        """
+{
+  "servers": [
+    {"name": "duplicate", "command": "python"},
+    {"name": "duplicate", "command": "other"}
+  ]
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/bad-mcp"]
+
+    assert plugin.status == PluginStatus.ERROR
+    assert "already registered by this plugin" in (plugin.error or "")
+    assert manager.get_mcp_servers() == []
+    assert plugin.mcp_servers_registered == []
+
+
 def test_duplicate_plugin_key_marks_existing_error(tmp_path):
     plugins_dir = tmp_path / "plugins"
     for name in ("one", "two"):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -130,13 +131,34 @@ class PluginContext:
             self.plugin.platforms_registered.append(entry.name)
 
     def register_mcp_server(self, config: MCPServerConfig | dict[str, Any]) -> None:
-        name = getattr(config, "name", None)
-        if name is None and isinstance(config, dict):
-            name = str(config.get("name") or config.get("command") or "unknown")
-        self.manager.register_mcp_server(self.plugin.key, config)
-        label = str(name or "unknown")
+        normalized = self.manager.register_mcp_server(self.plugin.key, config)
+        label = normalized.name
         if label not in self.plugin.mcp_servers_registered:
             self.plugin.mcp_servers_registered.append(label)
+
+    def register_mcp(self, relative_path: str | Path = "mcp.yaml") -> int:
+        """Register MCP server configurations from a plugin-owned YAML or JSON file."""
+        import yaml
+
+        path = self.resolve_path(relative_path)
+        if not path.is_file():
+            raise ValueError(f"Plugin MCP config does not exist: {relative_path}")
+        if path.suffix.lower() == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+        elif path.suffix.lower() in {".yaml", ".yml"}:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        else:
+            raise ValueError(f"Plugin MCP config must be YAML or JSON: {relative_path}")
+        if not isinstance(data, dict):
+            raise ValueError("Plugin MCP config must be an object")
+        servers = data.get("servers", [])
+        if not isinstance(servers, list):
+            raise ValueError("Plugin MCP config field 'servers' must be a list")
+        for server in servers:
+            if not isinstance(server, dict):
+                raise ValueError("Plugin MCP server entry must be an object")
+            self.register_mcp_server(server)
+        return len(servers)
 
     def register_hook(self, name: str, callback, priority: int = 100) -> None:
         self.manager.register_hook(self.plugin.key, name, callback, priority)
