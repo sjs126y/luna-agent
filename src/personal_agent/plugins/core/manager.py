@@ -505,12 +505,9 @@ class PluginManager:
     def _deferred_reason(self, plugin: LoadedPlugin) -> str:
         if not plugin.deferred:
             return ""
-        provides = set(plugin.manifest.provides)
-        if "platform" in provides or plugin.manifest.kind == "platform":
+        if plugin.manifest.kind == "platform":
             return "平台插件会在网关解析平台适配器时加载"
-        if "mcp" in provides or plugin.manifest.kind == "mcp":
-            return "MCP 插件会在 MCP 服务器启动时加载"
-        return "插件 manifest 声明了延迟加载"
+        return ""
 
     def _diagnostic_hints(
         self,
@@ -545,12 +542,12 @@ class PluginManager:
         if manifest.unknown_fields:
             warnings.append(f"Manifest 包含未知字段: {', '.join(manifest.unknown_fields)}")
         provides = set(manifest.provides)
-        if manifest.kind == "platform" and "platform" not in provides:
+        if manifest.kind == "platform" and not provides.intersection({"platform", "platforms"}):
             warnings.append("kind 为 platform 时建议 provides 包含 platform。")
         if manifest.kind == "mcp" and "mcp" not in provides:
             warnings.append("kind 为 mcp 时建议 provides 包含 mcp。")
-        if (manifest.kind in {"platform", "mcp"} or provides.intersection({"platform", "mcp"})) and not manifest.deferred:
-            warnings.append("platform/MCP 插件建议设置 deferred: true，避免启动时 eager import。")
+        if manifest.kind == "platform" and not manifest.deferred:
+            warnings.append("platform 插件建议设置 deferred: true，避免启动时 eager import。")
         bad_env = [
             name for name in manifest.requires_env
             if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)

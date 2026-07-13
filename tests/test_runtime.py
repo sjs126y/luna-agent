@@ -23,12 +23,18 @@ enabled_by_default: true
     (plugin_dir / "mcp_plugin.py").write_text(
         """
 def register(ctx):
-    ctx.register_mcp_server({
-        "name": "demo",
-        "command": "python",
-        "args": ["-m", "demo"],
-        "enabled": True,
-    })
+    ctx.register_mcp("mcp.yaml")
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "mcp.yaml").write_text(
+        """
+servers:
+  - name: demo
+    transport: stdio
+    command: python
+    args: [-m, demo]
+    enabled: true
 """.strip(),
         encoding="utf-8",
     )

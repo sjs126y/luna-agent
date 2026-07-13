@@ -126,6 +126,8 @@ class PluginManifest:
         tags = _string_list(data["tags"] if "tags" in data else [], "tags")
         enabled_by_default = _bool_field(data, "enabled_by_default", False)
         deferred = _bool_field(data, "deferred", False)
+        if deferred and kind != "platform":
+            raise ValueError("Plugin manifest field 'deferred' is only supported for platform plugins")
         record_import_delta = _bool_field(data, "record_import_delta", True)
         unknown_fields = sorted(key for key in data if key not in PLUGIN_MANIFEST_FIELDS)
 

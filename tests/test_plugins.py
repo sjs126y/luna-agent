@@ -51,6 +51,20 @@ def test_plugin_manifest_schema_rejects_invalid_values(field, value, message):
         PluginManifest.from_mapping(data)
 
 
+def test_only_platform_plugins_can_be_deferred():
+    data = {
+        "key": "user/lazy-mcp",
+        "name": "Lazy MCP",
+        "version": "1.0.0",
+        "kind": "mcp",
+        "entrypoint": "lazy_mcp:register",
+        "deferred": True,
+    }
+
+    with pytest.raises(ValueError, match="only supported for platform"):
+        PluginManifest.from_mapping(data)
+
+
 def test_invalid_manifest_is_preserved_for_doctor(tmp_path):
     plugins_dir = tmp_path / "plugins"
     plugin_dir = plugins_dir / "Bad Manifest"
