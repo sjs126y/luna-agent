@@ -22,9 +22,11 @@ class MockTransport:
         self.responses = responses
         self.calls = 0
         self.call_messages = []
+        self.call_tools = []
 
     async def call(self, messages, system_prompt="", tools=None, max_tokens=4096, stream=False):
         self.call_messages.append(messages)
+        self.call_tools.append(tools)
         if self.calls >= len(self.responses):
             return NormalizedResponse(text="done", finish_reason="end_turn")
         resp = self.responses[self.calls]
@@ -444,7 +446,7 @@ async def test_tool_use_loop(provider):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_successful_tool_call_stops_without_reexecution(provider):
+async def test_identical_successful_tool_call_finalizes_after_three_executions(provider):
     transport = MockTransport([
         NormalizedResponse(
             text="", finish_reason="tool_use",
@@ -454,7 +456,15 @@ async def test_duplicate_successful_tool_call_stops_without_reexecution(provider
             text="", finish_reason="tool_use",
             tool_calls=[{"id": "c2", "name": "echo_once", "input": {"msg": "test"}}],
         ),
-        NormalizedResponse(text="should not run", finish_reason="end_turn"),
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c3", "name": "echo_once", "input": {"msg": "test"}}],
+        ),
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c4", "name": "echo_once", "input": {"msg": "test"}}],
+        ),
+        NormalizedResponse(text="根据已有结果，测试内容已处理。", finish_reason="end_turn"),
     ])
 
     from personal_agent.tools.entry import ToolEntry
@@ -472,16 +482,73 @@ async def test_duplicate_successful_tool_call_stops_without_reexecution(provider
             "type": "object", "properties": {"msg": {"type": "string"}}
         }, handler=_echo_once,
     ))
-    agent = init_agent(transport, provider)
-    ctx = await build_turn_context(agent, "Test")
+    try:
+        agent = init_agent(transport, provider)
+        ctx = await build_turn_context(agent, "Test")
+        result = await run_conversation(agent, ctx)
+    finally:
+        tool_registry.unregister("echo_once")
 
-    result = await run_conversation(agent, ctx)
+    assert transport.calls == 5
+    assert executions == 3
+    assert result["final_response"] == "根据已有结果，测试内容已处理。"
+    assert "相同调用被重复请求" not in result["final_response"]
+    assert transport.call_tools[-1] == []
+    assert all(tools for tools in transport.call_tools[:-1])
+    assert not any(
+        "The identical call" in _user_text([message])
+        for message in result["messages"]
+    )
+    assert "The identical call" in _user_text(transport.call_messages[-1])
+    assert result["turn_report"]["tools"]["total"] == 3
+    duplicate_retry = next(
+        retry for retry in result["turn_report"]["retries"]
+        if retry["category"] == "duplicate_tool_call"
+    )
+    assert duplicate_retry["attempt"] == 1
+    assert duplicate_retry["max_attempts"] == 1
 
-    assert transport.calls == 2
-    assert executions == 1
-    assert "相同调用被重复请求" in result["final_response"]
-    assert "Echo: test" in result["final_response"]
-    assert result["turn_report"]["tools"]["total"] == 1
+
+@pytest.mark.asyncio
+async def test_duplicate_tool_finalization_empty_response_uses_safe_fallback(provider):
+    repeated_call = {
+        "name": "finalize_fallback_echo",
+        "input": {"msg": "large result"},
+    }
+    transport = MockTransport([
+        NormalizedResponse(
+            text="",
+            finish_reason="tool_use",
+            tool_calls=[{"id": f"c{index}", **repeated_call}],
+        )
+        for index in range(1, 5)
+    ] + [NormalizedResponse(text="", finish_reason="end_turn")])
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _echo(msg: str = ""):
+        return "sensitive raw result that must not be exposed"
+
+    tool_registry.register(ToolEntry(
+        name="finalize_fallback_echo",
+        description="Echo for finalization fallback",
+        schema={"type": "object", "properties": {"msg": {"type": "string"}}},
+        handler=_echo,
+    ))
+    try:
+        agent = init_agent(transport, provider)
+        ctx = await build_turn_context(agent, "Test")
+        result = await run_conversation(agent, ctx)
+    finally:
+        tool_registry.unregister("finalize_fallback_echo")
+
+    assert transport.calls == 5
+    assert transport.call_tools[-1] == []
+    assert result["final_response"] == (
+        "工具已经执行，但模型未能根据已有结果生成最终回复。请换一种方式重试本次请求。"
+    )
+    assert "sensitive raw result" not in result["final_response"]
 
 
 @pytest.mark.asyncio

@@ -315,9 +315,12 @@
 常见字段：
 
 - `attempt: integer`
+- `max_attempts: integer`
 - `error: string`
 - `tool_name: string`
 - `tool_names: string`
+
+当同一轮内相同参数的工具调用已经成功执行 3 次，后端不再执行第 4 次请求，改为一次禁用工具的模型收尾调用。此时发送 `category="duplicate_tool_call"`、`attempt=1`、`max_attempts=1` 和对应 `tool_name`。该事件只表示运行时恢复；最终 `assistant_message` 是模型基于已有工具结果生成的正常回复，不包含重复调用诊断或原始结果转储。
 
 ### `stop`
 

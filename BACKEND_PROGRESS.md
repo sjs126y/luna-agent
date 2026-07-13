@@ -703,3 +703,21 @@ uv run pytest -q
 结果：`904 passed`。
 
 真实环境待复测：GitHub HTTP MCP、需要联网安装/运行的 stdio MCP，以及宿主是否支持 Bubblewrap network namespace。`doctor` 会报告 network namespace 降级；DNS 检查到实际连接之间的 TOCTOU 风险已记录在 `TODO.md`。
+
+## 2026-07-14：重复工具调用收尾修复
+
+状态：已完成实现并通过回归验证。
+
+微信实测发现，相同工具调用第二次被熔断后，Agent Loop 会直接把内部诊断和截断的原始工具结果作为最终回复。现已调整为：同一轮内相同参数的工具调用最多成功执行 3 次；第 4 次请求不再执行，并只进行一次禁用工具的 LLM 收尾，让模型根据已有工具结果正常回答。收尾指令仅存在于该次 API 请求，不写入持久化会话；收尾为空或仍请求工具时返回不含原始结果的安全兜底文案。
+
+接口同步：新增 `retry.category="duplicate_tool_call"` 的恢复事件语义，已记录在 `BACKEND_INTERFACE.md`。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_agent_loop.py tests/test_mcp.py::test_tool_search_discovers_mcp_tools -q
+uv run pytest -q -k 'not test_refresh_mode_updates_status_after_command and not test_partial_slash_command_shows_matching_candidates'
+```
+
+结果：聚焦测试 `23 passed`；排除两项仍断言旧 `/allow` / TUI Mode 行为的既有测试后，全量回归 `879 passed, 2 deselected`。

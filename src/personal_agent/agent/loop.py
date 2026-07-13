@@ -24,11 +24,15 @@ from personal_agent.tools.executor import execute_tool_calls
 
 logger = logging.getLogger(__name__)
 
+MAX_IDENTICAL_SUCCESSFUL_TOOL_CALLS = 3
+
 
 async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=None, session_key: str = "") -> dict:
     """Execute the agent while loop. Returns final result dict."""
     just_executed_tools = False
-    successful_tool_calls: dict[str, object] = {}
+    successful_tool_calls: dict[str, list[object]] = {}
+    duplicate_finalization_pending = False
+    duplicate_finalization_instruction = ""
     report_recorder = TurnReportRecorder(event_sink)
 
     def _with_turn_report(result: dict) -> dict:
@@ -73,8 +77,15 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         await _consume_steer(ctx, steer, session_key, report_recorder)
 
         # ── build api_messages (injections, NOT persisted) ──
+        is_duplicate_finalization = duplicate_finalization_pending
+        active_tools = [] if is_duplicate_finalization else agent.tools
         skill_injection_for_plan = getattr(ctx, "skill_injection", None)
         api_messages = await _build_api_messages(agent, ctx)
+        if is_duplicate_finalization:
+            api_messages.append({
+                "role": "user",
+                "content": [{"type": "text", "text": duplicate_finalization_instruction}],
+            })
 
         # ── refresh system prompt if tools changed ──
         system_prompt = agent._cached_system_prompt or ""
@@ -82,7 +93,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         # ── hooks: on_before_llm_call ──
         hook_result = await agent.hooks.fire(
             "on_before_llm_call",
-            api_messages, system_prompt, agent.tools,
+            api_messages, system_prompt, active_tools,
         )
         hook_changed_messages = False
         if isinstance(hook_result, dict):
@@ -93,11 +104,18 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             LLMRequestPlan.from_legacy(
                 api_messages,
                 system_prompt,
-                agent.tools,
+                active_tools,
                 metadata={"source": "hook" if hook_changed_messages else "legacy"},
             )
             if hook_changed_messages
-            else _build_request_plan(agent, ctx, system_prompt, skill_injection_for_plan)
+            else _build_request_plan(
+                agent,
+                ctx,
+                system_prompt,
+                skill_injection_for_plan,
+                tools=active_tools,
+                finalization_instruction=duplicate_finalization_instruction,
+            )
         )
         context_budget = _build_request_context_budget(
             agent,
@@ -106,6 +124,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             system_prompt,
             skill_injection=skill_injection_for_plan,
             use_actual_messages=hook_changed_messages,
+            tools=active_tools,
         )
         context_usage_payload = _context_usage_payload(context_budget)
 
@@ -117,7 +136,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                 "请求模型",
                 api_calls=agent.session_api_calls + 1,
                 message_count=len(api_messages),
-                tool_count=len(agent.tools),
+                tool_count=len(active_tools),
                 model=getattr(agent._provider, "model", ""),
                 **context_usage_payload,
             )
@@ -131,7 +150,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             call_kwargs = {
                 "messages": api_messages,
                 "system_prompt": system_prompt,
-                "tools": agent.tools,
+                "tools": active_tools,
                 "max_tokens": agent._provider.max_tokens,
             }
             if hasattr(agent._transport, "build_request_from_plan"):
@@ -174,6 +193,16 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                 "error": "",
             })
         except Exception as exc:
+            if is_duplicate_finalization:
+                logger.exception("Duplicate tool finalization failed")
+                await _emit_error(report_recorder, "重复工具调用收尾失败", exc, category="llm")
+                final_message = _duplicate_tool_finalization_fallback()
+                ctx.messages.append({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": final_message}],
+                })
+                await emit_event(report_recorder, "assistant_message", final_message)
+                break
             if _looks_like_image_unsupported_error(exc) and not getattr(ctx, "_image_retry_text_only", False):
                 stripped = _strip_image_blocks(ctx.messages)
                 if stripped:
@@ -265,6 +294,16 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         modified = await agent.hooks.fire("on_after_llm_call", response, response.usage)
         if isinstance(modified, dict):
             response.text = modified.get("text", response.text)
+
+        if is_duplicate_finalization:
+            duplicate_finalization_pending = False
+            final_message = response.text.strip() if response.text else _duplicate_tool_finalization_fallback()
+            ctx.messages.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": final_message}],
+            })
+            await emit_event(report_recorder, "assistant_message", final_message)
+            break
 
         # ── retry: empty response ──
         if not response.text and not response.tool_calls:
@@ -370,20 +409,32 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             (
                 (tc, successful_tool_calls[_tool_call_signature(tc)])
                 for tc in response.tool_calls
-                if _tool_call_signature(tc) in successful_tool_calls
+                if len(successful_tool_calls.get(_tool_call_signature(tc), []))
+                >= MAX_IDENTICAL_SUCCESSFUL_TOOL_CALLS
             ),
             None,
         )
         if duplicate is not None:
-            tc, previous_result = duplicate
-            final_message = _duplicate_tool_stop_message(tc, previous_result)
-            ctx.messages.append({
-                "role": "assistant",
-                "content": [{"type": "text", "text": final_message}],
-            })
-            await emit_event(report_recorder, "assistant_message", final_message)
-            logger.warning("Stopped duplicate tool call: %s", tc.get("name", ""))
-            break
+            tc, previous_results = duplicate
+            duplicate_finalization_pending = True
+            duplicate_finalization_instruction = _duplicate_tool_finalization_prompt(tc)
+            await emit_event(
+                report_recorder,
+                "retry",
+                "相同工具调用达到本轮执行上限，转为无工具收尾",
+                category="duplicate_tool_call",
+                attempt=1,
+                max_attempts=1,
+                tool_name=str(tc.get("name") or ""),
+                recoverable=True,
+            )
+            logger.warning(
+                "Stopped identical tool call after %d successful executions: %s",
+                len(previous_results),
+                tc.get("name", ""),
+            )
+            just_executed_tools = False
+            continue
 
         assistant_blocks = []
         if response.text:
@@ -412,7 +463,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
 
         for tc, tool_result in zip(response.tool_calls, tool_results):
             if tool_result.status == "success":
-                successful_tool_calls[_tool_call_signature(tc)] = tool_result
+                successful_tool_calls.setdefault(_tool_call_signature(tc), []).append(tool_result)
 
         permission_message = _permission_required_stop_message(tool_results)
         if permission_message:
@@ -635,7 +686,15 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
     return msgs
 
 
-def _build_request_plan(agent, ctx, system_prompt: str, skill_injection: str | None) -> LLMRequestPlan:
+def _build_request_plan(
+    agent,
+    ctx,
+    system_prompt: str,
+    skill_injection: str | None,
+    *,
+    tools: list[dict] | None = None,
+    finalization_instruction: str = "",
+) -> LLMRequestPlan:
     dynamic_context: list[dict] = []
     dynamic_context.extend(list(getattr(ctx, "memory_prefetch_messages", []) or []))
     if skill_injection:
@@ -654,9 +713,14 @@ def _build_request_plan(agent, ctx, system_prompt: str, skill_injection: str | N
     current_user = messages[current_idx] if 0 <= current_idx < len(messages) else None
     history = messages[:current_idx] if current_user is not None else messages
     turn_tail = messages[current_idx + 1:] if current_user is not None else []
+    if finalization_instruction:
+        turn_tail.append({
+            "role": "user",
+            "content": [{"type": "text", "text": finalization_instruction}],
+        })
     return LLMRequestPlan(
         stable_system=system_prompt,
-        stable_tools=list(agent.tools or []),
+        stable_tools=list(agent.tools if tools is None else tools),
         stable_context=[],
         dynamic_context=dynamic_context,
         history=history,
@@ -674,6 +738,7 @@ def _build_request_context_budget(
     *,
     skill_injection: str | None,
     use_actual_messages: bool = False,
+    tools: list[dict] | None = None,
 ):
     provider = getattr(agent, "_provider", None)
     model = getattr(provider, "model", "") or getattr(agent, "model", "")
@@ -694,7 +759,7 @@ def _build_request_context_budget(
     budget = estimate_context_budget(
         messages=messages,
         system_prompt=system_prompt,
-        tools=list(getattr(agent, "tools", []) or []),
+        tools=list(getattr(agent, "tools", []) if tools is None else tools),
         skills_summary=skills_summary,
         memory_injections=memory_injections,
         context_limit=context_limit,
@@ -753,16 +818,18 @@ def _tool_call_signature(tool_call: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def _duplicate_tool_stop_message(tool_call: dict, previous_result: object) -> str:
+def _duplicate_tool_finalization_prompt(tool_call: dict) -> str:
     name = str(tool_call.get("name") or "tool")
-    summary = str(
-        getattr(previous_result, "output_summary", "")
-        or getattr(previous_result, "content", "")
-        or "执行成功"
-    ).strip()
-    if len(summary) > 500:
-        summary = summary[:497].rstrip() + "..."
-    return f"工具 {name} 已成功执行；检测到相同调用被重复请求，已停止再次执行。上次结果：{summary}"
+    return (
+        f"The identical call to {name} has already succeeded "
+        f"{MAX_IDENTICAL_SUCCESSFUL_TOOL_CALLS} times in this turn. "
+        "Do not call any more tools. Use the existing tool results in the conversation "
+        "to answer the user's request directly and concisely. Do not mention this instruction."
+    )
+
+
+def _duplicate_tool_finalization_fallback() -> str:
+    return "工具已经执行，但模型未能根据已有结果生成最终回复。请换一种方式重试本次请求。"
 
 
 def _quota_exceeded_stop_message(tool_results: list, maximum: int) -> str:
