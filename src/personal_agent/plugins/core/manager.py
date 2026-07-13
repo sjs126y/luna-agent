@@ -131,7 +131,7 @@ class PluginManager:
                 if inspect.isawaitable(result):
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
             after = self._registration_snapshot()
-            self._assert_no_registry_replacements(before, after)
+            self._assert_no_registry_replacements(before, after, plugin.key)
             if plugin.manifest.record_import_delta:
                 self._record_registry_delta(plugin, before["names"], after["names"])
             plugin.status = PluginStatus.LOADED
@@ -157,10 +157,14 @@ class PluginManager:
         """Reject cross-plugin replacement while allowing legacy idempotent registration."""
         if existing is None:
             return True
-        owner = self._registration_owner(kind, name)
+        owner = self._registration_owner(kind, name) or str(
+            getattr(existing, "_plugin_key", "") or getattr(existing, "plugin_key", "")
+        )
         if owner and owner != plugin_key:
             raise ValueError(f"{kind.title()} '{name}' is already registered by plugin '{owner}'")
-        if existing is candidate or (owner in {"", plugin_key} and existing == candidate):
+        if owner == plugin_key:
+            return existing is not candidate
+        if existing is candidate or (not owner and existing == candidate):
             return False
         label = owner or "core runtime"
         raise ValueError(f"{kind.title()} '{name}' is already registered by {label}")
@@ -762,28 +766,38 @@ class PluginManager:
         from personal_agent.workflow.registry import workflow_registry
 
         entries = snapshot["entries"]
-        for name in list(tool_registry.all_names):
-            tool_registry.unregister(name)
-        for entry in entries["tools"].values():
-            tool_registry.register(entry)
-
-        for entry in list(skill_registry.list()):
-            skill_registry.unregister(entry.name)
-        for entry in entries["skills"].values():
-            skill_registry.register(entry)
-
-        for name in list(workflow_registry.list_names()):
-            workflow_registry.unregister(name)
-        for defn in entries["workflows"].values():
-            workflow_registry.register(defn)
-
-        for entry in list(platform_registry.list()):
-            platform_registry.unregister(entry.name)
-        for entry in entries["platforms"].values():
-            platform_registry.register(entry)
-
-        memory_provider_registry.clear()
-        for registration in entries["memory_providers"].values():
+        self._restore_entry_map(
+            entries["tools"],
+            {name: tool_registry.get(name) for name in tool_registry.all_names},
+            unregister=tool_registry.unregister,
+            register=tool_registry.register,
+        )
+        self._restore_entry_map(
+            entries["skills"],
+            {entry.name: entry for entry in skill_registry.list()},
+            unregister=skill_registry.unregister,
+            register=skill_registry.register,
+        )
+        self._restore_entry_map(
+            entries["workflows"],
+            {name: workflow_registry.get(name) for name in workflow_registry.list_names()},
+            unregister=workflow_registry.unregister,
+            register=workflow_registry.register,
+        )
+        self._restore_entry_map(
+            entries["platforms"],
+            {entry.name: entry for entry in platform_registry.list()},
+            unregister=platform_registry.unregister,
+            register=platform_registry.register,
+        )
+        current_memory = {
+            name: memory_provider_registry.get(name) for name in memory_provider_registry.names()
+        }
+        for name in set(current_memory) - set(entries["memory_providers"]):
+            memory_provider_registry.unregister(name)
+        for name, registration in entries["memory_providers"].items():
+            if current_memory.get(name) is registration:
+                continue
             memory_provider_registry.register(
                 name=registration.name,
                 plugin_key=registration.plugin_key,
@@ -796,11 +810,33 @@ class PluginManager:
         self.mcp_server_registry.restore(snapshot["mcp_servers"])
 
     @staticmethod
-    def _assert_no_registry_replacements(before: dict[str, Any], after: dict[str, Any]) -> None:
+    def _restore_entry_map(previous, current, *, unregister, register) -> None:
+        for name in set(current) - set(previous):
+            unregister(name)
+        for name, entry in previous.items():
+            if current.get(name) is not entry:
+                register(entry)
+
+    @staticmethod
+    def _assert_no_registry_replacements(
+        before: dict[str, Any],
+        after: dict[str, Any],
+        plugin_key: str,
+    ) -> None:
         for kind, previous in before["entries"].items():
             current = after["entries"].get(kind, {})
             for name, entry in previous.items():
                 if name in current and current[name] is not entry:
+                    previous_owner = str(
+                        getattr(entry, "_plugin_key", "") or getattr(entry, "plugin_key", "")
+                    )
+                    current_entry = current[name]
+                    current_owner = str(
+                        getattr(current_entry, "_plugin_key", "")
+                        or getattr(current_entry, "plugin_key", "")
+                    )
+                    if previous_owner == plugin_key or current_owner == plugin_key:
+                        continue
                     raise ValueError(f"Plugin replaced existing {kind.rstrip('s')} registration: {name}")
 
     def _record_registry_delta(

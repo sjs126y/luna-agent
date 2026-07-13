@@ -60,4 +60,3 @@ class MCPServerRegistry:
         entries, revision = snapshot
         self._entries = dict(entries)
         self._revision = revision
-

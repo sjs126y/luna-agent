@@ -80,6 +80,9 @@ plugins:
     - ./data/plugins
   enabled: []
   disabled: []
+  config:
+    examples/hello:
+      greeting: hello
 
 memory:
   external_provider: lumora

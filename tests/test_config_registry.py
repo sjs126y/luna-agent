@@ -200,6 +200,13 @@ def test_effective_config_snapshot_masks_sensitive_values(tmp_path):
         plugins_dirs=[],
         llm_api_key="secret-key",
         telegram_bot_token="telegram-secret",
+        plugins_config={
+            "user/demo": {
+                "endpoint": "https://example.com",
+                "access_token": "plugin-secret",
+                "nested": {"api_key": "nested-secret"},
+            }
+        },
     )
 
     snapshot = effective_config_snapshot(settings)
@@ -213,6 +220,11 @@ def test_effective_config_snapshot_masks_sensitive_values(tmp_path):
     assert fields["TELEGRAM_BOT_TOKEN"]["value"] == "<set>"
     assert fields["storage.data_dir"]["value"].endswith("data")
     assert isinstance(fields["plugins.dirs"]["value"], list)
+    assert fields["plugins.config"]["value"]["user/demo"]["endpoint"] == "https://example.com"
+    assert fields["plugins.config"]["value"]["user/demo"]["access_token"] == "<set>"
+    assert fields["plugins.config"]["value"]["user/demo"]["nested"]["api_key"] == "<set>"
+    assert "plugin-secret" not in str(snapshot)
+    assert "nested-secret" not in str(snapshot)
     assert snapshot["values"]["LLM_API_KEY"] == "<set>"
     assert snapshot["attr_values"]["llm_api_key"] == "<set>"
     assert snapshot["sources"]["LLM_API_KEY"] == ".env"

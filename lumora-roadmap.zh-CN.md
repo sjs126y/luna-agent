@@ -8,7 +8,7 @@ Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工
 
 下一阶段不该重写这些系统，而是改善生命周期边界：
 
-1. **待设计**：插件资源归属，以及可靠的禁用和卸载。
+1. **已完成基础**：被动插件的作用域配置、Registry 归属、冲突检查和失败回滚；运行期热替换留待 Manager reconcile。
 2. **已完成**：MCP transport、单 server runtime、连接恢复、动态工具快照和结构化结果。
 3. **待推进**：完整的“入站媒体 -> 模型/工具 -> 出站媒体”路径。
 4. **待推进**：内部 turn 分发、Outbox/Delivery 和真正的主动决策系统。
@@ -127,7 +127,7 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 | 方向 | 当前基础 | 主要缺口 | 状态 |
 | --- | --- | --- | --- |
 | MCP runtime | stdio、Streamable HTTP、重连、动态工具、结构化结果、诊断 | OAuth、sampling、elicitation 仅按需补充 | 核心完成 |
-| 插件生命周期 | 已记录部分 Registry 注册项，支持基础 disable/unload | 事务回滚、覆盖恢复、异步资源关闭、版本代际 | 待设计 |
+| 被动插件 | `register(ctx)`、作用域配置、Skill/MCP 文件注册、所有权、冲突检查和事务回滚 | Manager reconcile、异步资源关闭和版本代际 | 基础完成 |
 | 出站多模态 | `OutboundMessage`、`PlatformCapabilities`、MCP/tool artifact 已有骨架 | TurnResult artifact、平台原生发送、降级、安全和投递审计 | 适合下一步讨论 |
 | 主动能力 | Cron 可复用会话和 Agent 主链路 | `InternalTurnRequest`、统一 dispatch、Delivery/Outbox、去重和策略 | 待推进 |
 | Memory / RAG | internal snapshot、buffer、Lumora/Mem0、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件 | 记忆重构完成 |
@@ -140,12 +140,12 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
      -> Outbox
         -> 主动提醒和后台结果投递
 
-插件 ownership（独立设计）
-  -> 可靠 disable/unload
+插件 ownership 与事务注册（已完成基础）
+  -> Manager reconcile 与运行期可靠 disable/unload
 
 Memory / RAG 拆分（独立领域）
   -> 长期记忆更新审计
   -> 外部知识证据检索
 ```
 
-当前更自然的后续讨论方向是出站消息与 Delivery。MCP 已能产生结构化 artifact，平台侧也已有 `OutboundMessage` 和能力声明；补齐这条链路既能形成直接用户价值，也能为后续 Outbox 和主动能力提供统一投递边界。插件生命周期继续保留为独立设计议题，不在没有明确资源模型前仓促实现。
+当前更自然的后续讨论方向是出站消息与 Delivery。MCP 已能产生结构化 artifact，平台侧也已有 `OutboundMessage` 和能力声明；补齐这条链路既能形成直接用户价值，也能为后续 Outbox 和主动能力提供统一投递边界。插件后续只在确有运行期热替换需求时再增加 Manager reconcile 和版本代际。

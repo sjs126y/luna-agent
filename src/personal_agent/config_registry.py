@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -89,7 +90,7 @@ class ConfigSnapshot:
                 for section, fields in self.sections.items()
             },
             "raw_env": _json_safe(_masked_raw_env(self.fields, self.raw_env)),
-            "raw_config": _json_safe(self.raw_config),
+            "raw_config": _json_safe(_masked_raw_config(self.raw_config)),
             "errors": list(self.errors),
             "warnings": list(self.warnings),
         }
@@ -220,7 +221,8 @@ class ConfigRegistry:
         sections: dict[str, list[dict[str, Any]]] = {}
         for field in self.fields:
             value = getattr(settings, field.attr, None)
-            item = field.as_dict(value=value, include_value=True)
+            diagnostic_value = _mask_dynamic_secrets(value) if field.path == "plugins.config" else value
+            item = field.as_dict(value=diagnostic_value, include_value=True)
             fields.append(item)
             values[field.path] = item.get("value")
             attr_values[field.attr] = value
@@ -740,7 +742,11 @@ def _masked_attr_values(fields: tuple[dict[str, Any], ...], values: dict[str, An
         if field.get("sensitive") and field.get("attr")
     }
     return {
-        key: _masked_value(value) if key in sensitive_attrs else value
+        key: (
+            _masked_value(value)
+            if key in sensitive_attrs
+            else _mask_dynamic_secrets(value) if key == "plugins_config" else value
+        )
         for key, value in values.items()
     }
 
@@ -749,6 +755,33 @@ def _masked_raw_env(fields: tuple[dict[str, Any], ...], env: dict[str, str]) -> 
     # A .env file may contain dynamic plugin or MCP credentials that are not
     # registered fields. Never expose any raw value through diagnostics.
     return {key: str(_masked_value(value)) for key, value in env.items()}
+
+
+def _masked_raw_config(config: dict[str, Any]) -> dict[str, Any]:
+    result = dict(config)
+    plugins = result.get("plugins")
+    if isinstance(plugins, dict):
+        masked_plugins = dict(plugins)
+        if "config" in masked_plugins:
+            masked_plugins["config"] = _mask_dynamic_secrets(masked_plugins["config"])
+        result["plugins"] = masked_plugins
+    return result
+
+
+_DYNAMIC_SECRET_KEY = re.compile(r"(?:api[_-]?key|token|secret|password|authorization)", re.IGNORECASE)
+
+
+def _mask_dynamic_secrets(value: Any, *, key: str = "") -> Any:
+    if key and _DYNAMIC_SECRET_KEY.search(key):
+        return _masked_value(value)
+    if isinstance(value, dict):
+        return {
+            item_key: _mask_dynamic_secrets(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_mask_dynamic_secrets(item) for item in value]
+    return value
 
 
 def _masked_value(value: Any) -> str:

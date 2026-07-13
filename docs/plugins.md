@@ -1,6 +1,8 @@
 # 插件系统
 
-Lumora 的插件系统是一个“装配层”：负责发现插件、加载入口、注册 hook/command，并把工具、平台、MCP、技能、workflow 等能力转发给已有的运行时 registry 或 manager。插件系统不接管这些子系统自己的生命周期。
+Lumora 的被动插件系统是一个“装配层”：插件不需要继承基类，只通过同步 `register(ctx)` 把能力放入已有 registry。对应 manager 负责连接、运行、停止和后续热加载，插件层不接管子系统生命周期。
+
+已启用的普通插件在 Skill、MCP 等 manager 初始化前完成注册。平台插件是唯一允许 `deferred: true` 的类型，由 Gateway 启动时加载。
 
 插件注册的 MCP server 配置会在应用启动时统一交给 `MCPManager`。连接、重连、动态工具快照和关闭都由 MCP runtime 管理；插件不应自行启动 MCP 子进程或网络 session。
 
@@ -72,6 +74,9 @@ src/personal_agent/plugins/
 examples/plugins/hello/
   __init__.py
   plugin.yaml
+  skills/
+    hello/
+      SKILL.md
 ```
 
 它演示了用户插件最常见的包式结构：插件目录本身是 Python package，`plugin.yaml` 的 `entrypoint` 写成 `hello:register`。
@@ -83,6 +88,7 @@ examples/plugins/hello/
 必填字段：
 
 ```yaml
+schema_version: 1
 key: memory/lumora
 name: Lumora Memory Provider
 version: "1.0.0"
@@ -95,9 +101,9 @@ entrypoint: personal_agent.plugins.builtin.memory.lumora:register
 description: Hybrid semantic and BM25 external memory provider.
 kind: memory
 provides: [memory_provider:lumora]
+tags: [memory, retrieval]
 requires_env: []
 enabled_by_default: true
-source: builtin
 deferred: false
 record_import_delta: false
 ```
@@ -108,10 +114,12 @@ manifest 会做严格校验：
 
 - `key` 必须是小写分段格式，例如 `builtin/tools`、`platforms/telegram`、`examples/hello`。
 - `entrypoint` 必须是 `module` 或 `module:function`，模块名和函数名都要是合法 Python 标识符。
-- `kind` 目前支持 `builtin`、`platform`、`tool`、`tools`、`skill`、`skills`、`workflow`、`memory`、`llm`、`mcp`、`user`。
-- `source` 目前支持 `builtin`、`user`。
-- `requires_env`、`provides` 必须是字符串或字符串列表。
+- `schema_version` 目前固定为 `1`。
+- `kind` 表示主要分类，支持平台、记忆、集成、开发、自动化等现有枚举。
+- `source` 由扫描边界确定为 `builtin`、`local` 或 `installed`，不信任插件自己的声明。
+- `requires_env`、`provides`、`tags` 必须是字符串或字符串列表。
 - `enabled_by_default`、`deferred`、`record_import_delta` 必须是布尔值。
+- `deferred: true` 只允许用于 `kind: platform`。
 
 manifest 有错时插件不会消失，会以 `invalid/<目录名>` 留在插件列表里，方便 `plugins doctor` 或 `plugins validate` 给出具体错误。
 
@@ -121,6 +129,8 @@ manifest 有错时插件不会消失，会以 `invalid/<目录名>` 留在插件
 
 ```python
 def register(ctx) -> None:
+    ctx.register_skills("skills")
+    ctx.register_mcp("mcp.yaml")
     ctx.register_hook("configure", configure, priority=10)
 ```
 
@@ -146,6 +156,11 @@ plugins/hello/
 
 每个插件加载时会拿到自己的 `PluginContext`。它只做注册转发和来源记录：
 
+- `config`：只读的 `plugins.config.<plugin-key>`
+- `parse_config(PydanticModel)`
+- `get_env(name)`：统一通过 Settings 边界解析
+- `register_skills(relative_path="skills")`
+- `register_mcp(relative_path="mcp.yaml")`
 - `register_tool(ToolEntry)`
 - `register_skill(SkillEntry)`
 - `register_workflow(WorkflowDef)`
@@ -156,6 +171,24 @@ plugins/hello/
 - `register_command(CommandEntry)`
 
 `middleware` 字段目前只是预留。普通插件也不要注册任意 agent role/team；多 Agent 仍然是 core runtime。
+
+`register_skills()` 支持平铺 `.md` 和 `skills/<name>/SKILL.md`，启动时只注册 frontmatter 元数据，正文仍由 `skill_load` 按需读取。`register_mcp()` 支持 YAML/JSON 中的 `servers` 列表，只注册稳定配置，连接仍由 `MCPManager` 统一启动。
+
+## 插件配置
+
+```yaml
+plugins:
+  enabled: [examples/hello]
+  config:
+    examples/hello:
+      greeting: "hi"
+```
+
+插件只会在 `ctx.config` 中看到自己的子树。密钥不写入该子树，由 `requires_env`/MCP `headers_env` 声明后经 Settings 解析。
+
+## 注册事务与冲突
+
+`register(ctx)` 在启动期事务中执行。任何异常或跨插件同名冲突都会恢复加载前 Registry，不保留部分注册。Tool、Skill、Workflow、Platform、Command、Memory Provider 和 MCP Server 不允许跨插件重名；同一 Hook 事件可以有多个回调。
 
 ## Hook 规则
 
@@ -198,7 +231,7 @@ Memory provider 使用专用 registry 注册，不通过通用 hook 创建，避
 
 内置插件可以默认启用。用户插件原则上默认 opt-in。
 
-`deferred: true` 的插件会被发现，但 `load_enabled()` 默认不会 import 它们。平台插件、MCP server 插件、重依赖 backend 适合 deferred。
+`deferred: true` 的平台插件会被发现，但 `load_enabled()` 默认不会 import 它们；Gateway 启动时再加载已启用平台。Skill、MCP、Hook、Tool 等普通插件必须在对应 manager 初始化前注册，不允许 deferred。
 
 缺少 `requires_env` 的插件会进入 `ERROR`，但 manifest、错误和诊断信息仍然保留。
 
@@ -244,6 +277,7 @@ uv run python -m personal_agent plugins validate examples/plugins/hello
 
 - `校验结果: 通过`
 - `commands: hello`
+- `skills: hello-example`
 - `hooks: example_hello:100`
 
 插件相关改动合入前至少跑：

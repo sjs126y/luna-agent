@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from personal_agent.plugins import CommandEntry
 
+_GREETING = "hello"
+
 
 def hello_command(args: str = "", **kwargs) -> str:
     target = args.strip() or "world"
-    return f"hello, {target}"
+    return f"{_GREETING}, {target}"
 
 
 def hello_hook(value=None, **kwargs):
@@ -15,6 +17,9 @@ def hello_hook(value=None, **kwargs):
 
 
 def register(ctx) -> None:
+    global _GREETING
+    _GREETING = str(ctx.config.get("greeting", "hello"))
+    ctx.register_skills("skills")
     ctx.register_command(CommandEntry(
         name="hello",
         description="Return a small greeting.",
@@ -22,4 +27,3 @@ def register(ctx) -> None:
         scope="both",
     ))
     ctx.register_hook("example_hello", hello_hook, priority=100)
-

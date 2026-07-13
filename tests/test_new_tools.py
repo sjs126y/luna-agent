@@ -933,8 +933,9 @@ def test_key_builtin_tools_declare_usage_metadata():
 
     for name, (risk, tag) in expected.items():
         entry = tool_registry.get(name)
-        assert entry.risk_level == risk
-        assert tag in entry.tags
+        assert entry is not None, name
+        assert entry.risk_level == risk, name
+        assert tag in entry.tags, name
         assert entry.usage_hint
 
 

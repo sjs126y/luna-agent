@@ -89,9 +89,11 @@ class PluginContext:
     def register_tool(self, entry: ToolEntry) -> None:
         from personal_agent.tools.registry import tool_registry
 
+        existing = tool_registry.get(entry.name)
         should_register = self.manager.ensure_registration_available(
-            "tool", entry.name, tool_registry.get(entry.name), entry, self.plugin.key,
+            "tool", entry.name, existing, entry, self.plugin.key,
         )
+        self._mark_owner(entry if should_register else existing)
         if should_register:
             tool_registry.register(entry)
         if entry.name not in self.plugin.tools_registered:
@@ -100,9 +102,11 @@ class PluginContext:
     def register_skill(self, entry: SkillEntry) -> None:
         from personal_agent.skills.registry import skill_registry
 
+        existing = skill_registry.get(entry.name)
         should_register = self.manager.ensure_registration_available(
-            "skill", entry.name, skill_registry.get(entry.name), entry, self.plugin.key,
+            "skill", entry.name, existing, entry, self.plugin.key,
         )
+        self._mark_owner(entry if should_register else existing)
         if should_register:
             skill_registry.register(entry)
         if entry.name not in self.plugin.skills_registered:
@@ -111,9 +115,11 @@ class PluginContext:
     def register_workflow(self, defn: WorkflowDef) -> None:
         from personal_agent.workflow.registry import workflow_registry
 
+        existing = workflow_registry.get(defn.name)
         should_register = self.manager.ensure_registration_available(
-            "workflow", defn.name, workflow_registry.get(defn.name), defn, self.plugin.key,
+            "workflow", defn.name, existing, defn, self.plugin.key,
         )
+        self._mark_owner(defn if should_register else existing)
         if should_register:
             workflow_registry.register(defn)
         if defn.name not in self.plugin.workflows_registered:
@@ -122,9 +128,11 @@ class PluginContext:
     def register_platform(self, entry: PlatformEntry) -> None:
         from personal_agent.platforms.core import platform_registry
 
+        existing = platform_registry.get(entry.name)
         should_register = self.manager.ensure_registration_available(
-            "platform", entry.name, platform_registry.get(entry.name), entry, self.plugin.key,
+            "platform", entry.name, existing, entry, self.plugin.key,
         )
+        self._mark_owner(entry if should_register else existing)
         if should_register:
             platform_registry.register(entry)
         if entry.name not in self.plugin.platforms_registered:
@@ -184,3 +192,16 @@ class PluginContext:
         normalized = str(name).strip().lower()
         if normalized not in self.plugin.memory_providers_registered:
             self.plugin.memory_providers_registered.append(normalized)
+
+    def _mark_owner(self, entry: Any | None) -> None:
+        if entry is None:
+            return
+        try:
+            setattr(entry, "_plugin_key", self.plugin.key)
+        except (AttributeError, TypeError):
+            pass
+        if hasattr(entry, "plugin_key"):
+            try:
+                setattr(entry, "plugin_key", self.plugin.key)
+            except (AttributeError, TypeError):
+                pass
