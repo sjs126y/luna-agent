@@ -1,6 +1,13 @@
 # Backend Progress
 
-更新时间：2026-07-13 CST
+更新时间：2026-07-14 CST
+
+## 2026-07-14：补充 Time 与 Context7 MCP
+
+- `config.yaml` 新增官方 `mcp-server-time`，固定本地时区为 `Asia/Shanghai`，在无网络的 Bubblewrap stdio 环境运行。
+- 新增 Upstash `@upstash/context7-mcp` v3.2.3，用于解析库标识和查询最新技术文档；不配置 API key 时使用公开基础能力。
+- Time 注册 `mcp__time__get_current_time`、`mcp__time__convert_time`；Context7 注册 `mcp__context7__resolve-library-id`、`mcp__context7__query-docs`。
+- `doctor --verbose` 验证两台 server 均为 `runtime=ready`、各 2 个工具、0 次重连；配置与 MCP 聚焦回归 `46 passed`。
 
 ## 2026-07-13：安全兼容层收尾与 Fetch MCP 修复
 

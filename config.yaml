@@ -168,6 +168,21 @@ mcp:
       allow_network: true
       enabled: true
 
+    - name: "time"
+      transport: "stdio"
+      command: "uvx"
+      args: ["mcp-server-time", "--local-timezone", "Asia/Shanghai"]
+      connect_timeout_seconds: 60
+      enabled: true
+
+    - name: "context7"
+      transport: "stdio"
+      command: "npx"
+      args: ["-y", "@upstash/context7-mcp"]
+      connect_timeout_seconds: 60
+      allow_network: true
+      enabled: true
+
     - name: "fetch"
       transport: "stdio"
       command: "uvx"
