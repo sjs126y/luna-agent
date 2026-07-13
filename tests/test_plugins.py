@@ -9,6 +9,7 @@ import pytest
 from personal_agent.config import Settings
 from personal_agent.plugins.core.manager import PluginManager
 from personal_agent.plugins.models import CommandEntry, PluginManifest, PluginStatus
+from personal_agent.skills.registry import skill_registry
 from personal_agent.tools.registry import tool_registry
 
 
@@ -606,6 +607,100 @@ def register(ctx):
     assert tool_registry.get("shared_plugin_tool") is not None
     assert tool_registry.get("shared_plugin_tool").description == "first"
     manager.disable_plugin("user/first")
+
+
+def test_plugin_registers_flat_and_nested_skill_bundles(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "skill_bundle"
+    nested_dir = plugin_dir / "skills" / "review-pr"
+    nested_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/skill-bundle
+name: Skill Bundle
+version: 1.0.0
+entrypoint: skill_bundle:register
+provides: [skills]
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "skill_bundle.py").write_text(
+        "def register(ctx): ctx.register_skills('skills')\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "skills" / "flat.md").write_text(
+        "# Flat skill\n\nFlat body.",
+        encoding="utf-8",
+    )
+    (nested_dir / "SKILL.md").write_text(
+        """
+---
+name: review-pr
+description: Review a pull request safely
+triggers: [/review-pr]
+---
+
+# Review PR
+
+Inspect the diff before suggesting changes.
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/skill-bundle"]
+
+    assert plugin.status == PluginStatus.LOADED
+    assert plugin.skills_registered == ["flat", "review-pr"]
+    review = skill_registry.get("review-pr")
+    assert review is not None
+    assert review.plugin_key == "user/skill-bundle"
+    assert review.triggers == ["/review-pr"]
+    assert "Inspect the diff" in (skill_registry.load("review-pr") or "")
+    manager.disable_plugin("user/skill-bundle")
+    assert skill_registry.get("review-pr") is None
+
+
+def test_plugin_skill_bundle_cannot_escape_plugin_root(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "escaping_skill"
+    plugin_dir.mkdir(parents=True)
+    (plugins_dir / "outside").mkdir()
+    (plugins_dir / "outside" / "secret.md").write_text("# Secret", encoding="utf-8")
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/escaping-skill
+name: Escaping Skill
+version: 1.0.0
+entrypoint: escaping_skill:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "escaping_skill.py").write_text(
+        "def register(ctx): ctx.register_skills('../outside')\n",
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/escaping-skill"]
+
+    assert plugin.status == PluginStatus.ERROR
+    assert "escapes package root" in (plugin.error or "")
+    assert skill_registry.get("secret") is None
 
 
 def test_duplicate_plugin_key_marks_existing_error(tmp_path):

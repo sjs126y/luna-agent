@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,35 @@ class PluginContext:
         """Resolve an environment value through the Settings boundary."""
         resolver = getattr(self.settings, "get_env", None)
         return resolver(name, default) if callable(resolver) else default
+
+    def resolve_path(self, relative_path: str | Path) -> Path:
+        """Resolve a path without allowing it to escape the plugin package."""
+        root = self.plugin.manifest.path
+        if root is None:
+            raise ValueError(f"Plugin root is unavailable: {self.plugin.key}")
+        root = root.resolve()
+        candidate = Path(relative_path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        candidate = candidate.resolve()
+        if candidate != root and root not in candidate.parents:
+            raise ValueError(f"Plugin path escapes package root: {relative_path}")
+        return candidate
+
+    def register_skills(self, relative_path: str | Path = "skills") -> int:
+        """Discover and register skill metadata from this plugin package."""
+        from personal_agent.skills.registry import discover_skills
+
+        skills_dir = self.resolve_path(relative_path)
+        if not skills_dir.is_dir():
+            raise ValueError(f"Plugin skills directory does not exist: {relative_path}")
+        return discover_skills(
+            skills_dir,
+            registrar=self,
+            recursive=True,
+            plugin_key=self.plugin.key,
+            allowed_root=self.plugin.manifest.path,
+        )
 
     def register_tool(self, entry: ToolEntry) -> None:
         from personal_agent.tools.registry import tool_registry
