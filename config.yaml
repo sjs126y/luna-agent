@@ -7,8 +7,18 @@ agent:
   max_tool_calls_per_turn: 20
 
 execution:
-  mode: "standard"                # guarded | standard | trusted | sovereign
-  policy: {}                      # optional permission overrides, e.g. {"tool_permissions": {"bash": "ask"}}
+  mode: "ask-first"               # read-only | ask-first | local-auto | full-auto
+
+permissions:
+  grant_ttl_minutes: 60           # shared in-memory TTL for tool and resource grants
+  confirm_timeout_seconds: 120
+  tool_approval:
+    default_external: "cached"    # auto | cached | prompt | deny
+    tools:
+      process_kill: "prompt"
+      worktree_merge: "prompt"
+      worktree_cleanup: "prompt"
+    mcp_servers: {}
 
 agents:
   max_concurrent_runs: 4          # max active delegated sub-agents
@@ -45,15 +55,15 @@ memory:
     max_tokens: 2048
   embedding:
     api_mode: "openai_compatible"
-    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    base_url: "https://llm-emwc1qhbxb5bsk0u.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
     api_key_env: "DASHSCOPE_API_KEY"
     model: "text-embedding-v4"
-    dimensions: 0
+    dimensions: 1024
   qdrant:
-    url: "http://localhost:6333"
+    url: "https://7f0404bc-2f2a-423c-9ae3-fd815997ae67.sa-east-1-0.aws.cloud.qdrant.io"
     collection: "lumora_memories"
     api_key_env: "QDRANT_API_KEY"
-    timeout_seconds: 10
+    timeout_seconds: 30
   providers:
     lumora: {}
     mem0:
@@ -109,6 +119,7 @@ sandbox:
   bash_work_dir: "./data"          # bash cwd (relative paths resolved from here)
   bash_restrict_paths: true        # false = bash can access paths outside sandbox roots
   bash_allow_network: false        # true = allow curl/pip/wget in bash tool
+  process_backend: "auto"         # auto | bwrap | legacy
   file_max_write_bytes: 100000     # max file_write size
   audit_enabled: true              # log to data/audit.log
 
@@ -128,23 +139,39 @@ mcp:
   enabled: true               # enable MCP client subsystem
   servers:
     - name: "filesystem"
+      transport: "stdio"
       command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/mnt/c/Users/MR"]
-      enabled: true
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/sujinsheng/projects/Personal-Agent"]
+      allow_network: true
+      enabled: false  # native file tools already enforce sandbox/blocked paths
 
     - name: "github"
-      command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-github"]
-      env:
-        GITHUB_PERSONAL_ACCESS_TOKEN: ""  # fill in your token
-      enabled: false  # enable after setting token
+      transport: "streamable_http"
+      url: "https://api.githubcopilot.com/mcp/"
+      headers_env:
+        Authorization: "GITHUB_MCP_AUTH"
+      enabled: true  # set GITHUB_MCP_AUTH="Bearer ..." in .env, then enable
 
     - name: "memory"
+      transport: "stdio"
       command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-memory", "--storage-path", "./data/mcp/memory.json"]
+      args: ["-y", "@modelcontextprotocol/server-memory"]
+      env:
+        MEMORY_FILE_PATH: "/home/sujinsheng/projects/Personal-Agent/data/mcp/memory.jsonl"
+      allow_network: true
       enabled: true
 
     - name: "sequential-thinking"
+      transport: "stdio"
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      allow_network: true
+      enabled: true
+
+    - name: "fetch"
+      transport: "stdio"
+      command: "uvx"
+      args: ["mcp-server-fetch"]
+      connect_timeout_seconds: 60
+      allow_network: true
       enabled: true
