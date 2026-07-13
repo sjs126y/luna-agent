@@ -7,7 +7,6 @@ class ConversationCommandRuntime:
     reset_session_response = "会话已重置。开始新的对话吧。"
     usage_create_agent = True
     usage_empty_message = "暂无会话数据。"
-    allow_all_cached_agents = False
 
     async def get_or_create_agent(self):
         return await self.conversation_service.get_or_create_agent(self.session_key)
@@ -152,14 +151,11 @@ class ConversationCommandRuntime:
         preset = mode_preset(state.mode_id)
         return f"执行模式已切换: {preset.label}（{preset.id}）。"
 
-    async def allow_category(self, category: str) -> str:
-        if self.allow_all_cached_agents:
-            self.conversation_service.allow_all_cached_agents(category)
-        else:
-            if not self.conversation_service.allow_agent_category(self.session_key, category):
-                await self.get_agent()
-                self.conversation_service.allow_agent_category(self.session_key, category)
-        return f"已授权 {category} 操作，本轮对话内有效。"
+    async def clear_security_grants(self) -> bool:
+        context = self.conversation_service.security_context(self.session_key)
+        changed = bool(context.state.tool_grants or context.state.resource_grants)
+        context.state.clear_grants()
+        return changed
 
     async def is_session_running(self) -> bool:
         snapshot = self.conversation_service.steer_snapshot(self.session_key)

@@ -128,7 +128,7 @@ def test_tool_runs_roundtrip_and_summary(db):
             "permission_category": "write",
             "permission_decision": "ask",
             "required_allow": "write",
-            "execution_mode": "sovereign",
+            "execution_mode": "full-auto",
             "created_at": 1001.0,
         },
     ]))

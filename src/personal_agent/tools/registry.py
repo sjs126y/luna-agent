@@ -307,7 +307,7 @@ def _assemble_with_bridge(active: list[ToolEntry], is_core) -> list[dict]:
         })
         result.append({
             "name": "tool_call",
-            "description": "Execute a safe tool by name with arguments. Destructive tools are blocked — call them directly after /allow.",
+            "description": "Execute a discovered tool by name through the same security and audit pipeline as a direct call.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -354,11 +354,6 @@ async def dispatch_tool_call(name: str, arguments: dict) -> object:
         return f"Error: unknown tool '{name}'"
     if name == "tool_call":
         return "Error: tool_call cannot call itself"
-    if entry.is_destructive:
-        return (
-            f"Error: destructive tool '{name}' cannot be called via tool_call. "
-            f"Send /allow to authorize it, then call '{name}' directly in your next response."
-        )
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
     from personal_agent.tools.runtime_context import (
         current_tool_agent,

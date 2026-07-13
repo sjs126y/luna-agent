@@ -1,5 +1,8 @@
 """Test agent engine with mocked transport."""
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from personal_agent.agent.agent import init_agent, Agent
@@ -573,22 +576,32 @@ async def test_turn_report_records_denied_tool_decision(provider):
         handler=_danger,
         permission_category="write",
         is_destructive=True,
+        approval_mode="cached",
     ))
+
+    from personal_agent.security.session import SecurityStateStore
+    agent._security_context = SecurityStateStore(SimpleNamespace(
+        execution_mode="ask-first",
+        sandbox_roots=[Path.cwd()],
+        permission_grant_ttl_minutes=60,
+        tool_approval_config={},
+    )).context("denied-tool")
+    agent._security_grant_ttl_seconds = 3600
 
     ctx = await build_turn_context(agent, "Test")
     result = await run_conversation(agent, ctx)
 
     item = result["turn_report"]["tools"]["items"][0]
     assert transport.calls == 1
-    assert "/allow write" in result["final_response"]
+    assert "支持授权确认的入口" in result["final_response"]
     assert result["turn_report"]["tools"]["denied"] == 1
     assert item["tool_name"] == "danger"
     assert item["tool_use_id"] == "w1"
     assert item["status"] == "denied"
     assert item["decision_stage"] == "permission"
     assert item["permission_category"] == "write"
-    assert item["reason_code"] == "permission_required"
-    assert item["required_allow"] == "write"
+    assert item["reason_code"] == "security_approval_required"
+    assert item["required_allow"] == "security"
     truth = result["turn_report"]["tool_truth"]
     assert truth["calls_total"] == 1
     assert truth["results_total"] == 1
@@ -612,7 +625,7 @@ async def test_permission_required_network_tool_stops_without_looping(provider):
         ),
     ])
 
-    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.security.session import SecurityStateStore
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.registry import tool_registry
 
@@ -626,27 +639,27 @@ async def test_permission_required_network_tool_stops_without_looping(provider):
         handler=_search,
         permission_category="network",
     ))
-    agent = init_agent(
-        transport,
-        provider,
-        execution_policy=ExecutionPolicy(
-            mode="trusted",
-            permissions={"default": "ask", "network": "ask"},
-        ),
-    )
+    agent = init_agent(transport, provider)
+    agent._security_context = SecurityStateStore(SimpleNamespace(
+        execution_mode="local-auto",
+        sandbox_roots=[Path.cwd()],
+        permission_grant_ttl_minutes=60,
+        tool_approval_config={},
+    )).context("network-denied")
+    agent._security_grant_ttl_seconds = 3600
 
     ctx = await build_turn_context(agent, "试一下搜索")
     result = await run_conversation(agent, ctx)
 
     assert result["completed"] is True
     assert transport.calls == 1
-    assert result["final_response"] == "网络工具需要授权，本轮已停止。请发送 /allow network 后重试。"
+    assert "支持授权确认的入口" in result["final_response"]
     assert result["turn_report"]["llm"]["calls"] == 1
     assert result["turn_report"]["tools"]["total"] == 1
     assert result["turn_report"]["tools"]["denied"] == 1
     item = result["turn_report"]["tools"]["items"][0]
     assert item["tool_name"] == "web_search"
-    assert item["reason_code"] == "permission_required"
+    assert item["reason_code"] == "security_approval_required"
     assert item["permission_category"] == "network"
 
 
@@ -666,8 +679,8 @@ async def test_temporary_network_grant_survives_turn_reset(provider):
         ),
     ])
 
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.permissions import add_temporary_grant
+    from personal_agent.security.models import ResourceRequirement
+    from personal_agent.security.session import SecurityStateStore
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.registry import tool_registry
 
@@ -681,19 +694,19 @@ async def test_temporary_network_grant_survives_turn_reset(provider):
         handler=_search,
         permission_category="network",
     ))
-    agent = init_agent(
-        transport,
-        provider,
-        execution_policy=ExecutionPolicy(
-            mode="trusted",
-            permissions={"default": "ask", "network": "ask"},
-        ),
-    )
-    agent._destructive_allowed.add("network")
-    add_temporary_grant(agent, "network", ttl_seconds=3600)
+    agent = init_agent(transport, provider)
+    store = SecurityStateStore(SimpleNamespace(
+        execution_mode="local-auto",
+        sandbox_roots=[Path.cwd()],
+        permission_grant_ttl_minutes=60,
+        tool_approval_config={},
+    ))
+    agent._security_context = store.context("network-granted")
+    agent._security_grant_ttl_seconds = store.grant_ttl_seconds
+    network = ResourceRequirement("network", "web-search", "connect", "web_search")
+    agent._security_context.state.grant_resource(network, ttl_seconds=3600)
 
     ctx = await build_turn_context(agent, "试一下搜索")
-    assert "network" not in agent._destructive_allowed
     result = await run_conversation(agent, ctx)
 
     assert result["completed"] is True
@@ -701,10 +714,8 @@ async def test_temporary_network_grant_survives_turn_reset(provider):
     assert transport.calls == 2
     item = result["turn_report"]["tools"]["items"][0]
     assert item["status"] == "success"
-    assert item["grant_matched"] == "network"
-    assert item["grant_scope"] == "temporary"
-    assert item["grant_expires_at"] > 0
-    assert item["temporary_grant_ttl_seconds"] == 24 * 60 * 60
+    assert agent._security_context.state.has_resource_grant(network)
+    assert item["temporary_grant_ttl_seconds"] == 60 * 60
     assert item["required_allow"] == ""
 
 

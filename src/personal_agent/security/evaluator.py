@@ -19,18 +19,30 @@ from personal_agent.security.config import TOOL_APPROVAL_MODES
 from personal_agent.security.session import SecuritySessionState
 
 
-def unscoped_security_context() -> SecurityContext:
-    """Return a fail-closed context for internal calls lacking a session."""
+def isolated_security_context(mode_id: str = "read-only") -> SecurityContext:
+    """Build an ephemeral context for internal calls without a user session."""
     from personal_agent.tools.sandbox import get_sandbox
+    from personal_agent.security.modes import mode_preset
 
-    rules = tuple(FileSystemRule(path=root, access="read") for root in get_sandbox().roots)
+    preset = mode_preset(mode_id)
+    access = "read" if preset.profile == "read-only" else "write"
+    rules = tuple(FileSystemRule(path=root, access=access) for root in get_sandbox().roots)
     return SecurityContext(
         session_key="",
-        profile=PermissionProfile("unscoped", filesystem=rules, network_enabled=False),
-        approval_policy="never",
-        state=SecuritySessionState(mode_id="read-only"),
-        mode_id="read-only",
+        profile=PermissionProfile(
+            preset.profile,
+            filesystem=rules,
+            network_enabled=preset.profile == "trusted",
+        ),
+        approval_policy=preset.approval_policy,
+        state=SecuritySessionState(mode_id=preset.id),
+        mode_id=preset.id,
     )
+
+
+def unscoped_security_context() -> SecurityContext:
+    """Return the fail-closed context for calls lacking an explicit session."""
+    return isolated_security_context("read-only")
 
 
 def prepare_tool_call(tc: dict[str, Any], entry: Any) -> PreparedToolCall:

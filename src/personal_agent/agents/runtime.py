@@ -572,14 +572,19 @@ class AgentRuntime:
         messages.append({"role": "assistant", "content": blocks})
 
         class _SubAgentCtx:
-            _destructive_allowed: set[str] = set()
             _tool_calls_this_turn: int = 0
             _max_tool_calls_per_turn: int = 0
             _destructive_calls_this_turn: int = 0
             _max_destructive_per_turn: int = 3
+            _security_context = None
+            _security_grant_ttl_seconds: int = 0
 
         agent_ctx = _SubAgentCtx()
-        agent_ctx._destructive_allowed = {"all"} if allow_destructive else set()
+        from personal_agent.security.evaluator import isolated_security_context
+
+        agent_ctx._security_context = isolated_security_context(
+            "full-auto" if allow_destructive else "read-only"
+        )
         agent_ctx._max_tool_calls_per_turn = self.max_tool_calls
 
         executable: list[dict] = []

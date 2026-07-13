@@ -21,10 +21,6 @@ class Settings:
 
         self.cron_jobs_path: Path = Path("data/cron")
 
-        from personal_agent.execution import resolve_execution_policy
-
-        self.execution_policy = resolve_execution_policy(self)
-
     def get_env(self, name: str, default: str = "") -> str:
         """Resolve an environment-backed value through the settings boundary."""
         value = self._environment.get(str(name), default)

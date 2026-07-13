@@ -18,15 +18,11 @@ def _agent(tmp_path: Path, *, mode: str = "ask-first"):
     return SimpleNamespace(
         _security_context=store.context("session-a"),
         _security_grant_ttl_seconds=store.grant_ttl_seconds,
-        _execution_policy=None,
         _tool_calls_this_turn=0,
         _max_tool_calls_per_turn=20,
         _destructive_calls_this_turn=0,
         _max_destructive_per_turn=3,
         _interrupt_requested=False,
-        _turn_grants=set(),
-        _destructive_allowed=set(),
-        _temporary_grants={},
     )
 
 

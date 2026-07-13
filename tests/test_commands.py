@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from personal_agent.commands.registry import command_specs_as_dict
 from personal_agent.commands.runtime import (
-    current_mode_from_policy,
     handle_slash_command,
     slash_argument_choices,
 )
 from personal_agent.config import Settings
-from personal_agent.execution import resolve_execution_policy
 from personal_agent.models.messages import SessionSource
 from personal_agent.plugins.models import CommandEntry
 
@@ -27,23 +23,19 @@ class Agent:
     _last_memory_injections = ""
     _tool_calls_this_turn = 0
     _max_tool_calls_per_turn = 20
-    _destructive_allowed: set[str]
     _interrupt_requested = False
     _cached_system_prompt = "system"
     tools = []
     model = "deepseek-chat"
     _memory_manager = None
-    _execution_policy = None
+    _security_context = None
+    _security_grant_ttl_seconds = 3600
 
     class Provider:
         model = "deepseek-chat"
         context_window = 1000
 
     _provider = Provider()
-
-    def __init__(self):
-        self._destructive_allowed = set()
-
 
 class PluginManager:
     def __init__(self):
@@ -91,6 +83,10 @@ class Runtime:
         self._session_key = "cli:default:local"
         self.source = SessionSource(platform="cli", user_id="local", chat_id="default")
         self.agent = Agent()
+        from personal_agent.security.session import SecurityStateStore
+
+        self.security_store = SecurityStateStore(self.settings)
+        self.agent._security_context = self.security_store.context(self._session_key)
         self.reset_called = False
         self.clear_called = False
         self.switched_to = ""
@@ -262,6 +258,19 @@ class Runtime:
         self.steers.append(text)
         return f"已收到，会在当前任务下一步应用。（test-steer）"
 
+    async def set_mode(self, mode: str) -> str:
+        from personal_agent.security.modes import mode_preset
+
+        state = self.security_store.set_mode(self.session_key, mode)
+        self.agent._security_context = self.security_store.context(self.session_key)
+        return f"执行模式已切换: {mode_preset(state.mode_id).label}。"
+
+    async def clear_security_grants(self) -> bool:
+        context = self.agent._security_context
+        changed = bool(context.state.tool_grants or context.state.resource_grants)
+        context.state.clear_grants()
+        return changed
+
     def plugin_command_kwargs(self, args: str):
         return {
             "args": args,
@@ -271,7 +280,7 @@ class Runtime:
 
 
 @pytest.mark.asyncio
-async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
+async def test_shared_command_core_session_usage_export_and_permissions(tmp_path):
     runtime = Runtime(tmp_path)
 
     result = await handle_slash_command(runtime, "/new")
@@ -314,17 +323,15 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
     assert runtime.exported
 
     result = await handle_slash_command(runtime, "/allow write")
-    assert "已授权 write" in result.response
-    assert "write" in runtime.agent._destructive_allowed
-    assert runtime.agent._temporary_grants["write"] > 0
+    assert result.handled is False
 
     result = await handle_slash_command(runtime, "/permissions")
     assert "临时授权 TTL" in result.response
-    assert result.payload["temporary_grants"][0]["category"] == "write"
+    assert result.payload["tool_grants"] == []
+    assert result.payload["resource_grants"] == []
 
     result = await handle_slash_command(runtime, "/deny write")
-    assert "已撤销 write" in result.response
-    assert "write" not in runtime.agent._temporary_grants
+    assert result.response == "用法: /deny all"
 
     result = await handle_slash_command(runtime, "/memory list")
     assert result.handled
@@ -350,38 +357,17 @@ async def test_shared_command_core_session_usage_export_and_allow(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_allow_network_follows_execution_mode_policy(tmp_path):
+async def test_removed_allow_command_is_not_handled(tmp_path):
     runtime = Runtime(tmp_path)
-    runtime.agent._execution_policy = resolve_execution_policy(SimpleNamespace(
-        execution_mode="standard",
-        bash_allow_network=False,
-    ))
-
     result = await handle_slash_command(runtime, "/allow network")
 
-    assert "已授权 network" in result.response
-    assert "network" in runtime.agent._destructive_allowed
-    assert "network" in runtime.agent._temporary_grants
-
-    runtime = Runtime(tmp_path)
-    runtime.agent._execution_policy = resolve_execution_policy(SimpleNamespace(
-        execution_mode="guarded",
-        bash_allow_network=False,
-    ))
-
-    result = await handle_slash_command(runtime, "/allow network")
-
-    assert "不能覆盖" in result.response
-    assert "network" not in runtime.agent._destructive_allowed
+    assert result.handled is False
 
 
 @pytest.mark.asyncio
-async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
+async def test_mode_command_switches_security_context_and_reports(tmp_path):
     runtime = Runtime(tmp_path)
 
-    runtime.agent._destructive_allowed.add("write")
-
-    # default execution mode is the standard profile.
     result = await handle_slash_command(runtime, "/mode")
     assert "当前模式: Ask First" in result.response
     assert result.kind == "mode"
@@ -394,44 +380,30 @@ async def test_mode_command_switches_execution_policy_and_reports(tmp_path):
 
     result = await handle_slash_command(runtime, "/mode set Local Auto")
     assert "Local Auto" in result.response
-    assert runtime.agent._execution_policy.mode == "trusted"
-    assert result.payload["selected"]["profile"] == "trusted"
+    assert runtime.agent._security_context.mode_id == "local-auto"
+    assert result.payload["selected"]["profile"] == "workspace"
 
     result = await handle_slash_command(runtime, "/mode acceptEdits")
-    assert "Local Auto" in result.response
-    assert runtime.agent._execution_policy.mode == "trusted"
-    assert runtime.agent._destructive_allowed == set()
+    assert result.payload["error"] == "unknown_mode"
 
-    # Querying now reflects the policy, not any /allow grant.
-    runtime.agent._destructive_allowed.add("write")
     result = await handle_slash_command(runtime, "/mode")
     assert "当前模式: Local Auto" in result.response
 
-    result = await handle_slash_command(runtime, "/mode auto")
+    result = await handle_slash_command(runtime, "/mode Full Auto")
     assert "Full Auto" in result.response
-    assert runtime.agent._execution_policy.mode == "sovereign"
-    assert runtime.agent._destructive_allowed == set()
+    assert runtime.agent._security_context.mode_id == "full-auto"
 
     result = await handle_slash_command(runtime, "/mode Read Only")
     assert "Read Only" in result.response
-    assert runtime.agent._execution_policy.mode == "guarded"
+    assert runtime.agent._security_context.mode_id == "read-only"
 
     result = await handle_slash_command(runtime, "/mode normal")
-    assert "Ask First" in result.response
-    assert runtime.agent._execution_policy.mode == "standard"
-    assert runtime.agent._destructive_allowed == set()
+    assert result.payload["error"] == "unknown_mode"
 
     result = await handle_slash_command(runtime, "/mode bogus")
     assert "用法" in result.response
     assert result.error
     assert result.payload["error"] == "unknown_mode"
-
-
-def test_current_mode_from_policy_uses_execution_profile(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[], execution_mode="sovereign")
-
-    assert current_mode_from_policy(settings.execution_policy) == "Full Auto"
-
 
 @pytest.mark.asyncio
 async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypatch):
@@ -537,7 +509,6 @@ async def test_shared_command_tools_permissions_and_protocol(tmp_path):
     import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
 
     runtime = Runtime(tmp_path)
-    runtime.agent._destructive_allowed.add("write")
 
     result = await handle_slash_command(runtime, "/tools")
     assert "工具总览" in result.response
@@ -562,15 +533,14 @@ async def test_shared_command_tools_permissions_and_protocol(tmp_path):
 
     result = await handle_slash_command(runtime, "/permissions")
     assert "权限策略: Ask First" in result.response
-    assert "permissions:" in result.response
-    assert "当前 grants: write" in result.response
+    assert "approval policy: on-request" in result.response
     assert result.kind == "permissions"
     assert result.payload["execution_mode"] == "Ask First"
-    assert result.payload["grants"] == ["write"]
+    assert result.payload["tool_grants"] == []
 
     result = await handle_slash_command(runtime, "/permissions grants")
-    assert result.response == "当前 grants: write"
-    assert result.payload["grants"] == ["write"]
+    assert result.response == "当前会话授权:\n- 无"
+    assert result.payload["tool_grants"] == []
 
     result = await handle_slash_command(runtime, "/protocol")
     assert "事件协议" in result.response
@@ -587,19 +557,15 @@ async def test_shared_command_tools_permissions_and_protocol(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_new_security_mode_rejects_category_allow_and_clears_all(tmp_path):
-    from personal_agent.security.session import SecurityStateStore
-
+async def test_security_grants_clear_without_category_compatibility(tmp_path):
     runtime = Runtime(tmp_path)
-    store = SecurityStateStore(runtime.settings)
-    context = store.context(runtime.session_key)
-    runtime.agent._security_context = context
+    context = runtime.agent._security_context
     context.state.grant_tool("core:bash", ttl_seconds=60)
 
     allowed = await handle_slash_command(runtime, "/allow write")
     denied = await handle_slash_command(runtime, "/deny all")
 
-    assert "不支持类别级预授权" in allowed.response
+    assert allowed.handled is False
     assert "已撤销当前会话" in denied.response
     assert context.state.tool_grants == {}
 
@@ -663,15 +629,9 @@ def test_command_registry_exports_structured_metadata(tmp_path):
         "Local Auto",
         "Full Auto",
     ]
-    allow = next(item for item in data["commands"] if item["name"] == "allow")
-    assert [choice["value"] for choice in allow["arguments"][0]["choices"]] == [
-        "write",
-        "bash",
-        "background",
-        "network",
-        "destructive",
-        "all",
-    ]
+    assert "allow" not in names
+    deny = next(item for item in data["commands"] if item["name"] == "deny")
+    assert [choice["value"] for choice in deny["arguments"][0]["choices"]] == ["all"]
     tools = next(item for item in data["commands"] if item["name"] == "tools")
     tools_show = next(child for child in tools["children"] if child["name"] == "show")
     assert tools_show["arguments"][0]["kind"] == "dynamic"

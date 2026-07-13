@@ -168,7 +168,7 @@ async def test_cli_new_resets_session_and_agent(runtime):
 
 
 @pytest.mark.asyncio
-async def test_cli_session_switch_list_usage_export_and_allow(runtime):
+async def test_cli_session_switch_list_usage_export_and_removed_allow(runtime):
     await runtime.run_once("hello")
 
     switched = await runtime.handle_command("/session work")
@@ -181,11 +181,9 @@ async def test_cli_session_switch_list_usage_export_and_allow(runtime):
     assert "cli:work:local" in switched
     assert "cli:work:local" in listed
     assert "上下文窗口" in usage
-    assert "不支持类别级预授权" in allowed
+    assert allowed is None
     assert "已导出" in exported
     assert (runtime.settings.agent_data_dir / "exports" / "cli_work_local.jsonl").exists()
-    agent = await runtime.get_or_create_agent()
-    assert "write" not in agent._destructive_allowed
 
 
 @pytest.mark.asyncio

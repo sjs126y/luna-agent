@@ -90,12 +90,14 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["commands"]["registry_version"] == 1
         assert health["commands"]["has_tool_runs"] is True
         assert health["commands"]["has_mode_arguments"] is True
-        assert health["commands"]["has_allow_arguments"] is True
+        assert "has_allow_arguments" not in health["commands"]
         assert set(health["commands"]["dynamic_providers"]) >= {"tools", "sessions"}
         assert health["query"]["conversation_query_service"] is True
         assert health["query"]["tool_runs_query"] is True
-        assert health["execution"]["mode"] == settings.execution_policy.mode
-        assert health["execution"]["label"] == settings.execution_policy.profile.label
+        assert health["execution"]["mode"] == "ask-first"
+        assert health["execution"]["label"] == "Ask First"
+        assert health["execution"]["profile"] == "read-only"
+        assert health["execution"]["approval_policy"] == "on-request"
         runtime.conversation_service.record_turn_report(
             "cli:default:local",
             type("Source", (), {"platform": "cli", "user_id": "local", "chat_id": "default", "chat_type": "dm"})(),

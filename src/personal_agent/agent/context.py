@@ -74,8 +74,6 @@ async def build_turn_context(
     agent._interrupt_requested = False
     agent._tool_calls_this_turn = 0
     agent._destructive_calls_this_turn = 0
-    from personal_agent.permissions import prepare_turn_grants
-    prepare_turn_grants(agent)
     agent._last_skill_injection = ""
     agent._last_skill_summaries = ""
     agent._last_memory_injections = ""

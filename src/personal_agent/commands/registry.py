@@ -82,16 +82,11 @@ _MODE_ARGUMENT = CommandArgumentSpec(
     ),
 )
 
-_ALLOW_ARGUMENT = CommandArgumentSpec(
-    name="category",
+_DENY_ARGUMENT = CommandArgumentSpec(
+    name="scope",
     kind="choice",
     choices=(
-        ArgumentChoiceSpec("write", "write", "文件写入"),
-        ArgumentChoiceSpec("bash", "bash", "终端命令"),
-        ArgumentChoiceSpec("background", "background", "后台任务"),
-        ArgumentChoiceSpec("network", "network", "网络访问"),
-        ArgumentChoiceSpec("destructive", "destructive", "高风险操作"),
-        ArgumentChoiceSpec("all", "all", "全部类别"),
+        ArgumentChoiceSpec("all", "all", "当前会话全部限时授权"),
     ),
 )
 
@@ -176,22 +171,12 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("usage", "查看当前会话上下文预算", "/usage", category="runtime"),
     CommandSpec("export", "导出当前会话 JSONL", "/export", category="session"),
     CommandSpec(
-        "allow",
-        "兼容命令；新安全模式请在具体工具确认中授权",
-        "/allow [write|bash|background|network|destructive|all]",
-        category="execution",
-        mutates_state=True,
-        requires_agent=True,
-        arguments=(_ALLOW_ARGUMENT,),
-    ),
-    CommandSpec(
         "deny",
-        "撤销限时工具授权；新安全模式支持 /deny all",
-        "/deny [write|bash|background|network|destructive|all]",
+        "撤销当前会话的全部限时工具与资源授权",
+        "/deny all",
         category="execution",
         mutates_state=True,
-        requires_agent=True,
-        arguments=(_ALLOW_ARGUMENT,),
+        arguments=(_DENY_ARGUMENT,),
     ),
     CommandSpec(
         "mode",

@@ -10,7 +10,6 @@ from personal_agent.agent.agent import init_agent
 from personal_agent.compression import compression_registry
 from personal_agent.llm.provider import ProviderProfile, provider_registry
 from personal_agent.llm.transport_registry import transport_registry
-from personal_agent.permissions import temporary_grant_ttl_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +48,6 @@ async def create_agent_runtime(
         memory_snapshot_refresh_interval=getattr(settings, "memory_snapshot_refresh_turn_interval", 20),
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
-        execution_policy=getattr(settings, "execution_policy", None),
-        permission_temporary_grant_ttl_seconds=temporary_grant_ttl_seconds(settings),
-        permission_confirm_timeout_seconds=int(getattr(settings, "permission_confirm_timeout_seconds", 120)),
     )
 
     if plugin_manager is not None:

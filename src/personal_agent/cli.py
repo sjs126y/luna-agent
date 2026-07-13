@@ -1325,7 +1325,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
             "max_tokens": settings.agent_runtime_max_tokens,
             "history_limit": settings.agent_runtime_history_limit,
         },
-        "execution": settings.execution_policy.as_dict(),
+        "execution": runtime_health["runtime"].get("execution", {}),
         "tools": tool_registry.catalog_summary(settings.enabled_toolsets),
         "sandbox": {
             "roots": sandbox_roots,
@@ -1384,13 +1384,14 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
         "mcp_runtime": {},
         "agents": {},
         "execution": {
-            "mode": "standard",
-            "description": "balanced daily-use mode",
-            "permissions": {},
-            "network": "deny",
-            "isolation": "policy-only",
-            "warnings": [],
-            "overrides": {"tool_permissions": {}},
+            "mode": "ask-first",
+            "label": "Ask First",
+            "profile": "read-only",
+            "approval_policy": "on-request",
+            "filesystem": [],
+            "network_enabled": False,
+            "tool_approval": {"default_external": "cached", "tools": {}, "mcp_servers": {}},
+            "grant_ttl_seconds": 3600,
         },
         "tools": _empty_tool_summary(),
         "sandbox": {
@@ -1660,7 +1661,6 @@ def _format_command_health_detail_lines(commands: dict[str, Any]) -> list[str]:
         f"  dynamic providers: {_list_or_none(commands.get('dynamic_providers', []))}",
         f"  /tool-runs: {_yes(commands.get('has_tool_runs', False))}",
         f"  /mode set arguments: {_yes(commands.get('has_mode_arguments', False))}",
-        f"  /allow arguments: {_yes(commands.get('has_allow_arguments', False))}",
     ]
 
 
@@ -1688,7 +1688,8 @@ def _format_runtime_execution_summary(execution: dict[str, Any]) -> str:
     return (
         f"mode={execution.get('mode') or '-'} "
         f"label={execution.get('label') or '-'} "
-        f"isolation={execution.get('isolation') or '-'}"
+        f"profile={execution.get('profile') or '-'} "
+        f"approval={execution.get('approval_policy') or '-'}"
     )
 
 
@@ -1698,9 +1699,10 @@ def _format_runtime_execution_detail_lines(execution: dict[str, Any]) -> list[st
     return [
         f"  mode: {execution.get('mode') or '-'}",
         f"  label: {execution.get('label') or '-'}",
-        f"  isolation: {execution.get('isolation') or '-'}",
-        f"  network: {execution.get('network') or '-'}",
-        f"  permissions: {_format_permissions(execution.get('permissions', {}))}",
+        f"  filesystem profile: {execution.get('profile') or '-'}",
+        f"  approval policy: {execution.get('approval_policy') or '-'}",
+        f"  network: {'allow' if execution.get('network_enabled') else 'restricted'}",
+        f"  grant TTL: {_format_duration_seconds(execution.get('grant_ttl_seconds', 0))}",
     ]
 
 
@@ -2074,51 +2076,35 @@ def _format_tool_summary_lines(tools: dict[str, Any]) -> list[str]:
 
 
 def _format_execution_lines(execution: dict[str, Any]) -> list[str]:
-    profile = execution.get("profile") or {}
-    sandbox = profile.get("sandbox") or {}
-    network = profile.get("network") or {}
-    grants = profile.get("grants") or {}
-    audit = profile.get("audit") or {}
-    overrides = execution.get("overrides") or {}
-    tool_overrides = overrides.get("tool_permissions") or {}
+    tool_approval = execution.get("tool_approval") or {}
     lines = [
         f"  mode: {execution.get('mode', '-')}",
-        f"  profile: {profile.get('label') or '-'}",
-        f"  description: {execution.get('description') or profile.get('description') or '-'}",
-        f"  isolation: {execution.get('isolation', '-')}",
-        f"  network: {execution.get('network', '-')}",
-        f"  effective permissions: {_format_permissions(execution.get('permissions', {}))}",
-        f"  overrides: {_format_permissions(tool_overrides)}",
+        f"  label: {execution.get('label', '-')}",
+        f"  filesystem profile: {execution.get('profile', '-')}",
+        f"  approval policy: {execution.get('approval_policy', '-')}",
+        f"  network: {'allow' if execution.get('network_enabled') else 'restricted'}",
+        f"  grant TTL: {_format_duration_seconds(execution.get('grant_ttl_seconds', 0))}",
+        f"  external tool approval: {tool_approval.get('default_external', '-')}",
     ]
-    if sandbox:
-        lines.extend([
-            f"  sandbox: {sandbox.get('kind', '-')}",
-            f"  hard prechecks: {_enforced(sandbox.get('hard_prechecks_enforced'))}",
-            f"  path roots: {_enforced(sandbox.get('path_roots_enforced'))}",
-            f"  blocked patterns: {_enforced(sandbox.get('blocked_patterns_enforced'))}",
-            f"  bash path restrict: {_enforced(sandbox.get('bash_path_restrict'))}",
-            f"  file write limit: {_enforced(sandbox.get('file_write_limit_enforced'))}",
-        ])
-    if network:
-        lines.extend([
-            f"  network tools: {network.get('tool_permission', '-')}",
-            f"  bash network: {network.get('bash_network', '-')}",
-        ])
-    if grants:
-        lines.append(
-            f"  grants: {grants.get('scope', '-')} scoped /allow "
-            f"{_list_or_none(grants.get('categories', []))}"
-        )
-    if audit:
-        lines.append(
-            "  audit: "
-            f"enabled={_yes(bool(audit.get('enabled', False)))} "
-            f"decisions={_yes(bool(audit.get('decisions', False)))} "
-            f"results={_yes(bool(audit.get('results', False)))}"
-        )
-    for warning in execution.get("warnings", []):
-        lines.append(f"  warning: {warning}")
+    for rule in execution.get("filesystem", []):
+        lines.append(f"  filesystem: {rule.get('access', '-')} {rule.get('path', '-')}")
+    for name, mode in sorted((tool_approval.get("tools") or {}).items()):
+        lines.append(f"  tool approval: {name}={mode}")
+    for name, mode in sorted((tool_approval.get("mcp_servers") or {}).items()):
+        lines.append(f"  MCP approval: {name}={mode}")
     return lines
+
+
+def _format_duration_seconds(value: object) -> str:
+    try:
+        seconds = max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return "-"
+    if seconds % 3600 == 0 and seconds:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0 and seconds:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
 
 
 def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str]:
@@ -2129,7 +2115,6 @@ def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str
     }
     paths = [
         "execution.mode",
-        "execution.policy",
         "sandbox.roots",
         "sandbox.blocked",
         "sandbox.bash_work_dir",

@@ -23,10 +23,6 @@ EXECUTION_MODE_LABELS = {
     "ask-first": "Ask First",
     "local-auto": "Local Auto",
     "full-auto": "Full Auto",
-    "guarded": "Read Only",
-    "standard": "Ask First",
-    "trusted": "Local Auto",
-    "sovereign": "Full Auto",
 }
 MAX_PREVIEW_CHARS = 500
 
@@ -357,79 +353,28 @@ def run_precheck(tc: dict, entry: Any) -> str | None:
 
 def check_permission(tc: dict, entry: Any, agent: Any, category: str) -> GuardDecision:
     security_context = getattr(agent, "_security_context", None) if agent is not None else None
-    if agent is None:
+    if security_context is None:
         from personal_agent.security.evaluator import unscoped_security_context
 
         security_context = unscoped_security_context()
-    if security_context is not None:
-        from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
 
-        security = evaluate_tool_security(prepare_tool_call(tc, entry), security_context)
-        preset_mode = str(getattr(security_context, "mode_id", ""))
-        return GuardDecision(
-            stage="permission",
-            allowed=security.allowed,
-            category=category,
-            reason_code="" if security.allowed else security.reason_code,
-            message="" if security.allowed else f"Error: {security.message}",
-            mode=preset_mode,
-            policy_decision=security.decision,
-            required_allow="security" if security.decision == "ask" else "",
-            grant_matched="tool" if security.tool_grant_matched else "",
-            grant_scope="cached" if security.tool_grant_matched else "",
-            tool_approval_mode=security.tool_approval_mode,
-            requested_resources=tuple(item.as_dict() for item in security.missing_resources),
-        )
-    policy = getattr(agent, "_execution_policy", None)
-    mode = str(getattr(policy, "mode", "")) if policy is not None else ""
-    decision = "ask" if entry.is_destructive else "allow"
-    if policy is not None:
-        decision = policy.permission_for(category)
-        if decision == "allow" and entry.is_destructive and category == "default":
-            decision = policy.permission_for("destructive")
-        explanation = policy.explain_permission(category)
-    else:
-        explanation = {
-            "message": f"tool '{tc['name']}' requires authorization",
-            "required_allow": category,
-        }
+    from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
 
-    if decision == "deny":
-        return GuardDecision(
-            stage="permission",
-            allowed=False,
-            category=category,
-            reason_code="permission_denied",
-            message=f"Error: {explanation['message']}",
-            mode=mode,
-            policy_decision=decision,
-        )
-
-    from personal_agent.permissions import matching_permission_grant
-
-    grant_matched, grant_scope, expires_at = matching_permission_grant(agent, category)
-
-    if decision == "ask" and not grant_matched:
-        return GuardDecision(
-            stage="permission",
-            allowed=False,
-            category=category,
-            reason_code="permission_required",
-            message=f"Error: {explanation['message']}",
-            mode=mode,
-            policy_decision=decision,
-            required_allow=str(explanation.get("required_allow") or category),
-        )
-
+    security = evaluate_tool_security(prepare_tool_call(tc, entry), security_context)
+    preset_mode = str(getattr(security_context, "mode_id", ""))
     return GuardDecision(
         stage="permission",
-        allowed=True,
+        allowed=security.allowed,
         category=category,
-        mode=mode,
-        policy_decision=decision,
-        grant_matched=grant_matched,
-        grant_scope=grant_scope,
-        grant_expires_at=expires_at,
+        reason_code="" if security.allowed else security.reason_code,
+        message="" if security.allowed else f"Error: {security.message}",
+        mode=preset_mode,
+        policy_decision=security.decision,
+        required_allow="security" if security.decision == "ask" else "",
+        grant_matched="tool" if security.tool_grant_matched else "",
+        grant_scope="cached" if security.tool_grant_matched else "",
+        tool_approval_mode=security.tool_approval_mode,
+        requested_resources=tuple(item.as_dict() for item in security.missing_resources),
     )
 
 
@@ -469,7 +414,7 @@ def check_runtime_guard(tc: dict, entry: Any, agent: Any, category: str) -> Guar
                 reason_code="quota_exceeded",
                 message=(
                     f"Error: destructive tool limit ({max_destructive}) reached. "
-                    f"Please summarize or request /allow for more."
+                    "Please summarize what has been done and stop."
                 ),
             )
         agent._destructive_calls_this_turn = destructive_count + 1

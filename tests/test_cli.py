@@ -47,12 +47,11 @@ def test_protocol_schema_command_outputs_frontend_contract():
     assert fields["available_actions"]["type"] == "list[string]"
 
 
-def test_doctor_report_includes_execution_policy():
+def test_doctor_report_includes_security_mode():
     from personal_agent.config import Settings
 
     settings = Settings(
-        execution_mode="sovereign",
-        execution_policy_overrides={"background": "ask"},
+        execution_mode="full-auto",
         llm_api_key="test",
         llm_base_url="https://example.test",
     )
@@ -60,15 +59,14 @@ def test_doctor_report_includes_execution_policy():
     summary = format_doctor_report(report)
     text = format_doctor_report(report, verbose=True)
 
-    assert report["execution"]["mode"] == "sovereign"
-    assert report["execution"]["isolation"] == "tool-enforced"
-    assert report["execution"]["profile"]["name"] == "sovereign"
-    assert report["execution"]["profile"]["sandbox"]["hard_prechecks_enforced"] is True
-    assert report["execution"]["permissions"]["background"] == "ask"
-    assert report["execution"]["overrides"]["tool_permissions"]["background"] == "ask"
+    assert report["execution"]["mode"] == "full-auto"
+    assert report["execution"]["label"] == "Full Auto"
+    assert report["execution"]["profile"] == "trusted"
+    assert report["execution"]["approval_policy"] == "never"
+    assert report["execution"]["network_enabled"] is True
     assert report["effective_config"]["field_count"] > 0
     effective_fields = {item["path"]: item for item in report["effective_config"]["fields"]}
-    assert effective_fields["execution.mode"]["value"] == "sovereign"
+    assert effective_fields["execution.mode"]["value"] == "full-auto"
     assert effective_fields["LLM_API_KEY"]["value"] == "<set>"
     assert report["tools"]["total"] >= 0
     assert report["sandbox"]["process"]["effective_backend"] in {"bwrap", "legacy"}
@@ -81,16 +79,13 @@ def test_doctor_report_includes_execution_policy():
     assert "Execution:" in text
     assert "Tools:" in text
     assert "by risk:" in text
-    assert "mode: sovereign" in text
-    assert "profile: Sovereign" in text
+    assert "mode: full-auto" in text
+    assert "filesystem profile: trusted" in text
     assert "Effective Config:" in text
-    assert "execution.mode: sovereign" in text
+    assert "execution.mode: full-auto" in text
     assert "LLM_API_KEY: <set>" in text
-    assert "effective permissions:" in text
-    assert "overrides: background=ask" in text
-    assert "hard prechecks: enforced" in text
-    assert "grants: turn scoped /allow" in text
-    assert "warning:" in text
+    assert "approval policy: never" in text
+    assert "grant TTL: 1h" in text
 
 
 def test_tokens_session_command_outputs_chinese_budget():
@@ -684,7 +679,7 @@ def test_format_doctor_config_section_includes_grouped_effective_config():
             "sections": {
                 "execution": [{
                     "path": "execution.mode",
-                    "value": "standard",
+                    "value": "ask-first",
                     "source": "config.yaml",
                 }],
                 "llm": [{
@@ -702,7 +697,7 @@ def test_format_doctor_config_section_includes_grouped_effective_config():
     assert "schema version: 1" in text
     assert "schema fields: 2" in text
     assert "Effective Config: 2 fields" in text
-    assert "execution.mode: standard (config.yaml)" in text
+    assert "execution.mode: ask-first (config.yaml)" in text
     assert "LLM_API_KEY: <set> (.env)" in text
 
 
@@ -999,18 +994,18 @@ def test_format_doctor_report_includes_summary_and_issues():
                 "dynamic_providers": ["sessions", "tools"],
                 "has_tool_runs": True,
                 "has_mode_arguments": True,
-                "has_allow_arguments": True,
             },
             "query": {
                 "conversation_query_service": True,
                 "tool_runs_query": True,
             },
             "execution": {
-                "mode": "standard",
+                "mode": "ask-first",
                 "label": "Ask First",
-                "isolation": "tool-enforced",
-                "network": "ask",
-                "permissions": {"write": "ask", "bash": "ask"},
+                "profile": "read-only",
+                "approval_policy": "on-request",
+                "network_enabled": False,
+                "grant_ttl_seconds": 3600,
             },
         },
         "platforms": [{
@@ -1084,7 +1079,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     assert "Tool Runs: stored=3 denied=1 failed=0 truncated=1" in text
     assert "Commands: registry=v1 core=15 plugins=2 arguments=4 providers=sessions, tools" in text
     assert "Query: conversation=是 tool_runs=是" in text
-    assert "Execution: mode=standard label=Ask First isolation=tool-enforced" in text
+    assert "Execution: mode=ask-first label=Ask First profile=read-only approval=on-request" in text
     assert "插件概览: 总数=1 已加载=0 延迟=0 禁用=0 错误=1" in text
     assert "需要注意:" in text
     assert "Sandbox root 不存在: /missing" in text

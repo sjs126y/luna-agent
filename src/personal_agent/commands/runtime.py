@@ -15,12 +15,8 @@ from personal_agent.commands.registry import (
     suggest_command_names,
 )
 from personal_agent.permissions import (
-    add_temporary_grant,
-    add_turn_grants,
     format_expiry,
-    remove_temporary_grant,
     temporary_grant_ttl_seconds,
-    temporary_grants_snapshot,
 )
 
 
@@ -133,6 +129,8 @@ class CommandRuntime(Protocol):
 
     async def steer_snapshot(self) -> dict: ...
 
+    async def clear_security_grants(self) -> bool: ...
+
     def plugin_command_kwargs(self, args: str) -> dict: ...
 
 
@@ -141,37 +139,23 @@ class ModeChoice:
     slug: str
     label: str
     profile: str
+    approval_policy: str
 
 
 MODE_CHOICES: tuple[ModeChoice, ...] = (
-    ModeChoice("read-only", "Read Only", "guarded"),
-    ModeChoice("ask-first", "Ask First", "standard"),
-    ModeChoice("local-auto", "Local Auto", "trusted"),
-    ModeChoice("full-auto", "Full Auto", "sovereign"),
+    ModeChoice("read-only", "Read Only", "read-only", "never"),
+    ModeChoice("ask-first", "Ask First", "read-only", "on-request"),
+    ModeChoice("local-auto", "Local Auto", "workspace", "on-request"),
+    ModeChoice("full-auto", "Full Auto", "trusted", "never"),
 )
 
 _MODE_BY_SLUG = {choice.slug: choice for choice in MODE_CHOICES}
-_MODE_BY_PROFILE = {choice.profile: choice for choice in MODE_CHOICES}
 _MODE_USAGE = "/mode [Read Only|Ask First|Local Auto|Full Auto]"
 _MODE_ALIASES = {
     "readonly": "read-only",
-    "read": "read-only",
-    "guarded": "read-only",
     "askfirst": "ask-first",
-    "ask": "ask-first",
-    "standard": "ask-first",
-    "normal": "ask-first",
-    "editfreely": "local-auto",
-    "edit": "local-auto",
-    "edits": "local-auto",
-    "trusted": "local-auto",
-    "acceptedits": "local-auto",
-    "autoedit": "local-auto",
     "localauto": "local-auto",
     "fullauto": "full-auto",
-    "full": "full-auto",
-    "auto": "full-auto",
-    "sovereign": "full-auto",
 }
 
 _ACTIVITY_SCOPE_CHOICES = (
@@ -203,13 +187,8 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         count, path = await runtime.export_session()
         return CommandResult.reply(f"已导出 {count} 条对话 -> {path}")
 
-    if command_name == "allow":
-        parts = args.split()
-        return CommandResult.reply(await _allow(runtime, parts[0] if parts else "write"))
-
     if command_name == "deny":
-        parts = args.split()
-        return CommandResult.reply(await _deny(runtime, parts[0] if parts else "all"))
+        return CommandResult.reply(await _deny(runtime, args))
 
     if command_name == "mode":
         text, payload = await _mode(runtime, args)
@@ -469,63 +448,19 @@ async def _session(runtime: CommandRuntime, args: str) -> str:
     return await runtime.switch_session(action)
 
 
-async def _allow(runtime: CommandRuntime, category: str) -> str:
-    valid = {"write", "bash", "background", "network", "destructive", "default", "all"}
-    if category not in valid:
-        return f"用法: /allow [write|bash|background|network|destructive|all]，当前有效类别: {', '.join(sorted(valid))}"
-    agent = _runtime_cached_agent(runtime)
-    if agent is None:
-        agent = await runtime.get_agent()
-    if getattr(agent, "_security_context", None) is not None:
-        return (
-            "新安全模式不支持类别级预授权。请发起具体工具调用，"
-            "并在确认中选择单次授权或限时授权；授权只覆盖提示中列出的资源。"
-        )
-    policy = getattr(agent, "_execution_policy", None) if agent is not None else getattr(runtime.settings, "execution_policy", None)
-    denied = _allow_denied_categories(policy, category)
-    if category != "all" and denied:
-        return _allow_denied_message(policy, category)
-    if category == "all" and len(denied) == len(_ALLOW_ALL_CATEGORIES):
-        return _allow_denied_message(policy, category)
-
-    warning = _allow_warning(denied)
-    ttl = temporary_grant_ttl_seconds(runtime.settings)
-    if category == "all":
-        expires_at = 0.0
-        for item in _ALLOW_ALL_CATEGORIES:
-            if item not in denied:
-                expires_at = add_temporary_grant(agent, item, ttl_seconds=ttl)
-                add_turn_grants(agent, item)
-    else:
-        expires_at = add_temporary_grant(agent, category, ttl_seconds=ttl)
-        add_turn_grants(agent, category)
-    response = f"已授权 {category}，{_format_ttl(ttl)}内有效，至 {format_expiry(expires_at)} 失效。"
-    return f"{response}\n{warning}" if warning else response
-
-
-_ALLOW_ALL_CATEGORIES = ("write", "bash", "background", "network", "destructive", "default")
-
-
-async def _deny(runtime: CommandRuntime, category: str) -> str:
-    valid = {"write", "bash", "background", "network", "destructive", "default", "all"}
-    if category not in valid:
-        return f"用法: /deny [write|bash|background|network|destructive|all]，当前有效类别: {', '.join(sorted(valid))}"
-    agent = _runtime_cached_agent(runtime)
-    if agent is None:
-        return "当前没有可撤销的临时授权。"
-    security_context = getattr(agent, "_security_context", None)
-    if security_context is not None:
-        if category != "all":
-            return "新安全模式请使用 /deny all 清空当前会话的全部限时授权。"
-        state = security_context.state
-        changed = bool(state.tool_grants or state.resource_grants)
-        state.clear_grants()
-        return "已撤销当前会话的全部限时授权。" if changed else "当前没有可撤销的临时授权。"
-    if category == "all":
-        changed = remove_temporary_grant(agent, "all")
-        return "已撤销全部临时授权。" if changed else "当前没有可撤销的临时授权。"
-    changed = remove_temporary_grant(agent, category)
-    return f"已撤销 {category} 临时授权。" if changed else f"当前没有 {category} 临时授权。"
+async def _deny(runtime: CommandRuntime, args: str) -> str:
+    value = args.strip().lower()
+    if value not in {"", "all"}:
+        return "用法: /deny all"
+    changed = await _call_optional(runtime, "clear_security_grants")
+    if changed is None:
+        agent = _runtime_cached_agent(runtime)
+        context = getattr(agent, "_security_context", None) if agent is not None else None
+        if context is None:
+            return "当前没有可撤销的限时授权。"
+        changed = bool(context.state.tool_grants or context.state.resource_grants)
+        context.state.clear_grants()
+    return "已撤销当前会话的全部限时授权。" if changed else "当前没有可撤销的限时授权。"
 
 
 def _format_ttl(seconds: int) -> str:
@@ -549,61 +484,26 @@ def _runtime_cached_agent(runtime: CommandRuntime):
     return None
 
 
-def _allow_denied_categories(policy, category: str) -> list[str]:
-    categories = _ALLOW_ALL_CATEGORIES if category == "all" else (category,)
-    if policy is None:
-        return []
-    denied: list[str] = []
-    for item in categories:
-        try:
-            decision = str(policy.permission_for(item))
-        except Exception:
-            decision = ""
-        if decision == "deny":
-            denied.append(item)
-    return denied
-
-
-def _allow_denied_message(policy, category: str) -> str:
-    mode = current_mode_from_policy(policy)
-    if category == "all":
-        return f"当前模式 {mode} 禁止这些权限类别，/allow all 不能覆盖。请切换模式或修改 config.yaml 的 execution.policy。"
-    return f"当前模式 {mode} 禁止 {category}，/allow 不能覆盖。请切换模式或修改 config.yaml 的 execution.policy。"
-
-
-def _allow_warning(denied: list[str]) -> str:
-    if not denied:
-        return ""
-    return f"注意：当前模式仍禁止 {', '.join(denied)}，/allow 不能覆盖。"
-
-
 def current_mode(agent) -> str:
     """Return the user-facing execution mode label for an agent."""
     security_context = getattr(agent, "_security_context", None)
-    if security_context is not None:
-        from personal_agent.security.modes import mode_preset
-
-        return mode_preset(getattr(security_context, "mode_id", "ask-first")).label
-    return current_mode_from_policy(getattr(agent, "_execution_policy", None))
-
-
-def current_mode_from_policy(policy) -> str:
-    """Return the user-facing execution mode label for an execution policy."""
-    choice = _choice_for_profile(str(getattr(policy, "mode", "") or ""))
-    return choice.label
+    mode_id = getattr(security_context, "mode_id", "ask-first")
+    return _MODE_BY_SLUG.get(mode_id, _MODE_BY_SLUG["ask-first"]).label
 
 
 async def _mode(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     agent = await runtime.get_agent()
     requested = args.strip()
-    current = _mode_payload(current_mode(agent), getattr(getattr(agent, "_execution_policy", None), "mode", "") or "standard")
+    context = getattr(agent, "_security_context", None)
+    current_id = str(getattr(context, "mode_id", "ask-first") or "ask-first")
+    current = _mode_payload(current_id)
     if not requested or requested == "show":
         return f"当前模式: {current['current']['label']}。用法: {_MODE_USAGE}", {
             "action": "show",
             **current,
         }
     if requested == "list":
-        return "执行模式:\n" + "\n".join(f"- {choice.label} ({choice.profile})" for choice in MODE_CHOICES), {
+        return "执行模式:\n" + "\n".join(f"- {choice.label} ({choice.slug})" for choice in MODE_CHOICES), {
             "action": "list",
             **current,
         }
@@ -628,22 +528,13 @@ async def _mode(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
             "action": "set",
             "selected": _choice_payload(choice),
             "custom": True,
-            **_mode_payload(choice.label, choice.profile),
+            **_mode_payload(choice.slug),
         }
-    from personal_agent.execution import resolve_execution_policy_for_mode
-
-    agent._execution_policy = resolve_execution_policy_for_mode(runtime.settings, choice.profile)
-    for attr in ("_destructive_allowed", "_turn_grants"):
-        grants = getattr(agent, attr, None)
-        if grants is None:
-            setattr(agent, attr, set())
-        else:
-            grants.clear()
-    return f"执行模式已切换: {choice.label}（{choice.profile}）。", {
+    return "当前入口不支持切换执行模式。", {
         "action": "set",
         "selected": _choice_payload(choice),
-        "cleared_grants": True,
-        **_mode_payload(choice.label, choice.profile),
+        "error": "mode_switch_unavailable",
+        **current,
     }
 
 
@@ -655,20 +546,15 @@ def _choice_for_input(value: str) -> ModeChoice | None:
     return None
 
 
-def _choice_for_profile(profile: str) -> ModeChoice:
-    return _MODE_BY_PROFILE.get(profile, _MODE_BY_PROFILE["standard"])
-
-
 def _mode_key(value: str) -> str:
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
 
-def _mode_payload(label: str, profile: str) -> dict:
+def _mode_payload(mode_id: str) -> dict:
+    choice = _MODE_BY_SLUG.get(mode_id, _MODE_BY_SLUG["ask-first"])
     return {
         "current": {
-            "label": label,
-            "profile": profile,
-            "slug": _choice_for_profile(profile).slug,
+            **_choice_payload(choice),
         },
         "modes": [_choice_payload(choice) for choice in MODE_CHOICES],
     }
@@ -679,6 +565,7 @@ def _choice_payload(choice: ModeChoice) -> dict:
         "slug": choice.slug,
         "label": choice.label,
         "profile": choice.profile,
+        "approval_policy": choice.approval_policy,
     }
 
 
@@ -1158,9 +1045,6 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
     parts = args.split()
     action = parts[0] if parts else "list"
     agent = await runtime.get_agent()
-    turn_grants = sorted(str(item) for item in getattr(agent, "_turn_grants", set()) or [])
-    legacy_grants = sorted(str(item) for item in getattr(agent, "_destructive_allowed", set()) or [])
-    temporary_grants = temporary_grants_snapshot(agent)
     security_context = getattr(agent, "_security_context", None)
     security_tool_grants, security_resource_grants = _security_grants_snapshot(
         security_context
@@ -1182,15 +1066,11 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
                 "action": "grants",
                 "tool_grants": security_tool_grants,
                 "resource_grants": security_resource_grants,
-                "grants": turn_grants or legacy_grants,
-                "temporary_grants": temporary_grants,
             }
-        legacy_text = ", ".join(turn_grants or legacy_grants) if (turn_grants or legacy_grants) else "无"
-        return "当前 grants: " + legacy_text, {
+        return "当前会话授权:\n- 无", {
             "action": "grants",
-            "grants": turn_grants or legacy_grants,
-            "turn_grants": turn_grants or legacy_grants,
-            "temporary_grants": temporary_grants,
+            "tool_grants": [],
+            "resource_grants": [],
         }
     if action not in {"list", "show"}:
         suggestions = _subcommand_suggestions(action, ["list", "show", "grants"])
@@ -1202,10 +1082,7 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
             "error": "unknown_permissions_action",
             "suggestions": [f"/permissions {item}" for item in suggestions],
         }
-    policy = getattr(agent, "_execution_policy", None)
-    mode = str(getattr(policy, "mode", "") or "")
-    permissions = getattr(policy, "permissions", {}) if policy is not None else {}
-    lines = [f"权限策略: {current_mode(agent)} ({mode or 'standard'})"]
+    lines = [f"权限策略: {current_mode(agent)}"]
     if security_context is not None:
         profile = security_context.profile
         lines.extend(
@@ -1225,16 +1102,7 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
             "tool approval: default_external="
             f"{security_context.tool_approval_default_external}"
         )
-    lines.append("permissions:")
-    keys = ["default", "read", "search", "write", "bash", "background", "network", "destructive"]
-    if isinstance(permissions, dict):
-        for key in keys:
-            if key in permissions:
-                lines.append(f"- {key}: {permissions[key]}")
-    ttl = int(
-        getattr(agent, "_security_grant_ttl_seconds", 0)
-        or temporary_grant_ttl_seconds(runtime.settings)
-    )
+    ttl = int(getattr(agent, "_security_grant_ttl_seconds", 0) or temporary_grant_ttl_seconds(runtime.settings))
     pending = await _call_optional(runtime, "pending_confirmation_status")
     lines.append(f"临时授权 TTL: {_format_ttl(ttl)}")
     if security_context is not None:
@@ -1242,17 +1110,11 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
             f"当前会话授权: tool={len(security_tool_grants)}, "
             f"resource={len(security_resource_grants)}"
         )
-    lines.append("当前 grants: " + _format_grants_text(temporary_grants, turn_grants or legacy_grants))
     if pending:
         lines.append(f"pending confirm: {pending.get('tool_name', '-')} ({pending.get('permission_category', '-')})")
     return "\n".join(lines), {
         "action": "list",
         "execution_mode": current_mode(agent),
-        "policy_mode": mode or "standard",
-        "permissions": dict(permissions) if isinstance(permissions, dict) else {},
-        "grants": turn_grants or legacy_grants,
-        "turn_grants": turn_grants or legacy_grants,
-        "temporary_grants": temporary_grants,
         "temporary_grant_ttl_seconds": ttl,
         "security": _security_context_snapshot(security_context),
         "tool_grants": security_tool_grants,
@@ -1306,15 +1168,6 @@ def _security_context_snapshot(context: Any) -> dict | None:
             "mcp_servers": dict(context.tool_approval_mcp_servers),
         },
     }
-
-
-def _format_grants_text(temporary_grants: list[dict], turn_grants: list[str]) -> str:
-    parts: list[str] = []
-    for item in temporary_grants:
-        parts.append(f"{item['category']} 至 {item['expires_at_iso']}")
-    for item in turn_grants:
-        parts.append(f"{item} 本轮")
-    return ", ".join(parts) if parts else "无"
 
 
 def _protocol(args: str) -> tuple[str, dict]:

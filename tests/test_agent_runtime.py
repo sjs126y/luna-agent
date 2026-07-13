@@ -246,21 +246,21 @@ async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
     from personal_agent.tools.registry import tool_registry
 
     calls = 0
-    original_read = tool_registry.get("read")
-    original_grep = tool_registry.get("grep")
+    original_calculator = tool_registry.get("calculator")
+    original_datetime = tool_registry.get("datetime")
 
     async def dummy_tool():
         return "ok"
 
     tool_registry.register(ToolEntry(
-        name="read",
-        description="read",
+        name="calculator",
+        description="calculator",
         schema={},
         handler=dummy_tool,
     ))
     tool_registry.register(ToolEntry(
-        name="grep",
-        description="grep",
+        name="datetime",
+        description="datetime",
         schema={},
         handler=dummy_tool,
     ))
@@ -272,8 +272,8 @@ async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
             return NormalizedResponse(
                 text="need tools",
                 tool_calls=[
-                    {"id": "toolu_1", "name": "read", "input": {}},
-                    {"id": "toolu_2", "name": "grep", "input": {}},
+                    {"id": "toolu_1", "name": "calculator", "input": {}},
+                    {"id": "toolu_2", "name": "datetime", "input": {}},
                 ],
             )
         return NormalizedResponse(text="quota handled")
@@ -282,8 +282,8 @@ async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
         runtime = AgentRuntime(
             call_fn=call_fn,
             tools=[
-                {"name": "read", "description": "read", "input_schema": {}},
-                {"name": "grep", "description": "grep", "input_schema": {}},
+                {"name": "calculator", "description": "calculator", "input_schema": {}},
+                {"name": "datetime", "description": "datetime", "input_schema": {}},
             ],
             max_tokens=100,
             max_tool_calls=1,
@@ -291,25 +291,25 @@ async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
 
         run = await runtime.run("use tools", AgentSpec(role="assistant"))
     finally:
-        if original_read is None:
-            tool_registry.unregister("read")
+        if original_calculator is None:
+            tool_registry.unregister("calculator")
         else:
-            tool_registry.register(original_read)
-        if original_grep is None:
-            tool_registry.unregister("grep")
+            tool_registry.register(original_calculator)
+        if original_datetime is None:
+            tool_registry.unregister("datetime")
         else:
-            tool_registry.register(original_grep)
+            tool_registry.register(original_datetime)
 
     assert run.status == "completed"
     assert run.result == "quota handled"
     assert run.executed_tool_calls == [{
         "id": "toolu_1",
-        "name": "read",
+        "name": "calculator",
         "input_summary": "{}",
     }]
     assert run.denied_tool_calls == [{
         "call_id": "toolu_2",
-        "name": "grep",
+        "name": "datetime",
         "allowed": False,
         "reason": "sub-agent tool call quota exceeded (1)",
         "category": "quota",
@@ -329,17 +329,20 @@ async def test_agent_runtime_records_executor_denied_tool_result():
         if calls == 1:
             return NormalizedResponse(
                 text="need tool",
-                tool_calls=[{"id": "toolu_1", "name": "read", "input": {"path": "x"}}],
+                tool_calls=[{"id": "toolu_1", "name": "missing_tool", "input": {}}],
             )
         return NormalizedResponse(text="executor handled")
 
     runtime = AgentRuntime(
         call_fn=call_fn,
-        tools=[{"name": "read", "description": "read", "input_schema": {}}],
+        tools=[{"name": "missing_tool", "description": "missing", "input_schema": {}}],
         max_tokens=100,
     )
 
-    run = await runtime.run("use missing executor tool", AgentSpec(role="assistant"))
+    run = await runtime.run(
+        "use missing executor tool",
+        AgentSpec(role="assistant", tool_policy=["missing_tool"]),
+    )
 
     assert run.status == "completed"
     assert run.executed_tool_calls == []

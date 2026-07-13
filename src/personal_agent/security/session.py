@@ -70,15 +70,9 @@ class SecurityStateStore:
 
     @property
     def grant_ttl_seconds(self) -> int:
-        minutes = getattr(self.settings, "permission_grant_ttl_minutes", None)
-        if minutes is not None:
-            try:
-                return max(60, int(minutes) * 60)
-            except (TypeError, ValueError):
-                pass
-        hours = getattr(self.settings, "permission_temporary_grant_ttl_hours", 24)
+        minutes = getattr(self.settings, "permission_grant_ttl_minutes", 60)
         try:
-            return max(60, int(float(hours) * 60 * 60))
+            return max(60, int(minutes) * 60)
         except (TypeError, ValueError):
             return 60 * 60
 
@@ -119,6 +113,29 @@ class SecurityStateStore:
             tool_approval_tools=tool_approval["tools"],
             tool_approval_mcp_servers=tool_approval["mcp_servers"],
         )
+
+
+def security_settings_snapshot(settings: Any) -> dict[str, Any]:
+    store = SecurityStateStore(settings)
+    context = store.context("__diagnostics__")
+    preset = mode_preset(context.mode_id)
+    return {
+        "mode": preset.id,
+        "label": preset.label,
+        "profile": context.profile.name,
+        "approval_policy": context.approval_policy,
+        "filesystem": [
+            {"path": str(rule.path), "access": rule.access}
+            for rule in context.profile.filesystem
+        ],
+        "network_enabled": context.profile.network_enabled,
+        "tool_approval": {
+            "default_external": context.tool_approval_default_external,
+            "tools": dict(context.tool_approval_tools),
+            "mcp_servers": dict(context.tool_approval_mcp_servers),
+        },
+        "grant_ttl_seconds": store.grant_ttl_seconds,
+    }
 
 
 def _profile_for(settings: Any, name: str) -> PermissionProfile:

@@ -1,5 +1,4 @@
-"""Targeted tests for the new tool execution pipeline: scope gate, shell whitelist,
-file_write safety checks, bridge destructive blocking, checkpoint, audit."""
+"""Targeted tests for security decisions, tool execution, and auditing."""
 
 from __future__ import annotations
 
@@ -9,6 +8,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -114,18 +114,17 @@ async def test_file_write_path_traversal():
     assert "outside" in result.lower()
 
 
-# ── Bridge tool_call blocking destructive tools ────────
+# ── Bridge tool_call security routing ──────────────────
 
 
 @pytest.mark.asyncio
-async def test_bridge_tool_call_blocks_destructive():
+async def test_bridge_tool_call_routes_destructive_through_security():
     import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
 
     from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
 
-    # file_write is destructive — should be blocked via tool_call
     result = await _tool_call("write", {"path": "test.txt", "content": "hello"})
-    assert "destructive" in result.lower() or "cannot be called" in result.lower()
+    assert "permission profile does not allow" in result.lower()
 
 
 @pytest.mark.asyncio
@@ -137,15 +136,26 @@ async def test_bridge_tool_call_allows_safe():
     assert "destructive" not in result.lower()
 
 
-# ── Executor scope gate ────────────────────────────────
+# ── Executor security gate ─────────────────────────────
 
 
 class MockAgent:
     def __init__(self):
-        self._destructive_allowed: set[str] = set()
         self._tool_calls_this_turn: int = 0
         self._max_tool_calls_per_turn: int = 20
-        self._execution_policy = None
+        self._destructive_calls_this_turn: int = 0
+        self._max_destructive_per_turn: int = 3
+        self._interrupt_requested = False
+        self._security_grant_ttl_seconds = 3600
+        from personal_agent.security.session import SecurityStateStore
+
+        settings = SimpleNamespace(
+            execution_mode="ask-first",
+            sandbox_roots=[Path.cwd()],
+            permission_grant_ttl_minutes=60,
+            tool_approval_config={},
+        )
+        self._security_context = SecurityStateStore(settings).context("test")
 
 
 def test_tool_entry_permission_category_defaults_to_default():
@@ -161,371 +171,10 @@ def test_tool_entry_permission_category_defaults_to_default():
     assert entry.permission_category == "default"
 
 
-def test_execution_guard_uses_tool_permission_metadata_before_fallback():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.execution_guard import evaluate_execution_guards
-
-    agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "network": "ask"},
-    )
-    tc = {"name": "custom_plugin_tool", "input": {}}
-    entry = ToolEntry(
-        name="custom_plugin_tool",
-        description="Custom",
-        schema={},
-        handler=lambda **kw: "ok",
-        permission_category="network",
-    )
-
-    decision = evaluate_execution_guards(tc, entry, agent)
-
-    assert decision.allowed is False
-    assert decision.stage == "permission"
-    assert decision.category == "network"
-    assert decision.reason_code == "permission_required"
-
-
-def test_execution_guard_fallback_category_still_supports_legacy_tools():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.execution_guard import evaluate_execution_guards
-
-    agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "background": "ask"},
-    )
-    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
-    entry = ToolEntry(
-        name="process_start",
-        description="Legacy process",
-        schema={},
-        handler=lambda **kw: "ok",
-    )
-
-    decision = evaluate_execution_guards(tc, entry, agent)
-
-    assert decision.allowed is False
-    assert decision.category == "background"
-    assert decision.required_allow == "background"
-
-
-def test_scope_gate_destructive_blocked_by_default():
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
-    entry = ToolEntry(
-        name="write",
-        description="Write file",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        is_destructive=True,
-    )
-
-    result = _scope_gate(tc, entry, agent)
-    assert result is not None
-    assert "authorization" in result.lower() or "allow" in result.lower()
-
-
-def test_scope_gate_destructive_allowed_after_allow():
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._destructive_allowed.add("write")
-
-    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
-    entry = ToolEntry(
-        name="write",
-        description="Write",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        is_destructive=True,
-    )
-
-    result = _scope_gate(tc, entry, agent)
-    assert result is None  # allowed now
-
-
-def test_scope_gate_allow_all():
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._destructive_allowed.add("all")
-
-    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
-    entry = ToolEntry(
-        name="write",
-        description="Write",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        is_destructive=True,
-    )
-
-    result = _scope_gate(tc, entry, agent)
-    assert result is None  # "all" bypasses everything
-
-
-def test_scope_gate_non_destructive_passes():
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    tc = {"name": "calculator", "input": {"expression": "2+2"}}
-    entry = ToolEntry(
-        name="calculator",
-        description="Calculate",
-        schema={},
-        handler=lambda **kw: "4",
-        toolset="utility",
-        is_destructive=False,
-    )
-
-    result = _scope_gate(tc, entry, agent)
-    assert result is None  # safe tool, always passes
-
-
-def test_scope_gate_tool_call_quota():
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._tool_calls_this_turn = 20  # already at limit
-    agent._max_tool_calls_per_turn = 20
-
-    tc = {"name": "calculator", "input": {"expression": "1+1"}}
-    entry = ToolEntry(
-        name="calculator",
-        description="Calc",
-        schema={},
-        handler=lambda **kw: "2",
-        toolset="utility",
-        is_destructive=False,
-    )
-
-    result = _scope_gate(tc, entry, agent)
-    assert result is not None
-    assert "limit" in result.lower()
-
-
-def test_scope_gate_guarded_denies_bash_even_with_allow():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._destructive_allowed.add("bash")
-    agent._execution_policy = ExecutionPolicy(
-        mode="guarded",
-        permissions={"default": "deny", "bash": "deny"},
-    )
-    tc = {"name": "bash", "input": {"command": "ls"}}
-    entry = ToolEntry(
-        name="bash",
-        description="Bash",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-    )
-
-    result = _scope_gate(tc, entry, agent)
-    assert result is not None
-    assert "denied by execution mode" in result
-
-
-def test_scope_gate_standard_bash_requires_allow():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "ask", "bash": "ask"},
-    )
-    tc = {"name": "bash", "input": {"command": "ls"}}
-    entry = ToolEntry(
-        name="bash",
-        description="Bash",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-    )
-
-    blocked = _scope_gate(tc, entry, agent)
-    assert blocked is not None
-    agent._destructive_allowed.add("bash")
-    assert _scope_gate(tc, entry, agent) is None
-
-
-def test_scope_gate_trusted_allows_workspace_write_policy():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="trusted",
-        permissions={"default": "ask", "write": "allow"},
-    )
-    tc = {"name": "write", "input": {"path": "x.txt", "content": "hi"}}
-    entry = ToolEntry(
-        name="write",
-        description="Write",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        is_destructive=True,
-    )
-
-    assert _scope_gate(tc, entry, agent) is None
-
-
-def test_scope_gate_standard_background_requires_allow():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "ask", "background": "ask"},
-    )
-    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
-    entry = ToolEntry(
-        name="process_start",
-        description="Start process",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        permission_category="background",
-    )
-
-    blocked = _scope_gate(tc, entry, agent)
-    assert blocked is not None
-    assert "background" in blocked
-    agent._destructive_allowed.add("background")
-    assert _scope_gate(tc, entry, agent) is None
-
-
-def test_scope_gate_policy_override_allows_background():
-    from types import SimpleNamespace
-
-    from personal_agent.execution import resolve_execution_policy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._execution_policy = resolve_execution_policy(SimpleNamespace(
-        execution_mode="standard",
-        bash_allow_network=False,
-        execution_policy_overrides={"background": "allow"},
-    ))
-    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
-    entry = ToolEntry(
-        name="process_start",
-        description="Start process",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        permission_category="background",
-    )
-
-    assert _scope_gate(tc, entry, agent) is None
-
-
-def test_scope_gate_policy_override_can_tighten_trusted_bash():
-    from types import SimpleNamespace
-
-    from personal_agent.execution import resolve_execution_policy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._execution_policy = resolve_execution_policy(SimpleNamespace(
-        execution_mode="trusted",
-        bash_allow_network=False,
-        execution_policy_overrides={"tool_permissions": {"bash": "ask"}},
-    ))
-    tc = {"name": "bash", "input": {"command": "ls"}}
-    entry = ToolEntry(
-        name="bash",
-        description="Bash",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        permission_category="bash",
-    )
-
-    blocked = _scope_gate(tc, entry, agent)
-    assert blocked is not None
-    assert "/allow bash" in blocked
-
-
-def test_scope_gate_guarded_denies_background():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._destructive_allowed.add("background")
-    agent._execution_policy = ExecutionPolicy(
-        mode="guarded",
-        permissions={"default": "deny", "background": "deny"},
-    )
-    tc = {"name": "process_start", "input": {"command": "python -c \"print(1)\""}}
-    entry = ToolEntry(
-        name="process_start",
-        description="Start process",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        permission_category="background",
-    )
-
-    result = _scope_gate(tc, entry, agent)
-    assert result is not None
-    assert "denied by execution mode" in result
-
-
-def test_scope_gate_process_clear_uses_background_permission():
-    from personal_agent.execution import ExecutionPolicy
-    from personal_agent.tools.executor import _scope_gate
-    from personal_agent.tools.entry import ToolEntry
-
-    agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "background": "ask"},
-    )
-    tc = {"name": "process_clear", "input": {"status": "finished"}}
-    entry = ToolEntry(
-        name="process_clear",
-        description="Clear processes",
-        schema={},
-        handler=lambda **kw: "ok",
-        toolset="builtin",
-        permission_category="background",
-    )
-
-    blocked = _scope_gate(tc, entry, agent)
-    assert blocked is not None
-    assert "background" in blocked
-
 
 @pytest.mark.asyncio
 async def test_process_start_precheck_runs_before_background_allow(tmp_path: Path):
     import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_work_dir
     from personal_agent.tools.executor import execute_tool_call_result
     from personal_agent.tools.sandbox import init_sandbox
@@ -535,11 +184,6 @@ async def test_process_start_precheck_runs_before_background_allow(tmp_path: Pat
     set_allow_network(False)
 
     agent = MockAgent()
-    agent._destructive_allowed.add("background")
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "ask", "background": "ask"},
-    )
 
     hard_blacklist = await execute_tool_call_result(
         {"id": "p1", "name": "process_start", "input": {"command": "rm -rf /", "cwd": str(tmp_path)}},
@@ -573,8 +217,8 @@ async def test_process_start_precheck_runs_before_background_allow(tmp_path: Pat
 async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path):
     import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
     from personal_agent.conversation.events import EventRecorder
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.security.session import SecurityStateStore
     from personal_agent.tools.executor import execute_tool_call_result
     from personal_agent.tools.sandbox import init_sandbox
 
@@ -582,10 +226,6 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
     set_work_dir(tmp_path)
 
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "background": "ask"},
-    )
     recorder = EventRecorder()
 
     result = await execute_tool_call_result(
@@ -611,14 +251,14 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
     assert decision_event.data["allowed"] is False
     assert decision_event.data["stage"] == "permission"
     assert decision_event.data["status"] == "denied"
-    assert decision_event.data["reason_code"] == "permission_required"
+    assert decision_event.data["reason_code"] == "security_approval_required"
     assert event.type == "tool_end"
     assert event.data["guard_stage"] == "permission"
-    assert event.data["guard_reason_code"] == "permission_required"
+    assert event.data["guard_reason_code"] == "security_approval_required"
     assert event.data["permission_category"] == "background"
     assert event.data["permission_decision"] == "ask"
-    assert event.data["required_allow"] == "background"
-    assert event.data["execution_mode"] == "standard"
+    assert event.data["required_allow"] == "security"
+    assert event.data["execution_mode"] == "ask-first"
     assert event.data["display_name"] == "Start background process"
     assert event.data["execution_mode_label"] == "Ask First"
     assert event.data["risk_level"] == "medium"
@@ -637,7 +277,6 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
 @pytest.mark.asyncio
 async def test_tool_decision_event_includes_confirmation_display_metadata(tmp_path: Path):
     from personal_agent.conversation.events import EventRecorder
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_call_result
     from personal_agent.tools.registry import tool_registry
@@ -656,14 +295,11 @@ async def test_tool_decision_event_includes_confirmation_display_metadata(tmp_pa
         toolset="test",
         is_destructive=True,
         permission_category="write",
+        approval_mode="cached",
     )
     previous = tool_registry.get("custom_write_preview")
     tool_registry.register(entry)
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "write": "ask"},
-    )
     recorder = EventRecorder()
     seen_decisions = []
 
@@ -730,10 +366,10 @@ def test_tool_decision_display_includes_network_preview_metadata():
             stage="permission",
             allowed=False,
             category="network",
-            reason_code="permission_required",
-            mode="standard",
+            reason_code="security_approval_required",
+            mode="ask-first",
             policy_decision="ask",
-            required_allow="network",
+            required_allow="security",
         ),
     )
 
@@ -747,7 +383,6 @@ def test_tool_decision_display_includes_network_preview_metadata():
 @pytest.mark.asyncio
 async def test_tool_confirm_deny_keeps_permission_denied_result():
     from personal_agent.conversation.events import EventRecorder
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_call_result
     from personal_agent.tools.registry import tool_registry
@@ -772,12 +407,9 @@ async def test_tool_confirm_deny_keeps_permission_denied_result():
         handler=handler,
         permission_category="write",
         is_destructive=True,
+        approval_mode="cached",
     ))
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "write": "ask"},
-    )
     recorder = EventRecorder()
 
     try:
@@ -799,15 +431,14 @@ async def test_tool_confirm_deny_keeps_permission_denied_result():
     assert len(decisions) == 1
     assert decisions[0].tool_name == "confirm_write_demo"
     assert decisions[0].permission_category == "write"
-    assert recorder.events[-2].data["reason_code"] == "permission_required"
+    assert recorder.events[-2].data["reason_code"] == "security_approval_required"
     assert recorder.events[-1].data["status"] == "denied"
-    assert "write" not in agent._destructive_allowed
+    assert agent._security_context.state.tool_grants == {}
 
 
 @pytest.mark.asyncio
 async def test_tool_confirm_allow_executes_once_without_persisting_grant():
     from personal_agent.conversation.events import EventRecorder
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_call_result
     from personal_agent.tools.registry import tool_registry
@@ -832,12 +463,9 @@ async def test_tool_confirm_allow_executes_once_without_persisting_grant():
         handler=handler,
         permission_category="write",
         is_destructive=True,
+        approval_mode="cached",
     ))
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "write": "ask"},
-    )
     recorder = EventRecorder()
 
     try:
@@ -860,12 +488,11 @@ async def test_tool_confirm_allow_executes_once_without_persisting_grant():
     assert recorder.events[-2].data["allowed"] is True
     assert recorder.events[-2].data["stage"] == "runtime_guard"
     assert recorder.events[-1].data["status"] == "success"
-    assert "write" not in agent._destructive_allowed
+    assert agent._security_context.state.tool_grants == {}
 
 
 @pytest.mark.asyncio
 async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_calls
     from personal_agent.tools.registry import tool_registry
@@ -890,12 +517,9 @@ async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
         handler=handler,
         permission_category="write",
         is_destructive=True,
+        approval_mode="cached",
     ))
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "write": "ask"},
-    )
     messages = []
 
     try:
@@ -918,15 +542,13 @@ async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
     assert [result.content for result in results] == ["ok:1", "ok:2"]
     assert calls == 2
     assert len(decisions) == 1
-    assert "write" in agent._destructive_allowed
-    assert "write" in agent._temporary_grants
+    assert "core:confirm_always_demo" in agent._security_context.state.tool_grants
     assert messages[-1]["content"][0]["content"] == "ok:1"
     assert messages[-1]["content"][1]["content"] == "ok:2"
 
 
 @pytest.mark.asyncio
 async def test_parallel_safe_tools_requiring_confirm_are_serialized():
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_calls
     from personal_agent.tools.registry import tool_registry
@@ -959,6 +581,7 @@ async def test_parallel_safe_tools_requiring_confirm_are_serialized():
         handler=first,
         permission_category="network",
         is_parallel_safe=True,
+        approval_mode="prompt",
     ))
     tool_registry.register(ToolEntry(
         name="confirm_parallel_second",
@@ -967,12 +590,9 @@ async def test_parallel_safe_tools_requiring_confirm_are_serialized():
         handler=second,
         permission_category="network",
         is_parallel_safe=True,
+        approval_mode="prompt",
     ))
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="trusted",
-        permissions={"default": "allow", "network": "ask"},
-    )
     messages = []
 
     try:
@@ -1006,7 +626,6 @@ async def test_parallel_safe_tools_requiring_confirm_are_serialized():
 @pytest.mark.asyncio
 async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
     import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
     from personal_agent.tools.executor import execute_tool_call_result
     from personal_agent.tools.sandbox import init_sandbox
@@ -1014,10 +633,6 @@ async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "background": "ask"},
-    )
     confirm_calls = 0
 
     async def confirm(_decision):
@@ -1039,7 +654,6 @@ async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_tool_confirm_pending_stop_denies_without_executing():
     from personal_agent.conversation.events import EventRecorder
-    from personal_agent.execution import ExecutionPolicy
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import clear_interrupted, execute_tool_call_result
     from personal_agent.tools.registry import tool_registry
@@ -1069,12 +683,9 @@ async def test_tool_confirm_pending_stop_denies_without_executing():
         handler=handler,
         permission_category="write",
         is_destructive=True,
+        approval_mode="cached",
     ))
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "write": "ask"},
-    )
     recorder = EventRecorder()
 
     try:
@@ -1099,14 +710,14 @@ async def test_tool_confirm_pending_stop_denies_without_executing():
     assert result.error == "tool confirmation interrupted"
     assert calls == 0
     assert confirm_cancelled.is_set()
-    assert "write" not in agent._destructive_allowed
+    assert agent._security_context.state.tool_grants == {}
     assert [event.type for event in recorder.events] == [
         "tool_start",
         "tool_decision",
         "tool_end",
     ]
     assert recorder.events[-1].data["status"] == "denied"
-    assert recorder.events[-1].data["guard_reason_code"] == "permission_required"
+    assert recorder.events[-1].data["guard_reason_code"] == "security_approval_required"
 
 
 @pytest.mark.asyncio
@@ -1203,14 +814,14 @@ async def test_structured_tool_output_keeps_artifacts_in_memory_and_redacts_even
 
 
 @pytest.mark.asyncio
-async def test_exec_one_blocks_destructive_without_allow():
+async def test_exec_one_requires_resource_approval():
     from personal_agent.tools.executor import _exec_one
 
     agent = MockAgent()
     tc = {"name": "write", "input": {"path": "test.txt", "content": "hello"}}
 
     result = await _exec_one(tc, agent=agent)
-    assert "authorization" in result.lower() or "allow" in result.lower()
+    assert "approval required" in result.lower()
 
 
 @pytest.mark.asyncio
@@ -1498,10 +1109,10 @@ async def test_audit_tool_decision_writes_structured_record():
             stage="permission",
             status="denied",
             permission_category="write",
-            execution_mode="standard",
+            execution_mode="ask-first",
             permission_decision="ask",
-            reason_code="permission_required",
-            required_allow="write",
+            reason_code="security_approval_required",
+            required_allow="security",
             message="requires authorization",
         ))
 
@@ -1516,10 +1127,10 @@ async def test_audit_tool_decision_writes_structured_record():
         assert data["stage"] == "permission"
         assert data["status"] == "denied"
         assert data["permission_category"] == "write"
-        assert data["execution_mode"] == "standard"
+        assert data["execution_mode"] == "ask-first"
         assert data["permission_decision"] == "ask"
-        assert data["reason_code"] == "permission_required"
-        assert data["required_allow"] == "write"
+        assert data["reason_code"] == "security_approval_required"
+        assert data["required_allow"] == "security"
 
 
 @pytest.mark.asyncio
@@ -1551,10 +1162,10 @@ async def test_audit_tool_result_writes_structured_record():
                 stage="permission",
                 status="denied",
                 permission_category="write",
-                execution_mode="standard",
+                execution_mode="ask-first",
                 permission_decision="ask",
-                reason_code="permission_required",
-                required_allow="write",
+                reason_code="security_approval_required",
+                required_allow="security",
                 grant_matched="",
             ),
         )
@@ -1567,10 +1178,10 @@ async def test_audit_tool_result_writes_structured_record():
         assert data["status"] == "denied"
         assert data["category"] == "authorization"
         assert data["permission_category"] == "write"
-        assert data["execution_mode"] == "standard"
+        assert data["execution_mode"] == "ask-first"
         assert data["permission_decision"] == "ask"
-        assert data["reason_code"] == "permission_required"
-        assert data["required_allow"] == "write"
+        assert data["reason_code"] == "security_approval_required"
+        assert data["required_allow"] == "security"
         assert data["duration"] == 0.25
         assert data["attempts"] == 1
         assert "abcdefghijklmnopqrstuvwxyz" not in data["input_summary"]
@@ -1624,25 +1235,31 @@ async def test_executor_writes_decision_and_result_audit_without_handler_duplica
 @pytest.mark.asyncio
 async def test_executor_writes_result_audit_for_denied_precheck_and_unknown_tools(tmp_path: Path):
     import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.execution import ExecutionPolicy
+    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from personal_agent.security.session import SecurityStateStore
     from personal_agent.tools.audit import set_audit_path
     from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.sandbox import init_sandbox
 
     audit_path = tmp_path / "audit.log"
     set_audit_path(audit_path)
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
 
     agent = MockAgent()
-    agent._execution_policy = ExecutionPolicy(
-        mode="standard",
-        permissions={"default": "allow", "background": "ask"},
-    )
+    agent._security_context = SecurityStateStore(SimpleNamespace(
+        execution_mode="ask-first",
+        sandbox_roots=[tmp_path],
+        permission_grant_ttl_minutes=60,
+        tool_approval_config={},
+    )).context("audit-denied")
 
     precheck = await execute_tool_call_result(
-        {"id": "p0", "name": "process_start", "input": {"command": "rm -rf /"}},
+        {"id": "p0", "name": "process_start", "input": {"command": "rm -rf /", "cwd": str(tmp_path)}},
         agent=agent,
     )
     denied = await execute_tool_call_result(
-        {"id": "p1", "name": "process_start", "input": {"command": "python -c \"print(1)\""}},
+        {"id": "p1", "name": "process_start", "input": {"command": "python -c \"print(1)\"", "cwd": str(tmp_path)}},
         agent=agent,
     )
     unknown = await execute_tool_call_result({"id": "bad", "name": "missing_demo", "input": {}})
@@ -1651,11 +1268,11 @@ async def test_executor_writes_result_audit_for_denied_precheck_and_unknown_tool
     assert precheck.status == "denied"
     assert denied.status == "denied"
     assert denied.guard_stage == "permission"
-    assert denied.reason_code == "permission_required"
+    assert denied.reason_code == "security_approval_required"
     assert denied.permission_category == "background"
     assert denied.permission_decision == "ask"
-    assert denied.required_allow == "background"
-    assert denied.execution_mode == "standard"
+    assert denied.required_allow == "security"
+    assert denied.execution_mode == "ask-first"
     assert unknown.status == "error"
     assert [event["event"] for event in events] == [
         "tool_decision",
@@ -1671,8 +1288,8 @@ async def test_executor_writes_result_audit_for_denied_precheck_and_unknown_tool
     assert events[1]["reason_code"] == "hard_blacklist"
     assert events[3]["tool"] == "process_start"
     assert events[3]["status"] == "denied"
-    assert events[3]["reason_code"] == "permission_required"
-    assert events[3]["required_allow"] == "background"
+    assert events[3]["reason_code"] == "security_approval_required"
+    assert events[3]["required_allow"] == "security"
     assert events[5]["tool"] == "missing_demo"
     assert events[5]["status"] == "error"
     assert events[5]["category"] == "unknown_tool"
@@ -1746,7 +1363,7 @@ def test_bash_hard_blacklist_catastrophic():
     """Hard blacklist blocks catastrophic commands unconditionally."""
     from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
 
-    # These must ALWAYS be blocked (even with /allow bash)
+    # These must ALWAYS be blocked, regardless of tool approval.
     catastrophic = [
         "rm -rf /",
         "rm -rf /*",
