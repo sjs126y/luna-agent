@@ -28,6 +28,7 @@ from personal_agent.plugins.core.models import (
     PluginManifest,
     PluginStatus,
 )
+from personal_agent.hooks import HookEvent, HookManager, HookSource
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,13 @@ class PluginManager:
         plugin_dirs: Iterable[Path] | None = None,
         state_path: Path | None = None,
         include_builtin: bool = True,
+        hook_manager: HookManager | None = None,
     ) -> None:
         self.settings = settings
         self._plugins: dict[str, LoadedPlugin] = {}
         self._hooks: dict[str, list[HookRegistration]] = {}
         self._commands: dict[str, CommandEntry] = {}
+        self.hook_manager = hook_manager or HookManager()
         self.mcp_server_registry = MCPServerRegistry()
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
@@ -136,6 +139,7 @@ class PluginManager:
                 self._record_registry_delta(plugin, before["names"], after["names"])
             plugin.status = PluginStatus.LOADED
         except Exception as exc:
+            self.hook_manager.unregister_owner(plugin.key)
             self._restore_registration_snapshot(before)
             self._clear_plugin_registrations(plugin)
             plugin.module = None
@@ -173,6 +177,7 @@ class PluginManager:
         plugin = self._plugins[key]
         self._remove_plugin_commands(key)
         self._remove_plugin_hooks(key)
+        self.hook_manager.unregister_owner(key)
 
         from personal_agent.platforms.core import platform_registry
         from personal_agent.skills.registry import skill_registry
@@ -230,6 +235,28 @@ class PluginManager:
         reg = HookRegistration(plugin_key=plugin_key, name=name, callback=callback, priority=priority)
         self._hooks.setdefault(name, []).append(reg)
         self._hooks[name].sort(key=lambda item: item.priority)
+
+    def register_event_hook(
+        self,
+        plugin_key: str,
+        event: HookEvent | str,
+        callback,
+        *,
+        name: str = "",
+        matcher: str = "*",
+        priority: int = 100,
+        timeout_seconds: float | None = None,
+    ):
+        return self.hook_manager.register(
+            owner=plugin_key,
+            source=HookSource.PLUGIN,
+            event=event,
+            callback=callback,
+            name=name,
+            matcher=matcher,
+            priority=priority,
+            timeout_seconds=timeout_seconds,
+        )
 
     async def invoke_hook(self, name: str, *args, **kwargs) -> Any:
         result = None

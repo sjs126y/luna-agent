@@ -32,6 +32,7 @@ class Gateway:
         memory_manager,
         system_prompt_template: str = "",
         plugin_manager=None,
+        hook_manager=None,
         conversation_service: ConversationService | None = None,
         memory_review_service: MemoryReviewService | None = None,
     ) -> None:
@@ -47,6 +48,7 @@ class Gateway:
             conversation_service = ConversationService(
                 settings=config,
                 plugin_manager=plugin_manager,
+                hook_manager=hook_manager,
                 session_store=session_store,
                 compression_chain=compression_chain,
                 memory_manager=memory_manager,
@@ -74,6 +76,7 @@ class Gateway:
         self._cron_scheduler = None
         self.hooks = Hooks()
         self.plugin_manager = plugin_manager
+        self.hook_manager = hook_manager or getattr(plugin_manager, "hook_manager", None)
         self._shutdown_event = asyncio.Event()
         self._mcp_manager = None  # set by main.py after MCPManager.start()
         self._started = False

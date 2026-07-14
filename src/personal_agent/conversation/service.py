@@ -44,6 +44,7 @@ class ConversationService:
         *,
         settings,
         plugin_manager,
+        hook_manager=None,
         session_store,
         compression_chain,
         memory_manager,
@@ -54,6 +55,7 @@ class ConversationService:
     ) -> None:
         self.settings = settings
         self.plugin_manager = plugin_manager
+        self.hook_manager = hook_manager or getattr(plugin_manager, "hook_manager", None)
         self.session_store = session_store
         self.compression_chain = compression_chain
         self.memory_manager = memory_manager

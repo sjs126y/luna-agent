@@ -14,6 +14,7 @@ from personal_agent.gateway.compression_chain import CompressionChain
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.memory.manager import MemoryManager
 from personal_agent.memory.review import MemoryReviewService
+from personal_agent.hooks import HookManager
 from personal_agent.plugins.core.manager import PluginManager
 from personal_agent.tools.audit import set_audit_path
 from personal_agent.tools.sandbox import init_sandbox
@@ -165,6 +166,7 @@ def boot_report_from_exception(exc: BaseException) -> BootReport | None:
 @dataclass
 class AppRuntime:
     settings: Settings
+    hook_manager: HookManager
     plugin_manager: PluginManager
     db: Database
     compression_chain: CompressionChain
@@ -192,6 +194,7 @@ class AppRuntime:
             self.memory_manager,
             system_prompt_template=system_prompt_template,
             plugin_manager=self.plugin_manager,
+            hook_manager=self.hook_manager,
             conversation_service=self.conversation_service,
             memory_review_service=self.memory_review_service,
         )
@@ -261,6 +264,7 @@ class AppRuntime:
             "query": query_health,
             "execution": _execution_health_snapshot(self.settings),
             "plugins": len(self.plugin_manager.list_plugins()),
+            "hooks": self.hook_manager.health_snapshot(),
             "cached_agents": len(self.conversation_service.agent_cache),
             "closed": self.closed,
         }
@@ -282,8 +286,9 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             data_dir = settings.agent_data_dir
             data_dir.mkdir(parents=True, exist_ok=True)
 
+        hook_manager = HookManager()
         with boot_report.step("plugins.discover"):
-            plugin_manager = PluginManager(settings)
+            plugin_manager = PluginManager(settings, hook_manager=hook_manager)
             plugin_manager.discover()
         with boot_report.step("plugins.load_enabled"):
             plugin_manager.load_enabled()
@@ -336,6 +341,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             conversation_service = ConversationService(
                 settings=settings,
                 plugin_manager=plugin_manager,
+                hook_manager=hook_manager,
                 session_store=session_store,
                 compression_chain=compression_chain,
                 memory_manager=memory_manager,
@@ -345,6 +351,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         with boot_report.step("runtime"):
             return AppRuntime(
                 settings=settings,
+                hook_manager=hook_manager,
                 plugin_manager=plugin_manager,
                 db=db,
                 compression_chain=compression_chain,

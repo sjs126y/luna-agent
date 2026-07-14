@@ -1035,7 +1035,7 @@ def test_wechat_plugin_registers_login_hook(tmp_path):
     plugin = manager.load_plugin("platforms/wechat")
 
     assert plugin.status == PluginStatus.LOADED
-    assert "wechat_qr_login:10" in plugin.hooks_registered
+    assert "legacy:wechat_qr_login:10" in plugin.hooks_registered
     assert "wechat_qr_login" in manager.hooks
 
 
@@ -1066,3 +1066,85 @@ async def test_hook_priority_and_fail_open(tmp_path):
 
     assert await manager.invoke_hook("hook", "input") == "second-result"
     assert order == ["first", "fail", "second"]
+
+
+@pytest.mark.asyncio
+async def test_typed_hook_registration_uses_shared_hook_manager(tmp_path):
+    from personal_agent.hooks import HookEnvelope, HookEvent, HookScope, PreToolUseOutcome
+
+    manager = PluginManager(
+        _settings(tmp_path, tmp_path / "plugins"),
+        plugin_dirs=[],
+        state_path=tmp_path / "state.json",
+    )
+
+    async def protect(event):
+        return PreToolUseOutcome.block("protected")
+
+    manager.register_event_hook(
+        "plugin/demo",
+        HookEvent.PRE_TOOL_USE,
+        protect,
+        matcher="^write$",
+    )
+
+    outcome = await manager.hook_manager.dispatch(HookEnvelope(
+        event_name=HookEvent.PRE_TOOL_USE,
+        scope=HookScope.TURN,
+        payload={"tool_name": "write"},
+    ))
+
+    assert outcome.blocked is True
+    assert outcome.reason == "protected"
+    manager.hook_manager.unregister_owner("plugin/demo")
+
+
+def test_plugin_typed_hook_is_removed_when_plugin_is_disabled(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "typed-hook"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/typed-hook
+name: Typed Hook
+version: 1.0.0
+entrypoint: typed_hook:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "typed_hook.py").write_text(
+        """
+from personal_agent.hooks import HookEvent, PreToolUseOutcome
+
+async def protect(event):
+    return PreToolUseOutcome.block("protected")
+
+def register(ctx):
+    ctx.register_hook(
+        HookEvent.PRE_TOOL_USE,
+        protect,
+        name="protect",
+        matcher="^write$",
+        priority=10,
+    )
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        _settings(tmp_path, plugins_dir),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+    plugin = manager._plugins["user/typed-hook"]
+
+    assert plugin.status == PluginStatus.LOADED
+    assert plugin.hooks_registered == ["PreToolUse:protect:10"]
+    assert len(manager.hook_manager.registrations()) == 1
+
+    manager.disable_plugin("user/typed-hook")
+
+    assert manager.hook_manager.registrations() == []
