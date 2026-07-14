@@ -27,6 +27,7 @@ def test_config_loader_uses_defaults(tmp_path):
     assert snapshot.attr_values["multimodal_ocr_language"] == "auto"
     assert snapshot.attr_values["llm_context_window"] == 0
     assert snapshot.attr_values["llm_reasoning_effort"] == ""
+    assert snapshot.attr_values["sandbox_read_roots"] == []
     assert snapshot.sources["LLM_PROVIDER"] == "default"
     assert snapshot.source_counts["default"] == snapshot.field_count
 
@@ -70,6 +71,7 @@ multimodal:
   ocr_language: zh
 sandbox:
   roots: ./data,./workspace
+  read_roots: ./home
   bash_allow_network: yes
 plugins:
   dirs: ./plugins,./more-plugins
@@ -106,6 +108,7 @@ plugins:
     assert snapshot.attr_values["multimodal_ocr_timeout_seconds"] == 5
     assert snapshot.attr_values["multimodal_ocr_language"] == "zh"
     assert snapshot.attr_values["sandbox_roots"] == [Path("./data"), Path("./workspace")]
+    assert snapshot.attr_values["sandbox_read_roots"] == [Path("./home")]
     assert snapshot.attr_values["bash_allow_network"] is True
     assert snapshot.attr_values["plugins_dirs"] == [Path("./plugins"), Path("./more-plugins")]
     assert snapshot.attr_values["plugins_config"] == {

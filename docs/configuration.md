@@ -123,6 +123,7 @@ multimodal:
 sandbox:
   roots:
     - ./data
+  read_roots: []
   blocked:
     - "**/.env"
     - "**/.git/**"
@@ -198,6 +199,10 @@ mcp:
 GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 ```
 
+仓库内的 `integrations/codex-bridge` 插件会注册官方 `codex mcp-server`。启用后，Lumora 可调用 `mcp__codex__codex` 创建独立 Codex 线程，并使用 `mcp__codex__codex-reply` 继续该线程。插件的 `PreToolUse` Hook 会固定 `cwd`、sandbox 和内部 approval policy，丢弃调用方传入的危险扩权参数；外层 MCP 工具审批仍按 `permissions.tool_approval` 执行。
+
+Codex 需要可写的状态目录。插件首次加载时只将 `source_codex_home/auth.json` 复制到 `runtime_codex_home`，权限设为 `0600`；后续数据库、会话和 token 更新均留在该隔离目录。默认建议把它放在已忽略的 `data/codex-bridge/`，不要提交其中内容。官方服务的实验性 `codex/event` 通知由插件内 stdio 适配器过滤，标准 MCP 请求、响应和错误保持原样。
+
 ## 执行模式与权限
 
 `execution.mode` 是默认执行模式，启动时生效；运行中可以用 `/mode` 临时切换当前会话的执行模式。可选值：
@@ -206,10 +211,12 @@ GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 | --- | --- | --- |
 | `read-only` | Read Only | sandbox roots 内只读；扩权请求直接拒绝 |
 | `ask-first` | Ask First | sandbox roots 内只读；写入、网络及需审批工具按具体资源确认 |
-| `local-auto` | Local Auto | sandbox roots 内可读写；越界资源和需审批工具按需确认 |
-| `full-auto` | Full Auto | sandbox roots 内可读写并允许网络；仍受 blocked path、危险命令和载荷上限等硬边界约束 |
+| `local-auto` | Local Auto | `sandbox.roots` 内可读写，`sandbox.read_roots` 内只读；其他越界资源按需确认 |
+| `full-auto` | Full Auto | `sandbox.roots` 内可读写、`sandbox.read_roots` 内只读并允许网络；仍受 blocked path 等硬边界约束 |
 
 旧 Mode 名称和 `execution.policy` 已删除。配置必须使用上表稳定 ID；未知值会在配置检查阶段报错。
+
+`sandbox.read_roots` 只扩展原生文件读取工具（read/grep/glob 等）的范围，不扩展 file_write/file_edit、Bash 或 MCP 的可写边界。`sandbox.blocked` 始终优先；路径同时位于只读根目录和更具体的可写根目录时，更具体的可写规则生效。
 
 工具审批使用 `permissions.tool_approval` 覆盖：
 

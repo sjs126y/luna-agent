@@ -1282,6 +1282,10 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         {"path": str(root), "exists": Path(root).exists()}
         for root in settings.sandbox_roots
     ]
+    sandbox_read_roots = [
+        {"path": str(root), "exists": Path(root).exists()}
+        for root in getattr(settings, "sandbox_read_roots", [])
+    ]
     mcp_servers = []
     for server in settings.mcp_servers:
         command = str(server.get("command", ""))
@@ -1329,6 +1333,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "tools": tool_registry.catalog_summary(settings.enabled_toolsets),
         "sandbox": {
             "roots": sandbox_roots,
+            "read_roots": sandbox_read_roots,
             "blocked_count": len(settings.sandbox_blocked),
             "bash_work_dir": str(settings.bash_work_dir),
             "process": process_sandbox_snapshot(settings.process_sandbox_backend),
@@ -1396,6 +1401,11 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
         "tools": _empty_tool_summary(),
         "sandbox": {
             "roots": sandbox_roots,
+            "read_roots": [
+                {"path": item["path"], "exists": item["exists"]}
+                for item in config_report.get("directories", [])
+                if item.get("kind") == "sandbox_read_root"
+            ],
             "blocked_count": 0,
             "bash_work_dir": _config_directory(config_report, "bash_work_dir", "./data"),
         },

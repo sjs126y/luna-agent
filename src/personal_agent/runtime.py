@@ -296,7 +296,11 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             await plugin_manager.invoke_hook("configure", settings=settings)
 
         with boot_report.step("sandbox"):
-            init_sandbox(settings.sandbox_roots, settings.sandbox_blocked)
+            init_sandbox(
+                settings.sandbox_roots,
+                settings.sandbox_blocked,
+                read_roots=getattr(settings, "sandbox_read_roots", []),
+            )
         if settings.audit_enabled:
             with boot_report.step("audit", str(data_dir / "audit.log")):
                 set_audit_path(data_dir / "audit.log")

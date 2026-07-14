@@ -8,6 +8,7 @@ def _settings(tmp_path: Path, *, mode: str = "ask-first"):
     return SimpleNamespace(
         execution_mode=mode,
         sandbox_roots=[tmp_path],
+        sandbox_read_roots=[],
         permission_grant_ttl_minutes=30,
     )
 
@@ -36,6 +37,33 @@ def test_permission_profiles_enforce_actual_roots(tmp_path):
     assert local_auto.profile.allows(inside) is True
     assert local_auto.profile.allows(outside) is False
     assert ask_first.profile.network_enabled is False
+
+
+def test_local_auto_supports_additional_read_only_roots(tmp_path):
+    from personal_agent.security.models import ResourceRequirement
+    from personal_agent.security.session import SecurityStateStore
+
+    home = tmp_path / "home"
+    workspace = home / "projects" / "agent"
+    outside = tmp_path / "outside"
+    workspace.mkdir(parents=True)
+    outside.mkdir()
+    settings = _settings(workspace, mode="local-auto")
+    settings.sandbox_read_roots = [home]
+    context = SecurityStateStore(settings).context("wechat:user")
+
+    assert context.profile.allows(
+        ResourceRequirement("filesystem", str(home / "notes.txt"), "read")
+    )
+    assert not context.profile.allows(
+        ResourceRequirement("filesystem", str(home / "notes.txt"), "write")
+    )
+    assert context.profile.allows(
+        ResourceRequirement("filesystem", str(workspace / "code.py"), "write")
+    )
+    assert not context.profile.allows(
+        ResourceRequirement("filesystem", str(outside / "file.txt"), "read")
+    )
 
 
 def test_session_grants_use_one_ttl_and_mode_switch_clears(tmp_path):

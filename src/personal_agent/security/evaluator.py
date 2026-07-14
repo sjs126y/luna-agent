@@ -25,8 +25,14 @@ def isolated_security_context(mode_id: str = "read-only") -> SecurityContext:
     from personal_agent.security.modes import mode_preset
 
     preset = mode_preset(mode_id)
-    access = "read" if preset.profile == "read-only" else "write"
-    rules = tuple(FileSystemRule(path=root, access=access) for root in get_sandbox().roots)
+    sandbox = get_sandbox()
+    if preset.profile == "read-only":
+        rules = tuple(FileSystemRule(path=root, access="read") for root in sandbox.roots)
+    else:
+        rules = (
+            *(FileSystemRule(path=root, access="write") for root in sandbox.roots),
+            *(FileSystemRule(path=root, access="read") for root in sandbox.read_roots),
+        )
     return SecurityContext(
         session_key="",
         profile=PermissionProfile(

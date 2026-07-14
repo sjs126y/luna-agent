@@ -34,16 +34,33 @@ def get_sandbox() -> Sandbox:
     return _sandbox
 
 
-def init_sandbox(roots: list[Path], blocked: list[str]) -> Sandbox:
+def init_sandbox(
+    roots: list[Path],
+    blocked: list[str],
+    *,
+    read_roots: list[Path] | None = None,
+) -> Sandbox:
     global _sandbox
-    _sandbox = Sandbox(roots, blocked)
-    logger.info("Sandbox: %d roots, %d blocked patterns", len(roots), len(blocked))
+    _sandbox = Sandbox(roots, blocked, read_roots=read_roots)
+    logger.info(
+        "Sandbox: %d writable roots, %d read-only roots, %d blocked patterns",
+        len(roots),
+        len(read_roots or []),
+        len(blocked),
+    )
     return _sandbox
 
 
 class Sandbox:
-    def __init__(self, roots: list[Path], blocked: list[str]) -> None:
+    def __init__(
+        self,
+        roots: list[Path],
+        blocked: list[str],
+        *,
+        read_roots: list[Path] | None = None,
+    ) -> None:
         self.roots = [r.resolve() for r in roots]
+        self.read_roots = [r.resolve() for r in (read_roots or [])]
         self.blocked = blocked
 
     # ── File tool API ───────────────────────────────
@@ -57,7 +74,7 @@ class Sandbox:
         p = Path(path)
         if p.is_absolute():
             return p.resolve()
-        for root in self.roots:
+        for root in [*self.roots, *self.read_roots]:
             full = (root / path).resolve()
             if full.exists():
                 return full
@@ -82,9 +99,10 @@ class Sandbox:
         if security_evaluated:
             return security_error
 
-        # 2. Must be under at least one root (if any configured)
-        if self.roots:
-            for root in self.roots:
+        # 2. Read-only roots never expand write access.
+        allowed_roots = self.roots if access == "write" else [*self.roots, *self.read_roots]
+        if allowed_roots:
+            for root in allowed_roots:
                 rs = str(root).replace("\\", "/")
                 if ps == rs or ps.startswith(rs + "/"):
                     return None  # allowed

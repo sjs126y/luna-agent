@@ -494,7 +494,8 @@ def _cron_fields() -> tuple[ConfigField, ...]:
 
 def _sandbox_fields() -> tuple[ConfigField, ...]:
     return (
-        _yaml_field("sandbox.roots", "sandbox_roots", ["./data"], "list[path]", "sandbox", "Sandbox root directories.", allow_csv=True),
+        _yaml_field("sandbox.roots", "sandbox_roots", ["./data"], "list[path]", "sandbox", "Writable sandbox root directories.", allow_csv=True),
+        _yaml_field("sandbox.read_roots", "sandbox_read_roots", [], "list[path]", "sandbox", "Additional read-only roots for Local Auto and Full Auto.", allow_csv=True),
         _yaml_field("sandbox.blocked", "sandbox_blocked", [], "list", "sandbox", "Blocked sandbox path patterns."),
         _yaml_field("sandbox.bash_work_dir", "bash_work_dir", "./data", "path", "sandbox", "Bash working directory."),
         _yaml_field("sandbox.bash_restrict_paths", "bash_restrict_paths", True, "bool", "sandbox", "Restrict bash paths."),

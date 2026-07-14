@@ -2,6 +2,16 @@
 
 更新时间：2026-07-14 CST
 
+## 2026-07-14：Local Auto 只读根与 Codex Bridge 插件
+
+- 新增 `sandbox.read_roots`：Local Auto / Full Auto 可通过原生 read/grep/glob 读取额外目录，但 file_write/file_edit、Bash 和 MCP 不获得对应写入边界；blocked path 始终优先。
+- 本机配置已将 `/home/sujinsheng` 设为只读根，当前项目仍由更具体的 `sandbox.roots` 保持可写；实测 home read=true、home write=false、workspace write=true、`/etc` read=false。
+- 新增首个本地通用插件 `integrations/codex-bridge`：插件同时注册官方 `codex mcp-server` 与精确匹配的 `PreToolUse` Hook，核心 MCP/工具管道没有 Codex 特例。
+- Hook 固定 Codex 新线程的项目 cwd、`workspace-write` sandbox 和 `never` 内层审批，移除调用方传入的扩权 config；Lumora 外层 MCP 工具审批仍保留。`codex-reply` 可继续插件隔离目录中的线程。
+- Codex Bridge 使用 `data/codex-bridge/` 保存独立状态，首次加载只复制现有 `auth.json` 并设为 `0600`；插件内 stdio 适配器仅过滤 Python MCP SDK 不认识的实验性 `codex/event`，标准响应和错误保持原样。
+- 真实握手通过：`codex-mcp-server 0.144.3`，发现 `codex` / `codex-reply`，stderr 为空。当前 Codex 执行沙箱访问 `api.openai.com` 时流断连，最终联网调用留给真实 Gateway 环境复测。
+- 聚焦与扩展回归：`158 passed`；`compileall` 与 `git diff --check` 通过。全量套件在正在运行的 Gateway 占用真实 `data/state.db` 时停于 doctor/Runtime SQLite 初始化，未将其误报为全量通过。
+
 ## 2026-07-14：Typed Hook Contract v2
 
 - 新增独立 `personal_agent.hooks.HookManager`，由 AppRuntime 持有；PluginManager 只负责注册转发、owner 归属和插件卸载清理。
