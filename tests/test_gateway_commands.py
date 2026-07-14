@@ -157,6 +157,83 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_gateway_message_hook_runs_after_auth_and_rewrites_input(gateway, monkeypatch):
+    from personal_agent.hooks import GatewayMessageOutcome, HookEvent, HookManager
+
+    hook_manager = HookManager()
+    gateway.hook_manager = hook_manager
+    captured = {}
+    auth_calls = []
+
+    async def rewrite(event):
+        assert auth_calls == [("u1", "hello")]
+        return GatewayMessageOutcome.replace_message(
+            text="rewritten",
+            metadata={"hooked": True},
+        )
+
+    async def run_turn_input(session_key, user_input):
+        captured["text"] = user_input.text
+        captured["metadata"] = user_input.metadata
+        return ConversationTurnResult(
+            final_response="ok",
+            messages=[],
+            completed=True,
+            context_overflow=False,
+            was_compressed=False,
+            should_review_memory=False,
+            raw={},
+        )
+
+    hook_manager.register(
+        owner="test",
+        event=HookEvent.GATEWAY_MESSAGE_RECEIVED,
+        callback=rewrite,
+        matcher="telegram",
+    )
+    monkeypatch.setattr(
+        gateway._auth_manager,
+        "check",
+        lambda user_id, text: auth_calls.append((user_id, text)) or (True, None),
+    )
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    result = await gateway._handle_message_inner(_event("hello"))
+
+    assert result == "ok"
+    assert captured == {"text": "rewritten", "metadata": {"hooked": True}}
+
+
+@pytest.mark.asyncio
+async def test_gateway_message_hook_can_block_before_agent(gateway, monkeypatch):
+    from personal_agent.hooks import GatewayMessageOutcome, HookEvent, HookManager
+
+    hook_manager = HookManager()
+    gateway.hook_manager = hook_manager
+    called = False
+
+    async def block(event):
+        return GatewayMessageOutcome.block("message rejected")
+
+    async def run_turn_input(session_key, user_input):
+        nonlocal called
+        called = True
+
+    hook_manager.register(
+        owner="test",
+        event=HookEvent.GATEWAY_MESSAGE_RECEIVED,
+        callback=block,
+    )
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+
+    result = await gateway._handle_message_inner(_event("hello"))
+
+    assert result == "message rejected"
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_gateway_prepares_inbound_attachments_after_auth(gateway, monkeypatch):
     adapter = FakeAdapter(gateway.config, gateway.db)
     adapter.mark_connected(name="telegram")
@@ -390,6 +467,84 @@ async def test_gateway_before_send_does_not_spawn_separate_memory_review(gateway
     result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
 
     assert result == "base!"
+
+
+@pytest.mark.asyncio
+async def test_gateway_outbound_hooks_wrap_actual_platform_send(gateway):
+    from personal_agent.hooks import GatewayBeforeSendOutcome, HookEvent, HookManager
+
+    hook_manager = HookManager()
+    gateway.hook_manager = hook_manager
+    adapter = RecordingAdapter(gateway.config, gateway.db)
+    adapter.mark_connected(name="telegram")
+    adapter.set_outbound_handlers(
+        before_send=gateway._before_platform_send,
+        after_send=gateway._after_platform_send,
+    )
+    after_payloads = []
+
+    async def rewrite(event):
+        return GatewayBeforeSendOutcome.replace_text(event.payload["text"] + "!")
+
+    async def observe(event):
+        after_payloads.append(dict(event.payload))
+
+    hook_manager.register(
+        owner="test",
+        event=HookEvent.GATEWAY_BEFORE_SEND,
+        callback=rewrite,
+        matcher="telegram",
+    )
+    hook_manager.register(
+        owner="test",
+        event=HookEvent.GATEWAY_AFTER_SEND,
+        callback=observe,
+        matcher="telegram",
+    )
+
+    sent = await adapter._send_gateway_response(_event("hello").source, "base")
+
+    assert sent is True
+    assert adapter.sent_contents == ["base!"]
+    assert after_payloads == [{"text": "base!", "success": True, "error": ""}]
+
+
+@pytest.mark.asyncio
+async def test_gateway_lifecycle_hooks_observe_start_connect_disconnect_stop(gateway, monkeypatch):
+    from personal_agent.hooks import HookEvent, HookManager
+
+    hook_manager = HookManager()
+    gateway.hook_manager = hook_manager
+    seen = []
+
+    async def observe(event):
+        seen.append((event.event_name.value, event.source.platform if event.source else ""))
+
+    for event_name in (
+        HookEvent.GATEWAY_START,
+        HookEvent.PLATFORM_CONNECTED,
+        HookEvent.GATEWAY_STOP,
+        HookEvent.PLATFORM_DISCONNECTED,
+    ):
+        hook_manager.register(owner="test", event=event_name, callback=observe)
+
+    monkeypatch.setattr(platform_registry, "_entries", {
+        "demo": PlatformEntry(
+            "demo",
+            lambda config, db: FakeAdapter(config, db),
+            lambda config: True,
+        ),
+    })
+
+    await gateway.start()
+    await gateway.stop()
+
+    assert seen == [
+        ("PlatformConnected", "demo"),
+        ("GatewayStart", ""),
+        ("GatewayStop", ""),
+        ("PlatformDisconnected", "demo"),
+    ]
 
 
 @pytest.mark.asyncio
