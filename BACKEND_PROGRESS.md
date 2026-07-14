@@ -10,7 +10,7 @@
 - Hook 附加上下文保持 turn 内临时状态，不写入 transcript；工具参数改写后重新执行统一 guard/permission 评估，真实工具结果和审计不会被 PostToolUse 覆盖。
 - 删除 Agent/Gateway 旧运行时 Hooks、LLM request/response 改写链和嵌套工具 hooks context；平台私有解析回调迁移到 `AdapterHooks`。`configure`、`on_agent_created`、`on_session_selected`、`wechat_qr_login` 等专用生命周期回调保留。
 - 阶段提交：`3a843e7`、`d5d1d2f`、`2865884`、`1af786f`、`0d69c4b`、`97ed678`。
-- 已通过 Hook/Agent/Tool/Security/Plugin/Platform Core 聚焦回归 `158 passed`；Gateway/SQLite 回归在当前执行环境受 aiosqlite 工作线程阻塞，需在环境恢复后补跑。平台适配器另有 1 项 DNS 依赖测试因受限网络失败。
+- 使用仅位于 `/tmp` 的事件循环心跳辅助完成全量回归：`900 passed, 4 failed`。失败项均与本次 Hook 改造无关：2 项因受限网络无法解析 `example.com`，2 项为前端线仍期待旧 `/allow` 和旧 mode 刷新方式的 TUI 断言。
 
 ## 2026-07-14：补充 Time 与 Context7 MCP
 

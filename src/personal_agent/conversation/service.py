@@ -194,7 +194,6 @@ class ConversationService:
                 "stop",
                 final,
                 reason="hook",
-                message=final,
                 stopped_tools=0,
                 stopped_agents=0,
             )
