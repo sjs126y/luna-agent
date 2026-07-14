@@ -2,6 +2,16 @@
 
 更新时间：2026-07-14 CST
 
+## 2026-07-14：Typed Hook Contract v2
+
+- 新增独立 `personal_agent.hooks.HookManager`，由 AppRuntime 持有；PluginManager 只负责注册转发、owner 归属和插件卸载清理。
+- Gateway、Conversation、压缩、Stop、工具 proposal、权限请求和工具结果已接入事件专属 outcome；入站消息 Hook 固定在鉴权后，出站 Hook 包围平台真实发送。
+- Hook matcher、优先级、超时、失败策略和健康诊断已统一；PreToolUse fail-closed，PermissionRequest 失败 abstain，其余非安全事件默认 fail-open。
+- Hook 附加上下文保持 turn 内临时状态，不写入 transcript；工具参数改写后重新执行统一 guard/permission 评估，真实工具结果和审计不会被 PostToolUse 覆盖。
+- 删除 Agent/Gateway 旧运行时 Hooks、LLM request/response 改写链和嵌套工具 hooks context；平台私有解析回调迁移到 `AdapterHooks`。`configure`、`on_agent_created`、`on_session_selected`、`wechat_qr_login` 等专用生命周期回调保留。
+- 阶段提交：`3a843e7`、`d5d1d2f`、`2865884`、`1af786f`、`0d69c4b`、`97ed678`。
+- 已通过 Hook/Agent/Tool/Security/Plugin/Platform Core 聚焦回归 `158 passed`；Gateway/SQLite 回归在当前执行环境受 aiosqlite 工作线程阻塞，需在环境恢复后补跑。平台适配器另有 1 项 DNS 依赖测试因受限网络失败。
+
 ## 2026-07-14：补充 Time 与 Context7 MCP
 
 - `config.yaml` 新增官方 `mcp-server-time`，固定本地时区为 `Asia/Shanghai`，在无网络的 Bubblewrap stdio 环境运行。

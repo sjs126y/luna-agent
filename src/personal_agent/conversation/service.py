@@ -191,10 +191,12 @@ class ConversationService:
             final = str(exc) or "本轮已被钩子停止。"
             await emit_event(
                 recorder,
-                "turn_stopped",
+                "stop",
                 final,
-                category="hook",
-                recoverable=False,
+                reason="hook",
+                message=final,
+                stopped_tools=0,
+                stopped_agents=0,
             )
             result = {
                 "final_response": final,
@@ -659,11 +661,11 @@ class ConversationService:
                 payload={"source": start_source, "session_id": session_id},
                 **common,
             ))
-            self._hook_started_session_ids.add(session_id)
             if outcome.additional_context.strip():
                 contexts.append(f"[SessionStart hook context]\n{outcome.additional_context.strip()}")
             if outcome.stop:
                 raise _HookTurnStopped(outcome.reason or "session start blocked by hook")
+            self._hook_started_session_ids.add(session_id)
 
         prompt_outcome = await self.hook_manager.dispatch(HookEnvelope(
             event_name=HookEvent.USER_PROMPT_SUBMIT,

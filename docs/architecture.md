@@ -147,7 +147,7 @@ Gateway 负责：
 - 从 transport registry 获取 transport。
 - 创建 compressor。
 - 调用 `init_agent()`。
-- 将 plugin hooks 挂到 agent。
+- 将共享 `HookManager` 注入 agent；插件生命周期回调仍由 PluginManager 单独调用。
 - 初始化 workflow engine 的 LLM call 和工具列表。
 
 `ConversationService` 会按 `session_key` 缓存 agent，避免每一轮都重新创建。
@@ -160,7 +160,7 @@ PluginManager 负责插件生命周期：
 - load enabled。
 - configure。
 - list plugins。
-- invoke hooks。
+- 转发正式 Hook 注册并清理 owner；调用少量宿主生命周期回调。
 
 插件可以提供：
 
@@ -169,7 +169,7 @@ PluginManager 负责插件生命周期：
 - memory providers。
 - workflows。
 - skills。
-- LLM / hooks。
+- LLM transport 与正式生命周期 Hook。
 
 ## 会话层
 
@@ -447,7 +447,7 @@ LLM 层负责“不同 provider 和 wire protocol 怎么统一接入”。
 - cache strategy。
 - usage field mapping。
 - multimodal support。
-- request / response hooks。
+- 请求能力和 wire protocol 描述；不开放 LLM request/response 改写 Hook。
 
 ProviderProfile 不直接发 HTTP，它给 transport 提供能力描述。
 
@@ -779,6 +779,7 @@ Doctor 和 health snapshot 用于启动诊断和运行排错。
 - sandbox。
 - cache/context usage。
 - activity。
+- hook registrations、超时、失败和阻止计数。
 
 ## 关键流转
 

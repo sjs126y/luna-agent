@@ -164,6 +164,10 @@ async def test_prompt_hook_can_stop_before_agent_loop(service, monkeypatch):
 
     assert result.status == "stopped"
     assert result.final_response == "prompt rejected by policy"
+    assert any(
+        event.type == "stop" and event.data.get("reason") == "hook"
+        for event in result.events
+    )
     assert called is False
 
 
