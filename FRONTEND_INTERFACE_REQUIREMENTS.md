@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-截至 2026-07-06，前端已接入并消费以下后端能力：
+截至 2026-07-14，前端已接入并消费以下后端能力：
 
 - `tool_decision` / `tool_end` 的确认展示字段：`display_name`, `execution_mode_label`, `risk_level`, `risk_summary`, `default_action`, `available_actions`, `input_summary`, `input_preview`, `affected_paths`, `command_preview`, `url_preview`, `host`, `cwd`, `timeout_seconds`, `method`, `process_label`。
 - `confirm(decision)` 的 allow / deny / always 语义，以及由 `available_actions` 限定可用确认动作。
@@ -18,10 +18,12 @@
 - 静态参数候选：`/mode set <mode>` 和 `/deny all`。
 - 动态参数候选入口：`slash_argument_choices(...)`，当前 provider 为 `tools` 和 `sessions`。
 - Tool Runs 查询入口：`ConversationQueryService` 和 `/tool-runs [recent|summary|show <id>]`，返回 `CommandResult.kind="tool_runs"` 与结构化 payload。
+- Security v4：四档稳定 Mode、`/deny all`、结构化 `/permissions`、精确
+  `tool_grants` / `resource_grants`、`tool_approval_mode` 和 `requested_resources`。
 
-## 待前端适配：Security v4
+## 已完成：Security v4 前端适配
 
-后端已经完成安全兼容层清理，前端/TUI 本轮不修改。前端后续需要按以下契约适配：
+后端安全兼容层清理已经完成，inline TUI 已按以下契约适配：
 
 1. 从 slash 菜单、补全、帮助和本地命令处理移除 `/allow`；类别级预授权已经不存在。
 2. `/deny` 只接受 `/deny all`，用于清空当前 session 的精确工具与资源限时授权。
@@ -29,7 +31,9 @@
 4. `/mode` 的 `CommandResult.kind="mode"` payload 以 `current` / `modes[]` 为入口，每项字段为 `slug`、`label`、`profile`、`approval_policy`。
 5. `/permissions` payload 只依赖 `security`、`tool_grants`、`resource_grants`、`temporary_grant_ttl_seconds` 和 `pending_confirmation`；不要读取旧 `grants`、`turn_grants` 或类别级 `temporary_grants`。
 6. 确认动作仍为 allow / deny / always，但 always 的显示时长必须来自 `temporary_grant_ttl_seconds`，不能硬编码 24 小时。
-7. Doctor 的 execution 摘要字段为 `mode`、`label`、`profile`、`approval_policy`、`filesystem`、`network_enabled`、`tool_approval`、`grant_ttl_seconds`；旧 `policy_mode` 和 permission category 字段已删除。
+7. Doctor 的 execution 摘要字段为 `mode`、`label`、`profile`、`approval_policy`、`filesystem`、`network_enabled`、`tool_approval`、`grant_ttl_seconds`；旧 `policy_mode` 和 permission category 字段已删除。Doctor UI 仍不属于当前 TUI 必做范围。
+
+当前没有因 Security v4 遗留的后端接口需求。
 
 ## Future Desktop App 技术方向
 

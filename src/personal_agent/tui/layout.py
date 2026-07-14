@@ -294,6 +294,8 @@ def _confirm_action_lines(confirm) -> list[str]:
 
 def _confirm_detail_lines(confirm) -> list[str]:
     lines: list[str] = []
+    if confirm.tool_approval_mode:
+        lines.append(_confirm_detail("Approval", confirm.tool_approval_mode))
     if confirm.command_preview:
         lines.append(_confirm_detail("Cmd", confirm.command_preview))
     if confirm.url_preview:
@@ -303,7 +305,15 @@ def _confirm_detail_lines(confirm) -> list[str]:
         lines.append(_confirm_detail("URL", target))
     if confirm.process_label:
         lines.append(_confirm_detail("Process", confirm.process_label))
-    if confirm.affected_paths:
+    if confirm.requested_resources:
+        for resource in confirm.requested_resources[:3]:
+            label = _resource_label(resource.kind)
+            value = " ".join(part for part in (resource.access, resource.resource) if part)
+            lines.append(_confirm_detail(label, value))
+        if len(confirm.requested_resources) > 3:
+            extra = len(confirm.requested_resources) - 3
+            lines.append(_confirm_detail("Resource", f"+{extra} more"))
+    elif confirm.affected_paths:
         paths = ", ".join(confirm.affected_paths[:3])
         if len(confirm.affected_paths) > 3:
             paths += f" +{len(confirm.affected_paths) - 3}"
@@ -311,6 +321,17 @@ def _confirm_detail_lines(confirm) -> list[str]:
     if confirm.input_preview and not lines:
         lines.append(_confirm_detail("Input", confirm.input_preview))
     return lines
+
+
+def _resource_label(kind: str) -> str:
+    value = str(kind or "").lower()
+    if value in {"file", "path", "filesystem", "directory"}:
+        return "Path"
+    if value in {"host", "network", "url"}:
+        return "Host"
+    if value in {"command", "process"}:
+        return "Process"
+    return "Resource"
 
 
 def _confirm_detail(label: str, value: str) -> str:

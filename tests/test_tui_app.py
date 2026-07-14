@@ -346,7 +346,7 @@ async def test_submit_ignores_blank():
 
 
 @pytest.mark.asyncio
-async def test_refresh_mode_updates_status_after_command():
+async def test_refresh_mode_updates_status_after_command(monkeypatch):
     app = _app()
 
     async def print_above(text):
@@ -354,13 +354,30 @@ async def test_refresh_mode_updates_status_after_command():
 
     app._print_above = print_above  # type: ignore[method-assign]
 
-    async def handle_command(text):
-        app.runtime.mode = "Full Auto"
-        return "执行模式已切换: Full Auto"
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/mode set Full Auto"
+        runtime.mode = "Full Auto"
+        return CommandResult.reply(
+            "执行模式已切换: Full Auto",
+            kind="mode",
+            payload={
+                "action": "set",
+                "current": {
+                    "slug": "full-auto",
+                    "label": "Full Auto",
+                    "profile": "trusted",
+                    "approval_policy": "never",
+                },
+                "modes": [],
+            },
+        )
 
-    app.runtime.handle_command = handle_command  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "personal_agent.commands.runtime.handle_slash_command",
+        fake_handle_slash_command,
+    )
     assert app.state.exec_mode == "Ask First"
-    await app._submit("/mode Full Auto")
+    await app._submit("/mode set Full Auto")
     assert app.state.exec_mode == "Full Auto"
 
 
@@ -466,6 +483,33 @@ def test_confirm_prompt_preserves_network_display_fields():
     })
     assert prompt.url_preview == "https://example.test/a"
     assert prompt.host == "example.test"
+
+
+def test_confirm_prompt_consumes_security_v4_resources():
+    app = _app()
+    prompt = app._build_confirm_prompt({
+        "display_name": "Write file",
+        "tool_approval_mode": "prompt",
+        "requested_resources": [
+            {
+                "kind": "path",
+                "resource": "/workspace/src/app.py",
+                "access": "write",
+                "reason": "File will be modified",
+            },
+            {
+                "kind": "host",
+                "resource": "api.example.test",
+                "access": "connect",
+                "reason": "Network request",
+            },
+        ],
+    })
+    assert prompt.tool_approval_mode == "prompt"
+    assert [(item.kind, item.resource, item.access) for item in prompt.requested_resources] == [
+        ("path", "/workspace/src/app.py", "write"),
+        ("host", "api.example.test", "connect"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -797,6 +841,67 @@ async def test_tool_runs_recent_payload_formats_structured_output(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_permissions_payload_formats_security_v4_state(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/permissions"
+        return CommandResult.reply(
+            "backend fallback text",
+            kind="permissions",
+            payload={
+                "execution_mode": "Local Auto",
+                "temporary_grant_ttl_seconds": 6 * 3600,
+                "security": {
+                    "mode_id": "local-auto",
+                    "profile": "workspace",
+                    "approval_policy": "on-request",
+                    "filesystem": [
+                        {"path": "/workspace", "access": "write"},
+                    ],
+                    "network_enabled": False,
+                },
+                "tool_grants": [
+                    {"tool_key": "core:bash", "expires_at_iso": "2026-07-14T12:00:00Z"},
+                ],
+                "resource_grants": [
+                    {
+                        "kind": "path",
+                        "resource": "/workspace/src",
+                        "access": "write",
+                        "expires_at_iso": "2026-07-14T12:00:00Z",
+                    },
+                ],
+                "pending_confirmation": {
+                    "tool_name": "web_fetch",
+                    "display_name": "Fetch URL",
+                },
+            },
+        )
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr(
+        "personal_agent.commands.runtime.handle_slash_command",
+        fake_handle_slash_command,
+    )
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/permissions")
+
+    text = "\n".join(printed)
+    assert "Permissions  Local Auto" in text
+    assert "workspace · approval on-request · network restricted" in text
+    assert "Grant TTL 6h" in text
+    assert "Tool      core:bash" in text
+    assert "Resource  write /workspace/src" in text
+    assert "Pending   Fetch URL" in text
+    assert "backend fallback text" not in text
+
+
+@pytest.mark.asyncio
 async def test_tool_run_detail_payload_sets_expandable_output(monkeypatch):
     app = _app()
     printed: list[str] = []
@@ -816,7 +921,7 @@ async def test_tool_run_detail_payload_sets_expandable_output(monkeypatch):
                     "duration": 0.2,
                     "session_key": "cli:default:local",
                     "turn_id": "turn-1",
-                    "execution_mode": "standard",
+                    "execution_mode": "ask-first",
                     "permission_category": "read",
                     "permission_decision": "allow",
                     "input_summary": '{"path": "README.md"}',
@@ -1046,7 +1151,7 @@ def test_unknown_slash_command_shows_no_matches():
 def test_partial_slash_command_shows_matching_candidates():
     app = _app()
     app.input_area.text = "/a"
-    assert [item.text for item in app.state.slash_items] == ["/allow", "/agents", "/activity"]
+    assert [item.text for item in app.state.slash_items] == ["/agents", "/activity"]
 
 
 def test_parent_slash_command_shows_child_candidates():

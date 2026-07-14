@@ -32,7 +32,13 @@ from personal_agent.tui.renderer import (
     format_expand_block,
     tool_summary_from_mapping,
 )
-from personal_agent.tui.state import ConfirmAction, ConfirmPrompt, SlashMenuItem, UIState
+from personal_agent.tui.state import (
+    ConfirmAction,
+    ConfirmPrompt,
+    ConfirmResource,
+    SlashMenuItem,
+    UIState,
+)
 from personal_agent.tui import theme
 
 
@@ -108,6 +114,17 @@ def _decision_list(decision, name: str) -> list[str]:
     if value:
         return [str(value)]
     return []
+
+
+def _decision_objects(decision, name: str) -> list[dict]:
+    value = (
+        decision.get(name)
+        if isinstance(decision, dict)
+        else getattr(decision, name, None)
+    )
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
 
 
 def _confirm_actions(
@@ -606,6 +623,64 @@ def _format_duration(value: object) -> str:
         return f"{float(value or 0.0):.2f}s"
     except (TypeError, ValueError):
         return "0.00s"
+
+
+def _format_permissions_payload(payload: dict) -> str:
+    security = payload.get("security") if isinstance(payload.get("security"), dict) else {}
+    mode = str(payload.get("execution_mode") or security.get("mode_id") or "").strip()
+    lines = [f"Permissions  {mode}".rstrip()]
+    if security:
+        profile = str(security.get("profile") or "-")
+        approval = str(security.get("approval_policy") or "-")
+        network = "enabled" if security.get("network_enabled") else "restricted"
+        lines.append(
+            f"  Security  {profile} · approval {approval} · network {network}"
+        )
+    ttl_seconds = int(payload.get("temporary_grant_ttl_seconds") or 0)
+    if ttl_seconds > 0:
+        ttl = _always_label(ttl_seconds).removeprefix("Always ")
+        lines.append(f"  Grant TTL {ttl}")
+
+    filesystem = [
+        item
+        for item in security.get("filesystem") or []
+        if isinstance(item, dict)
+    ]
+    for item in filesystem[:3]:
+        access = _fit(str(item.get("access") or "-"), 12)
+        path = _fit(str(item.get("path") or "-"), 96)
+        lines.append(f"  FS        {access} {path}")
+    if len(filesystem) > 3:
+        lines.append(f"  FS        +{len(filesystem) - 3} more")
+
+    tool_grants = [
+        item for item in payload.get("tool_grants") or [] if isinstance(item, dict)
+    ]
+    resource_grants = [
+        item
+        for item in payload.get("resource_grants") or []
+        if isinstance(item, dict)
+    ]
+    if not tool_grants and not resource_grants:
+        lines.append("  Grants    none")
+    for item in tool_grants:
+        lines.append(
+            f"  Tool      {_fit(str(item.get('tool_key') or '-'), 72)}"
+            f" · {_fit(str(item.get('expires_at_iso') or '-'), 32)}"
+        )
+    for item in resource_grants:
+        access = str(item.get("access") or "-")
+        resource = str(item.get("resource") or "-")
+        lines.append(
+            f"  Resource  {_fit(access, 12)} {_fit(resource, 72)}"
+            f" · {_fit(str(item.get('expires_at_iso') or '-'), 32)}"
+        )
+
+    pending = payload.get("pending_confirmation")
+    if isinstance(pending, dict):
+        label = str(pending.get("display_name") or pending.get("tool_name") or "tool")
+        lines.append(f"  Pending   {_fit(label, 72)}")
+    return "\n".join(lines)
 
 
 def _field(item: dict, name: str) -> str:
@@ -1143,6 +1218,14 @@ class InlineTuiApp:
         return await handler(text)
 
     def _command_output(self, result) -> str:
+        if _command_kind(result) == "mode":
+            payload = _command_payload(result)
+            if payload and not payload.get("error"):
+                self._update_mode_state(payload)
+        if _command_kind(result) == "permissions":
+            payload = _command_payload(result)
+            if payload and not payload.get("error"):
+                return _format_permissions_payload(payload)
         if _command_kind(result) == "tool_runs":
             payload = _command_payload(result)
             if payload and not payload.get("error"):
@@ -1161,6 +1244,15 @@ class InlineTuiApp:
                 self._invalidate()
                 return text
         return _command_response_text(result)
+
+    def _update_mode_state(self, payload: dict) -> None:
+        current = payload.get("current")
+        if not isinstance(current, dict):
+            return
+        label = str(current.get("label") or "").strip()
+        if label and label != self.state.exec_mode:
+            self.state.exec_mode = label
+            self._invalidate()
 
     def _update_activity_state(self, payload: dict) -> None:
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
@@ -1502,6 +1594,17 @@ class InlineTuiApp:
         url_preview = _decision_field(decision, "url_preview")
         host = _decision_field(decision, "host")
         process_label = _decision_field(decision, "process_label")
+        tool_approval_mode = _decision_field(decision, "tool_approval_mode")
+        requested_resources = tuple(
+            ConfirmResource(
+                kind=str(item.get("kind") or "resource"),
+                resource=str(item.get("resource") or ""),
+                access=str(item.get("access") or ""),
+                reason=str(item.get("reason") or ""),
+            )
+            for item in _decision_objects(decision, "requested_resources")
+            if item.get("resource")
+        )
         if paths and not (command_preview or url_preview):
             preview = (preview + " · " if preview else "") + ", ".join(paths[:3])
         ttl_seconds = _decision_int(decision, "temporary_grant_ttl_seconds")
@@ -1525,6 +1628,8 @@ class InlineTuiApp:
             host=host,
             process_label=process_label,
             affected_paths=tuple(paths),
+            tool_approval_mode=tool_approval_mode,
+            requested_resources=requested_resources,
             default_action=default_action,
             available_actions=tuple(action.id for action in actions),
             actions=actions,

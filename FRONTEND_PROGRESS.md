@@ -1,12 +1,12 @@
 # Frontend Progress
 
-更新时间：2026-07-08 03:00 CST
+更新时间：2026-07-14 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
 ## 当前分支与范围
 
-- 当前分支：`feature/desktop-frontend`
+- 当前分支：`feature/frontend-security-v4`
 - 前端主要范围：`src/personal_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`
@@ -117,6 +117,8 @@
 - LLM turn usage fields：`input_tokens`、`output_tokens`
 - LLM cache usage fields：`cache_hit_tokens`、`cache_miss_tokens`、`cache_write_tokens`、`cache_read_tokens`、`cache_hit_rate`（当前不在顶部常驻展示）
 - `retry` / `stop` / `error` 增强字段
+- Security v4：移除 `/allow`，只保留 `/deny all`，消费四档稳定 Mode、结构化
+  `/permissions`、精确工具/资源授权和 `requested_resources`
 - Doctor diagnostics 目前仅用于联调判断，TUI 未做 UI 消费；不是当前必做项。
 
 ## 用户偏好
@@ -130,6 +132,34 @@
 - 多工具结果列表 / Ctrl+O 选择展开：用户感兴趣，但之前尝试失败过，暂缓，不作为当前优先项。
 
 ## 最近完成
+
+### 2026-07-14 Security v4 前端适配
+
+- Slash 菜单和测试不再依赖已删除的 `/allow`；`/deny all` 是当前 session
+  工具/资源限时授权的清理入口。
+- `CommandResult.kind="mode"` 会直接使用 `payload.current.label` 同步状态栏，Mode
+  固定为 `Read Only`、`Ask First`、`Local Auto`、`Full Auto`。
+- `/permissions` 已消费 `security`、`tool_grants`、`resource_grants`、
+  `temporary_grant_ttl_seconds` 和 `pending_confirmation`，以紧凑结构化列表展示。
+- Confirm UI 已消费 `tool_approval_mode` 和 `requested_resources`；存在精确资源时，
+  优先展示资源的 kind/access/resource，不再依赖旧类别授权说明。
+- Always 动作的 TTL 继续完全来自后端 `temporary_grant_ttl_seconds`。
+
+阶段提交：
+
+- `bc79e5f Adapt TUI mode handling to security v4`
+- `365613d Render security v4 permissions in TUI`
+
+已验证：
+
+```bash
+uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
+uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
+PYTHONPYCACHEPREFIX=/tmp/personal-agent-frontend-pycache python -m compileall -q src/personal_agent/tui
+git diff --check
+```
+
+结果：TUI `101 passed`；前端与 slash command 集成回归 `167 passed`；语法与 diff 检查通过。
 
 ### 2026-07-08 02:20 CST
 
