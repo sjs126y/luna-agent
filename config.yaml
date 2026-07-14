@@ -113,6 +113,16 @@ sandbox:
     - "**/__pycache__/**"
     - "**/.venv/**"
     - "**/.claude/**"
+    - "**/.codex/**"
+    - "**/.aws/**"
+    - "**/.kube/**"
+    - "**/.gnupg/**"
+    - "**/.docker/config.json"
+    - "**/.config/gh/**"
+    - "**/.config/gcloud/**"
+    - "**/.npmrc"
+    - "**/.pypirc"
+    - "**/.pgpass"
     - "**/audit.log"
     - "**/pyproject.toml"
     - "**/config.yaml"
@@ -131,9 +141,9 @@ auth:
 profiles:
   # Map session_key → profile directory under data/system/
   # The matching profile's .md files replace the default system prompt.
-  # Example: "wechat:<wx_id>:<wx_id>": "girlfriend"
+  # Example: "wechat:<wx_id>:<wx_id>": "luna"
   # Fill in your own session keys below.
-  "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat": "girlfriend"
+  "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat": "luna"
 
 mcp:
   enabled: true               # enable MCP client subsystem
