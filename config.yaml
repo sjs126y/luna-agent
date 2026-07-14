@@ -97,10 +97,12 @@ session:
   override: {}               # {"wechat:o9cq80:o9cq80": "wechat:custom:o9cq80"}
 
 sandbox:
-  roots:                           # allowed directories (boundary for all file tools + bash)
+  roots:                           # writable directories for Local/Full Auto and bash
     - "/home/sujinsheng/projects/Personal-Agent"
     - "/mnt/c/Users/MR/Desktop/SJS-AGENT"
     - "/mnt/c/Users/MR/Desktop/luna workspace"
+  read_roots:                      # native file tools may read, but never write or use via bash
+    - "/home/sujinsheng"
   blocked:                         # never accessible — glob patterns, applies to all tools
     - "**/.env"
     - "**/.env.*"
@@ -144,6 +146,20 @@ profiles:
   # Example: "wechat:<wx_id>:<wx_id>": "luna"
   # Fill in your own session keys below.
   "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat": "luna"
+
+plugins:
+  dirs: ["./plugins", "./data/plugins"]
+  enabled: ["integrations/codex-bridge"]
+  disabled: []
+  config:
+    integrations/codex-bridge:
+      command: "codex"
+      source_codex_home: "/home/sujinsheng/.codex"
+      runtime_codex_home: "/home/sujinsheng/projects/Personal-Agent/data/codex-bridge"
+      cwd: "/home/sujinsheng/projects/Personal-Agent"
+      sandbox: "workspace-write"
+      connect_timeout_seconds: 60
+      call_timeout_seconds: 1800
 
 mcp:
   enabled: true               # enable MCP client subsystem

@@ -142,6 +142,32 @@ sandbox:
     assert any("sandbox.process_backend 不支持" in error for error in report["errors"])
 
 
+def test_config_report_validates_sandbox_read_roots(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  read_roots:
+    nested: ./home
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any(
+        "sandbox.read_roots 必须是字符串列表或逗号分隔字符串" in error
+        for error in report["errors"]
+    )
+
+
 def test_config_report_includes_registry_field_summary(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

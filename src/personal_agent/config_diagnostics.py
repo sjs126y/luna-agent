@@ -488,6 +488,7 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
 
     sandbox = sections["sandbox"]
     _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)
+    _string_list_or_csv(sandbox, "read_roots", "sandbox.read_roots", errors)
     _string_list(sandbox, "blocked", "sandbox.blocked", errors)
     _string_value(sandbox, "bash_work_dir", "sandbox.bash_work_dir", errors)
     for key in ("bash_restrict_paths", "bash_allow_network", "audit_enabled"):
@@ -549,6 +550,7 @@ def _directory_report(base: Path, config: dict[str, Any]) -> list[dict[str, Any]
     data_dir = storage.get("data_dir", "./data")
     plugin_dirs = _string_or_list(plugins.get("dirs", ["./plugins", "./data/plugins"]))
     sandbox_roots = _string_or_list(sandbox.get("roots", ["./data"]))
+    sandbox_read_roots = _string_or_list(sandbox.get("read_roots", []))
     bash_work_dir = sandbox.get("bash_work_dir", "./data")
 
     result = [
@@ -558,6 +560,10 @@ def _directory_report(base: Path, config: dict[str, Any]) -> list[dict[str, Any]
     ]
     result.extend(_dir_item(base, "plugin_dir", item, required=False) for item in plugin_dirs)
     result.extend(_dir_item(base, "sandbox_root", item, required=True) for item in sandbox_roots)
+    result.extend(
+        _dir_item(base, "sandbox_read_root", item, required=True)
+        for item in sandbox_read_roots
+    )
     return result
 
 

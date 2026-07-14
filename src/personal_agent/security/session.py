@@ -140,8 +140,17 @@ def security_settings_snapshot(settings: Any) -> dict[str, Any]:
 
 def _profile_for(settings: Any, name: str) -> PermissionProfile:
     roots = tuple(Path(path).resolve() for path in (getattr(settings, "sandbox_roots", []) or []))
-    access = "read" if name == "read-only" else "write"
-    rules = tuple(FileSystemRule(path=root, access=access) for root in roots)
+    read_roots = tuple(
+        Path(path).resolve()
+        for path in (getattr(settings, "sandbox_read_roots", []) or [])
+    )
+    if name == "read-only":
+        rules = tuple(FileSystemRule(path=root, access="read") for root in roots)
+    else:
+        rules = (
+            *(FileSystemRule(path=root, access="write") for root in roots),
+            *(FileSystemRule(path=root, access="read") for root in read_roots),
+        )
     return PermissionProfile(
         name=name,
         filesystem=rules,

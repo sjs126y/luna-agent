@@ -1,0 +1,11 @@
+schema_version: 1
+key: integrations/codex-bridge
+name: Codex Bridge
+version: "0.1.0"
+description: Register the official Codex MCP server with Lumora-enforced session boundaries.
+kind: integration
+entrypoint: codex_bridge:register
+provides: [mcp, hook]
+tags: [codex, mcp, coding]
+enabled_by_default: false
+source: local

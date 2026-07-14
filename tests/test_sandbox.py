@@ -92,6 +92,35 @@ class TestSandboxCheckPath:
         sb = Sandbox([r], [])
         assert sb.check_path(r) is None
 
+    def test_read_root_allows_reads_but_not_writes(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import Sandbox
+
+        workspace = tmp_path / "workspace"
+        home = tmp_path / "home"
+        workspace.mkdir()
+        home.mkdir()
+        target = home / "notes.txt"
+        target.write_text("notes")
+        sb = Sandbox([workspace], [], read_roots=[home])
+
+        assert sb.check_path(target, access="read") is None
+        assert sb.check_path(target, access="write") is not None
+        assert sb.is_under_root(str(target)) is False
+
+    def test_blocked_pattern_wins_inside_read_root(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import Sandbox
+
+        workspace = tmp_path / "workspace"
+        home = tmp_path / "home"
+        workspace.mkdir()
+        home.mkdir()
+        secret = home / ".codex" / "auth.json"
+        secret.parent.mkdir()
+        secret.write_text("secret")
+        sb = Sandbox([workspace], ["**/.codex/**"], read_roots=[home])
+
+        assert "blocked" in (sb.check_path(secret, access="read") or "")
+
 
 class TestCheckBashPath:
     def test_blocked(self, tmp_path: Path):

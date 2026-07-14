@@ -111,9 +111,10 @@ session:
   override: {}                    # {"wechat:<chat_id>:<user_id>": "wechat:custom:<user_id>"}
 
 sandbox:
-  roots:                          # 文件工具和 bash 允许访问的目录
+  roots:                          # Local/Full Auto 可写目录，也是 bash 边界
     - "."
     - "./data"
+  read_roots: []                  # Local/Full Auto 额外只读目录，不扩大写入和 bash 边界
   blocked:                        # 即使 mode/policy 放行，也禁止访问这些路径
     - "**/.env"
     - "**/.env.*"
@@ -153,6 +154,20 @@ auth:
 profiles:
   # 将 session_key 映射到 data/system/ 下的 profile 目录。
   # 示例："wechat:<chat_id>:<user_id>": "default"
+
+plugins:
+  dirs: ["./plugins", "./data/plugins"]
+  enabled: []
+  disabled: []
+  config:
+    integrations/codex-bridge:
+      command: "codex"
+      source_codex_home: "~/.codex"
+      runtime_codex_home: "./data/codex-bridge"
+      cwd: "."
+      sandbox: "workspace-write"  # 仅支持 read-only 或 workspace-write
+      connect_timeout_seconds: 60
+      call_timeout_seconds: 1800
 
 mcp:
   enabled: true

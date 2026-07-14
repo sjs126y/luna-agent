@@ -195,6 +195,7 @@ Lumora 的目标是尽量通过配置切换运行方式，而不是改代码。
 - `permissions.tool_approval`
 - `sandbox.process_backend`
 - `sandbox.roots`
+- `sandbox.read_roots`
 - `sandbox.blocked`
 - `sandbox.bash_allow_network`
 - `storage.data_dir`
