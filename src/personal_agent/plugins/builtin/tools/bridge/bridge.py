@@ -33,7 +33,6 @@ async def _tool_call(name: str, arguments: dict) -> object:
         current_tool_agent,
         current_tool_confirm,
         current_tool_event_sink,
-        current_tool_hooks,
     )
 
     entry = _tr.get(name)
@@ -44,7 +43,6 @@ async def _tool_call(name: str, arguments: dict) -> object:
 
     agent = current_tool_agent()
     confirm = current_tool_confirm()
-    hooks = current_tool_hooks()
     event_sink = current_tool_event_sink()
     result = await execute_tool_call_result(
         {
@@ -54,10 +52,9 @@ async def _tool_call(name: str, arguments: dict) -> object:
         },
         agent=agent,
         confirm=confirm,
-        hooks=hooks,
         event_sink=event_sink,
     )
-    if agent is None and confirm is None and hooks is None and event_sink is None:
+    if agent is None and confirm is None and event_sink is None:
         return format_tool_result(result)
     return result
 

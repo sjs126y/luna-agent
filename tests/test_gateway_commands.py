@@ -438,7 +438,7 @@ async def test_gateway_commands_lists_slash_plugin_commands_only(gateway):
 
 
 @pytest.mark.asyncio
-async def test_gateway_before_send_does_not_spawn_separate_memory_review(gateway, monkeypatch):
+async def test_gateway_agent_response_does_not_spawn_separate_memory_review(gateway, monkeypatch):
     messages = [
         {"role": "user", "content": [{"type": "text", "text": "hello"}]},
         {"role": "assistant", "content": [{"type": "text", "text": "base"}]},
@@ -458,15 +458,11 @@ async def test_gateway_before_send_does_not_spawn_separate_memory_review(gateway
             raw={},
         )
 
-    async def before_send(text, source):
-        return text + "!"
-
-    gateway.hooks.on_before_send.append(before_send)
     monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
 
     result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
 
-    assert result == "base!"
+    assert result == "base"
 
 
 @pytest.mark.asyncio

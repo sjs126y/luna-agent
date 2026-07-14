@@ -7,7 +7,6 @@ from typing import Any
 
 from personal_agent.memory.models import InternalMemorySnapshot
 
-from personal_agent.agent.hooks import Hooks
 from personal_agent.agent.retry import RetryState
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.tools.registry import tool_registry
@@ -54,9 +53,6 @@ class Agent:
     _hook_turn_id: str = ""
     _hook_source: Any = None
     _hook_additional_contexts: list[str] = field(default_factory=list)
-
-    # ── hooks ──
-    hooks: Hooks = field(default_factory=Hooks)
 
     # ── per-session counters (accumulate across turns) ──
     session_prompt_tokens: int = 0
@@ -120,21 +116,7 @@ def init_agent(
     _pin_memory_snapshot(agent)
     _refresh_tools(agent)
     _build_system_prompt(agent, system_prompt_template)
-    _register_default_hooks(agent)
     return agent
-
-
-def _register_default_hooks(agent: Agent) -> None:
-    """Non-restrictive default hooks for observability."""
-    import logging as _logging
-    _log = _logging.getLogger("personal_agent.hooks")
-
-    async def _log_llm_usage(response, usage):
-        _log.info("LLM call: in=%d out=%d",
-                  usage.get("input_tokens", 0), usage.get("output_tokens", 0))
-        return response
-
-    agent.hooks.on_after_llm_call.append(_log_llm_usage)
 
 
 def _refresh_tools(agent: Agent) -> None:

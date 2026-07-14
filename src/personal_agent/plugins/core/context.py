@@ -181,6 +181,18 @@ class PluginContext:
         """Register a typed runtime hook or a temporary legacy callback."""
         from personal_agent.hooks import HookEvent
 
+        retired = {
+            "on_message_received",
+            "on_before_send",
+            "on_before_llm_call",
+            "on_after_llm_call",
+            "on_before_tool_exec",
+            "on_after_tool_exec",
+        }
+        if str(event) in retired:
+            raise ValueError(
+                f"Legacy runtime hook '{event}' was removed; register a typed HookEvent instead"
+            )
         try:
             hook_event = event if isinstance(event, HookEvent) else HookEvent(str(event))
         except ValueError:

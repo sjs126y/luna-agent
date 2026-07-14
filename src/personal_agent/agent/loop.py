@@ -91,32 +91,13 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         # ── refresh system prompt if tools changed ──
         system_prompt = agent._cached_system_prompt or ""
 
-        # ── hooks: on_before_llm_call ──
-        hook_result = await agent.hooks.fire(
-            "on_before_llm_call",
-            api_messages, system_prompt, active_tools,
-        )
-        hook_changed_messages = False
-        if isinstance(hook_result, dict):
-            hook_changed_messages = "messages" in hook_result
-            api_messages = hook_result.get("messages", api_messages)
-            system_prompt = hook_result.get("system_prompt", system_prompt)
-        request_plan = (
-            LLMRequestPlan.from_legacy(
-                api_messages,
-                system_prompt,
-                active_tools,
-                metadata={"source": "hook" if hook_changed_messages else "legacy"},
-            )
-            if hook_changed_messages
-            else _build_request_plan(
-                agent,
-                ctx,
-                system_prompt,
-                skill_injection_for_plan,
-                tools=active_tools,
-                finalization_instruction=duplicate_finalization_instruction,
-            )
+        request_plan = _build_request_plan(
+            agent,
+            ctx,
+            system_prompt,
+            skill_injection_for_plan,
+            tools=active_tools,
+            finalization_instruction=duplicate_finalization_instruction,
         )
         context_budget = _build_request_context_budget(
             agent,
@@ -124,7 +105,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             api_messages,
             system_prompt,
             skill_injection=skill_injection_for_plan,
-            use_actual_messages=hook_changed_messages,
+            use_actual_messages=True,
             tools=active_tools,
         )
         context_usage_payload = _context_usage_payload(context_budget)
@@ -291,10 +272,11 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             except Exception:
                 logger.exception("Compressor usage update failed")
 
-        # ── hooks: on_after_llm_call ──
-        modified = await agent.hooks.fire("on_after_llm_call", response, response.usage)
-        if isinstance(modified, dict):
-            response.text = modified.get("text", response.text)
+        logging.getLogger("personal_agent.hooks").info(
+            "LLM call: in=%d out=%d",
+            response.usage.get("input_tokens", 0),
+            response.usage.get("output_tokens", 0),
+        )
 
         if is_duplicate_finalization:
             duplicate_finalization_pending = False
@@ -470,7 +452,6 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             response.tool_calls,
             ctx.messages,
             agent=agent,
-            hooks=agent.hooks,
             event_sink=report_recorder,
             confirm=confirm,
         )

@@ -12,11 +12,11 @@ from collections.abc import Callable, Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from personal_agent.agent.hooks import Hooks
 from personal_agent.attachments import AttachmentStore, DownloadedAttachment, ResolvedAttachment
 from personal_agent.attachments.store import AttachmentStoreError
 from personal_agent.models.messages import AttachmentRef, MessageEvent, OutboundMessage, PlatformCapabilities
 from personal_agent.models.messages import SessionSource
+from personal_agent.platforms.hooks import AdapterHooks
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ class BasePlatformAdapter(ABC):
             2,
             minimum=0,
         )
-        self.hooks = Hooks()
+        self.hooks = AdapterHooks()
         self._platform_name = type(self).__name__
         self._connected = False
         self._last_connected_at = ""

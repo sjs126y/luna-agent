@@ -52,7 +52,6 @@ async def create_agent_runtime(
     )
 
     if plugin_manager is not None:
-        _wire_plugin_hooks(agent, plugin_manager)
         await plugin_manager.invoke_hook(
             "on_agent_created",
             agent=agent,
@@ -94,24 +93,3 @@ def _create_compressor(settings, provider: ProviderProfile, api_mode: str):
         return None
 
     return factory(settings, provider, api_mode)
-
-
-def _wire_plugin_hooks(agent, plugin_manager) -> None:
-    async def _before_llm(messages, system_prompt, tools):
-        return await plugin_manager.invoke_hook(
-            "on_before_llm_call", messages, system_prompt, tools
-        )
-
-    async def _after_llm(response, usage):
-        return await plugin_manager.invoke_hook("on_after_llm_call", response, usage)
-
-    async def _before_tool(tool_call, agent_obj):
-        return await plugin_manager.invoke_hook("on_before_tool_exec", tool_call, agent_obj)
-
-    async def _after_tool(tool_call, result):
-        return await plugin_manager.invoke_hook("on_after_tool_exec", tool_call, result)
-
-    agent.hooks.on_before_llm_call.append(_before_llm)
-    agent.hooks.on_after_llm_call.append(_after_llm)
-    agent.hooks.on_before_tool_exec.append(_before_tool)
-    agent.hooks.on_after_tool_exec.append(_after_tool)

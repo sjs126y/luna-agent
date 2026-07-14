@@ -9,7 +9,6 @@ from collections import OrderedDict
 from pathlib import Path
 
 from personal_agent.platforms.core import platform_registry
-from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
@@ -75,7 +74,6 @@ class Gateway:
         self._session_override = self._session_router.overrides
         self._confirmations = PendingConfirmationManager()
         self._cron_scheduler = None
-        self.hooks = Hooks()
         self.plugin_manager = plugin_manager
         self.hook_manager = hook_manager or getattr(plugin_manager, "hook_manager", None)
         self._shutdown_event = asyncio.Event()
@@ -305,19 +303,7 @@ class Gateway:
             event.to_envelope()
         session_key = self._session_router.active_key(event.source)
 
-        # 1. Legacy hook: on_message_received (only if hooks registered)
-        if self.hooks.on_message_received:
-            hook_result = await self.hooks.fire("on_message_received", event)
-            if hook_result is None:
-                return None  # dropped
-            if hook_result is not event:
-                event = hook_result
-        if self.plugin_manager is not None:
-            hook_result = await self.plugin_manager.invoke_hook("on_message_received", event)
-            if hook_result is not None and hook_result is not event:
-                event = hook_result
-
-        # 2. Authorization (skip internal/cron events)
+        # 1. Authorization (skip internal/cron events)
         if not event.internal and event.source.user_id != "cron":
             allowed, response = self._auth_manager.check(
                 event.source.user_id, event.text
@@ -328,7 +314,7 @@ class Gateway:
             if allowed and response is not None:
                 return response
 
-        # 2.5. Formal inbound hooks run only after authorization.
+        # 2. Formal inbound hooks run only after authorization.
         event, blocked_response = await self._dispatch_gateway_message(event, session_key)
         if blocked_response is not None:
             return blocked_response
@@ -384,17 +370,7 @@ class Gateway:
                 confirm=self._confirm_callback(event, session_key),
             )
 
-        # Hook: on_before_send
-        final = turn.final_response
-        hook_result = await self.hooks.fire("on_before_send", final, event.source)
-        if isinstance(hook_result, str):
-            final = hook_result
-        if self.plugin_manager is not None:
-            hook_result = await self.plugin_manager.invoke_hook("on_before_send", final, event.source)
-            if isinstance(hook_result, str):
-                final = hook_result
-
-        return final or EMPTY_FINAL_RESPONSE_MESSAGE
+        return turn.final_response or EMPTY_FINAL_RESPONSE_MESSAGE
 
     async def _dispatch_gateway_message(self, event, session_key: str):
         if self.hook_manager is None:

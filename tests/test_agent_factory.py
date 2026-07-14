@@ -91,10 +91,7 @@ async def test_create_agent_runtime_wires_plugin_hooks(tmp_path):
         provider_registry.detect_api_mode = original_detect
 
     assert "on_agent_created" in manager.calls
-    assert runtime.agent.hooks.on_before_llm_call
-    assert runtime.agent.hooks.on_after_llm_call
-    assert runtime.agent.hooks.on_before_tool_exec
-    assert runtime.agent.hooks.on_after_tool_exec
+    assert not hasattr(runtime.agent, "hooks")
 
 
 @pytest.mark.asyncio

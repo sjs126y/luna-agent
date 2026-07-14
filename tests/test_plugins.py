@@ -1099,6 +1099,44 @@ async def test_typed_hook_registration_uses_shared_hook_manager(tmp_path):
     manager.hook_manager.unregister_owner("plugin/demo")
 
 
+def test_plugin_rejects_removed_runtime_hook_names(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "legacy-runtime-hook"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/legacy-runtime-hook
+name: Legacy Runtime Hook
+version: 1.0.0
+entrypoint: legacy_runtime_hook:register
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "legacy_runtime_hook.py").write_text(
+        """
+async def before_tool(*args, **kwargs):
+    return None
+
+def register(ctx):
+    ctx.register_hook("on_before_tool_exec", before_tool)
+""".strip(),
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        _settings(tmp_path, plugins_dir),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+
+    plugin = manager._plugins["user/legacy-runtime-hook"]
+    assert plugin.status == PluginStatus.ERROR
+    assert "register a typed HookEvent" in (plugin.error or "")
+
+
 def test_plugin_typed_hook_is_removed_when_plugin_is_disabled(tmp_path):
     plugins_dir = tmp_path / "plugins"
     plugin_dir = plugins_dir / "typed-hook"
