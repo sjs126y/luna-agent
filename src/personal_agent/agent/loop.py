@@ -33,6 +33,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
     successful_tool_calls: dict[str, list[object]] = {}
     duplicate_finalization_pending = False
     duplicate_finalization_instruction = ""
+    stop_hook_active = False
     report_recorder = TurnReportRecorder(event_sink)
 
     def _with_turn_report(result: dict) -> dict:
@@ -396,6 +397,20 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             if await _consume_steer(ctx, steer, session_key, report_recorder):
                 just_executed_tools = False
                 continue
+            if response.text and not stop_hook_active:
+                stop_outcome = await _run_stop_hook(agent, ctx, response.text)
+                if stop_outcome is not None and stop_outcome.continue_turn:
+                    continuation = (
+                        stop_outcome.continuation_prompt.strip()
+                        or stop_outcome.reason.strip()
+                    )
+                    if continuation:
+                        ctx.hook_contexts.append(
+                            f"[Stop hook continuation]\n{continuation}"
+                        )
+                        stop_hook_active = True
+                        just_executed_tools = False
+                        continue
             if not response.text:
                 ctx.messages.append({
                     "role": "assistant",
@@ -663,6 +678,44 @@ def _signal_preview(value: str, limit: int = 120) -> str:
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+async def _run_stop_hook(agent, ctx, response_text: str):
+    hook_manager = getattr(agent, "_hook_manager", None)
+    if hook_manager is None:
+        return None
+    from pathlib import Path
+
+    from personal_agent.hooks import (
+        HookEnvelope,
+        HookEvent,
+        HookScope,
+        HookSourceContext,
+    )
+
+    source = getattr(agent, "_hook_source", None)
+    security_context = getattr(agent, "_security_context", None)
+    return await hook_manager.dispatch(HookEnvelope(
+        event_name=HookEvent.STOP,
+        scope=HookScope.TURN,
+        session_key=str(
+            getattr(security_context, "session_key", "")
+            or getattr(agent, "_memory_session_key", "")
+        ),
+        turn_id=str(getattr(ctx, "turn_id", "") or ""),
+        cwd=str(Path.cwd()),
+        mode=str(getattr(security_context, "mode_id", "") or ""),
+        source=HookSourceContext(
+            platform=str(getattr(source, "platform", "") or ""),
+            user_id=str(getattr(source, "user_id", "") or ""),
+            chat_id=str(getattr(source, "chat_id", "") or ""),
+        ),
+        payload={
+            "reason": "model_completed",
+            "last_assistant_message": response_text,
+            "hook_active": False,
+        },
+    ))
 
 
 async def _build_api_messages(agent, ctx) -> list[dict]:

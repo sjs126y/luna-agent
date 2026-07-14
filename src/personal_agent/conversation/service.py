@@ -23,6 +23,10 @@ TURN_REPORT_HISTORY_LIMIT = 50
 EMPTY_FINAL_RESPONSE_MESSAGE = "抱歉，模型没有返回可发送内容，请重试或让我用更短的格式回答。"
 
 
+class _HookTurnStopped(Exception):
+    """Stop a turn before the agent loop without treating it as a runtime failure."""
+
+
 @dataclass
 class ConversationTurnResult:
     final_response: str
@@ -72,6 +76,8 @@ class ConversationService:
         self._persisted_turn_report_count = 0
         self._last_persisted_turn_report: dict[str, Any] = {}
         self._last_persisted_turn_report_error = ""
+        self._hook_started_session_ids: set[str] = set()
+        self._pending_session_start_sources: dict[str, str] = {}
         self.attachment_store = AttachmentStore(Path(settings.agent_data_dir) / "attachments")
         self.multimodal_processor = MultiAttachmentProcessor(
             settings=settings,
@@ -133,6 +139,7 @@ class ConversationService:
             await self.plugin_manager.invoke_hook("on_session_selected", session_key=session_key)
 
         source = user_input.source or SessionSource(platform="unknown", user_id="unknown")
+        previous_session_id = self.session_store.resolve_session_id(session_key)
         session = await self.session_store.get_or_create(session_key, source)
         current_id = self.resolve_session_id(session.session_id)
         history = await self.session_store.load_history(current_id)
@@ -145,6 +152,14 @@ class ConversationService:
 
         ctx = None
         try:
+            hook_contexts = await self._conversation_hook_contexts(
+                session_key=session_key,
+                session_id=current_id,
+                turn_id=turn_id,
+                source=source,
+                user_input=user_input,
+                previous_session_id=previous_session_id,
+            )
             agent = await self.get_or_create_agent(session_key)
             agent._hook_source = source
             resolved_input = await self.multimodal_processor.resolve(
@@ -158,6 +173,11 @@ class ConversationService:
                 ctx = await build_turn_context(agent, ctx_input, history)
                 if not str(getattr(ctx, "turn_id", "") or ""):
                     setattr(ctx, "turn_id", turn_id)
+            context_items = getattr(ctx, "hook_contexts", None)
+            if context_items is None:
+                context_items = []
+                setattr(ctx, "hook_contexts", context_items)
+            context_items.extend(hook_contexts)
             kwargs = {}
             if _accepts_event_sink(run_conversation):
                 kwargs["event_sink"] = recorder
@@ -167,6 +187,22 @@ class ConversationService:
                 kwargs["steer"] = self.steer_manager
                 kwargs["session_key"] = session_key
             result = await run_conversation(agent, ctx, **kwargs)
+        except _HookTurnStopped as exc:
+            final = str(exc) or "本轮已被钩子停止。"
+            await emit_event(
+                recorder,
+                "turn_stopped",
+                final,
+                category="hook",
+                recoverable=False,
+            )
+            result = {
+                "final_response": final,
+                "messages": _minimal_turn_messages(user_input.text, final),
+                "completed": False,
+                "status": "stopped",
+                "error": "",
+            }
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             final = f"抱歉，本轮处理出错了：{exc}"
@@ -583,9 +619,67 @@ class ConversationService:
 
     async def reset_session(self, session_key: str, source) -> str:
         new_id = await self.session_store.reset_session(session_key, source)
+        self._pending_session_start_sources[session_key] = "clear"
         self.clear_agent(session_key)
         self.security_states.clear(session_key)
         return new_id
+
+    async def _conversation_hook_contexts(
+        self,
+        *,
+        session_key: str,
+        session_id: str,
+        turn_id: str,
+        source,
+        user_input: ConversationInput,
+        previous_session_id: str | None,
+    ) -> list[str]:
+        if self.hook_manager is None:
+            return []
+        from personal_agent.hooks import HookEnvelope, HookEvent, HookScope, HookSourceContext
+
+        common = {
+            "scope": HookScope.TURN,
+            "session_key": session_key,
+            "turn_id": turn_id,
+            "cwd": str(Path.cwd()),
+            "source": HookSourceContext(
+                platform=str(getattr(source, "platform", "") or ""),
+                user_id=str(getattr(source, "user_id", "") or ""),
+                chat_id=str(getattr(source, "chat_id", "") or ""),
+            ),
+        }
+        contexts: list[str] = []
+        if session_id not in self._hook_started_session_ids:
+            start_source = self._pending_session_start_sources.pop(session_key, "")
+            if not start_source:
+                start_source = "new" if previous_session_id is None else "resume"
+            outcome = await self.hook_manager.dispatch(HookEnvelope(
+                event_name=HookEvent.SESSION_START,
+                payload={"source": start_source, "session_id": session_id},
+                **common,
+            ))
+            self._hook_started_session_ids.add(session_id)
+            if outcome.additional_context.strip():
+                contexts.append(f"[SessionStart hook context]\n{outcome.additional_context.strip()}")
+            if outcome.stop:
+                raise _HookTurnStopped(outcome.reason or "session start blocked by hook")
+
+        prompt_outcome = await self.hook_manager.dispatch(HookEnvelope(
+            event_name=HookEvent.USER_PROMPT_SUBMIT,
+            payload={
+                "text": user_input.text,
+                "attachment_count": len(user_input.attachments),
+            },
+            **common,
+        ))
+        if prompt_outcome.additional_context.strip():
+            contexts.append(
+                f"[UserPromptSubmit hook context]\n{prompt_outcome.additional_context.strip()}"
+            )
+        if prompt_outcome.stop:
+            raise _HookTurnStopped(prompt_outcome.reason or "user prompt blocked by hook")
+        return contexts
 
     async def rename_session(self, old_key: str, new_key: str) -> bool:
         ok = await self.session_store.rename_session(old_key, new_key)

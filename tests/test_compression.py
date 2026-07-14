@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from personal_agent.compression.simple import (
     ContextCompressor,
     _format_messages_for_summary,
 )
+from personal_agent.agent.context import _check_and_compress
 from personal_agent.models.messages import NormalizedResponse
 
 
@@ -48,6 +50,53 @@ def _make_long_history(n: int) -> list[dict]:
         msgs.append(_text_msg("user", f"question {i} " + "x" * 100))
         msgs.append(_text_msg("assistant", f"answer {i} " + "y" * 200))
     return msgs
+
+
+@pytest.mark.asyncio
+async def test_pre_compact_hook_can_defer_compression_and_add_context():
+    from personal_agent.hooks import ContextHookOutcome, HookEvent, HookManager
+
+    hook_manager = HookManager()
+
+    async def defer_compaction(event):
+        assert event.turn_id == "turn-hook"
+        assert event.payload["trigger"] == "auto"
+        return ContextHookOutcome(
+            additional_context="preserve the active investigation",
+            stop=True,
+            reason="not yet",
+        )
+
+    hook_manager.register(
+        owner="test",
+        event=HookEvent.PRE_COMPACT,
+        callback=defer_compaction,
+    )
+    compressor = MagicMock()
+    compressor.should_compress.return_value = True
+    compressor.compress = AsyncMock(return_value=[])
+    agent = SimpleNamespace(
+        _compressor=compressor,
+        _provider=SimpleNamespace(model="test"),
+        _cached_system_prompt="system",
+        tools=[],
+        _hook_manager=hook_manager,
+        _hook_turn_id="turn-hook",
+        _hook_additional_contexts=[],
+        _hook_source=None,
+        _security_context=None,
+        _memory_session_key="session-hook",
+        _transport=AsyncMock(),
+    )
+    messages = _make_long_history(10)
+
+    result = await _check_and_compress(agent, messages)
+
+    assert result is messages
+    compressor.compress.assert_not_awaited()
+    assert agent._hook_additional_contexts == [
+        "[PreCompact hook context]\npreserve the active investigation"
+    ]
 
 
 # ── ContextEngine ABC ───────────────────────────────────
