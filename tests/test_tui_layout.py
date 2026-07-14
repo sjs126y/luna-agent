@@ -88,7 +88,7 @@ def test_slash_command_slot_draws_dark_command_rows():
     state = UIState(
         slash_mode=True,
         slash_items=(
-            SlashMenuItem("/allow", "授权本轮工具权限"),
+            SlashMenuItem("/deny all", "清除当前会话授权"),
             SlashMenuItem("/agents", "查看子 agent 运行记录"),
         ),
     )
@@ -97,7 +97,7 @@ def test_slash_command_slot_draws_dark_command_rows():
     text = to_plain_text(slash_slot.content.content.text())
     assert "commands" in text
     assert "type to filter" in text
-    assert "/allow" in text
+    assert "/deny all" in text
     assert "/agents" in text
 
 

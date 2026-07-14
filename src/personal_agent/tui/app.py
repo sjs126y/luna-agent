@@ -1143,6 +1143,10 @@ class InlineTuiApp:
         return await handler(text)
 
     def _command_output(self, result) -> str:
+        if _command_kind(result) == "mode":
+            payload = _command_payload(result)
+            if payload and not payload.get("error"):
+                self._update_mode_state(payload)
         if _command_kind(result) == "tool_runs":
             payload = _command_payload(result)
             if payload and not payload.get("error"):
@@ -1161,6 +1165,15 @@ class InlineTuiApp:
                 self._invalidate()
                 return text
         return _command_response_text(result)
+
+    def _update_mode_state(self, payload: dict) -> None:
+        current = payload.get("current")
+        if not isinstance(current, dict):
+            return
+        label = str(current.get("label") or "").strip()
+        if label and label != self.state.exec_mode:
+            self.state.exec_mode = label
+            self._invalidate()
 
     def _update_activity_state(self, payload: dict) -> None:
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}

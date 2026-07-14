@@ -346,7 +346,7 @@ async def test_submit_ignores_blank():
 
 
 @pytest.mark.asyncio
-async def test_refresh_mode_updates_status_after_command():
+async def test_refresh_mode_updates_status_after_command(monkeypatch):
     app = _app()
 
     async def print_above(text):
@@ -354,13 +354,30 @@ async def test_refresh_mode_updates_status_after_command():
 
     app._print_above = print_above  # type: ignore[method-assign]
 
-    async def handle_command(text):
-        app.runtime.mode = "Full Auto"
-        return "执行模式已切换: Full Auto"
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/mode set Full Auto"
+        runtime.mode = "Full Auto"
+        return CommandResult.reply(
+            "执行模式已切换: Full Auto",
+            kind="mode",
+            payload={
+                "action": "set",
+                "current": {
+                    "slug": "full-auto",
+                    "label": "Full Auto",
+                    "profile": "trusted",
+                    "approval_policy": "never",
+                },
+                "modes": [],
+            },
+        )
 
-    app.runtime.handle_command = handle_command  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "personal_agent.commands.runtime.handle_slash_command",
+        fake_handle_slash_command,
+    )
     assert app.state.exec_mode == "Ask First"
-    await app._submit("/mode Full Auto")
+    await app._submit("/mode set Full Auto")
     assert app.state.exec_mode == "Full Auto"
 
 
@@ -816,7 +833,7 @@ async def test_tool_run_detail_payload_sets_expandable_output(monkeypatch):
                     "duration": 0.2,
                     "session_key": "cli:default:local",
                     "turn_id": "turn-1",
-                    "execution_mode": "standard",
+                    "execution_mode": "ask-first",
                     "permission_category": "read",
                     "permission_decision": "allow",
                     "input_summary": '{"path": "README.md"}',
@@ -1046,7 +1063,7 @@ def test_unknown_slash_command_shows_no_matches():
 def test_partial_slash_command_shows_matching_candidates():
     app = _app()
     app.input_area.text = "/a"
-    assert [item.text for item in app.state.slash_items] == ["/allow", "/agents", "/activity"]
+    assert [item.text for item in app.state.slash_items] == ["/agents", "/activity"]
 
 
 def test_parent_slash_command_shows_child_candidates():
