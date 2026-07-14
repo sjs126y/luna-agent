@@ -16,7 +16,13 @@ from personal_agent.tui.layout import (
     _slash_menu,
     build_layout,
 )
-from personal_agent.tui.state import ConfirmPrompt, SlashMenuItem, ToolTrace, UIState
+from personal_agent.tui.state import (
+    ConfirmPrompt,
+    ConfirmResource,
+    SlashMenuItem,
+    ToolTrace,
+    UIState,
+)
 
 
 def _active_text(state: UIState) -> str:
@@ -232,6 +238,25 @@ def test_active_region_confirm_shows_structured_details():
     text = _active_text(state)
     assert "URL https://example.test/a" in text
     assert "Path src/a.py, src/b.py" in text
+
+
+def test_active_region_confirm_prioritizes_requested_resources():
+    state = UIState()
+    state.pending_confirm = ConfirmPrompt(
+        title="需要确认",
+        display_name="Write and fetch",
+        tool_approval_mode="prompt",
+        affected_paths=("legacy.py",),
+        requested_resources=(
+            ConfirmResource("path", "/workspace/src/app.py", "write"),
+            ConfirmResource("host", "api.example.test", "connect"),
+        ),
+    )
+    text = _active_text(state)
+    assert "Approval prompt" in text
+    assert "Path write /workspace/src/app.py" in text
+    assert "Host connect api.example.test" in text
+    assert "legacy.py" not in text
 
 
 def test_active_region_confirm_shows_command_detail():

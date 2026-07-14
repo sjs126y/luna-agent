@@ -60,6 +60,16 @@ class ConfirmAction:
     is_default: bool = False
 
 
+@dataclass(frozen=True)
+class ConfirmResource:
+    """One concrete resource covered by a tool confirmation."""
+
+    kind: str
+    resource: str
+    access: str = ""
+    reason: str = ""
+
+
 @dataclass
 class ConfirmPrompt:
     """Human-facing state for one pending tool confirmation."""
@@ -76,6 +86,8 @@ class ConfirmPrompt:
     host: str = ""
     process_label: str = ""
     affected_paths: tuple[str, ...] = ()
+    tool_approval_mode: str = ""
+    requested_resources: tuple[ConfirmResource, ...] = ()
     default_action: str = "allow"  # allow | deny | none
     available_actions: tuple[str, ...] = ("allow_once", "allow_always", "deny")
     actions: tuple[ConfirmAction, ...] = ()

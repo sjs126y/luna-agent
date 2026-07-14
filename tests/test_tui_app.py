@@ -485,6 +485,33 @@ def test_confirm_prompt_preserves_network_display_fields():
     assert prompt.host == "example.test"
 
 
+def test_confirm_prompt_consumes_security_v4_resources():
+    app = _app()
+    prompt = app._build_confirm_prompt({
+        "display_name": "Write file",
+        "tool_approval_mode": "prompt",
+        "requested_resources": [
+            {
+                "kind": "path",
+                "resource": "/workspace/src/app.py",
+                "access": "write",
+                "reason": "File will be modified",
+            },
+            {
+                "kind": "host",
+                "resource": "api.example.test",
+                "access": "connect",
+                "reason": "Network request",
+            },
+        ],
+    })
+    assert prompt.tool_approval_mode == "prompt"
+    assert [(item.kind, item.resource, item.access) for item in prompt.requested_resources] == [
+        ("path", "/workspace/src/app.py", "write"),
+        ("host", "api.example.test", "connect"),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_confirm_action_respects_available_actions():
     app = _app()
@@ -810,6 +837,67 @@ async def test_tool_runs_recent_payload_formats_structured_output(monkeypatch):
     assert "read" in text
     assert "success" in text
     assert "/tool-runs show <id>" in text
+    assert "backend fallback text" not in text
+
+
+@pytest.mark.asyncio
+async def test_permissions_payload_formats_security_v4_state(monkeypatch):
+    app = _app()
+    printed: list[str] = []
+
+    async def fake_handle_slash_command(runtime, text):
+        assert text == "/permissions"
+        return CommandResult.reply(
+            "backend fallback text",
+            kind="permissions",
+            payload={
+                "execution_mode": "Local Auto",
+                "temporary_grant_ttl_seconds": 6 * 3600,
+                "security": {
+                    "mode_id": "local-auto",
+                    "profile": "workspace",
+                    "approval_policy": "on-request",
+                    "filesystem": [
+                        {"path": "/workspace", "access": "write"},
+                    ],
+                    "network_enabled": False,
+                },
+                "tool_grants": [
+                    {"tool_key": "core:bash", "expires_at_iso": "2026-07-14T12:00:00Z"},
+                ],
+                "resource_grants": [
+                    {
+                        "kind": "path",
+                        "resource": "/workspace/src",
+                        "access": "write",
+                        "expires_at_iso": "2026-07-14T12:00:00Z",
+                    },
+                ],
+                "pending_confirmation": {
+                    "tool_name": "web_fetch",
+                    "display_name": "Fetch URL",
+                },
+            },
+        )
+
+    async def print_above(text):
+        printed.append(text)
+
+    monkeypatch.setattr(
+        "personal_agent.commands.runtime.handle_slash_command",
+        fake_handle_slash_command,
+    )
+    app._print_above = print_above  # type: ignore[method-assign]
+
+    await app._submit("/permissions")
+
+    text = "\n".join(printed)
+    assert "Permissions  Local Auto" in text
+    assert "workspace · approval on-request · network restricted" in text
+    assert "Grant TTL 6h" in text
+    assert "Tool      core:bash" in text
+    assert "Resource  write /workspace/src" in text
+    assert "Pending   Fetch URL" in text
     assert "backend fallback text" not in text
 
 
