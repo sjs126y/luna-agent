@@ -146,6 +146,7 @@ class ConversationService:
         ctx = None
         try:
             agent = await self.get_or_create_agent(session_key)
+            agent._hook_source = source
             resolved_input = await self.multimodal_processor.resolve(
                 user_input,
                 provider=getattr(agent, "_provider", None),

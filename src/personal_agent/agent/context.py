@@ -41,6 +41,7 @@ class TurnContext:
     resolved_input: "ResolvedConversationInput | None" = None
     processed_attachments: list = field(default_factory=list)
     multimodal_diagnostics: dict = field(default_factory=dict)
+    hook_contexts: list[str] = field(default_factory=list)  # ephemeral model context
 
 
 async def build_turn_context(
@@ -78,6 +79,8 @@ async def build_turn_context(
     agent._last_skill_summaries = ""
     agent._last_memory_injections = ""
     agent._last_tool_results = []
+    agent._hook_turn_id = str(turn_id or "")
+    agent._hook_additional_contexts = []
     from personal_agent.tools.executor import clear_interrupted
     clear_interrupted()
 

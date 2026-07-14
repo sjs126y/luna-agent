@@ -49,6 +49,12 @@ class Agent:
     # ── compressor ──
     _compressor: Any = None
 
+    # ── lifecycle hooks ──
+    _hook_manager: Any = None
+    _hook_turn_id: str = ""
+    _hook_source: Any = None
+    _hook_additional_contexts: list[str] = field(default_factory=list)
+
     # ── hooks ──
     hooks: Hooks = field(default_factory=Hooks)
 
@@ -90,6 +96,7 @@ def init_agent(
     memory_snapshot_refresh_interval: int = 20,
     system_prompt_template: str = "",
     enabled_toolsets: list[str] | None = None,
+    hook_manager=None,
 ) -> Agent:
     """Wire an Agent instance. Flat initialization — no 1700-line magic."""
     from concurrent.futures import ThreadPoolExecutor
@@ -104,6 +111,7 @@ def init_agent(
         _memory_session_key=memory_session_key,
         _memory_snapshot_refresh_interval=memory_snapshot_refresh_interval,
         _compressor=compressor,
+        _hook_manager=hook_manager,
         enabled_toolsets=enabled_toolsets,
         _llm_pool=pool,
         _tool_pool=pool,  # shared pool for MVP, separate later

@@ -48,6 +48,7 @@ async def create_agent_runtime(
         memory_snapshot_refresh_interval=getattr(settings, "memory_snapshot_refresh_turn_interval", 20),
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
+        hook_manager=getattr(plugin_manager, "hook_manager", None),
     )
 
     if plugin_manager is not None:

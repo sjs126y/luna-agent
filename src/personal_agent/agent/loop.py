@@ -459,6 +459,10 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             event_sink=report_recorder,
             confirm=confirm,
         )
+        hook_contexts = list(getattr(agent, "_hook_additional_contexts", []) or [])
+        if hook_contexts:
+            ctx.hook_contexts.extend(hook_contexts)
+            agent._hook_additional_contexts.clear()
         just_executed_tools = True
 
         for tc, tool_result in zip(response.tool_calls, tool_results):
@@ -683,6 +687,12 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
     for message in reversed(ctx.memory_prefetch_messages):
         msgs.insert(0, message)
 
+    for hook_context in getattr(ctx, "hook_contexts", []) or []:
+        msgs.append({
+            "role": "user",
+            "content": [{"type": "text", "text": hook_context}],
+        })
+
     return msgs
 
 
@@ -707,12 +717,16 @@ def _build_request_plan(
             "role": "user",
             "content": [{"type": "text", "text": ctx.skill_summaries}],
         })
-
     messages = list(getattr(ctx, "messages", []) or [])
     current_idx = int(getattr(ctx, "current_turn_user_idx", max(0, len(messages) - 1)) or 0)
     current_user = messages[current_idx] if 0 <= current_idx < len(messages) else None
     history = messages[:current_idx] if current_user is not None else messages
     turn_tail = messages[current_idx + 1:] if current_user is not None else []
+    for hook_context in getattr(ctx, "hook_contexts", []) or []:
+        turn_tail.append({
+            "role": "user",
+            "content": [{"type": "text", "text": hook_context}],
+        })
     if finalization_instruction:
         turn_tail.append({
             "role": "user",
