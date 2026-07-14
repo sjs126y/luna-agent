@@ -168,9 +168,47 @@ class PluginContext:
             self.register_mcp_server(server)
         return len(servers)
 
-    def register_hook(self, name: str, callback, priority: int = 100) -> None:
-        self.manager.register_hook(self.plugin.key, name, callback, priority)
-        label = f"{name}:{priority}"
+    def register_hook(
+        self,
+        event,
+        callback,
+        priority: int = 100,
+        *,
+        name: str = "",
+        matcher: str = "*",
+        timeout: float | None = None,
+    ) -> None:
+        """Register a typed runtime hook or a temporary legacy callback."""
+        from personal_agent.hooks import HookEvent
+
+        retired = {
+            "on_message_received",
+            "on_before_send",
+            "on_before_llm_call",
+            "on_after_llm_call",
+            "on_before_tool_exec",
+            "on_after_tool_exec",
+        }
+        if str(event) in retired:
+            raise ValueError(
+                f"Legacy runtime hook '{event}' was removed; register a typed HookEvent instead"
+            )
+        try:
+            hook_event = event if isinstance(event, HookEvent) else HookEvent(str(event))
+        except ValueError:
+            self.manager.register_hook(self.plugin.key, str(event), callback, priority)
+            label = f"legacy:{event}:{priority}"
+        else:
+            registration = self.manager.register_event_hook(
+                self.plugin.key,
+                hook_event,
+                callback,
+                name=name,
+                matcher=matcher,
+                priority=priority,
+                timeout_seconds=timeout,
+            )
+            label = f"{hook_event.value}:{registration.name}:{priority}"
         if label not in self.plugin.hooks_registered:
             self.plugin.hooks_registered.append(label)
 

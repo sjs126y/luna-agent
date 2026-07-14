@@ -6,9 +6,9 @@ import asyncio
 import inspect
 import logging
 from collections import OrderedDict
+from pathlib import Path
 
 from personal_agent.platforms.core import platform_registry
-from personal_agent.agent.hooks import Hooks
 from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
@@ -32,6 +32,7 @@ class Gateway:
         memory_manager,
         system_prompt_template: str = "",
         plugin_manager=None,
+        hook_manager=None,
         conversation_service: ConversationService | None = None,
         memory_review_service: MemoryReviewService | None = None,
     ) -> None:
@@ -47,6 +48,7 @@ class Gateway:
             conversation_service = ConversationService(
                 settings=config,
                 plugin_manager=plugin_manager,
+                hook_manager=hook_manager,
                 session_store=session_store,
                 compression_chain=compression_chain,
                 memory_manager=memory_manager,
@@ -72,8 +74,8 @@ class Gateway:
         self._session_override = self._session_router.overrides
         self._confirmations = PendingConfirmationManager()
         self._cron_scheduler = None
-        self.hooks = Hooks()
         self.plugin_manager = plugin_manager
+        self.hook_manager = hook_manager or getattr(plugin_manager, "hook_manager", None)
         self._shutdown_event = asyncio.Event()
         self._mcp_manager = None  # set by main.py after MCPManager.start()
         self._started = False
@@ -108,8 +110,16 @@ class Gateway:
             await self._start_platform(entry)
 
         logger.info("Gateway started with %d platform(s)", len(self._adapters))
+        await self._dispatch_gateway_observer(
+            "GatewayStart",
+            payload={"platform_count": len(self._adapters)},
+        )
 
     async def stop(self) -> None:
+        await self._dispatch_gateway_observer(
+            "GatewayStop",
+            payload={"platform_count": len(self._adapters)},
+        )
         self._started = False
         if self._cron_scheduler:
             self._cron_scheduler.stop()
@@ -136,6 +146,11 @@ class Gateway:
             finally:
                 if hasattr(adapter, "mark_disconnected"):
                     adapter.mark_disconnected()
+                await self._dispatch_gateway_observer(
+                    "PlatformDisconnected",
+                    source=self._platform_source(getattr(adapter, "_platform_name", "")),
+                    payload={"platform": getattr(adapter, "_platform_name", "")},
+                )
         for runtime in self._platforms.values():
             runtime.mark_stopped()
         self._shutdown_event.set()
@@ -199,6 +214,11 @@ class Gateway:
         try:
             adapter = entry.factory(self.config, self.db)
             adapter.set_message_handler(self._handle_message)
+            if hasattr(adapter, "set_outbound_handlers"):
+                adapter.set_outbound_handlers(
+                    before_send=self._before_platform_send,
+                    after_send=self._after_platform_send,
+                )
             if hasattr(adapter, "set_message_bypass_predicate"):
                 adapter.set_message_bypass_predicate(self._should_bypass_adapter_queue)
             if hasattr(adapter, "set_attachment_store"):
@@ -218,6 +238,11 @@ class Gateway:
             self._adapters.append(adapter)
         runtime.mark_connected(adapter)
         logger.info("Platform '%s' connected", entry.name)
+        await self._dispatch_gateway_observer(
+            "PlatformConnected",
+            source=self._platform_source(entry.name),
+            payload={"platform": entry.name, "adapter": type(adapter).__name__},
+        )
         return True
 
     def _schedule_platform_reconnect(self, entry, runtime: PlatformRuntime) -> None:
@@ -278,19 +303,7 @@ class Gateway:
             event.to_envelope()
         session_key = self._session_router.active_key(event.source)
 
-        # 1. Hook: on_message_received (only if hooks registered)
-        if self.hooks.on_message_received:
-            hook_result = await self.hooks.fire("on_message_received", event)
-            if hook_result is None:
-                return None  # dropped
-            if hook_result is not event:
-                event = hook_result
-        if self.plugin_manager is not None:
-            hook_result = await self.plugin_manager.invoke_hook("on_message_received", event)
-            if hook_result is not None and hook_result is not event:
-                event = hook_result
-
-        # 2. Authorization (skip internal/cron events)
+        # 1. Authorization (skip internal/cron events)
         if not event.internal and event.source.user_id != "cron":
             allowed, response = self._auth_manager.check(
                 event.source.user_id, event.text
@@ -300,6 +313,11 @@ class Gateway:
             # Auth passed with a message (e.g. pairing success greeting)
             if allowed and response is not None:
                 return response
+
+        # 2. Formal inbound hooks run only after authorization.
+        event, blocked_response = await self._dispatch_gateway_message(event, session_key)
+        if blocked_response is not None:
+            return blocked_response
 
         # 3. Command detection. /stop must be able to cancel pending confirms.
         if event.text.startswith("/"):
@@ -352,17 +370,117 @@ class Gateway:
                 confirm=self._confirm_callback(event, session_key),
             )
 
-        # Hook: on_before_send
-        final = turn.final_response
-        hook_result = await self.hooks.fire("on_before_send", final, event.source)
-        if isinstance(hook_result, str):
-            final = hook_result
-        if self.plugin_manager is not None:
-            hook_result = await self.plugin_manager.invoke_hook("on_before_send", final, event.source)
-            if isinstance(hook_result, str):
-                final = hook_result
+        return turn.final_response or EMPTY_FINAL_RESPONSE_MESSAGE
 
-        return final or EMPTY_FINAL_RESPONSE_MESSAGE
+    async def _dispatch_gateway_message(self, event, session_key: str):
+        if self.hook_manager is None:
+            return event, None
+        from personal_agent.hooks import HookEvent
+
+        envelope = event.to_envelope()
+        outcome = await self.hook_manager.dispatch(self._gateway_hook_envelope(
+            HookEvent.GATEWAY_MESSAGE_RECEIVED,
+            source=event.source,
+            session_key=session_key,
+            payload={
+                "text": event.text,
+                "attachments": [item.as_dict() for item in envelope.attachments],
+                "metadata": dict(envelope.metadata),
+                "internal": bool(event.internal),
+            },
+        ))
+        if outcome.blocked:
+            return event, outcome.reason or None
+        if outcome.text is not None:
+            event.text = str(outcome.text)
+            envelope.text = event.text
+        if outcome.attachments is not None:
+            envelope.attachments = list(outcome.attachments)
+        if outcome.metadata is not None:
+            envelope.metadata = dict(outcome.metadata)
+        event.envelope = envelope
+        return event, None
+
+    async def _before_platform_send(self, source, text: str) -> str | None:
+        if self.hook_manager is None:
+            return text
+        from personal_agent.hooks import HookEvent
+
+        outcome = await self.hook_manager.dispatch(self._gateway_hook_envelope(
+            HookEvent.GATEWAY_BEFORE_SEND,
+            source=source,
+            session_key=self._session_router.active_key(source),
+            payload={"text": text},
+        ))
+        if outcome.suppressed:
+            return None
+        return outcome.text if outcome.text is not None else text
+
+    async def _after_platform_send(
+        self,
+        source,
+        text: str,
+        success: bool,
+        error: str,
+    ) -> None:
+        from personal_agent.hooks import HookEvent
+
+        await self._dispatch_gateway_observer(
+            HookEvent.GATEWAY_AFTER_SEND,
+            source=source,
+            session_key=self._session_router.active_key(source),
+            payload={"text": text, "success": success, "error": error},
+        )
+
+    async def _dispatch_gateway_observer(
+        self,
+        event_name,
+        *,
+        source=None,
+        session_key: str = "",
+        payload: dict | None = None,
+    ) -> None:
+        if self.hook_manager is None:
+            return
+        from personal_agent.hooks import HookEvent
+
+        event = event_name if isinstance(event_name, HookEvent) else HookEvent(str(event_name))
+        await self.hook_manager.dispatch(self._gateway_hook_envelope(
+            event,
+            source=source,
+            session_key=session_key,
+            payload=payload or {},
+        ))
+
+    def _gateway_hook_envelope(
+        self,
+        event_name,
+        *,
+        source=None,
+        session_key: str = "",
+        payload: dict | None = None,
+    ):
+        from personal_agent.hooks import HookEnvelope, HookEvent, HookScope, HookSourceContext
+
+        event = event_name if isinstance(event_name, HookEvent) else HookEvent(str(event_name))
+        return HookEnvelope(
+            event_name=event,
+            scope=HookScope.RUNTIME if event in {HookEvent.GATEWAY_START, HookEvent.GATEWAY_STOP} else HookScope.SESSION,
+            session_key=session_key,
+            cwd=str(Path.cwd()),
+            source=HookSourceContext(
+                platform=str(getattr(source, "platform", "") or ""),
+                user_id=str(getattr(source, "user_id", "") or ""),
+                chat_id=str(getattr(source, "chat_id", "") or ""),
+            ) if source is not None else None,
+            payload=payload or {},
+        )
+
+    @staticmethod
+    def _platform_source(platform: str):
+        from personal_agent.models.messages import SessionSource
+
+        return SessionSource(platform=str(platform or ""), user_id="gateway")
 
     def _confirm_callback(self, event, session_key: str):
         async def _confirm(decision):

@@ -953,6 +953,15 @@ Review worker payload 提供：
 
 插件配置位于 `plugins.config.<plugin-key>`。配置诊断会递归遮蔽键名中的 token、secret、password、authorization 和 api key；前端不应尝试从诊断 payload 恢复真实密钥。
 
+`AppRuntime.health_snapshot()` 现在还提供 `hooks` 对象，供 doctor 或后端诊断页展示：
+
+- `registered: integer`
+- `owners: integer`
+- `events: list[string]`
+- `items: list[object]`
+
+`items[]` 常见字段：`hook_id`、`owner`、`source`、`event_name`、`name`、`matcher`、`priority`、`timeout_seconds`、`execution_count`、`blocked_count`、`timeout_count`、`failure_count`、`last_duration_ms`、`last_error`。这些字段是诊断信息，不进入 Conversation Event Stream；前端应允许新增事件名和诊断字段。
+
 ## 14. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。

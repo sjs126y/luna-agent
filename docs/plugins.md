@@ -167,7 +167,7 @@ plugins/hello/
 - `register_platform(PlatformEntry)`
 - `register_mcp_server(MCPServerConfig | dict)`
 - `register_memory_provider(name, factory, validator)`
-- `register_hook(name, callback, priority=100)`
+- `register_hook(event, callback, priority=100, name="", matcher="*", timeout=None)`
 - `register_command(CommandEntry)`
 
 `middleware` 字段目前只是预留。普通插件也不要注册任意 agent role/team；多 Agent 仍然是 core runtime。
@@ -192,17 +192,58 @@ plugins:
 
 ## Hook 规则
 
-Hook 由 `PluginManager` 直接管理：
+正式运行时 Hook 由独立的 `HookManager` 管理，`PluginManager` 只负责注册转发、插件归属和卸载清理。回调接收只读的 `HookEnvelope`，并返回事件对应的 outcome：
 
-- `priority` 越小越先执行。
-- hook 抛异常时 fail-open，只记录日志，不打断主流程。
-- 多个 hook 返回非 `None` 时，最终返回最后一个非 `None` 的结果。
-- 禁用插件时会移除该插件注册的 hook。
+```python
+from personal_agent.hooks import HookEvent, PreToolUseOutcome
 
-当前内置 hook 示例：
+async def protect_write(event):
+    path = str(event.payload.get("input", {}).get("path") or "")
+    if path.endswith(".pem"):
+        return PreToolUseOutcome.block("private key files are protected")
+    return PreToolUseOutcome()
 
-- `configure`：把配置应用到插件自己的模块状态。
-- `wechat_qr_login`：触发微信扫码登录辅助流程。
+def register(ctx) -> None:
+    ctx.register_hook(
+        HookEvent.PRE_TOOL_USE,
+        protect_write,
+        name="protect_private_keys",
+        matcher="file_write",
+        priority=20,
+        timeout=2.0,
+    )
+```
+
+`HookEnvelope` 的公共字段包括 `event_name`、`scope`、`session_key`、`turn_id`、`agent_id`、`cwd`、`mode`、`triggered_at`、`source`、`payload` 和 `schema_version`。Payload 只放当前事件所需的 JSON-safe 数据；插件不应修改 envelope 或把密钥写入 outcome。
+
+正式事件与返回类型：
+
+| 事件 | matcher 对象 | 返回类型 | 语义 |
+|---|---|---|---|
+| `GatewayStart` / `GatewayStop` | 无 | `None` | Gateway 生命周期观察 |
+| `PlatformConnected` / `PlatformDisconnected` | platform | `None` | 平台连接状态观察 |
+| `GatewayMessageReceived` | platform | `GatewayMessageOutcome` | 鉴权后按顺序变换或阻止入站消息 |
+| `GatewayBeforeSend` | platform | `GatewayBeforeSendOutcome` | 实际平台发送前按顺序变换或抑制文本 |
+| `GatewayAfterSend` | platform | `None` | 重试结束后的发送结果观察 |
+| `SessionStart` | `new` / `resume` / `clear` | `ContextHookOutcome` | 会话首次使用时添加上下文或停止本轮 |
+| `UserPromptSubmit` | platform | `ContextHookOutcome` | 用户提示进入 Agent 前添加上下文或停止本轮 |
+| `PreCompact` / `PostCompact` | `auto` | `ContextHookOutcome` / `None` | 压缩前延期/补上下文，压缩后观察 |
+| `Stop` | 无 | `StopOutcome` | 最终答案后最多要求继续一次 |
+| `PreToolUse` | tool name | `PreToolUseOutcome` | 安全评估前阻止、补上下文或改写参数 |
+| `PermissionRequest` | tool name | `PermissionRequestOutcome` | 对需要确认的调用 allow / deny / abstain |
+| `PostToolUse` | tool name | `PostToolUseOutcome` | 保留真实审计结果，只改变模型可见反馈或补上下文 |
+
+执行规则：
+
+- `priority` 越小优先级越高；matcher 使用正则 `fullmatch`，`"*"` 表示全部匹配。
+- Gateway 消息和发送前事件按优先级串行变换，后一个 Hook 能看到前一个 Hook 的结果。
+- Context、policy 和 observer 事件中的多个回调并发执行，再按事件规则保守聚合。
+- 多个 `PreToolUse` 参数改写冲突时只采用最高优先级的改写；任意 deny/block 都优先于 allow。
+- `PreToolUse` 异常或超时 fail-closed；`PermissionRequest` 异常视为 abstain；Gateway、context 和 observer 默认 fail-open。
+- Hook 附加上下文只进入当前 turn 的模型请求，不写入 transcript；`PostToolUse` 也不会覆盖真实 tool result 和审计记录。
+- 禁用或加载失败时，`HookManager` 会按插件 owner 移除全部正式 Hook。
+
+`configure`、`on_agent_created`、`on_session_selected`、`wechat_qr_login` 目前仍是宿主内部使用的专用生命周期回调，不属于正式运行时事件。旧的 `on_before_llm_call`、`on_after_llm_call`、`on_before_tool_exec`、`on_after_tool_exec`、`on_message_received`、`on_before_send` 已移除；插件注册这些名称会直接报错。主 Agent 不开放 LLM request/response 改写 Hook。
 
 Memory provider 使用专用 registry 注册，不通过通用 hook 创建，避免多个插件互相覆盖。
 

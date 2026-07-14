@@ -12,11 +12,11 @@ from collections.abc import Callable, Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from personal_agent.agent.hooks import Hooks
 from personal_agent.attachments import AttachmentStore, DownloadedAttachment, ResolvedAttachment
 from personal_agent.attachments.store import AttachmentStoreError
 from personal_agent.models.messages import AttachmentRef, MessageEvent, OutboundMessage, PlatformCapabilities
 from personal_agent.models.messages import SessionSource
+from personal_agent.platforms.hooks import AdapterHooks
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,8 @@ class BasePlatformAdapter(ABC):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._message_handler: Callable[[MessageEvent], Awaitable[str | None]] | None = None
         self._message_bypass_predicate: Callable[[MessageEvent], bool] | None = None
+        self._before_send_handler: Callable[[SessionSource, str], Awaitable[str | None]] | None = None
+        self._after_send_handler: Callable[[SessionSource, str, bool, str], Awaitable[None]] | None = None
         self._active_sessions: dict[str, bool] = {}
         self._pending_messages: dict[str, list[PendingMessage]] = {}
         self._chat_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -164,7 +166,7 @@ class BasePlatformAdapter(ABC):
             2,
             minimum=0,
         )
-        self.hooks = Hooks()
+        self.hooks = AdapterHooks()
         self._platform_name = type(self).__name__
         self._connected = False
         self._last_connected_at = ""
@@ -205,6 +207,15 @@ class BasePlatformAdapter(ABC):
 
     def set_message_bypass_predicate(self, predicate: Callable[[MessageEvent], bool] | None) -> None:
         self._message_bypass_predicate = predicate
+
+    def set_outbound_handlers(
+        self,
+        *,
+        before_send: Callable[[SessionSource, str], Awaitable[str | None]] | None = None,
+        after_send: Callable[[SessionSource, str, bool, str], Awaitable[None]] | None = None,
+    ) -> None:
+        self._before_send_handler = before_send
+        self._after_send_handler = after_send
 
     def set_attachment_store(self, store: AttachmentStore) -> None:
         self._attachment_store = store
@@ -277,7 +288,7 @@ class BasePlatformAdapter(ABC):
                     response = await self._message_handler(event)
                     self._last_response_at = _now()
                 if response:
-                    await self._send_with_retry(event.source.chat_id, response)
+                    await self._send_gateway_response(event.source, response)
         except Exception:
             logger.exception("Background processing failed for session %s", session_key)
         finally:
@@ -299,7 +310,7 @@ class BasePlatformAdapter(ABC):
                 response = await self._message_handler(event)
                 self._last_response_at = _now()
             if response:
-                await self._send_with_retry(event.source.chat_id, response)
+                await self._send_gateway_response(event.source, response)
         except Exception:
             logger.exception("Bypass processing failed for session %s", session_key)
 
@@ -385,12 +396,39 @@ class BasePlatformAdapter(ABC):
 
     # ── retry logic ───────────────────────────────────
 
-    async def _send_with_retry(self, chat_id: str, content: str, max_retries: int | None = None) -> None:
+    async def _send_gateway_response(self, source: SessionSource, content: str) -> bool:
+        final = str(content or "")
+        if self._before_send_handler is not None:
+            try:
+                transformed = await self._before_send_handler(source, final)
+            except Exception:
+                logger.exception("Gateway before-send handler failed")
+            else:
+                if transformed is None:
+                    return False
+                final = str(transformed)
+        if not final:
+            return False
+        success = await self._send_with_retry(source.chat_id, final)
+        if self._after_send_handler is not None:
+            try:
+                await self._after_send_handler(source, final, success, self._last_send_error)
+            except Exception:
+                logger.exception("Gateway after-send handler failed")
+        return success
+
+    async def _send_with_retry(
+        self,
+        chat_id: str,
+        content: str,
+        max_retries: int | None = None,
+    ) -> bool:
         max_retries = self._send_max_retries if max_retries is None else max_retries
         for chunk in split_text_for_platform(content, self._max_outbound_text_length()):
             sent = await self._send_chunk_with_retry(chat_id, chunk, max_retries=max_retries)
             if not sent:
-                return
+                return False
+        return True
 
     async def _send_chunk_with_retry(self, chat_id: str, content: str, *, max_retries: int) -> bool:
         message = OutboundMessage.text(content)

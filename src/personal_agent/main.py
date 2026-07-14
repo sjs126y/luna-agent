@@ -88,27 +88,41 @@ async def boot() -> None:
 
     # ── 7.5. Default hooks — non-restrictive utility hooks ──
 
+    from personal_agent.hooks import (
+        GatewayBeforeSendOutcome,
+        GatewayMessageOutcome,
+        HookEvent,
+        HookSource,
+    )
+
     async def _norm_message(event):
-        """Normalize inbound text: strip whitespace, collapse blank lines."""
-        event.text = event.text.strip()
-        return event
+        return GatewayMessageOutcome.replace_message(
+            text=str(event.payload.get("text") or "").strip()
+        )
 
-    async def _truncate_response(text, source):
-        """Truncate very long responses (>4000 chars) with a note."""
+    async def _truncate_response(event):
+        text = str(event.payload.get("text") or "")
         if len(text) > 4000:
-            return text[:4000] + f"\n\n…(截断 {len(text) - 4000} 字符)"
-        return text
+            text = text[:4000] + f"\n\n…(截断 {len(text) - 4000} 字符)"
+            return GatewayBeforeSendOutcome.replace_text(text)
+        return GatewayBeforeSendOutcome()
 
-    async def _log_usage(response, usage):
-        """Log per-call token usage for observability."""
-        logger.info("LLM usage: in=%d out=%d total=%d",
-                     usage.get("input_tokens", 0),
-                     usage.get("output_tokens", 0),
-                     usage.get("input_tokens", 0) + usage.get("output_tokens", 0))
-        return response
-
-    gateway.hooks.on_message_received.append(_norm_message)
-    gateway.hooks.on_before_send.append(_truncate_response)
+    runtime.hook_manager.register(
+        owner="core.gateway.defaults",
+        source=HookSource.CORE,
+        event=HookEvent.GATEWAY_MESSAGE_RECEIVED,
+        callback=_norm_message,
+        name="normalize_text",
+        priority=10,
+    )
+    runtime.hook_manager.register(
+        owner="core.gateway.defaults",
+        source=HookSource.CORE,
+        event=HookEvent.GATEWAY_BEFORE_SEND,
+        callback=_truncate_response,
+        name="truncate_text",
+        priority=10,
+    )
 
     # ── 8. Start ───────────────────────────────────────
     await runtime.start_gateway(system_prompt_template=system_prompt)

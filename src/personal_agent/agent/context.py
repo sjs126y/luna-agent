@@ -41,6 +41,7 @@ class TurnContext:
     resolved_input: "ResolvedConversationInput | None" = None
     processed_attachments: list = field(default_factory=list)
     multimodal_diagnostics: dict = field(default_factory=dict)
+    hook_contexts: list[str] = field(default_factory=list)  # ephemeral model context
 
 
 async def build_turn_context(
@@ -67,6 +68,7 @@ async def build_turn_context(
     text_message = clean_text(
         resolved_input.text if resolved_input is not None else str(user_message or "")
     )
+    resolved_turn_id = str(turn_id or "").strip() or f"{uuid.uuid4().hex[:8]}"
 
     # Reset per-turn state
     agent._iteration_budget = agent.max_iterations
@@ -78,6 +80,8 @@ async def build_turn_context(
     agent._last_skill_summaries = ""
     agent._last_memory_injections = ""
     agent._last_tool_results = []
+    agent._hook_turn_id = resolved_turn_id
+    agent._hook_additional_contexts = []
     from personal_agent.tools.executor import clear_interrupted
     clear_interrupted()
 
@@ -122,10 +126,10 @@ async def build_turn_context(
             memory_injections_text,
         ),
     )
+    compression_hook_contexts = list(agent._hook_additional_contexts)
+    agent._hook_additional_contexts.clear()
     was_compressed = messages != pre_compress_messages
     user_idx = max(0, len(messages) - 1)
-
-    resolved_turn_id = str(turn_id or "").strip() or f"{uuid.uuid4().hex[:8]}"
 
     return TurnContext(
         user_message=text_message,
@@ -145,6 +149,7 @@ async def build_turn_context(
         resolved_input=resolved_input,
         processed_attachments=list(resolved_input.attachments) if resolved_input is not None else [],
         multimodal_diagnostics=dict(resolved_input.diagnostics) if resolved_input is not None else {},
+        hook_contexts=compression_hook_contexts,
     )
 
 
@@ -172,6 +177,45 @@ async def _check_and_compress(
     if not agent._compressor.should_compress(total, messages):
         return messages
 
+    hook_manager = getattr(agent, "_hook_manager", None)
+    if hook_manager is not None:
+        from pathlib import Path
+
+        from personal_agent.hooks import HookEnvelope, HookEvent, HookScope, HookSourceContext
+
+        source = getattr(agent, "_hook_source", None)
+        security_context = getattr(agent, "_security_context", None)
+        common = {
+            "scope": HookScope.TURN,
+            "session_key": str(
+                getattr(security_context, "session_key", "")
+                or getattr(agent, "_memory_session_key", "")
+            ),
+            "turn_id": str(getattr(agent, "_hook_turn_id", "") or ""),
+            "cwd": str(Path.cwd()),
+            "mode": str(getattr(security_context, "mode_id", "") or ""),
+            "source": HookSourceContext(
+                platform=str(getattr(source, "platform", "") or ""),
+                user_id=str(getattr(source, "user_id", "") or ""),
+                chat_id=str(getattr(source, "chat_id", "") or ""),
+            ),
+        }
+        pre_outcome = await hook_manager.dispatch(HookEnvelope(
+            event_name=HookEvent.PRE_COMPACT,
+            payload={
+                "trigger": "auto",
+                "message_count": len(messages),
+                "estimated_tokens": total,
+            },
+            **common,
+        ))
+        if pre_outcome.additional_context.strip():
+            agent._hook_additional_contexts.append(
+                f"[PreCompact hook context]\n{pre_outcome.additional_context.strip()}"
+            )
+        if pre_outcome.stop:
+            return messages
+
     logger.info("Compressing: %d tokens > %d limit", total, agent._compressor.threshold_tokens)
     try:
         result = await agent._compressor.compress(
@@ -179,10 +223,33 @@ async def _check_and_compress(
             agent._cached_system_prompt or "",
             agent._transport,
         )
+        if hook_manager is not None:
+            await hook_manager.dispatch(HookEnvelope(
+                event_name=HookEvent.POST_COMPACT,
+                payload={
+                    "trigger": "auto",
+                    "pre_message_count": len(messages),
+                    "post_message_count": len(result),
+                    "fallback": False,
+                },
+                **common,
+            ))
         return result
     except Exception:
         logger.exception("Compression failed, falling back to truncation")
-        return _truncate(messages, agent._compressor.protect_head, agent._compressor.protect_tail)
+        result = _truncate(messages, agent._compressor.protect_head, agent._compressor.protect_tail)
+        if hook_manager is not None:
+            await hook_manager.dispatch(HookEnvelope(
+                event_name=HookEvent.POST_COMPACT,
+                payload={
+                    "trigger": "auto",
+                    "pre_message_count": len(messages),
+                    "post_message_count": len(result),
+                    "fallback": True,
+                },
+                **common,
+            ))
+        return result
 
 
 def _truncate(messages: list[dict], head: int = 2, tail: int = 6) -> list[dict]:

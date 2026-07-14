@@ -91,6 +91,86 @@ def _messages(user_text="hello", assistant_text="echo:hello"):
     ]
 
 
+@pytest.mark.asyncio
+async def test_conversation_hooks_emit_session_start_once_and_prompt_context(service):
+    from personal_agent.conversation.input import ConversationInput
+    from personal_agent.hooks import ContextHookOutcome, HookEvent, HookManager
+
+    svc, _manager, _db = service
+    hook_manager = HookManager()
+    svc.hook_manager = hook_manager
+    starts = []
+
+    async def session_start(event):
+        starts.append(event.payload["source"])
+        return ContextHookOutcome(additional_context="session policy")
+
+    async def prompt(event):
+        return ContextHookOutcome(additional_context=f"prompt:{event.payload['text']}")
+
+    hook_manager.register(owner="test", event=HookEvent.SESSION_START, callback=session_start)
+    hook_manager.register(owner="test", event=HookEvent.USER_PROMPT_SUBMIT, callback=prompt)
+    user_input = ConversationInput(text="hello", source=_source())
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+
+    first = await svc._conversation_hook_contexts(
+        session_key="cli:default:local",
+        session_id=session.session_id,
+        turn_id="turn-1",
+        source=_source(),
+        user_input=user_input,
+        previous_session_id=None,
+    )
+    second = await svc._conversation_hook_contexts(
+        session_key="cli:default:local",
+        session_id=session.session_id,
+        turn_id="turn-2",
+        source=_source(),
+        user_input=user_input,
+        previous_session_id=session.session_id,
+    )
+
+    assert starts == ["new"]
+    assert "session policy" in first[0]
+    assert any("prompt:hello" in item for item in first)
+    assert second == ["[UserPromptSubmit hook context]\nprompt:hello"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_hook_can_stop_before_agent_loop(service, monkeypatch):
+    from personal_agent.hooks import ContextHookOutcome, HookEvent, HookManager
+
+    svc, _manager, _db = service
+    hook_manager = HookManager()
+    svc.hook_manager = hook_manager
+    called = False
+
+    async def stop_prompt(event):
+        return ContextHookOutcome(stop=True, reason="prompt rejected by policy")
+
+    async def run_conversation(agent, ctx):
+        nonlocal called
+        called = True
+        return {}
+
+    hook_manager.register(
+        owner="test",
+        event=HookEvent.USER_PROMPT_SUBMIT,
+        callback=stop_prompt,
+    )
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "blocked input")
+
+    assert result.status == "stopped"
+    assert result.final_response == "prompt rejected by policy"
+    assert any(
+        event.type == "stop" and event.data.get("reason") == "hook"
+        for event in result.events
+    )
+    assert called is False
+
+
 def _turn_report(
     *,
     status="completed",

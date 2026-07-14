@@ -552,6 +552,42 @@ async def test_duplicate_tool_finalization_empty_response_uses_safe_fallback(pro
 
 
 @pytest.mark.asyncio
+async def test_stop_hook_can_continue_once_without_persisting_instruction(provider):
+    from personal_agent.hooks import HookEvent, HookManager, StopOutcome
+
+    transport = MockTransport([
+        NormalizedResponse(text="draft", finish_reason="end_turn"),
+        NormalizedResponse(text="revised", finish_reason="end_turn"),
+    ])
+    manager = HookManager()
+    calls = 0
+
+    async def require_revision(event):
+        nonlocal calls
+        calls += 1
+        return StopOutcome(
+            continue_turn=True,
+            reason="needs revision",
+            continuation_prompt="Answer with a shorter final response.",
+        )
+
+    manager.register(owner="test", event=HookEvent.STOP, callback=require_revision)
+    agent = init_agent(transport, provider, hook_manager=manager)
+    ctx = await build_turn_context(agent, "Test")
+
+    result = await run_conversation(agent, ctx)
+
+    assert transport.calls == 2
+    assert calls == 1
+    assert result["final_response"] == "revised"
+    assert "Answer with a shorter final response." in _user_text(transport.call_messages[1])
+    assert not any(
+        "Answer with a shorter final response." in _user_text([message])
+        for message in result["messages"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_tool_quota_denial_stops_agent_loop(provider):
     transport = MockTransport([
         NormalizedResponse(

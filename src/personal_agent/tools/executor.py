@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 from personal_agent.conversation.events import emit_event
+from personal_agent.hooks import (
+    HookEnvelope,
+    HookEvent,
+    HookScope,
+    HookSourceContext,
+    PermissionDecision,
+)
 from personal_agent.tools.execution_guard import (
     GuardDecision,
     ToolDecision,
@@ -59,6 +66,7 @@ class ToolExecutionResult:
     temporary_grant_ttl_seconds: int = 0
     artifacts: list[ToolArtifact] = field(default_factory=list)
     result_metadata: dict[str, Any] = field(default_factory=dict)
+    hook_feedback: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -102,7 +110,6 @@ async def execute_tool_calls(
     messages: list[dict],
     *,
     agent: Any = None,
-    hooks: Any = None,
     event_sink: Any = None,
     confirm: Any = None,
 ) -> list[ToolExecutionResult]:
@@ -134,7 +141,6 @@ async def execute_tool_calls(
                     execute_tool_call_result(
                         tc,
                         agent=agent,
-                        hooks=hooks,
                         event_sink=event_sink,
                         confirm=confirm,
                     )
@@ -160,7 +166,6 @@ async def execute_tool_calls(
             results[idx] = await execute_tool_call_result(
                 tc,
                 agent=agent,
-                hooks=hooks,
                 event_sink=event_sink,
                 confirm=confirm,
             )
@@ -186,16 +191,15 @@ async def execute_tool_calls(
     return ordered_results
 
 
-async def _exec_one(tc: dict, *, agent: Any = None, hooks: Any = None) -> str:
+async def _exec_one(tc: dict, *, agent: Any = None) -> str:
     """Compatibility wrapper that returns only the tool-result string."""
-    return format_tool_result(await execute_tool_call_result(tc, agent=agent, hooks=hooks))
+    return format_tool_result(await execute_tool_call_result(tc, agent=agent))
 
 
 async def execute_tool_call_result(
     tc: dict,
     *,
     agent: Any = None,
-    hooks: Any = None,
     event_sink: Any = None,
     confirm: Any = None,
     timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
@@ -203,10 +207,10 @@ async def execute_tool_call_result(
     """Execute a single tool call through the security pipeline.
 
     Order matters — hard rejections first, then user-facing gates:
-      ① pre-check — hard blocks (never ask user): bash whitelist, ext, SSRF...
-      ② security gate — may ask for exact tool/resource approval
-      ③ checkpoint — backup before destructive write
-      ④ pre-hook → dispatch → post-process
+      ① typed proposal hook — may block or rewrite input
+      ② pre-check — hard blocks (never ask user): bash whitelist, ext, SSRF...
+      ③ security gate — may ask for exact tool/resource approval
+      ④ checkpoint → dispatch → post-process
     """
     started = _time_module.monotonic()
     tc = _normalize_tool_call(tc)
@@ -321,36 +325,28 @@ async def execute_tool_call_result(
             started=started,
         ))
 
-    # Proposal hooks may transform arguments, but the final call is frozen and
-    # evaluated only after those transformations have completed.
-    if hooks:
-        try:
-            hook_result = await hooks.fire("on_before_tool_exec", tc, entry)
-        except Exception as exc:
+    hook_manager = getattr(agent, "_hook_manager", None) if agent is not None else None
+    if hook_manager is not None:
+        pre_outcome = await hook_manager.dispatch(_tool_hook_envelope(
+            agent,
+            HookEvent.PRE_TOOL_USE,
+            tc,
+            entry=entry,
+        ))
+        _record_hook_context(agent, getattr(pre_outcome, "additional_context", ""))
+        if getattr(pre_outcome, "blocked", False):
             return await _finish(_result(
                 tc,
-                status="error",
+                status="denied",
                 category="hook",
-                error=f"before hook failed: {type(exc).__name__}: {exc}",
+                error=getattr(pre_outcome, "reason", "") or "tool execution blocked by hook",
                 started=started,
             ))
-        if hook_result is None:
-            return await _finish(_result(
-                tc, status="denied", category="hook", error="tool execution blocked", started=started
-            ))
-        if isinstance(hook_result, dict):
-            modified = _normalize_tool_call(hook_result)
-            if modified["name"] != name:
-                return await _finish(_result(
-                    tc,
-                    status="denied",
-                    category="hook",
-                    error="before hook cannot change tool name",
-                    started=started,
-                ))
-            tc = modified
+        updated_input = getattr(pre_outcome, "updated_input", None)
+        if updated_input is not None:
+            tc = _normalize_tool_call({**tc, "input": dict(updated_input)})
 
-    # ── guard decisions: hard safety → permission → runtime guard ──
+    # Evaluate all guards against the final hook-approved input.
     try:
         guard_decision = evaluate_execution_guards(tc, entry, agent)
     except Exception as exc:
@@ -362,8 +358,33 @@ async def execute_tool_call_result(
             started=started,
         ))
     tool_decision = _with_agent_grant_metadata(tool_decision_from_guard(tc, guard_decision), agent)
-    if _needs_tool_confirm(tool_decision) and confirm is not None:
-        answer = await _confirm_tool_decision(confirm, tool_decision, agent=agent)
+    hook_permission = PermissionDecision.ABSTAIN
+    if _needs_tool_confirm(tool_decision) and hook_manager is not None:
+        permission_outcome = await hook_manager.dispatch(_tool_hook_envelope(
+            agent,
+            HookEvent.PERMISSION_REQUEST,
+            tc,
+            entry=entry,
+            tool_decision=tool_decision,
+        ))
+        hook_permission = getattr(permission_outcome, "decision", PermissionDecision.ABSTAIN)
+        if hook_permission == PermissionDecision.DENY:
+            await _emit_tool_decision(event_sink, tool_decision)
+            return await _finish(_result(
+                tc,
+                status="denied",
+                category="hook",
+                error=getattr(permission_outcome, "reason", "") or "permission denied by hook",
+                started=started,
+            ))
+    if _needs_tool_confirm(tool_decision) and (
+        hook_permission == PermissionDecision.ALLOW or confirm is not None
+    ):
+        answer = (
+            "allow"
+            if hook_permission == PermissionDecision.ALLOW
+            else await _confirm_tool_decision(confirm, tool_decision, agent=agent)
+        )
         if answer == "interrupted":
             await _emit_tool_decision(event_sink, tool_decision)
             return await _finish(_result(
@@ -438,7 +459,6 @@ async def execute_tool_call_result(
                 timeout=timeout,
                 agent=agent,
                 confirm=confirm,
-                hooks=hooks,
                 event_sink=event_sink,
             )
             nested_result = raw_result if isinstance(raw_result, ToolExecutionResult) else None
@@ -513,17 +533,6 @@ async def execute_tool_call_result(
         category = "handler"
         error = result or "MCP tool call failed"
         result = ""
-    if hooks:
-        try:
-            modified = await hooks.fire("on_after_tool_exec", tc, result)
-            if isinstance(modified, str):
-                result = modified
-                output_truncated = False
-        except Exception as exc:
-            status = "error"
-            category = "hook"
-            error = f"after hook failed: {type(exc).__name__}: {exc}"
-
     logger.debug("Tool '%s' done: %d chars", name, len(result))
     final_result = _result(
         tc,
@@ -549,10 +558,26 @@ async def execute_tool_call_result(
         final_result.grant_scope = nested_result.grant_scope
         final_result.grant_expires_at = nested_result.grant_expires_at
         final_result.temporary_grant_ttl_seconds = nested_result.temporary_grant_ttl_seconds
+    if hook_manager is not None:
+        post_outcome = await hook_manager.dispatch(_tool_hook_envelope(
+            agent,
+            HookEvent.POST_TOOL_USE,
+            tc,
+            entry=entry,
+            tool_result=final_result,
+        ))
+        _record_hook_context(agent, getattr(post_outcome, "additional_context", ""))
+        if getattr(post_outcome, "blocked", False):
+            final_result.hook_feedback = (
+                getattr(post_outcome, "reason", "")
+                or "Tool result requires review before continuing."
+            )
     return await _finish(final_result)
 
 
 def format_tool_result(result: ToolExecutionResult) -> str:
+    if result.hook_feedback:
+        return result.hook_feedback
     if result.content:
         return result.content
     if result.error:
@@ -651,6 +676,61 @@ async def _emit_tool_decision(event_sink: Any, decision: ToolDecision) -> None:
         f"工具决策 {decision.tool_name} {decision.status}",
         **decision.as_dict(),
     )
+
+
+def _tool_hook_envelope(
+    agent: Any,
+    event: HookEvent,
+    tool_call: dict,
+    *,
+    entry: Any = None,
+    tool_decision: ToolDecision | None = None,
+    tool_result: ToolExecutionResult | None = None,
+) -> HookEnvelope:
+    security_context = getattr(agent, "_security_context", None)
+    source = getattr(agent, "_hook_source", None)
+    payload: dict[str, Any] = {
+        "tool_name": str(tool_call.get("name") or ""),
+        "tool_use_id": str(tool_call.get("id") or ""),
+        "tool_input": dict(tool_call.get("input") or {}),
+        "display_name": str(getattr(entry, "display_name", "") or ""),
+    }
+    if tool_decision is not None:
+        payload.update({
+            "requested_resources": list(tool_decision.requested_resources),
+            "risk_level": tool_decision.risk_level,
+            "risk_summary": tool_decision.risk_summary,
+            "approval_mode": tool_decision.tool_approval_mode,
+        })
+    if tool_result is not None:
+        payload["tool_result"] = tool_result.as_dict()
+    return HookEnvelope(
+        event_name=event,
+        scope=HookScope.TURN,
+        session_key=str(
+            getattr(security_context, "session_key", "")
+            or getattr(agent, "_memory_session_key", "")
+        ),
+        turn_id=str(getattr(agent, "_hook_turn_id", "") or ""),
+        agent_id="main",
+        cwd=str(payload["tool_input"].get("cwd") or Path.cwd()),
+        mode=str(getattr(security_context, "mode_id", "") or ""),
+        source=HookSourceContext(
+            platform=str(getattr(source, "platform", "") or ""),
+            user_id=str(getattr(source, "user_id", "") or ""),
+            chat_id=str(getattr(source, "chat_id", "") or ""),
+        ),
+        payload=payload,
+    )
+
+
+def _record_hook_context(agent: Any, value: str) -> None:
+    text = str(value or "").strip()
+    if not text or agent is None:
+        return
+    contexts = getattr(agent, "_hook_additional_contexts", None)
+    if isinstance(contexts, list):
+        contexts.append(f"[Hook additional context]\n{text}")
 
 
 def _normalize_tool_call(tc: dict) -> dict:
@@ -762,7 +842,6 @@ async def _run_handler(
     timeout: float,
     agent: Any = None,
     confirm: Any = None,
-    hooks: Any = None,
     event_sink: Any = None,
 ) -> Any:
     global _active_tool_executions
@@ -770,23 +849,19 @@ async def _run_handler(
         reset_current_tool_agent,
         reset_current_tool_confirm,
         reset_current_tool_event_sink,
-        reset_current_tool_hooks,
         set_current_tool_agent,
         set_current_tool_confirm,
         set_current_tool_event_sink,
-        set_current_tool_hooks,
     )
 
     _active_tool_executions += 1
     agent_token = set_current_tool_agent(agent)
     confirm_token = set_current_tool_confirm(confirm)
-    hooks_token = set_current_tool_hooks(hooks)
     event_sink_token = set_current_tool_event_sink(event_sink)
     try:
         return await asyncio.wait_for(handler(**kwargs), timeout=timeout)
     finally:
         reset_current_tool_event_sink(event_sink_token)
-        reset_current_tool_hooks(hooks_token)
         reset_current_tool_confirm(confirm_token)
         reset_current_tool_agent(agent_token)
         _active_tool_executions = max(0, _active_tool_executions - 1)

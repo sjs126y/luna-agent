@@ -323,6 +323,7 @@ async def test_resource_approval_is_enforced_by_file_boundary(tmp_path):
 
 @pytest.mark.asyncio
 async def test_hook_arguments_are_evaluated_after_modification(tmp_path):
+    from personal_agent.hooks import HookEvent, HookManager, PreToolUseOutcome
     from personal_agent.security.models import ResourceRequirement
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_call_result
@@ -335,12 +336,6 @@ async def test_hook_arguments_are_evaluated_after_modification(tmp_path):
     async def handler(path: str):
         seen.append(path)
         return "ok"
-
-    class Hooks:
-        async def fire(self, name, tc, _entry):
-            if name == "on_before_tool_exec":
-                return {**tc, "input": {"path": str(modified)}}
-            return tc
 
     entry = ToolEntry(
         "hook_resource_demo",
@@ -358,11 +353,24 @@ async def test_hook_arguments_are_evaluated_after_modification(tmp_path):
         decisions.append(decision)
         return "deny"
 
+    agent = _agent(tmp_path)
+    agent._hook_manager = HookManager()
+    agent._hook_turn_id = "hook-turn"
+    agent._hook_source = None
+    agent._hook_additional_contexts = []
+    agent._memory_session_key = "test"
+    agent._hook_manager.register(
+        owner="test",
+        event=HookEvent.PRE_TOOL_USE,
+        matcher="hook_resource_demo",
+        callback=lambda event: PreToolUseOutcome(
+            updated_input={"path": str(modified)}
+        ),
+    )
     try:
         result = await execute_tool_call_result(
             {"id": "hook", "name": entry.name, "input": {"path": str(original)}},
-            agent=_agent(tmp_path),
-            hooks=Hooks(),
+            agent=agent,
             confirm=deny,
         )
     finally:

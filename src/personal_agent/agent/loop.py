@@ -33,6 +33,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
     successful_tool_calls: dict[str, list[object]] = {}
     duplicate_finalization_pending = False
     duplicate_finalization_instruction = ""
+    stop_hook_active = False
     report_recorder = TurnReportRecorder(event_sink)
 
     def _with_turn_report(result: dict) -> dict:
@@ -90,32 +91,13 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         # ── refresh system prompt if tools changed ──
         system_prompt = agent._cached_system_prompt or ""
 
-        # ── hooks: on_before_llm_call ──
-        hook_result = await agent.hooks.fire(
-            "on_before_llm_call",
-            api_messages, system_prompt, active_tools,
-        )
-        hook_changed_messages = False
-        if isinstance(hook_result, dict):
-            hook_changed_messages = "messages" in hook_result
-            api_messages = hook_result.get("messages", api_messages)
-            system_prompt = hook_result.get("system_prompt", system_prompt)
-        request_plan = (
-            LLMRequestPlan.from_legacy(
-                api_messages,
-                system_prompt,
-                active_tools,
-                metadata={"source": "hook" if hook_changed_messages else "legacy"},
-            )
-            if hook_changed_messages
-            else _build_request_plan(
-                agent,
-                ctx,
-                system_prompt,
-                skill_injection_for_plan,
-                tools=active_tools,
-                finalization_instruction=duplicate_finalization_instruction,
-            )
+        request_plan = _build_request_plan(
+            agent,
+            ctx,
+            system_prompt,
+            skill_injection_for_plan,
+            tools=active_tools,
+            finalization_instruction=duplicate_finalization_instruction,
         )
         context_budget = _build_request_context_budget(
             agent,
@@ -123,7 +105,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             api_messages,
             system_prompt,
             skill_injection=skill_injection_for_plan,
-            use_actual_messages=hook_changed_messages,
+            use_actual_messages=True,
             tools=active_tools,
         )
         context_usage_payload = _context_usage_payload(context_budget)
@@ -290,10 +272,11 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             except Exception:
                 logger.exception("Compressor usage update failed")
 
-        # ── hooks: on_after_llm_call ──
-        modified = await agent.hooks.fire("on_after_llm_call", response, response.usage)
-        if isinstance(modified, dict):
-            response.text = modified.get("text", response.text)
+        logging.getLogger("personal_agent.hooks").info(
+            "LLM call: in=%d out=%d",
+            response.usage.get("input_tokens", 0),
+            response.usage.get("output_tokens", 0),
+        )
 
         if is_duplicate_finalization:
             duplicate_finalization_pending = False
@@ -396,6 +379,20 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             if await _consume_steer(ctx, steer, session_key, report_recorder):
                 just_executed_tools = False
                 continue
+            if response.text and not stop_hook_active:
+                stop_outcome = await _run_stop_hook(agent, ctx, response.text)
+                if stop_outcome is not None and stop_outcome.continue_turn:
+                    continuation = (
+                        stop_outcome.continuation_prompt.strip()
+                        or stop_outcome.reason.strip()
+                    )
+                    if continuation:
+                        ctx.hook_contexts.append(
+                            f"[Stop hook continuation]\n{continuation}"
+                        )
+                        stop_hook_active = True
+                        just_executed_tools = False
+                        continue
             if not response.text:
                 ctx.messages.append({
                     "role": "assistant",
@@ -455,10 +452,13 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             response.tool_calls,
             ctx.messages,
             agent=agent,
-            hooks=agent.hooks,
             event_sink=report_recorder,
             confirm=confirm,
         )
+        hook_contexts = list(getattr(agent, "_hook_additional_contexts", []) or [])
+        if hook_contexts:
+            ctx.hook_contexts.extend(hook_contexts)
+            agent._hook_additional_contexts.clear()
         just_executed_tools = True
 
         for tc, tool_result in zip(response.tool_calls, tool_results):
@@ -661,6 +661,44 @@ def _signal_preview(value: str, limit: int = 120) -> str:
     return text[: max(0, limit - 3)].rstrip() + "..."
 
 
+async def _run_stop_hook(agent, ctx, response_text: str):
+    hook_manager = getattr(agent, "_hook_manager", None)
+    if hook_manager is None:
+        return None
+    from pathlib import Path
+
+    from personal_agent.hooks import (
+        HookEnvelope,
+        HookEvent,
+        HookScope,
+        HookSourceContext,
+    )
+
+    source = getattr(agent, "_hook_source", None)
+    security_context = getattr(agent, "_security_context", None)
+    return await hook_manager.dispatch(HookEnvelope(
+        event_name=HookEvent.STOP,
+        scope=HookScope.TURN,
+        session_key=str(
+            getattr(security_context, "session_key", "")
+            or getattr(agent, "_memory_session_key", "")
+        ),
+        turn_id=str(getattr(ctx, "turn_id", "") or ""),
+        cwd=str(Path.cwd()),
+        mode=str(getattr(security_context, "mode_id", "") or ""),
+        source=HookSourceContext(
+            platform=str(getattr(source, "platform", "") or ""),
+            user_id=str(getattr(source, "user_id", "") or ""),
+            chat_id=str(getattr(source, "chat_id", "") or ""),
+        ),
+        payload={
+            "reason": "model_completed",
+            "last_assistant_message": response_text,
+            "hook_active": False,
+        },
+    ))
+
+
 async def _build_api_messages(agent, ctx) -> list[dict]:
     """Build messages for LLM: messages + injections. NOT persisted."""
     msgs = list(ctx.messages)
@@ -682,6 +720,12 @@ async def _build_api_messages(agent, ctx) -> list[dict]:
     # Memory prefetch: external provider results injected as prefix
     for message in reversed(ctx.memory_prefetch_messages):
         msgs.insert(0, message)
+
+    for hook_context in getattr(ctx, "hook_contexts", []) or []:
+        msgs.append({
+            "role": "user",
+            "content": [{"type": "text", "text": hook_context}],
+        })
 
     return msgs
 
@@ -707,12 +751,16 @@ def _build_request_plan(
             "role": "user",
             "content": [{"type": "text", "text": ctx.skill_summaries}],
         })
-
     messages = list(getattr(ctx, "messages", []) or [])
     current_idx = int(getattr(ctx, "current_turn_user_idx", max(0, len(messages) - 1)) or 0)
     current_user = messages[current_idx] if 0 <= current_idx < len(messages) else None
     history = messages[:current_idx] if current_user is not None else messages
     turn_tail = messages[current_idx + 1:] if current_user is not None else []
+    for hook_context in getattr(ctx, "hook_contexts", []) or []:
+        turn_tail.append({
+            "role": "user",
+            "content": [{"type": "text", "text": hook_context}],
+        })
     if finalization_instruction:
         turn_tail.append({
             "role": "user",

@@ -158,6 +158,147 @@ class MockAgent:
         self._security_context = SecurityStateStore(settings).context("test")
 
 
+def _hook_agent():
+    from personal_agent.hooks import HookManager
+
+    agent = MockAgent()
+    agent._hook_manager = HookManager()
+    agent._hook_turn_id = "turn-hook"
+    agent._hook_source = None
+    agent._hook_additional_contexts = []
+    agent._memory_session_key = "test"
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_typed_pre_tool_hook_blocks_before_handler():
+    from personal_agent.hooks import HookEvent, PreToolUseOutcome
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    calls = 0
+
+    async def handler():
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    agent = _hook_agent()
+    agent._hook_manager.register(
+        owner="test",
+        event=HookEvent.PRE_TOOL_USE,
+        matcher="^typed_hook_block$",
+        callback=lambda event: PreToolUseOutcome.block("blocked by policy"),
+    )
+    tool_registry.register(ToolEntry("typed_hook_block", "demo", {}, handler))
+    try:
+        result = await execute_tool_call_result(
+            {"id": "hook", "name": "typed_hook_block", "input": {}},
+            agent=agent,
+        )
+    finally:
+        tool_registry.unregister("typed_hook_block")
+
+    assert result.status == "denied"
+    assert result.category == "hook"
+    assert result.error == "blocked by policy"
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_typed_permission_hook_allow_skips_confirmation():
+    from personal_agent.hooks import (
+        HookEvent,
+        PermissionDecision,
+        PermissionRequestOutcome,
+    )
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    confirmations = 0
+
+    async def confirm(_decision):
+        nonlocal confirmations
+        confirmations += 1
+        return "deny"
+
+    agent = _hook_agent()
+    agent._hook_manager.register(
+        owner="test",
+        event=HookEvent.PERMISSION_REQUEST,
+        matcher="^typed_hook_allow$",
+        callback=lambda event: PermissionRequestOutcome(PermissionDecision.ALLOW),
+    )
+
+    async def handler():
+        return "ok"
+
+    tool_registry.register(ToolEntry(
+        "typed_hook_allow",
+        "demo",
+        {},
+        handler,
+        approval_mode="cached",
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {"id": "hook", "name": "typed_hook_allow", "input": {}},
+            agent=agent,
+            confirm=confirm,
+        )
+    finally:
+        tool_registry.unregister("typed_hook_allow")
+
+    assert result.status == "success"
+    assert result.content == "ok"
+    assert confirmations == 0
+    assert agent._security_context.state.tool_grants == {}
+
+
+@pytest.mark.asyncio
+async def test_post_tool_hook_feedback_does_not_replace_audit_content():
+    from personal_agent.hooks import HookEvent, PostToolUseOutcome
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from personal_agent.tools.registry import tool_registry
+
+    agent = _hook_agent()
+    agent._hook_manager.register(
+        owner="test",
+        event=HookEvent.POST_TOOL_USE,
+        matcher="^typed_hook_feedback$",
+        callback=lambda event: PostToolUseOutcome(
+            blocked=True,
+            reason="review this result",
+            additional_context="generated files changed",
+        ),
+    )
+
+    async def handler():
+        return "actual result"
+
+    tool_registry.register(ToolEntry(
+        "typed_hook_feedback",
+        "demo",
+        {},
+        handler,
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {"id": "hook", "name": "typed_hook_feedback", "input": {}},
+            agent=agent,
+        )
+    finally:
+        tool_registry.unregister("typed_hook_feedback")
+
+    assert result.status == "success"
+    assert result.content == "actual result"
+    assert format_tool_result(result) == "review this result"
+    assert "generated files changed" in agent._hook_additional_contexts[0]
+
+
 def test_tool_entry_permission_category_defaults_to_default():
     from personal_agent.tools.entry import ToolEntry
 
