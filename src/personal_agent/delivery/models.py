@@ -56,6 +56,7 @@ class DeliveryResult:
     message_id: str = ""
     error: str = ""
     attempts: int = 0
+    ambiguous: bool = False
     completed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property

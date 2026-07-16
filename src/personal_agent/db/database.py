@@ -105,6 +105,26 @@ CREATE INDEX IF NOT EXISTS idx_turn_reports_session ON turn_reports(session_id, 
 CREATE INDEX IF NOT EXISTS idx_turn_reports_session_key ON turn_reports(session_key, id);
 CREATE INDEX IF NOT EXISTS idx_turn_reports_turn ON turn_reports(turn_id);
 CREATE INDEX IF NOT EXISTS idx_turn_reports_status ON turn_reports(status, id);
+
+CREATE TABLE IF NOT EXISTS delivery_outbox (
+    delivery_id   TEXT PRIMARY KEY,
+    session_key   TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    message_json  TEXT NOT NULL,
+    metadata_json TEXT DEFAULT '{}',
+    status        TEXT NOT NULL,
+    attempts      INTEGER DEFAULT 0,
+    next_attempt_at REAL DEFAULT 0,
+    platform      TEXT DEFAULT '',
+    chat_id       TEXT DEFAULT '',
+    message_id    TEXT DEFAULT '',
+    last_error    TEXT DEFAULT '',
+    created_at    REAL NOT NULL,
+    updated_at    REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_outbox_due
+ON delivery_outbox(status, next_attempt_at, created_at);
 """
 
 
@@ -140,6 +160,53 @@ class Database:
         if self._conn:
             await self._conn.close()
             self._conn = None
+
+    # ── delivery outbox ───────────────────────────────
+
+    async def enqueue_delivery(self, values: tuple) -> None:
+        async with self._write_lock:
+            await self._conn.execute(
+                """INSERT OR IGNORE INTO delivery_outbox
+                   (delivery_id, session_key, kind, message_json, metadata_json,
+                    status, attempts, next_attempt_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                values,
+            )
+            await self._conn.commit()
+
+    async def due_deliveries(self, *, now: float, limit: int = 50) -> list[dict]:
+        cursor = await self._conn.execute(
+            """SELECT * FROM delivery_outbox
+               WHERE status IN ('pending', 'retry') AND next_attempt_at <= ?
+               ORDER BY created_at LIMIT ?""",
+            (now, max(1, int(limit))),
+        )
+        return [dict(row) async for row in cursor]
+
+    async def delivery_record(self, delivery_id: str) -> dict | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM delivery_outbox WHERE delivery_id = ?",
+            (delivery_id,),
+        )
+        async for row in cursor:
+            return dict(row)
+        return None
+
+    async def update_delivery(self, delivery_id: str, **changes) -> None:
+        allowed = {
+            "status", "attempts", "next_attempt_at", "platform", "chat_id",
+            "message_id", "last_error", "updated_at",
+        }
+        values = {key: value for key, value in changes.items() if key in allowed}
+        if not values:
+            return
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        async with self._write_lock:
+            await self._conn.execute(
+                f"UPDATE delivery_outbox SET {assignments} WHERE delivery_id = ?",
+                (*values.values(), delivery_id),
+            )
+            await self._conn.commit()
 
     # ── sessions ──────────────────────────────────────
 

@@ -50,12 +50,22 @@ class DeliveryService:
         sessions: "SessionDirectory",
         platforms: PlatformDirectory,
         hook_manager=None,
+        outbox=None,
     ) -> None:
         self.sessions = sessions
         self.platforms = platforms
         self.hook_manager = hook_manager
+        self.outbox = outbox
 
     async def deliver(self, request: DeliveryRequest) -> DeliveryResult:
+        if self.outbox is not None:
+            await self.outbox.enqueue(request)
+        result = await self.deliver_once(request)
+        if self.outbox is not None:
+            return await self.outbox.record_result(result)
+        return result
+
+    async def deliver_once(self, request: DeliveryRequest) -> DeliveryResult:
         binding = self.sessions.resolve(request.session_key)
         if binding is None:
             return self._failed(request, "session has no delivery binding")
@@ -91,6 +101,7 @@ class DeliveryService:
                 success=bool(getattr(raw, "success", False)),
                 message_id=str(getattr(raw, "message_id", "") or ""),
                 error=str(getattr(raw, "error", "") or ""),
+                ambiguous="timeout" in str(getattr(raw, "error", "") or "").lower(),
             )
         except Exception as exc:
             sent = PlatformSendResult(
@@ -108,6 +119,7 @@ class DeliveryService:
             message_id=sent.message_id,
             error=sent.error,
             attempts=1,
+            ambiguous=sent.ambiguous,
         )
         await self._post_delivery(request, source, result)
         return result
