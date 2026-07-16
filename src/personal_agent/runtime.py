@@ -18,7 +18,8 @@ from personal_agent.hooks import HookManager
 from personal_agent.plugins.core.manager import PluginManager
 from personal_agent.tools.audit import set_audit_path
 from personal_agent.tools.sandbox import init_sandbox
-from personal_agent.conversation import ConversationService
+from personal_agent.conversation import ConversationCoordinator, ConversationService, SessionDirectory
+from personal_agent.delivery import DeliveryOutbox, DeliveryService, DeliveryWorker, PlatformDirectory
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,12 @@ class AppRuntime:
     session_store: SessionStore
     memory_manager: MemoryManager
     conversation_service: ConversationService
+    conversation_coordinator: ConversationCoordinator
+    session_directory: SessionDirectory
+    platform_directory: PlatformDirectory
+    delivery_service: DeliveryService
+    delivery_outbox: DeliveryOutbox
+    delivery_worker: DeliveryWorker
     memory_review_service: MemoryReviewService
     mcp_manager: Any | None
     data_dir: Path
@@ -196,6 +203,11 @@ class AppRuntime:
             plugin_manager=self.plugin_manager,
             hook_manager=self.hook_manager,
             conversation_service=self.conversation_service,
+            conversation_coordinator=self.conversation_coordinator,
+            session_directory=self.session_directory,
+            platform_directory=self.platform_directory,
+            delivery_service=self.delivery_service,
+            delivery_worker=self.delivery_worker,
             memory_review_service=self.memory_review_service,
         )
         self.gateway_started = False
@@ -221,6 +233,7 @@ class AppRuntime:
             return
         self.closed = True
         await self.stop_gateway()
+        await self.conversation_coordinator.close(cancel_pending=True)
         await self.memory_review_service.close()
         await self.memory_manager.close()
         mcp_manager = self.mcp_manager
@@ -255,6 +268,8 @@ class AppRuntime:
             "gateway_created": self.gateway is not None,
             "gateway_running": bool(self.gateway is not None and self.gateway_started),
             "gateway": gateway,
+            "coordinator": self.conversation_coordinator.snapshot(),
+            "delivery": self.platform_directory.snapshot(),
             "activity": activity_snapshot(gateway_snapshot=gateway),
             "turns": turns,
             "llm_cache": _llm_cache_health_snapshot(self.settings, turns),
@@ -351,6 +366,32 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 memory_manager=memory_manager,
                 memory_review_service=memory_review_service,
             )
+            session_directory = SessionDirectory(settings.session_override)
+            platform_directory = PlatformDirectory()
+            delivery_outbox = DeliveryOutbox(
+                db,
+                max_attempts=max(1, int(getattr(settings, "platform_send_max_retries", 2)) + 1),
+            )
+            delivery_service = DeliveryService(
+                sessions=session_directory,
+                platforms=platform_directory,
+                hook_manager=hook_manager,
+                outbox=delivery_outbox,
+            )
+            delivery_worker = DeliveryWorker(delivery_service, delivery_outbox)
+
+            async def dispatch_command(request):
+                from personal_agent.commands.runtime import CommandResult, handle_slash_command
+
+                if request.command_runtime is None:
+                    return CommandResult.unhandled()
+                return await handle_slash_command(request.command_runtime, request.input.text)
+
+            conversation_coordinator = ConversationCoordinator(
+                conversation_service,
+                command_dispatcher=dispatch_command,
+                delivery_service=delivery_service,
+            )
 
         with boot_report.step("runtime"):
             return AppRuntime(
@@ -362,6 +403,12 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 session_store=session_store,
                 memory_manager=memory_manager,
                 conversation_service=conversation_service,
+                conversation_coordinator=conversation_coordinator,
+                session_directory=session_directory,
+                platform_directory=platform_directory,
+                delivery_service=delivery_service,
+                delivery_outbox=delivery_outbox,
+                delivery_worker=delivery_worker,
                 memory_review_service=memory_review_service,
                 mcp_manager=mcp_manager,
                 data_dir=data_dir,

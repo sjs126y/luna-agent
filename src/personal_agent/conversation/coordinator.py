@@ -382,6 +382,7 @@ class ConversationCoordinator:
             metadata=request.metadata,
             event_sink=request.event_sink,
             confirm=request.confirm,
+            command_runtime=request.command_runtime,
             created_at=request.created_at,
         )
 

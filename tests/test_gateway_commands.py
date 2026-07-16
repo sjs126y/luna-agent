@@ -17,6 +17,7 @@ from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import MessageEvent, MessagePart, PlatformCapabilities, SessionSource
 from personal_agent.plugins.models import CommandEntry
 from personal_agent.conversation import EMPTY_FINAL_RESPONSE_MESSAGE, ConversationTurnResult
+from personal_agent.conversation import SubmissionOutcome, SubmissionStatus
 
 
 class Memory:
@@ -154,6 +155,36 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
 
     assert result == "ok"
     assert captured == [("telegram:work:u1", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_gateway_submits_normalized_request_when_coordinator_is_available(gateway, monkeypatch):
+    captured = []
+
+    class Handle:
+        async def outcome(self):
+            return SubmissionOutcome(
+                request_id="sub-1",
+                session_key="telegram:c1:u1",
+                status=SubmissionStatus.COMPLETED,
+                response="ok",
+            )
+
+    class Coordinator:
+        async def submit(self, request):
+            captured.append(request)
+            return Handle()
+
+    gateway._conversation_coordinator = Coordinator()
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
+
+    result = await gateway._handle_message_inner(_event("hello", message_id="m1"))
+
+    assert result is None
+    assert captured[0].session_key == "telegram:c1:u1"
+    assert captured[0].input.text == "hello"
+    assert captured[0].response_mode.value == "deliver"
+    assert captured[0].metadata == {"message_id": "m1"}
 
 
 @pytest.mark.asyncio

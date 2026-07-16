@@ -60,6 +60,10 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert "行为规则" in runtime.memory_manager.get_system_prompt_text()
         assert runtime.conversation_service.session_store is runtime.session_store
         assert runtime.conversation_service.memory_manager is runtime.memory_manager
+        assert runtime.conversation_coordinator.conversation_service is runtime.conversation_service
+        assert runtime.delivery_service.sessions is runtime.session_directory
+        assert runtime.delivery_service.outbox is runtime.delivery_outbox
+        assert runtime.delivery_worker.outbox is runtime.delivery_outbox
         assert runtime.memory_review_service is not None
         assert (runtime.system_dir / "AGENT.md").exists()
         assert runtime.mcp_manager is None
@@ -156,6 +160,8 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert health["gateway_created"] is False
         assert health["gateway_running"] is False
         assert health["gateway"] == {}
+        assert health["coordinator"]["active_count"] == 0
+        assert health["delivery"]["platforms"] == []
         assert health["cached_agents"] == 0
     finally:
         await runtime.close()

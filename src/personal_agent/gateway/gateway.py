@@ -10,10 +10,16 @@ from pathlib import Path
 
 from personal_agent.platforms.core import platform_registry
 from personal_agent.commands.runtime import handle_slash_command
+from personal_agent.conversation.input import ConversationInput
 from personal_agent.conversation import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
     ConversationCommandRuntime,
+    ConversationCoordinator,
     ConversationService,
+    ResponseMode,
+    SubmissionOrigin,
+    SubmissionRequest,
+    SessionDirectory,
 )
 from personal_agent.gateway.confirmations import PendingConfirmationManager
 from personal_agent.gateway.session_router import GatewaySessionRouter
@@ -35,6 +41,11 @@ class Gateway:
         hook_manager=None,
         conversation_service: ConversationService | None = None,
         memory_review_service: MemoryReviewService | None = None,
+        conversation_coordinator: ConversationCoordinator | None = None,
+        session_directory: SessionDirectory | None = None,
+        platform_directory=None,
+        delivery_service=None,
+        delivery_worker=None,
     ) -> None:
         self.config = config
         self.db = db
@@ -61,6 +72,7 @@ class Gateway:
             if conversation_service.agent_cache_max is None:
                 conversation_service.agent_cache_max = 128
         self._conversation_service = conversation_service
+        self._conversation_coordinator = conversation_coordinator
         self._memory_review_service = memory_review_service or MemoryReviewService()
         self._compression_chain = conversation_service.compression_chain
         self._auth_manager = AuthManager(config, config.agent_data_dir)
@@ -70,9 +82,12 @@ class Gateway:
         self._platform_backoff_delays = tuple(getattr(config, "platform_reconnect_delays", (1, 2, 5, 10, 30, 60)))
         self._run_state = GatewayRunState()
         self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
-        self._session_router = GatewaySessionRouter()
+        self._session_router = session_directory or GatewaySessionRouter()
         self._session_override = self._session_router.overrides
         self._confirmations = PendingConfirmationManager()
+        self._platform_directory = platform_directory
+        self._delivery_service = delivery_service
+        self._delivery_worker = delivery_worker
         self._cron_scheduler = None
         self.plugin_manager = plugin_manager
         self.hook_manager = hook_manager or getattr(plugin_manager, "hook_manager", None)
@@ -108,6 +123,8 @@ class Gateway:
 
         for entry in platform_registry.list():
             await self._start_platform(entry)
+        if self._delivery_worker is not None:
+            await self._delivery_worker.process_due()
 
         logger.info("Gateway started with %d platform(s)", len(self._adapters))
         await self._dispatch_gateway_observer(
@@ -146,6 +163,8 @@ class Gateway:
             finally:
                 if hasattr(adapter, "mark_disconnected"):
                     adapter.mark_disconnected()
+                if self._platform_directory is not None:
+                    self._platform_directory.unregister(getattr(adapter, "_platform_name", ""))
                 await self._dispatch_gateway_observer(
                     "PlatformDisconnected",
                     source=self._platform_source(getattr(adapter, "_platform_name", "")),
@@ -237,6 +256,8 @@ class Gateway:
         if adapter not in self._adapters:
             self._adapters.append(adapter)
         runtime.mark_connected(adapter)
+        if self._platform_directory is not None:
+            self._platform_directory.register(entry.name, adapter)
         logger.info("Platform '%s' connected", entry.name)
         await self._dispatch_gateway_observer(
             "PlatformConnected",
@@ -320,6 +341,31 @@ class Gateway:
             return blocked_response
 
         # 3. Command detection. /stop must be able to cancel pending confirms.
+        if self._conversation_coordinator is not None:
+            consumed, confirm_response = self._confirmations.resolve_message(session_key, event.text)
+            if consumed:
+                return confirm_response
+            event = await self._prepare_inbound_attachments(event)
+            envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
+            user_input = (
+                ConversationInput.from_envelope(envelope)
+                if envelope is not None
+                else ConversationInput.text_only(event.text, source=event.source)
+            )
+            request = SubmissionRequest(
+                session_key=session_key,
+                input=user_input,
+                origin=SubmissionOrigin.GATEWAY,
+                response_mode=ResponseMode.DELIVER,
+                owner_id=str(event.source.user_id or ""),
+                metadata={"message_id": str(getattr(event, "message_id", "") or "")},
+                confirm=self._confirm_callback(event, session_key),
+                command_runtime=_GatewayCommandRuntime(self, event, session_key),
+            )
+            handle = await self._conversation_coordinator.submit(request)
+            await handle.outcome()
+            return None
+
         if event.text.startswith("/"):
             cmd_result = await self._handle_command(event, session_key)
             if cmd_result is not None:

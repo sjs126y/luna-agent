@@ -59,6 +59,7 @@ class SubmissionRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
     event_sink: Any = field(default=None, repr=False, compare=False)
     confirm: Any = field(default=None, repr=False, compare=False)
+    command_runtime: Any = field(default=None, repr=False, compare=False)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
