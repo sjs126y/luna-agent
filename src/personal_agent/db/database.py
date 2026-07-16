@@ -140,6 +140,10 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
         await self._ensure_tool_run_columns()
+        await self._conn.execute(
+            "UPDATE delivery_outbox SET status = 'retry', next_attempt_at = 0 "
+            "WHERE status = 'sending'"
+        )
         await self._conn.commit()
         logger.info("Database initialized at %s", self._path)
 
@@ -207,6 +211,16 @@ class Database:
                 (*values.values(), delivery_id),
             )
             await self._conn.commit()
+
+    async def claim_delivery(self, delivery_id: str, *, updated_at: float) -> bool:
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                """UPDATE delivery_outbox SET status = 'sending', updated_at = ?
+                   WHERE delivery_id = ? AND status IN ('pending', 'retry')""",
+                (updated_at, delivery_id),
+            )
+            await self._conn.commit()
+            return cursor.rowcount == 1
 
     # ── sessions ──────────────────────────────────────
 

@@ -113,3 +113,41 @@ async def test_delivery_worker_processes_due_records_in_background(tmp_path: Pat
 
     assert (await db.delivery_record(request.delivery_id))["status"] == "delivered"
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_outbox_claim_allows_only_one_sender(tmp_path: Path):
+    db = Database(tmp_path / "state.db")
+    await db.initialize()
+    outbox = DeliveryOutbox(db)
+    request = DeliveryRequest(session_key="wechat:c1:u1", message=OutboundMessage.text("hello"))
+    await outbox.enqueue(request)
+
+    first, second = await asyncio.gather(
+        outbox.claim(request.delivery_id),
+        outbox.claim(request.delivery_id),
+    )
+
+    assert sorted([first, second]) == [False, True]
+    assert (await db.delivery_record(request.delivery_id))["status"] == "sending"
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_database_recovers_interrupted_sending_record(tmp_path: Path):
+    path = tmp_path / "state.db"
+    db = Database(path)
+    await db.initialize()
+    outbox = DeliveryOutbox(db)
+    request = DeliveryRequest(session_key="wechat:c1:u1", message=OutboundMessage.text("hello"))
+    await outbox.enqueue(request)
+    assert await outbox.claim(request.delivery_id)
+    await db.close()
+
+    reopened = Database(path)
+    await reopened.initialize()
+    record = await reopened.delivery_record(request.delivery_id)
+
+    assert record["status"] == "retry"
+    assert record["next_attempt_at"] == 0
+    await reopened.close()

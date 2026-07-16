@@ -47,6 +47,9 @@ class DeliveryOutbox:
         row = await self.db.delivery_record(delivery_id)
         return self._record(row) if row else None
 
+    async def claim(self, delivery_id: str) -> bool:
+        return await self.db.claim_delivery(delivery_id, updated_at=time.time())
+
     async def record_result(self, result: DeliveryResult) -> DeliveryResult:
         record = await self.get(result.delivery_id)
         attempts = (record.attempts if record else 0) + 1
@@ -139,6 +142,8 @@ class DeliveryWorker:
         async with self._lock:
             results = []
             for record in await self.outbox.due(limit=limit):
+                if not await self.outbox.claim(record.request.delivery_id):
+                    continue
                 result = await self.service.deliver_once(record.request)
                 results.append(await self.outbox.record_result(result))
             return results

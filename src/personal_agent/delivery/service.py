@@ -60,6 +60,8 @@ class DeliveryService:
     async def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         if self.outbox is not None:
             await self.outbox.enqueue(request)
+            if not await self.outbox.claim(request.delivery_id):
+                return self._failed(request, "delivery is already being processed", status=DeliveryStatus.DEFERRED)
         result = await self.deliver_once(request)
         if self.outbox is not None:
             return await self.outbox.record_result(result)
