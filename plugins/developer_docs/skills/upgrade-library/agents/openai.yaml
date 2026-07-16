@@ -1,0 +1,4 @@
+interface:
+  display_name: "Upgrade Library"
+  short_description: "Analyze a library version upgrade safely"
+  default_prompt: "Analyze the requested library upgrade using current documentation and migration guidance."

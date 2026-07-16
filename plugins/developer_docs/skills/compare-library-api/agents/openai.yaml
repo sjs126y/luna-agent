@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compare Library APIs"
+  short_description: "Compare APIs using current documentation"
+  default_prompt: "Compare the requested library APIs using current authoritative documentation."

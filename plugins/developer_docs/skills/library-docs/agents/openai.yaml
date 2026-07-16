@@ -1,0 +1,4 @@
+interface:
+  display_name: "Library Documentation"
+  short_description: "Answer questions from current library docs"
+  default_prompt: "Answer the library question using current authoritative documentation."
