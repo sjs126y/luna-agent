@@ -60,6 +60,9 @@ class TurnAwareService(RecordingService):
         self.turns.append((turn_id, steer.active_turn(session_key)))
         return await super().run_turn_input_events(session_key, user_input, **kwargs)
 
+    def capture_turn_policy(self, session_key):
+        return SimpleNamespace(session_key=session_key, revision=7)
+
 
 @pytest.mark.asyncio
 async def test_coordinator_serializes_same_session_in_submission_order():

@@ -33,6 +33,7 @@ class ConversationTurnRunner(Protocol):
         confirm=None,
         turn_id: str = "",
         steer=None,
+        policy_snapshot=None,
     ): ...
 
 
@@ -186,6 +187,8 @@ class ConversationCoordinator:
         if command_result is not None and command_result.continue_text is not None:
             request = self._with_text(request, command_result.continue_text)
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"
+        capture_policy = getattr(self.conversation_service, "capture_turn_policy", None)
+        policy_snapshot = capture_policy(request.session_key) if capture_policy else None
         self.active_turns.begin_turn(
             request.session_key,
             turn_id,
@@ -200,6 +203,7 @@ class ConversationCoordinator:
                 confirm=request.confirm,
                 turn_id=turn_id,
                 steer=self.active_turns,
+                policy_snapshot=policy_snapshot,
             )
         except asyncio.CancelledError:
             return SubmissionOutcome(

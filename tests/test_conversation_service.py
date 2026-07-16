@@ -92,6 +92,28 @@ def _messages(user_text="hello", assistant_text="echo:hello"):
 
 
 @pytest.mark.asyncio
+async def test_turn_policy_snapshot_keeps_running_agent_mode_until_next_turn(service):
+    svc, _manager, _db = service
+    session_key = "cli:default:local"
+    agent = await svc.get_or_create_agent(session_key)
+    snapshot = svc.capture_turn_policy(session_key)
+    snapshot.security.state.grant_tool("core:test", ttl_seconds=60)
+
+    state = svc.set_security_mode(session_key, "local-auto")
+
+    assert snapshot.revision == 0
+    assert snapshot.security.mode_id == "ask-first"
+    assert snapshot.security.state is state
+    assert snapshot.security.state.tool_grants == {}
+    assert agent._security_context.mode_id == "ask-first"
+
+    same_agent = await svc.get_or_create_agent(session_key)
+    assert same_agent is agent
+    assert same_agent._security_context.mode_id == "local-auto"
+    assert svc.capture_turn_policy(session_key).revision == 1
+
+
+@pytest.mark.asyncio
 async def test_conversation_hooks_emit_session_start_once_and_prompt_context(service):
     from personal_agent.conversation.input import ConversationInput
     from personal_agent.hooks import ContextHookOutcome, HookEvent, HookManager

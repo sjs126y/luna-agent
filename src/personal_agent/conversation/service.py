@@ -135,6 +135,7 @@ class ConversationService:
         confirm=None,
         turn_id: str = "",
         steer=None,
+        policy_snapshot=None,
     ) -> ConversationTurnResult:
         recorder = EventRecorder(event_sink)
         if self.plugin_manager is not None:
@@ -166,6 +167,8 @@ class ConversationService:
                 previous_session_id=previous_session_id,
             )
             agent = await self.get_or_create_agent(session_key)
+            if policy_snapshot is not None:
+                agent._security_context = policy_snapshot.security
             agent._hook_source = source
             resolved_input = await self.multimodal_processor.resolve(
                 user_input,
@@ -559,11 +562,17 @@ class ConversationService:
         return self.security_states.context(session_key)
 
     def set_security_mode(self, session_key: str, mode: object):
-        state = self.security_states.set_mode(session_key, mode)
-        agent = self.get_cached_agent(session_key)
-        if agent is not None:
-            self._apply_security_context(agent, session_key)
-        return state
+        return self.security_states.set_mode(session_key, mode)
+
+    def capture_turn_policy(self, session_key: str):
+        from personal_agent.conversation.policy import TurnPolicySnapshot
+
+        state = self.security_states.get(session_key)
+        return TurnPolicySnapshot.capture(
+            session_key,
+            revision=state.revision,
+            security=self.security_context(session_key),
+        )
 
     def _apply_security_context(self, agent, session_key: str) -> None:
         context = self.security_context(session_key)

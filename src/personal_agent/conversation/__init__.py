@@ -8,6 +8,7 @@ from personal_agent.conversation.events import (
     EventRecorder,
     frontend_protocol_schema,
 )
+from personal_agent.conversation.policy import TurnPolicySnapshot
 from personal_agent.conversation.query import ConversationQueryService
 from personal_agent.conversation.service import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
@@ -53,5 +54,6 @@ __all__ = [
     "SubmissionReceipt",
     "SubmissionRequest",
     "SubmissionStatus",
+    "TurnPolicySnapshot",
     "frontend_protocol_schema",
 ]

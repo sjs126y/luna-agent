@@ -22,6 +22,7 @@ from personal_agent.security.config import normalize_tool_approval_config
 @dataclass
 class SecuritySessionState:
     mode_id: str
+    revision: int = 0
     tool_grants: dict[str, ToolGrant] = field(default_factory=dict)
     resource_grants: dict[str, ResourceGrant] = field(default_factory=dict)
 
@@ -86,6 +87,7 @@ class SecurityStateStore:
     def set_mode(self, session_key: str, mode: object) -> SecuritySessionState:
         state = self.get(session_key)
         state.mode_id = normalize_mode_id(mode)
+        state.revision += 1
         state.clear_grants()
         return state
 

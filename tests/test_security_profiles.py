@@ -83,6 +83,7 @@ def test_session_grants_use_one_ttl_and_mode_switch_clears(tmp_path):
 
     switched = store.set_mode("wechat:user", "local-auto")
     assert switched.mode_id == "local-auto"
+    assert switched.revision == 1
     assert switched.tool_grants == {}
     assert switched.resource_grants == {}
 
