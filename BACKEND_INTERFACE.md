@@ -15,6 +15,14 @@
 - `/new`、session rename/delete/switch 等操作与会话队列有序执行。
 - Skill slash command 展开后作为普通 Agent 请求进入队列。
 
+新增插件命令会通过现有 slash command metadata 自动暴露给前端：
+
+- `/github-status`：GitHub MCP、仓库白名单与写操作策略。
+- `/developer-docs-status`：Context7 插件配置摘要。
+- `/browser-status`：Playwright 浏览器、域名和上传/脚本策略。
+
+新增 Skill 命令名为 `/repo-summary`、`/review-pr`、`/triage-issues`、`/release-notes`、`/library-docs`、`/upgrade-library`、`/compare-library-api`、`/inspect-web-page`、`/test-web-page`、`/operate-web-page`。Skill 执行仍表现为普通 conversation turn，不新增前端事件类型。
+
 ## 1. Conversation Event Stream
 
 所有实时前端消费同一种事件模型：

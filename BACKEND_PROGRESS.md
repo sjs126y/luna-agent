@@ -2,6 +2,16 @@
 
 更新时间：2026-07-16 CST
 
+## 2026-07-16：GitHub、Developer Docs 与 Browser Operator 插件
+
+- 新增 `integrations/github-assistant`：插件化现有 GitHub Streamable HTTP MCP，提供 `repo-summary`、`review-pr`、`triage-issues`、`release-notes` 四个 Skill 和 `/github-status`；PreToolUse Hook 默认禁止 GitHub 写操作，并支持 `owner/repo` 白名单。
+- 新增 `integrations/developer-docs`：插件化 Context7 MCP，提供 `library-docs`、`upgrade-library`、`compare-library-api` 三个 Skill 和 `/developer-docs-status`。
+- 新增 `integrations/browser-operator`：插件化 Playwright MCP，提供 `inspect-web-page`、`test-web-page`、`operate-web-page` 三个 Skill 和 `/browser-status`；Hook 支持域名白名单，并默认禁止文件上传和页面脚本执行。
+- 三个 MCP 已从顶层 `mcp.servers` 迁移到插件注册，避免同名重复；本机配置启用三个插件，example 只提供默认关闭的配置模板。
+- 10 个 Skill 均通过 `skill-creator quick_validate`；插件 validate 全部通过；配置、插件与 MCP 聚焦回归 `117 passed`。
+- 真实 Runtime doctor：GitHub `ready`/44 tools、Context7 `ready`/2 tools、Playwright `ready`/24 tools，三个插件均为 `LOADED`，无配置错误和重复 server。
+- 最终全量回归 `956 passed`；`compileall` 与 `git diff --check` 通过。
+
 ## 2026-07-16：Conversation Runtime 与 Delivery 架构重构
 
 - 新增统一 `SubmissionRequest -> SubmissionHandle -> SubmissionOutcome` 契约；Gateway、CLI、TUI、Cron 和主动插件使用同一提交边界。
