@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Web Page"
+  short_description: "Test a web page interaction flow"
+  default_prompt: "Test the requested web page flow and report reproducible findings."

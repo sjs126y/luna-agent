@@ -1,0 +1,4 @@
+interface:
+  display_name: "Operate Web Page"
+  short_description: "Perform a controlled browser interaction"
+  default_prompt: "Perform the requested browser interaction while preserving confirmation boundaries."

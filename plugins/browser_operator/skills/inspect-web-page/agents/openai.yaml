@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inspect Web Page"
+  short_description: "Inspect a web page with browser evidence"
+  default_prompt: "Inspect the requested web page and report verified content and behavior."
