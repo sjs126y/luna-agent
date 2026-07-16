@@ -180,6 +180,8 @@ mcp:
 
 stdio server 在应用 Runtime 中会进入 `sandbox.process_backend` 指定的进程沙箱，默认工作目录为 `data/mcp`。需要联网的 stdio server 必须显式设置 `allow_network: true`。远程 transport 默认要求 HTTPS；连接明文 HTTP 或私网地址时，分别需要显式设置 `allow_insecure_http: true`、`allow_private_network: true`。MCP 还会限制工具数量/分页、schema、文本结果、结构化结果和 artifact 大小；对应 server 字段为 `max_tools`、`max_tool_pages`、`max_schema_bytes`、`max_result_chars`、`max_artifact_bytes`。
 
+正常 Runtime 启动不会等待 MCP 完成首次连接。插件和安全 Hook 注册完成后，MCP server 在主 asyncio 事件循环中作为独立后台任务并发连接；Gateway、CLI 和 TUI 可以先进入可用状态。连接成功的 MCP 会动态注册工具，缓存 Agent 在下一轮根据 Tool Registry generation 刷新工具快照。`doctor` 和 `serve --dry-run` 会显式等待首次连接尝试，以输出稳定诊断。使用 `npx`、`uvx` 且需要下载或检查包索引的 stdio server 必须允许网络，生产环境建议预安装并固定依赖版本。
+
 GitHub 官方远程 MCP 可以使用 PAT 认证：
 
 ```yaml

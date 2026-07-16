@@ -56,12 +56,80 @@ def tool(name: str, description: str = "test") -> MCPToolSpec:
     return MCPToolSpec(name=name, description=description, input_schema={"type": "object"})
 
 
+class BlockingConnection(FakeConnection):
+    def __init__(self, config, callback, gate: asyncio.Event):
+        super().__init__(config, callback, tools=[tool("late")])
+        self.gate = gate
+        self.connect_started = asyncio.Event()
+
+    async def connect(self):
+        self.connect_started.set()
+        await self.gate.wait()
+        return await super().connect()
+
+
 async def wait_until(predicate, timeout: float = 1.0):
     end = asyncio.get_running_loop().time() + timeout
     while not predicate():
         if asyncio.get_running_loop().time() >= end:
             raise AssertionError("condition not reached before timeout")
         await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_runtime_start_does_not_wait_for_initial_connection():
+    gate = asyncio.Event()
+    created = []
+
+    def factory(config, callback):
+        connection = BlockingConnection(config, callback, gate)
+        created.append(connection)
+        return connection
+
+    runtime = MCPServerRuntime(
+        MCPServerConfig(name="slow", command="python"),
+        connection_factory=factory,
+        health_interval_seconds=60,
+    )
+    try:
+        assert await asyncio.wait_for(runtime.start(), timeout=0.1) == 0
+        await wait_until(lambda: bool(created))
+        await created[0].connect_started.wait()
+        assert runtime.state == MCPRuntimeState.CONNECTING
+        assert runtime.health_snapshot()["initial_attempt_done"] is False
+
+        gate.set()
+        assert await runtime.wait_initial_attempt() == 1
+        assert runtime.ready is True
+        assert runtime.health_snapshot()["initial_attempt_done"] is True
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_stop_cancels_initial_connection():
+    gate = asyncio.Event()
+    created = []
+
+    def factory(config, callback):
+        connection = BlockingConnection(config, callback, gate)
+        created.append(connection)
+        return connection
+
+    runtime = MCPServerRuntime(
+        MCPServerConfig(name="slow-stop", command="python"),
+        connection_factory=factory,
+        health_interval_seconds=60,
+    )
+    await runtime.start()
+    await wait_until(lambda: bool(created))
+    await created[0].connect_started.wait()
+
+    await asyncio.wait_for(runtime.stop(), timeout=0.5)
+
+    assert created[0].closed is True
+    assert runtime.state == MCPRuntimeState.STOPPED
+    assert runtime.health_snapshot()["initial_attempt_done"] is True
 
 
 @pytest.mark.asyncio
@@ -139,7 +207,8 @@ async def test_runtime_refreshes_tool_snapshot_from_notification():
         refresh_debounce_seconds=0,
     )
     try:
-        assert await runtime.start() == 1
+        assert await runtime.start() == 0
+        assert await runtime.wait_initial_attempt() == 1
         connection = created[0]
         connection.tools = [tool("new", "updated")]
         await connection.notify_tools_changed()
@@ -173,6 +242,7 @@ async def test_runtime_keeps_last_tool_snapshot_when_refresh_fails():
     )
     try:
         await runtime.start()
+        await runtime.wait_initial_attempt()
         connection = created[0]
         connection.list_error = RuntimeError("refresh failed")
         await connection.notify_tools_changed()
@@ -210,6 +280,7 @@ async def test_runtime_keeps_tool_registered_but_unavailable_during_recovery():
     )
     try:
         await runtime.start()
+        await runtime.wait_initial_attempt()
         result = await runtime.call_tool("fragile", {})
         entry = tool_registry.get("mcp__unstable__fragile")
 
@@ -217,5 +288,8 @@ async def test_runtime_keeps_tool_registered_but_unavailable_during_recovery():
         assert result.metadata["reason"] == "temporarily_unavailable"
         assert entry is not None
         assert entry.check_fn is not None and entry.check_fn() is False
+        catalog = {item["name"]: item for item in tool_registry.catalog()}
+        assert "reconnecting" in catalog["mcp__unstable__fragile"]["unavailable_reason"]
+        assert "lost" in catalog["mcp__unstable__fragile"]["unavailable_reason"]
     finally:
         await runtime.stop()

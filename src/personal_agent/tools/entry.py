@@ -47,6 +47,7 @@ class ToolEntry:
     risk_level: str = "low"
     usage_hint: str = ""
     check_fn: Callable[[], bool] | None = None  # dependency check → True/False
+    availability_reason_fn: Callable[[], str] | None = None
     precheck: Callable[[dict[str, Any]], str | None] | None = None
     approval_mode: str = "inherit"  # auto | cached | prompt | deny | inherit
     resource_resolver: Callable[[dict[str, Any]], list[Any]] | None = None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from personal_agent.agent.factory import create_agent_runtime
@@ -11,6 +13,8 @@ from personal_agent.config import Settings
 from personal_agent.llm.provider import ProviderProfile, provider_registry
 from personal_agent.llm.transport_registry import transport_registry
 from personal_agent.models.messages import NormalizedResponse
+from personal_agent.tools.entry import ToolEntry
+from personal_agent.tools.registry import dispatch_tool_search, tool_registry
 
 
 class FakeTransport:
@@ -132,3 +136,36 @@ def test_system_prompt_includes_tool_protocol_before_tool_list():
     assert "不要用文字声称已经调用" in prompt
     assert prompt.index("工具调用规则：") < prompt.index("可用工具：")
     assert prompt.index("- read: Read a file") < prompt.index("- web_search: Search the web")
+
+
+@pytest.mark.asyncio
+async def test_background_tool_registration_refreshes_agent_on_next_turn():
+    from personal_agent.agent.context import build_turn_context
+
+    provider = ProviderProfile(name="test", base_url="https://example.test", api_key="", model="test-model")
+    agent = init_agent(FakeTransport(provider), provider=provider)
+    await build_turn_context(agent, "first turn")
+    first_generation = agent._tools_generation
+    first_tools = list(agent.tools)
+
+    async def _late_tool():
+        return "ready"
+
+    tool_registry.register(ToolEntry(
+        name="mcp__late__ready",
+        description="Late MCP tool",
+        schema={"type": "object", "properties": {}},
+        handler=_late_tool,
+        toolset="mcp",
+    ))
+    try:
+        assert agent.tools == first_tools
+        assert agent._tools_generation == first_generation
+
+        await build_turn_context(agent, "second turn")
+
+        assert agent._tools_generation == tool_registry.generation
+        hits = json.loads(await dispatch_tool_search("late ready"))["hits"]
+        assert any(item["name"] == "mcp__late__ready" for item in hits)
+    finally:
+        tool_registry.unregister("mcp__late__ready")

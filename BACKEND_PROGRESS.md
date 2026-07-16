@@ -791,3 +791,33 @@ uv run pytest -q
 - 每个原文件只保留最近 5 份快照，其他文件的快照互不影响。
 - `checkpoints/` 加入 Git 忽略规则，运行时安全快照不再污染 worktree。
 - 快照聚焦测试 `63 passed`，全量回归 `959 passed`。
+
+## 2026-07-17：MCP 后台启动
+
+状态：已完成实现并通过回归与真实环境验证。
+
+- MCP Runtime 启动与首次连接等待已拆分；AppRuntime 调度各 server 后继续初始化核心服务，`doctor` 和 `serve --dry-run` 仍显式等待稳定诊断。
+- MCP 连接任务支持启动期间取消和有界关闭，单个慢连接不再拖住 Gateway 启动或退出。
+- MCP 健康快照新增 enabled、starting、degraded、failed 和首次尝试耗时；工具不可用原因显示具体 runtime 状态，不再只返回 `check_fn returned False`。
+- Tool Registry generation 保证后台注册只在 Agent 下一轮刷新，不改变当前 turn 的工具快照。
+- Time MCP 增加 stdio 网络权限，避免 `uvx` 在 Bubblewrap 中因无法访问包索引反复等待 DNS 失败。
+
+阶段提交：
+
+- `a8103f1 Start MCP runtimes in background`
+- `db4bfac Expose background MCP readiness`
+- `2b9916f Document background MCP readiness`
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest tests/test_mcp_runtime.py tests/test_mcp.py tests/test_runtime.py tests/test_tool_registry.py tests/test_agent_factory.py tests/test_cli.py tests/test_cli_entrypoints.py tests/test_config_diagnostics.py -q
+uv run pytest -q
+```
+
+结果：聚焦回归 `127 passed`，全量回归 `963 passed`。
+
+真实配置测速：核心 Runtime 在 `1.868s` 返回，此时 8 个已启用 MCP 均在后台 starting；所有首次尝试在 `20.477s` 完成，其中 GitHub 单独耗时 `20.341s`，但不再阻塞核心。最终 8/8 server ready、85 个 MCP 工具，Time MCP 在 `1.748s` 正常上线；Runtime 关闭耗时 `2.319s`。
+
+真实 GitHub 写保护复测：在 GitHub runtime 为 ready 时通过完整 executor pipeline 调用 `mcp__github__issue_write`，结果为 `status=denied`、`category=hook`，错误为 `GitHub Assistant write operations are disabled by plugin configuration`，请求未到达远端。

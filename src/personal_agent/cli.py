@@ -1086,6 +1086,7 @@ async def _build_serve_dry_run_report() -> dict[str, Any]:
     try:
         settings = Settings()
         runtime = await create_app_runtime(settings)
+        await _wait_for_mcp_diagnostics(runtime)
         runtime.create_gateway(system_prompt_template="")
         _load_enabled_platform_plugins(runtime.plugin_manager)
         health = runtime.health_snapshot()
@@ -1163,6 +1164,7 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
     runtime = None
     try:
         runtime = await create_app_runtime(settings)
+        await _wait_for_mcp_diagnostics(runtime)
         runtime_data = runtime.health_snapshot()
         runtime_data.update({
             "initialized": True,
@@ -1197,7 +1199,12 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
                 "enabled": bool(settings.mcp_enabled),
                 "running": False,
                 "configured_count": len(settings.mcp_servers),
+                "enabled_count": 0,
+                "initializing": False,
+                "starting_count": 0,
                 "connected_count": 0,
+                "degraded_count": 0,
+                "failed_count": 0,
                 "total_tools": 0,
                 "registered_tools": [],
                 "servers": [],
@@ -1234,6 +1241,13 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
     finally:
         if runtime is not None:
             await runtime.close()
+
+
+async def _wait_for_mcp_diagnostics(runtime) -> None:
+    manager = getattr(runtime, "mcp_manager", None)
+    wait = getattr(manager, "wait_initial_attempts", None)
+    if wait is not None:
+        await wait()
 
 
 def _run_async_sync(coro):
@@ -2002,13 +2016,25 @@ def _doctor_mcp_summary(report: dict[str, Any], mcp_runtime: dict[str, Any]) -> 
     connected = int(mcp_runtime.get("connected_count") or 0)
     if not connected:
         connected = sum(1 for item in mcp_runtime.get("servers", []) if item.get("connected"))
-    disabled = sum(1 for item in report.get("mcp_servers", []) if not item.get("enabled", True))
-    configured = len(report.get("mcp_servers", []) or mcp_runtime.get("servers", []) or [])
+    starting = int(mcp_runtime.get("starting_count") or 0)
+    degraded = int(mcp_runtime.get("degraded_count") or 0)
+    failed = int(mcp_runtime.get("failed_count") or 0)
+    disabled = sum(1 for item in mcp_runtime.get("servers", []) if not item.get("enabled", True))
+    configured = int(mcp_runtime.get("configured_count") or 0)
+    if not configured:
+        configured = len(report.get("mcp_servers", []) or mcp_runtime.get("servers", []) or [])
     parts = [f"{connected} 已连接"]
+    if starting:
+        parts.append(f"{starting} 启动中")
+    if degraded:
+        parts.append(f"{degraded} 重连中")
+    if failed:
+        parts.append(f"{failed} 失败")
     if disabled:
         parts.append(f"{disabled} 禁用")
-    elif configured and connected < configured:
-        parts.append(f"{configured - connected} 未连接")
+    accounted = connected + starting + degraded + failed + disabled
+    if configured > accounted:
+        parts.append(f"{configured - accounted} 未连接")
     return ", ".join(parts)
 
 

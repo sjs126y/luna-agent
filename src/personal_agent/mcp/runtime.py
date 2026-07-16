@@ -17,6 +17,7 @@ from personal_agent.mcp.registrar import MCPToolRegistrar
 logger = logging.getLogger(__name__)
 
 DEFAULT_RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
+MCP_STOP_TIMEOUT_SECONDS = 5.0
 ConnectionFactory = Callable[[MCPServerConfig, Callable[[str], Any]], MCPConnection]
 
 
@@ -56,6 +57,7 @@ class MCPServerRuntime:
             config.name,
             self.call_tool,
             server_url=config.url,
+            availability_reason=self.availability_reason,
         )
         self._server_info: MCPServerInfo | None = None
         self._last_error = ""
@@ -68,6 +70,8 @@ class MCPServerRuntime:
         self._tool_refresh_count = 0
         self._notification_count = 0
         self._stderr_tail: list[str] = []
+        self._initial_attempt_started_at = 0.0
+        self._initial_attempt_duration_seconds = 0.0
 
     @property
     def ready(self) -> bool:
@@ -77,6 +81,12 @@ class MCPServerRuntime:
     def registered_names(self) -> set[str]:
         return self._registrar.registered_names
 
+    def availability_reason(self) -> str:
+        label = "starting" if self.state == MCPRuntimeState.CONNECTING else self.state.value
+        detail = self._last_error or self._last_call_error
+        message = f"MCP server '{self.config.name}' is {label}"
+        return f"{message}: {detail}" if detail else message
+
     async def start(self) -> int:
         if not self.config.enabled:
             self.state = MCPRuntimeState.DISABLED
@@ -84,7 +94,17 @@ class MCPServerRuntime:
         if self._owner_task is not None and not self._owner_task.done():
             return len(self.registered_names)
         self._reset_events()
+        self.state = MCPRuntimeState.CONNECTING
+        self._initial_attempt_started_at = time.monotonic()
+        self._initial_attempt_duration_seconds = 0.0
         self._owner_task = asyncio.create_task(self._run(), name=f"mcp-runtime:{self.config.name}")
+        return len(self.registered_names)
+
+    async def wait_initial_attempt(self) -> int:
+        if not self.config.enabled:
+            return 0
+        if self._owner_task is None:
+            await self.start()
         await self._initial_attempt_done.wait()
         return len(self.registered_names)
 
@@ -98,16 +118,23 @@ class MCPServerRuntime:
         self._registrar.set_available(False)
         self._stop_event.set()
         self._reconnect_event.set()
+        task.cancel()
         try:
-            await task
+            await asyncio.wait_for(task, timeout=MCP_STOP_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            logger.warning("Timed out stopping MCP server '%s'", self.config.name)
         finally:
+            self._mark_initial_attempt_done()
             self._owner_task = None
             self._registrar.unregister_all()
             self.state = MCPRuntimeState.STOPPED
 
     async def restart(self) -> int:
         await self.stop()
-        return await self.start()
+        await self.start()
+        return await self.wait_initial_attempt()
 
     async def call_tool(self, name: str, arguments: dict) -> MCPCallResult:
         connection = self._connection
@@ -157,6 +184,8 @@ class MCPServerRuntime:
             "next_retry_at": self._next_retry_at,
             "tool_refresh_count": self._tool_refresh_count,
             "notification_count": self._notification_count,
+            "initial_attempt_done": self._initial_attempt_done.is_set(),
+            "initial_attempt_duration_seconds": self._initial_attempt_duration_seconds,
             "stderr_tail": stderr_tail,
         }
 
@@ -183,7 +212,7 @@ class MCPServerRuntime:
                     self._registrar.set_available(True)
                     failure_index = 0
                     if first_attempt:
-                        self._initial_attempt_done.set()
+                        self._mark_initial_attempt_done()
                     first_attempt = False
                     reason = await self._ready_loop(connection)
                     if reason == "stop":
@@ -197,7 +226,7 @@ class MCPServerRuntime:
                     self.state = MCPRuntimeState.FAILED if permanent_failure else MCPRuntimeState.RECONNECTING
                     self._registrar.set_available(False)
                     if first_attempt:
-                        self._initial_attempt_done.set()
+                        self._mark_initial_attempt_done()
                     first_attempt = False
                 finally:
                     self._connection = None
@@ -222,9 +251,19 @@ class MCPServerRuntime:
                 except asyncio.TimeoutError:
                     pass
         finally:
-            self._initial_attempt_done.set()
+            self._mark_initial_attempt_done()
             self._connection = None
             self._registrar.set_available(False)
+
+    def _mark_initial_attempt_done(self) -> None:
+        if self._initial_attempt_done.is_set():
+            return
+        if self._initial_attempt_started_at > 0:
+            self._initial_attempt_duration_seconds = max(
+                time.monotonic() - self._initial_attempt_started_at,
+                0.0,
+            )
+        self._initial_attempt_done.set()
 
     async def _ready_loop(self, connection: MCPConnection) -> str:
         self._reconnect_event.clear()

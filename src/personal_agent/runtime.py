@@ -259,6 +259,7 @@ class AppRuntime:
         return {
             "data_dir": str(self.data_dir),
             "db_open": getattr(self.db, "_conn", None) is not None,
+            "core_ready": getattr(self.db, "_conn", None) is not None and not self.closed,
             "mcp_enabled": bool(self.settings.mcp_enabled),
             "mcp_running": self.mcp_manager is not None,
             "mcp": mcp_health,
@@ -329,7 +330,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             if mcp_server_count == 0:
                 boot_report.skip("mcp", "servers=0")
             else:
-                with boot_report.step("mcp", f"servers={mcp_server_count}"):
+                with boot_report.step("mcp", f"servers={mcp_server_count}; startup=background"):
                     mcp_manager = await start_mcp_manager(settings, plugin_manager)
 
         with boot_report.step("database", str(data_dir / "state.db")):
@@ -442,7 +443,12 @@ def _mcp_health_snapshot(
         "enabled": enabled,
         "running": manager is not None,
         "configured_count": configured_count,
+        "enabled_count": 0,
+        "initializing": False,
+        "starting_count": 0,
         "connected_count": 0,
+        "degraded_count": 0,
+        "failed_count": 0,
         "total_tools": 0,
         "registered_tools": [],
         "servers": [],

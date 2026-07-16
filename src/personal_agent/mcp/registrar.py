@@ -16,10 +16,18 @@ ToolCaller = Callable[[str, dict], Awaitable[MCPCallResult]]
 
 
 class MCPToolRegistrar:
-    def __init__(self, server_name: str, call_tool: ToolCaller, *, server_url: str = "") -> None:
+    def __init__(
+        self,
+        server_name: str,
+        call_tool: ToolCaller,
+        *,
+        server_url: str = "",
+        availability_reason: Callable[[], str] | None = None,
+    ) -> None:
         self.server_name = server_name
         self._call_tool = call_tool
         self._network_requirement = _network_requirement(server_url, server_name)
+        self._availability_reason = availability_reason
         self._registered: dict[str, str] = {}
         self._available = False
 
@@ -90,6 +98,7 @@ class MCPToolRegistrar:
             handler=handler,
             toolset="mcp",
             check_fn=lambda: self._available,
+            availability_reason_fn=self._availability_reason,
             approval_mode="cached",
             resource_resolver=(
                 (lambda _input: [self._network_requirement])

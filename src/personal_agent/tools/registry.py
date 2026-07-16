@@ -246,6 +246,13 @@ def _entry_availability(entry: ToolEntry) -> tuple[bool, str]:
             return True, ""
     except Exception as exc:
         return False, f"check_fn error: {type(exc).__name__}: {exc}"
+    if entry.availability_reason_fn is not None:
+        try:
+            reason = str(entry.availability_reason_fn() or "").strip()
+        except Exception as exc:
+            return False, f"availability reason error: {type(exc).__name__}: {exc}"
+        if reason:
+            return False, reason
     return False, "check_fn returned False"
 
 

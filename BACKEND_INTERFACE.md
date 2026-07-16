@@ -983,7 +983,25 @@ Review worker payload 提供：
 
 `items[]` 常见字段：`hook_id`、`owner`、`source`、`event_name`、`name`、`matcher`、`priority`、`timeout_seconds`、`execution_count`、`blocked_count`、`timeout_count`、`failure_count`、`last_duration_ms`、`last_error`。这些字段是诊断信息，不进入 Conversation Event Stream；前端应允许新增事件名和诊断字段。
 
-## 14. Compatibility Notes
+## 14. MCP Runtime Diagnostics
+
+`AppRuntime.health_snapshot()` 的 `mcp` 对象用于展示后台 MCP 就绪状态：
+
+- `running: boolean`
+- `configured_count: integer`
+- `enabled_count: integer`
+- `initializing: boolean`，至少一个已启用 server 尚未完成首次连接尝试
+- `starting_count: integer`
+- `connected_count: integer`
+- `degraded_count: integer`，包含 degraded 和 reconnecting server
+- `failed_count: integer`
+- `total_tools: integer`
+- `registered_tools: list[string]`
+- `servers: list[object]`
+
+`servers[]` 新增 `initial_attempt_done` 和 `initial_attempt_duration_seconds`。MCP 工具断线后仍可出现在 Tool Catalog，但 `available=false`，`unavailable_reason` 会说明 server 正在 starting、reconnecting、failed 或 stopped，并可附带最近错误。MCP 工具只在下一轮刷新进入 Agent 工具快照，前端不要假定 `core_ready=true` 等于所有 MCP 已连接。
+
+## 15. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。
