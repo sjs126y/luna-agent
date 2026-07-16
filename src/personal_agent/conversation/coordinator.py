@@ -12,6 +12,8 @@ from personal_agent.commands.policy import CommandExecutionPolicy, command_execu
 from personal_agent.commands.runtime import CommandResult
 from personal_agent.conversation.input import ConversationInput
 from personal_agent.conversation.steer import ActiveTurnRegistry
+from personal_agent.delivery import DeliveryKind, DeliveryRequest
+from personal_agent.models.messages import OutboundMessage
 
 from personal_agent.conversation.submission import (
     SubmissionHandle,
@@ -20,6 +22,7 @@ from personal_agent.conversation.submission import (
     SubmissionReceipt,
     SubmissionRequest,
     SubmissionStatus,
+    ResponseMode,
 )
 
 
@@ -56,10 +59,12 @@ class ConversationCoordinator:
         *,
         active_turns: ActiveTurnRegistry | None = None,
         command_dispatcher: CoordinatorCommandDispatcher | None = None,
+        delivery_service=None,
     ) -> None:
         self.conversation_service = conversation_service
         self.active_turns = active_turns or ActiveTurnRegistry()
         self.command_dispatcher = command_dispatcher
+        self.delivery_service = delivery_service
         self._queues: dict[str, asyncio.Queue[_QueuedSubmission]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._immediate_tasks: set[asyncio.Task[None]] = set()
@@ -167,6 +172,7 @@ class ConversationCoordinator:
                 if not item.future.cancelled():
                     self._active[session_key] = item.request
                     outcome = await self._execute(item.request)
+                    outcome = await self._apply_response_mode(item.request, outcome)
                     if not item.future.done():
                         item.future.set_result(outcome)
             finally:
@@ -278,6 +284,7 @@ class ConversationCoordinator:
                     started_at=started_at,
                     policy=policy,
                 )
+            outcome = await self._apply_response_mode(request, outcome)
         except Exception as exc:
             outcome = SubmissionOutcome(
                 request_id=request.request_id,
@@ -289,6 +296,44 @@ class ConversationCoordinator:
             )
         if not future.done():
             future.set_result(outcome)
+
+    async def _apply_response_mode(
+        self,
+        request: SubmissionRequest,
+        outcome: SubmissionOutcome,
+    ) -> SubmissionOutcome:
+        if request.response_mode != ResponseMode.DELIVER or not outcome.response:
+            return outcome
+        if self.delivery_service is None:
+            return SubmissionOutcome(
+                request_id=outcome.request_id,
+                session_key=outcome.session_key,
+                status=SubmissionStatus.FAILED,
+                kind=outcome.kind,
+                response=outcome.response,
+                error="delivery service is unavailable",
+                payload=dict(outcome.payload),
+                started_at=outcome.started_at,
+            )
+        kind = DeliveryKind.COMMAND if outcome.kind == SubmissionKind.COMMAND else DeliveryKind.CONVERSATION
+        delivery = await self.delivery_service.deliver(DeliveryRequest(
+            session_key=request.session_key,
+            message=OutboundMessage.text(outcome.response),
+            kind=kind,
+            metadata={"submission_id": request.request_id},
+        ))
+        payload = dict(outcome.payload)
+        payload["delivery_result"] = delivery
+        return SubmissionOutcome(
+            request_id=outcome.request_id,
+            session_key=outcome.session_key,
+            status=outcome.status if delivery.delivered else SubmissionStatus.FAILED,
+            kind=outcome.kind,
+            response=outcome.response,
+            error=outcome.error or delivery.error,
+            payload=payload,
+            started_at=outcome.started_at,
+        )
 
     async def _dispatch_command(self, request: SubmissionRequest) -> CommandResult | None:
         if self.command_dispatcher is None or command_execution_policy(request.input.text) is None:

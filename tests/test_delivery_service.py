@@ -1,0 +1,106 @@
+from types import SimpleNamespace
+
+import pytest
+
+from personal_agent.conversation import SessionDirectory
+from personal_agent.delivery import (
+    DeliveryKind,
+    DeliveryRequest,
+    DeliveryService,
+    DeliveryStatus,
+    PlatformDirectory,
+)
+from personal_agent.hooks import GatewayBeforeSendOutcome, HookEvent, HookManager
+from personal_agent.models.messages import OutboundMessage, SessionSource
+
+
+class Adapter:
+    def __init__(self):
+        self.sent = []
+
+    async def send_message(self, chat_id, message):
+        self.sent.append((chat_id, message.render_text()))
+        return SimpleNamespace(success=True, message_id="m1", error="")
+
+
+def _runtime(hook_manager=None):
+    sessions = SessionDirectory()
+    sessions.active_key(SessionSource(platform="wechat", user_id="u1", chat_id="c1"))
+    platforms = PlatformDirectory()
+    adapter = Adapter()
+    platforms.register("wechat", adapter)
+    return DeliveryService(sessions=sessions, platforms=platforms, hook_manager=hook_manager), adapter
+
+
+@pytest.mark.asyncio
+async def test_delivery_resolves_session_and_sends_once():
+    service, adapter = _runtime()
+    result = await service.deliver(DeliveryRequest(
+        session_key="wechat:c1:u1",
+        message=OutboundMessage.text("hello"),
+    ))
+
+    assert result.status == DeliveryStatus.DELIVERED
+    assert result.message_id == "m1"
+    assert result.attempts == 1
+    assert adapter.sent == [("c1", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_delivery_hook_can_replace_or_suppress_normal_message():
+    hooks = HookManager()
+
+    async def replace(event):
+        if event.payload["text"] == "hide":
+            return GatewayBeforeSendOutcome.suppress("hidden")
+        return GatewayBeforeSendOutcome.replace_text("changed")
+
+    hooks.register(owner="test", event=HookEvent.GATEWAY_BEFORE_SEND, callback=replace)
+    service, adapter = _runtime(hooks)
+
+    changed = await service.deliver(DeliveryRequest(
+        session_key="wechat:c1:u1",
+        message=OutboundMessage.text("hello"),
+    ))
+    hidden = await service.deliver(DeliveryRequest(
+        session_key="wechat:c1:u1",
+        message=OutboundMessage.text("hide"),
+    ))
+
+    assert changed.delivered
+    assert hidden.status == DeliveryStatus.SUPPRESSED
+    assert adapter.sent == [("c1", "changed")]
+
+
+@pytest.mark.asyncio
+async def test_protected_delivery_cannot_be_suppressed_by_plugin_hook():
+    hooks = HookManager()
+    hooks.register(
+        owner="test",
+        event=HookEvent.GATEWAY_BEFORE_SEND,
+        callback=lambda event: GatewayBeforeSendOutcome.suppress("blocked"),
+    )
+    service, adapter = _runtime(hooks)
+
+    result = await service.deliver(DeliveryRequest(
+        session_key="wechat:c1:u1",
+        message=OutboundMessage.text("approval required"),
+        kind=DeliveryKind.APPROVAL,
+    ))
+
+    assert result.delivered
+    assert adapter.sent == [("c1", "approval required")]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_platform_is_deferred():
+    sessions = SessionDirectory()
+    sessions.active_key(SessionSource(platform="offline", user_id="u1", chat_id="c1"))
+    service = DeliveryService(sessions=sessions, platforms=PlatformDirectory())
+
+    result = await service.deliver(DeliveryRequest(
+        session_key="offline:c1:u1",
+        message=OutboundMessage.text("later"),
+    ))
+
+    assert result.status == DeliveryStatus.DEFERRED

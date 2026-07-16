@@ -15,6 +15,7 @@ from personal_agent.conversation import (
     SubmissionStatus,
 )
 from personal_agent.commands.runtime import CommandResult
+from personal_agent.delivery import DeliveryResult, DeliveryStatus
 
 
 def _request(session_key: str, text: str) -> SubmissionRequest:
@@ -185,4 +186,36 @@ async def test_skill_command_forward_is_ordered_as_conversation():
     outcome = await handle.outcome()
     assert outcome.response == "echo:expanded skill prompt"
     assert service.calls == [("session", "expanded skill prompt")]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_deliver_response_mode_aggregates_delivery_result():
+    service = RecordingService()
+
+    class Delivery:
+        async def deliver(self, request):
+            assert request.message.render_text() == "echo:hello"
+            return DeliveryResult(
+                delivery_id=request.delivery_id,
+                session_key=request.session_key,
+                status=DeliveryStatus.DELIVERED,
+                platform="wechat",
+                chat_id="c1",
+                message_id="m1",
+                attempts=1,
+            )
+
+    coordinator = ConversationCoordinator(service, delivery_service=Delivery())
+    request = SubmissionRequest.text(
+        session_key="session",
+        text="hello",
+        origin=SubmissionOrigin.GATEWAY,
+        response_mode=ResponseMode.DELIVER,
+    )
+
+    outcome = await (await coordinator.submit(request)).outcome()
+
+    assert outcome.status == SubmissionStatus.COMPLETED
+    assert outcome.payload["delivery_result"].message_id == "m1"
     await coordinator.close()
