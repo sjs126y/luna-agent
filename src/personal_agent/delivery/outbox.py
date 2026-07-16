@@ -114,10 +114,26 @@ class DeliveryOutbox:
 
 
 class DeliveryWorker:
-    def __init__(self, service, outbox: DeliveryOutbox) -> None:
+    def __init__(self, service, outbox: DeliveryOutbox, *, poll_interval: float = 1.0) -> None:
         self.service = service
         self.outbox = outbox
         self._lock = asyncio.Lock()
+        self.poll_interval = max(0.05, float(poll_interval))
+        self._stop = asyncio.Event()
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._task is not None and not self._task.done():
+            return
+        self._stop = asyncio.Event()
+        self._task = asyncio.create_task(self._run(), name="delivery-outbox")
+
+    async def close(self) -> None:
+        self._stop.set()
+        task = self._task
+        self._task = None
+        if task is not None:
+            await task
 
     async def process_due(self, *, limit: int = 50) -> list[DeliveryResult]:
         async with self._lock:
@@ -126,3 +142,11 @@ class DeliveryWorker:
                 result = await self.service.deliver_once(record.request)
                 results.append(await self.outbox.record_result(result))
             return results
+
+    async def _run(self) -> None:
+        while not self._stop.is_set():
+            await self.process_due()
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval)
+            except asyncio.TimeoutError:
+                pass

@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+import asyncio
 
 import pytest
 
@@ -83,4 +84,32 @@ async def test_outbox_does_not_retry_ambiguous_timeout(tmp_path: Path):
     assert result.ambiguous is True
     assert record["status"] == "ambiguous"
     assert await outbox.due() == []
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_delivery_worker_processes_due_records_in_background(tmp_path: Path):
+    db = Database(tmp_path / "state.db")
+    await db.initialize()
+    outbox = DeliveryOutbox(db)
+    request = DeliveryRequest(session_key="wechat:c1:u1", message=OutboundMessage.text("hello"))
+    await outbox.enqueue(request)
+
+    class Service:
+        async def deliver_once(self, restored):
+            return DeliveryResult(
+                delivery_id=restored.delivery_id,
+                session_key=restored.session_key,
+                status=DeliveryStatus.DELIVERED,
+            )
+
+    worker = DeliveryWorker(Service(), outbox, poll_interval=0.01)
+    worker.start()
+    for _ in range(20):
+        if (await db.delivery_record(request.delivery_id))["status"] == "delivered":
+            break
+        await asyncio.sleep(0.01)
+    await worker.close()
+
+    assert (await db.delivery_record(request.delivery_id))["status"] == "delivered"
     await db.close()

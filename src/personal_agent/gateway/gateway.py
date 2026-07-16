@@ -132,6 +132,7 @@ class Gateway:
             await self._start_platform(entry)
         if self._delivery_worker is not None:
             await self._delivery_worker.process_due()
+            self._delivery_worker.start()
 
         logger.info("Gateway started with %d platform(s)", len(self._adapters))
         await self._dispatch_gateway_observer(
@@ -147,6 +148,8 @@ class Gateway:
         self._started = False
         if self._cron_scheduler:
             self._cron_scheduler.stop()
+        if self._delivery_worker is not None:
+            await self._delivery_worker.close()
         mcp = getattr(self, '_mcp_manager', None)
         if mcp is not None:
             try:
