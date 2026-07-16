@@ -15,6 +15,7 @@ from personal_agent.conversation.service import (
     ConversationService,
     ConversationTurnResult,
 )
+from personal_agent.conversation.session_directory import SessionBinding, SessionDirectory
 from personal_agent.conversation.steer import (
     ActiveTurn,
     ActiveTurnRegistry,
@@ -54,6 +55,8 @@ __all__ = [
     "SubmissionReceipt",
     "SubmissionRequest",
     "SubmissionStatus",
+    "SessionBinding",
+    "SessionDirectory",
     "TurnPolicySnapshot",
     "frontend_protocol_schema",
 ]
