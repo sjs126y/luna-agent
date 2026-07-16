@@ -165,7 +165,7 @@ def discover_skills(
         else:
             skill_registry.register(entry)
         count += 1
-        logger.info("Auto-discovered skill: %s", name)
+        logger.debug("Auto-discovered skill: %s", name)
     return count
 
 

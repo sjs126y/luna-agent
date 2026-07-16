@@ -165,6 +165,15 @@ class PluginManager:
             if plugin.manifest.record_import_delta:
                 self._record_registry_delta(plugin, before["names"], after["names"])
             plugin.status = PluginStatus.LOADED
+            counts = plugin.registration_counts()
+            logger.info(
+                "Plugin loaded: %s skills=%d mcp=%d hooks=%d commands=%d",
+                plugin.key,
+                counts["skills"],
+                counts["mcp_servers"],
+                counts["hooks"],
+                counts["commands"],
+            )
         except Exception as exc:
             self.hook_manager.unregister_owner(plugin.key)
             self._restore_registration_snapshot(before)

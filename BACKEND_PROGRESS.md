@@ -11,6 +11,8 @@
 - 10 个 Skill 均通过 `skill-creator quick_validate`；插件 validate 全部通过；配置、插件与 MCP 聚焦回归 `117 passed`。
 - 真实 Runtime doctor：GitHub `ready`/44 tools、Context7 `ready`/2 tools、Playwright `ready`/24 tools，三个插件均为 `LOADED`，无配置错误和重复 server。
 - 最终全量回归 `956 passed`；`compileall` 与 `git diff --check` 通过。
+- 新增根目录 `INTEGRATION_PLUGIN_TEST_CHECKLIST.md`，供真实 Gateway 验证状态命令、代表 Skill、GitHub 写保护、Browser 上传/脚本保护和无重复工具循环。
+- Skill 自动发现明细降为 DEBUG；INFO 改为每个插件一行 `skills/mcp/hooks/commands` 注册汇总。日志与插件聚焦回归 `74 passed`。
 
 ## 2026-07-16：Conversation Runtime 与 Delivery 架构重构
 

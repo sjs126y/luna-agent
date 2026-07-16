@@ -8,6 +8,7 @@ and audit logging.
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -62,6 +63,21 @@ def test_get_summaries():
     assert "python-expert" in summary
     assert "git-workflow" in summary
     assert "可用技能" in summary
+
+
+def test_discovery_logs_skill_details_at_debug(tmp_path, caplog):
+    from personal_agent.skills.registry import discover_skills, skill_registry
+
+    path = tmp_path / "quiet-skill.md"
+    path.write_text("---\nname: quiet-skill\ndescription: Quiet test skill\n---\n\n# Quiet", encoding="utf-8")
+    caplog.set_level(logging.DEBUG, logger="personal_agent.skills.registry")
+    try:
+        assert discover_skills(tmp_path) == 1
+        records = [record for record in caplog.records if "Auto-discovered skill" in record.message]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+    finally:
+        skill_registry.unregister("quiet-skill")
 
 
 def test_duplicate_registration_overwrites():
