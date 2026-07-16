@@ -188,6 +188,26 @@ async def test_gateway_submits_normalized_request_when_coordinator_is_available(
 
 
 @pytest.mark.asyncio
+async def test_coordinator_gateway_delivers_auth_response_as_protected_message(gateway, monkeypatch):
+    deliveries = []
+
+    class Delivery:
+        async def deliver(self, request):
+            deliveries.append(request)
+            return SimpleNamespace(delivered=True)
+
+    gateway._conversation_coordinator = SimpleNamespace()
+    gateway._delivery_service = Delivery()
+    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (False, "pair first"))
+
+    result = await gateway._handle_message_inner(_event("hello"))
+
+    assert result is None
+    assert deliveries[0].kind.value == "auth"
+    assert deliveries[0].message.render_text() == "pair first"
+
+
+@pytest.mark.asyncio
 async def test_gateway_message_hook_runs_after_auth_and_rewrites_input(gateway, monkeypatch):
     from personal_agent.hooks import GatewayMessageOutcome, HookEvent, HookManager
 

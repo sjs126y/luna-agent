@@ -26,6 +26,8 @@ from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
 from personal_agent.gateway.state import GatewayRunState, PlatformRuntime
 from personal_agent.memory.review import MemoryReviewService
+from personal_agent.delivery import DeliveryKind, DeliveryRequest
+from personal_agent.models.messages import OutboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +242,7 @@ class Gateway:
             adapter.set_message_handler(self._handle_message)
             if self._conversation_coordinator is not None and hasattr(adapter, "set_coordinator_managed"):
                 adapter.set_coordinator_managed(True)
-            if hasattr(adapter, "set_outbound_handlers"):
+            if self._conversation_coordinator is None and hasattr(adapter, "set_outbound_handlers"):
                 adapter.set_outbound_handlers(
                     before_send=self._before_platform_send,
                     after_send=self._after_platform_send,
@@ -337,20 +339,37 @@ class Gateway:
                 event.source.user_id, event.text
             )
             if not allowed:
-                return response or "抱歉，你没有权限使用此服务。"
+                text = response or "抱歉，你没有权限使用此服务。"
+                if self._conversation_coordinator is not None:
+                    await self._deliver_gateway_text(session_key, text, DeliveryKind.AUTH)
+                    return None
+                return text
             # Auth passed with a message (e.g. pairing success greeting)
             if allowed and response is not None:
+                if self._conversation_coordinator is not None:
+                    await self._deliver_gateway_text(session_key, response, DeliveryKind.AUTH)
+                    return None
                 return response
 
         # 2. Formal inbound hooks run only after authorization.
         event, blocked_response = await self._dispatch_gateway_message(event, session_key)
         if blocked_response is not None:
+            if self._conversation_coordinator is not None:
+                await self._deliver_gateway_text(session_key, blocked_response, DeliveryKind.SYSTEM)
+                return None
             return blocked_response
 
         # 3. Command detection. /stop must be able to cancel pending confirms.
         if self._conversation_coordinator is not None:
             consumed, confirm_response = self._confirmations.resolve_message(session_key, event.text)
             if consumed:
+                if confirm_response:
+                    await self._deliver_gateway_text(
+                        session_key,
+                        confirm_response,
+                        DeliveryKind.SYSTEM,
+                    )
+                    return None
                 return confirm_response
             event = await self._prepare_inbound_attachments(event)
             envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
@@ -542,6 +561,13 @@ class Gateway:
                 return "deny"
 
             async def send(prompt: str) -> bool:
+                if self._delivery_service is not None:
+                    result = await self._delivery_service.deliver(DeliveryRequest(
+                        session_key=session_key,
+                        message=OutboundMessage.text(prompt),
+                        kind=DeliveryKind.APPROVAL,
+                    ))
+                    return result.delivered
                 try:
                     result = await adapter.send(event.source.chat_id, prompt)
                 except Exception:
@@ -558,6 +584,21 @@ class Gateway:
             )
 
         return _confirm
+
+    async def _deliver_gateway_text(
+        self,
+        session_key: str,
+        text: str,
+        kind: DeliveryKind,
+    ) -> bool:
+        if self._delivery_service is None or not str(text or ""):
+            return False
+        result = await self._delivery_service.deliver(DeliveryRequest(
+            session_key=session_key,
+            message=OutboundMessage.text(text),
+            kind=kind,
+        ))
+        return result.delivered
 
     async def _prepare_inbound_attachments(self, event):
         adapter = self._adapter_for_source(event.source)
