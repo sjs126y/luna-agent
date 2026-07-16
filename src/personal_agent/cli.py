@@ -36,8 +36,8 @@ app.add_typer(protocol_app, name="protocol")
 
 _CONFIG_TEMPLATE_LOCAL = """# Personal Agent minimal configuration
 agent:
-  max_iterations: 30
-  max_tool_calls_per_turn: 20
+  max_iterations: 50
+  max_tool_calls_per_turn: 40
 
 llm:
   context_window: 0
@@ -139,8 +139,8 @@ auth:
 
 _CONFIG_TEMPLATE_SERVER = """# Personal Agent server configuration
 agent:
-  max_iterations: 30
-  max_tool_calls_per_turn: 20
+  max_iterations: 50
+  max_tool_calls_per_turn: 40
 
 llm:
   context_window: 0
@@ -240,8 +240,8 @@ auth:
 
 _CONFIG_TEMPLATE_BOT = """# Personal Agent bot configuration
 agent:
-  max_iterations: 30
-  max_tool_calls_per_turn: 20
+  max_iterations: 50
+  max_tool_calls_per_turn: 40
 
 llm:
   context_window: 0

@@ -764,3 +764,23 @@ uv run pytest -q -k 'not test_refresh_mode_updates_status_after_command and not 
 ```
 
 结果：聚焦测试 `23 passed`；排除两项仍断言旧 `/allow` / TUI Mode 行为的既有测试后，全量回归 `879 passed, 2 deselected`。
+
+## 2026-07-16：工具配额无工具收尾
+
+状态：已完成实现并通过回归验证。
+
+- 单轮工具调用总配额触发后不再直接返回固定停止文案，而是保留已有工具结果并额外调用一次 LLM；该调用不暴露任何工具，只生成面向用户的最终总结。
+- 模型收尾为空或调用失败时仍返回明确的固定兜底文案，避免空回复。
+- 新增 `retry.category="tool_quota"`，用于表达“配额已触发，正在整理已有结果”的可恢复状态。
+- 主 Agent 默认及当前测试配置由 20 次工具调用提高到 40 次；迭代预算由 30 提高到 50，确保连续 40 次单工具调用后仍有一次总结空间。委派子 Agent 配额保持不变。
+- 小鹿集成插件实测发现 GitHub MCP 的 `issue_write` 命名未被原有动作前缀规则识别；写保护现同时覆盖危险动作前缀和 `*_write` 后缀，包括 `issue_write` 与 `pull_request_review_write`。
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent plugins/github_assistant
+uv run pytest tests/test_agent_loop.py tests/test_integration_plugins.py tests/test_config_loader.py tests/test_config_diagnostics.py tests/test_cli_entrypoints.py -q
+uv run pytest -q
+```
+
+结果：聚焦测试 `74 passed`；全量回归 `958 passed`。

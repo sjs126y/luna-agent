@@ -5,8 +5,8 @@
 
 agent:
   ui: "inline"                    # 终端交互界面，目前正式入口为行内 TUI
-  max_iterations: 30
-  max_tool_calls_per_turn: 20
+  max_iterations: 50
+  max_tool_calls_per_turn: 40
 
 llm:
   context_window: 0               # 0 = 根据模型名自动推断；中转站自定义模型名可填真实窗口，例如 1000000

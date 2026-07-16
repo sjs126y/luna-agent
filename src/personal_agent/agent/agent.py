@@ -23,7 +23,7 @@ TOOL_PROTOCOL_PROMPT = (
 class Agent:
     # ── identity (set by init_agent, never changes) ──
     model: str = ""
-    max_iterations: int = 30
+    max_iterations: int = 50
 
     # ── transport & provider ──
     _transport: Any = None                 # BaseTransport instance
@@ -64,7 +64,7 @@ class Agent:
     _retry: RetryState = field(default_factory=RetryState)
     _interrupt_requested: bool = False
     _tool_calls_this_turn: int = 0
-    _max_tool_calls_per_turn: int = 20
+    _max_tool_calls_per_turn: int = 40
     _destructive_calls_this_turn: int = 0
     _max_destructive_per_turn: int = 3
     _security_context: Any = None
@@ -86,8 +86,8 @@ def init_agent(
     *,
     memory_manager=None,
     compressor=None,
-    max_iterations: int = 30,
-    max_tool_calls_per_turn: int = 20,
+    max_iterations: int = 50,
+    max_tool_calls_per_turn: int = 40,
     memory_session_key: str = "",
     memory_snapshot_refresh_interval: int = 20,
     system_prompt_template: str = "",

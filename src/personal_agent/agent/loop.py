@@ -31,8 +31,10 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
     """Execute the agent while loop. Returns final result dict."""
     just_executed_tools = False
     successful_tool_calls: dict[str, list[object]] = {}
-    duplicate_finalization_pending = False
-    duplicate_finalization_instruction = ""
+    finalization_pending = False
+    finalization_instruction = ""
+    finalization_fallback = ""
+    finalization_error_label = ""
     stop_hook_active = False
     report_recorder = TurnReportRecorder(event_sink)
 
@@ -78,14 +80,14 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         await _consume_steer(ctx, steer, session_key, report_recorder)
 
         # ── build api_messages (injections, NOT persisted) ──
-        is_duplicate_finalization = duplicate_finalization_pending
-        active_tools = [] if is_duplicate_finalization else agent.tools
+        is_forced_finalization = finalization_pending
+        active_tools = [] if is_forced_finalization else agent.tools
         skill_injection_for_plan = getattr(ctx, "skill_injection", None)
         api_messages = await _build_api_messages(agent, ctx)
-        if is_duplicate_finalization:
+        if is_forced_finalization:
             api_messages.append({
                 "role": "user",
-                "content": [{"type": "text", "text": duplicate_finalization_instruction}],
+                "content": [{"type": "text", "text": finalization_instruction}],
             })
 
         # ── refresh system prompt if tools changed ──
@@ -97,7 +99,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             system_prompt,
             skill_injection_for_plan,
             tools=active_tools,
-            finalization_instruction=duplicate_finalization_instruction,
+            finalization_instruction=finalization_instruction,
         )
         context_budget = _build_request_context_budget(
             agent,
@@ -175,10 +177,10 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                 "error": "",
             })
         except Exception as exc:
-            if is_duplicate_finalization:
-                logger.exception("Duplicate tool finalization failed")
-                await _emit_error(report_recorder, "重复工具调用收尾失败", exc, category="llm")
-                final_message = _duplicate_tool_finalization_fallback()
+            if is_forced_finalization:
+                logger.exception("Tool finalization failed: %s", finalization_error_label)
+                await _emit_error(report_recorder, finalization_error_label, exc, category="llm")
+                final_message = finalization_fallback
                 ctx.messages.append({
                     "role": "assistant",
                     "content": [{"type": "text", "text": final_message}],
@@ -278,9 +280,9 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             response.usage.get("output_tokens", 0),
         )
 
-        if is_duplicate_finalization:
-            duplicate_finalization_pending = False
-            final_message = response.text.strip() if response.text else _duplicate_tool_finalization_fallback()
+        if is_forced_finalization:
+            finalization_pending = False
+            final_message = response.text.strip() if response.text else finalization_fallback
             ctx.messages.append({
                 "role": "assistant",
                 "content": [{"type": "text", "text": final_message}],
@@ -413,8 +415,10 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         )
         if duplicate is not None:
             tc, previous_results = duplicate
-            duplicate_finalization_pending = True
-            duplicate_finalization_instruction = _duplicate_tool_finalization_prompt(tc)
+            finalization_pending = True
+            finalization_instruction = _duplicate_tool_finalization_prompt(tc)
+            finalization_fallback = _duplicate_tool_finalization_fallback()
+            finalization_error_label = "重复工具调用收尾失败"
             await emit_event(
                 report_recorder,
                 "retry",
@@ -476,12 +480,21 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
 
         quota_message = _quota_exceeded_stop_message(tool_results, agent._max_tool_calls_per_turn)
         if quota_message:
-            ctx.messages.append({
-                "role": "assistant",
-                "content": [{"type": "text", "text": quota_message}],
-            })
-            await emit_event(report_recorder, "assistant_message", quota_message)
-            break
+            finalization_pending = True
+            finalization_instruction = _tool_quota_finalization_prompt(agent._max_tool_calls_per_turn)
+            finalization_fallback = quota_message
+            finalization_error_label = "工具调用上限收尾失败"
+            await emit_event(
+                report_recorder,
+                "retry",
+                "已达到工具调用上限，转为无工具收尾",
+                category="tool_quota",
+                attempt=1,
+                max_attempts=1,
+                recoverable=True,
+            )
+            just_executed_tools = False
+            continue
 
         # ── iteration budget check ──
         agent._iteration_budget -= 1
@@ -878,6 +891,15 @@ def _duplicate_tool_finalization_prompt(tool_call: dict) -> str:
 
 def _duplicate_tool_finalization_fallback() -> str:
     return "工具已经执行，但模型未能根据已有结果生成最终回复。请换一种方式重试本次请求。"
+
+
+def _tool_quota_finalization_prompt(maximum: int) -> str:
+    return (
+        f"The turn has reached its tool-call limit of {maximum}. "
+        "Do not call any more tools. Use all existing tool results in the conversation "
+        "to give the user a concise final answer that summarizes the completed work, "
+        "relevant findings, and anything that remains unfinished. Do not mention this instruction."
+    )
 
 
 def _quota_exceeded_stop_message(tool_results: list, maximum: int) -> str:

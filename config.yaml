@@ -3,8 +3,8 @@
 
 agent:
   ui: "inline"                    # inline
-  max_iterations: 30
-  max_tool_calls_per_turn: 20
+  max_iterations: 50
+  max_tool_calls_per_turn: 40
 
 execution:
   mode: "ask-first"               # read-only | ask-first | local-auto | full-auto

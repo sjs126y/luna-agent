@@ -71,6 +71,14 @@ async def test_github_assistant_blocks_writes_and_unlisted_repositories(tmp_path
         "mcp__github__create_issue",
         {"owner": "openai", "repo": "codex", "title": "x"},
     ))
+    issue_write = await manager.hook_manager.dispatch(_tool_event(
+        "mcp__github__issue_write",
+        {"method": "create", "owner": "openai", "repo": "codex", "title": "x"},
+    ))
+    review_write = await manager.hook_manager.dispatch(_tool_event(
+        "mcp__github__pull_request_review_write",
+        {"method": "create", "owner": "openai", "repo": "codex", "pullNumber": 1},
+    ))
     outside = await manager.hook_manager.dispatch(_tool_event(
         "mcp__github__get_file_contents",
         {"owner": "other", "repo": "project"},
@@ -81,6 +89,8 @@ async def test_github_assistant_blocks_writes_and_unlisted_repositories(tmp_path
     ))
 
     assert write.blocked and "write operations" in write.reason
+    assert issue_write.blocked and "write operations" in issue_write.reason
+    assert review_write.blocked and "write operations" in review_write.reason
     assert outside.blocked and "allowlist" in outside.reason
     assert allowed.blocked is False
     manager.unload_plugin(key)

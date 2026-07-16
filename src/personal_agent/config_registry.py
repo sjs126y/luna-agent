@@ -391,8 +391,8 @@ def _platform_env_fields() -> tuple[ConfigField, ...]:
 def _agent_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("agent.ui", "agent_ui", "inline", "str", "agent", "CLI renderer: inline.", choices=("inline",)),
-        _yaml_field("agent.max_iterations", "max_iterations", 30, "int", "agent", "Maximum agent loop iterations.", minimum=1),
-        _yaml_field("agent.max_tool_calls_per_turn", "max_tool_calls_per_turn", 20, "int", "agent", "Maximum tool calls per turn.", minimum=1),
+        _yaml_field("agent.max_iterations", "max_iterations", 50, "int", "agent", "Maximum agent loop iterations.", minimum=1),
+        _yaml_field("agent.max_tool_calls_per_turn", "max_tool_calls_per_turn", 40, "int", "agent", "Maximum tool calls per turn.", minimum=1),
         _yaml_field("agents.max_concurrent_runs", "agent_runtime_max_concurrent_runs", 4, "int", "agents", "Maximum concurrent delegated agent runs.", minimum=1),
         _yaml_field("agents.max_tool_calls", "agent_runtime_max_tool_calls", 10, "int", "agents", "Maximum delegated agent tool calls.", minimum=1),
         _yaml_field("agents.max_tokens", "agent_runtime_max_tokens", 4096, "int", "agents", "Delegated agent token budget.", minimum=1),

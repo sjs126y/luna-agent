@@ -598,7 +598,7 @@ async def test_tool_quota_denial_stops_agent_loop(provider):
             text="", finish_reason="tool_use",
             tool_calls=[{"id": "c2", "name": "quota_echo", "input": {"msg": "two"}}],
         ),
-        NormalizedResponse(text="should not run", finish_reason="end_turn"),
+        NormalizedResponse(text="已根据现有结果完成总结。", finish_reason="end_turn"),
     ])
 
     from personal_agent.tools.entry import ToolEntry
@@ -617,10 +617,46 @@ async def test_tool_quota_denial_stops_agent_loop(provider):
 
     result = await run_conversation(agent, ctx)
 
-    assert transport.calls == 2
-    assert "工具调用上限（1）" in result["final_response"]
+    assert transport.calls == 3
+    assert result["final_response"] == "已根据现有结果完成总结。"
+    assert transport.call_tools[-1] == []
+    assert "Do not call any more tools" in _user_text(transport.call_messages[-1])
     assert result["turn_report"]["tools"]["total"] == 2
     assert result["turn_report"]["tools"]["denied"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_quota_finalization_uses_fallback_when_model_returns_empty(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c1", "name": "quota_fallback_echo", "input": {"msg": "one"}}],
+        ),
+        NormalizedResponse(
+            text="", finish_reason="tool_use",
+            tool_calls=[{"id": "c2", "name": "quota_fallback_echo", "input": {"msg": "two"}}],
+        ),
+        NormalizedResponse(text="", finish_reason="end_turn"),
+    ])
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _quota_fallback_echo(msg: str = ""):
+        return "done"
+
+    tool_registry.register(ToolEntry(
+        name="quota_fallback_echo", description="Quota fallback echo",
+        schema={"type": "object", "properties": {"msg": {"type": "string"}}},
+        handler=_quota_fallback_echo,
+    ))
+    agent = init_agent(transport, provider, max_tool_calls_per_turn=1)
+    ctx = await build_turn_context(agent, "Test")
+
+    result = await run_conversation(agent, ctx)
+
+    assert transport.calls == 3
+    assert result["final_response"] == "已达到本轮工具调用上限（1），已停止继续调用工具。"
 
 
 @pytest.mark.asyncio

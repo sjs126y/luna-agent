@@ -74,7 +74,8 @@ def register(ctx) -> None:
 
 def _is_write_tool(tool_name: str) -> bool:
     short = tool_name.rsplit("__", 1)[-1]
-    return bool(_WRITE_TOOL.search(short)) or short.lower() in {
+    lowered = short.lower()
+    return lowered.endswith("_write") or bool(_WRITE_TOOL.search(short)) or lowered in {
         "add_comment_to_pending_review",
         "create_pull_request_review",
         "dismiss_notification",
