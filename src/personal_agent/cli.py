@@ -1086,6 +1086,7 @@ async def _build_serve_dry_run_report() -> dict[str, Any]:
     try:
         settings = Settings()
         runtime = await create_app_runtime(settings)
+        await _wait_for_mcp_diagnostics(runtime)
         runtime.create_gateway(system_prompt_template="")
         _load_enabled_platform_plugins(runtime.plugin_manager)
         health = runtime.health_snapshot()
@@ -1163,6 +1164,7 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
     runtime = None
     try:
         runtime = await create_app_runtime(settings)
+        await _wait_for_mcp_diagnostics(runtime)
         runtime_data = runtime.health_snapshot()
         runtime_data.update({
             "initialized": True,
@@ -1197,7 +1199,12 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
                 "enabled": bool(settings.mcp_enabled),
                 "running": False,
                 "configured_count": len(settings.mcp_servers),
+                "enabled_count": 0,
+                "initializing": False,
+                "starting_count": 0,
                 "connected_count": 0,
+                "degraded_count": 0,
+                "failed_count": 0,
                 "total_tools": 0,
                 "registered_tools": [],
                 "servers": [],
@@ -1234,6 +1241,13 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
     finally:
         if runtime is not None:
             await runtime.close()
+
+
+async def _wait_for_mcp_diagnostics(runtime) -> None:
+    manager = getattr(runtime, "mcp_manager", None)
+    wait = getattr(manager, "wait_initial_attempts", None)
+    if wait is not None:
+        await wait()
 
 
 def _run_async_sync(coro):

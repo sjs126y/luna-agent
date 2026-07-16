@@ -57,6 +57,7 @@ class MCPServerRuntime:
             config.name,
             self.call_tool,
             server_url=config.url,
+            availability_reason=self.availability_reason,
         )
         self._server_info: MCPServerInfo | None = None
         self._last_error = ""
@@ -79,6 +80,12 @@ class MCPServerRuntime:
     @property
     def registered_names(self) -> set[str]:
         return self._registrar.registered_names
+
+    def availability_reason(self) -> str:
+        label = "starting" if self.state == MCPRuntimeState.CONNECTING else self.state.value
+        detail = self._last_error or self._last_call_error
+        message = f"MCP server '{self.config.name}' is {label}"
+        return f"{message}: {detail}" if detail else message
 
     async def start(self) -> int:
         if not self.config.enabled:

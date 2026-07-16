@@ -288,5 +288,8 @@ async def test_runtime_keeps_tool_registered_but_unavailable_during_recovery():
         assert result.metadata["reason"] == "temporarily_unavailable"
         assert entry is not None
         assert entry.check_fn is not None and entry.check_fn() is False
+        catalog = {item["name"]: item for item in tool_registry.catalog()}
+        assert "reconnecting" in catalog["mcp__unstable__fragile"]["unavailable_reason"]
+        assert "lost" in catalog["mcp__unstable__fragile"]["unavailable_reason"]
     finally:
         await runtime.stop()

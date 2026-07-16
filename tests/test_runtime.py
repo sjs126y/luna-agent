@@ -290,6 +290,8 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
         boot_steps = {step["name"]: step for step in runtime.boot_report.as_dict()["steps"]}
         assert boot_steps["mcp"]["status"] == "ok"
         assert boot_steps["mcp"]["detail"].startswith("servers=")
+        assert "startup=background" in boot_steps["mcp"]["detail"]
+        assert runtime.health_snapshot()["core_ready"] is True
         assert runtime.health_snapshot()["mcp_running"] is True
     finally:
         await runtime.close()

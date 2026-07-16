@@ -84,6 +84,9 @@ class MCPManager:
 
     def health_snapshot(self) -> dict[str, Any]:
         servers = [runtime.health_snapshot() for runtime in self._runtimes.values()]
+        enabled_runtimes = [
+            runtime for runtime in self._runtimes.values() if runtime.config.enabled
+        ]
         registered = sorted(
             name
             for runtime in self._runtimes.values()
@@ -92,6 +95,11 @@ class MCPManager:
         return {
             "running": self._running,
             "configured_count": len(self._runtimes),
+            "enabled_count": len(enabled_runtimes),
+            "initializing": self._running and any(
+                not runtime.health_snapshot()["initial_attempt_done"]
+                for runtime in enabled_runtimes
+            ),
             "starting_count": sum(
                 1 for runtime in self._runtimes.values()
                 if runtime.state == MCPRuntimeState.CONNECTING
