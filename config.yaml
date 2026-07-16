@@ -216,3 +216,12 @@ mcp:
       connect_timeout_seconds: 60
       allow_network: true
       enabled: true
+
+    - name: "playwright"
+      transport: "stdio"
+      command: "npx"
+      args: ["-y", "@playwright/mcp@0.0.78", "--browser", "chromium", "--headless", "--isolated"]
+      connect_timeout_seconds: 120
+      call_timeout_seconds: 120
+      allow_network: true
+      enabled: true

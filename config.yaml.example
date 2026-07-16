@@ -198,3 +198,13 @@ mcp:
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
       enabled: true
+
+    # 浏览器自动化；首次运行需要联网下载 npm 包与浏览器组件。
+    - name: "playwright"
+      transport: "stdio"
+      command: "npx"
+      args: ["-y", "@playwright/mcp@0.0.78", "--browser", "chromium", "--headless", "--isolated"]
+      connect_timeout_seconds: 120
+      call_timeout_seconds: 120
+      allow_network: true
+      enabled: false
