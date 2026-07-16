@@ -57,6 +57,8 @@ class SubmissionRequest:
     request_id: str = field(default_factory=lambda: f"sub_{uuid.uuid4().hex}")
     owner_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    event_sink: Any = field(default=None, repr=False, compare=False)
+    confirm: Any = field(default=None, repr=False, compare=False)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
@@ -147,4 +149,3 @@ class SubmissionHandle:
 
     def cancel(self) -> bool:
         return self._future.cancel()
-

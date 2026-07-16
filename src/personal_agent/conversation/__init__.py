@@ -1,6 +1,7 @@
 """Shared conversation runtime services."""
 
 from personal_agent.conversation.command_runtime import ConversationCommandRuntime
+from personal_agent.conversation.coordinator import ConversationCoordinator
 from personal_agent.conversation.events import (
     ConversationEvent,
     ConversationEventSink,
@@ -27,6 +28,7 @@ from personal_agent.conversation.submission import (
 
 __all__ = [
     "ConversationCommandRuntime",
+    "ConversationCoordinator",
     "ConversationEvent",
     "ConversationEventSink",
     "ConversationQueryService",
