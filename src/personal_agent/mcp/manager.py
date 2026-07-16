@@ -63,6 +63,12 @@ class MCPManager:
         await asyncio.gather(*(runtime.start() for runtime in self._runtimes.values()))
         return self.total_tools
 
+    async def wait_initial_attempts(self) -> int:
+        await asyncio.gather(
+            *(runtime.wait_initial_attempt() for runtime in self._runtimes.values())
+        )
+        return self.total_tools
+
     async def stop(self) -> None:
         await asyncio.gather(
             *(runtime.stop() for runtime in self._runtimes.values()),
@@ -86,10 +92,18 @@ class MCPManager:
         return {
             "running": self._running,
             "configured_count": len(self._runtimes),
+            "starting_count": sum(
+                1 for runtime in self._runtimes.values()
+                if runtime.state == MCPRuntimeState.CONNECTING
+            ),
             "connected_count": sum(1 for runtime in self._runtimes.values() if runtime.ready),
             "degraded_count": sum(
                 1 for runtime in self._runtimes.values()
                 if runtime.state in {MCPRuntimeState.DEGRADED, MCPRuntimeState.RECONNECTING}
+            ),
+            "failed_count": sum(
+                1 for runtime in self._runtimes.values()
+                if runtime.state == MCPRuntimeState.FAILED
             ),
             "total_tools": len(registered),
             "registered_tools": registered,

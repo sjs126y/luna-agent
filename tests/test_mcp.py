@@ -280,7 +280,8 @@ async def test_manager_start_stop(mock_server_script: Path):
     count_before = len(tool_registry.all_names)
 
     try:
-        count = await manager.start()
+        assert await manager.start() == 0
+        count = await manager.wait_initial_attempts()
         assert count == 2
         assert manager.total_tools == 2
         assert "mock" in manager.client_names
@@ -371,7 +372,8 @@ async def test_manager_bad_server_doesnt_block_others(mock_server_script: Path):
 
     manager = MCPManager(configs)
     try:
-        count = await manager.start()
+        await manager.start()
+        count = await manager.wait_initial_attempts()
         assert count == 2  # mock server's 2 tools
         assert "mock" in manager.client_names
         assert "bad_one" not in manager.client_names
@@ -405,6 +407,7 @@ async def test_tool_search_discovers_mcp_tools(mock_server_script: Path):
 
     try:
         await manager.start()
+        await manager.wait_initial_attempts()
 
         # Search for "echo" should find the MCP echo tool
         result = await dispatch_tool_search("echo")
@@ -454,6 +457,7 @@ async def test_exec_mcp_tool_through_pipeline(mock_server_script: Path):
 
     try:
         await manager.start()
+        await manager.wait_initial_attempts()
 
         tc = {"name": "mcp__mock__echo", "input": {"msg": "from executor"}}
         settings = SimpleNamespace(
@@ -499,6 +503,7 @@ async def test_mcp_tool_search_integration(mock_server_script: Path):
 
     try:
         await manager.start()
+        await manager.wait_initial_attempts()
 
         # 1. LLM searches for "add numbers"
         search_result = json.loads(await dispatch_tool_search("add numbers"))
