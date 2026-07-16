@@ -22,9 +22,10 @@ class CronScheduler:
     Independent thread → survives main loop stalls.
     """
 
-    def __init__(self, store: CronStore, gateway_ref) -> None:
+    def __init__(self, store: CronStore, submission_port, *, sessions=None) -> None:
         self._store = store
-        self._gateway = weakref.ref(gateway_ref)  # weak ref, won't block GC
+        self._submission_port = weakref.ref(submission_port)
+        self._sessions = sessions
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -76,8 +77,8 @@ class CronScheduler:
             logger.info("Cron job triggered: %s (prompt=%s...)", job.name, job.prompt[:50])
 
             # Bridge to main loop
-            gateway = self._gateway()
-            if gateway and self._loop and self._loop.is_running():
+            submission_port = self._submission_port()
+            if submission_port and self._loop and self._loop.is_running():
                 self._loop.call_soon_threadsafe(
                     lambda j=job: asyncio.ensure_future(self._execute_job(j))
                 )
@@ -88,41 +89,34 @@ class CronScheduler:
     async def _execute_job(self, job) -> None:
         """Run on main loop: send prompt to Agent, deliver result to chat."""
         try:
-            gateway = self._gateway()
-            if gateway is None:
+            submission_port = self._submission_port()
+            if submission_port is None:
                 return
+            from personal_agent.conversation import ResponseMode, SubmissionOrigin, SubmissionRequest
+            from personal_agent.models.messages import SessionSource
 
-            # Find the adapter for delivery
-            adapter = None
-            for a in gateway._adapters:
-                if a.__class__.__name__.lower().startswith(job.platform):
-                    adapter = a
-                    break
-
-            if adapter is None:
-                logger.warning("Cron: no adapter found for platform %s", job.platform)
-                return
-
-            # Build internal event and process through Gateway
-            from personal_agent.models.messages import MessageEvent, SessionSource
-            event = MessageEvent(
-                text=job.prompt,
-                message_type="command",
-                source=SessionSource(
-                    platform=job.platform,
-                    user_id="cron",
-                    user_name="Cron",
-                    chat_id=job.chat_id or "cron",
-                    chat_type="dm",
-                ),
-                internal=True,  # skip auth
+            user_id = str(job.session_key or "").rpartition(":")[2] or "scheduler"
+            source = SessionSource(
+                platform=job.platform,
+                user_id=user_id,
+                user_name="Cron",
+                chat_id=job.chat_id,
+                chat_type="dm",
             )
-
-            response = await gateway._handle_message(event)
-            if response and job.chat_id:
-                await adapter.send(job.chat_id, response)
-
-            logger.info("Cron job completed: %s", job.name)
+            if self._sessions is not None and job.chat_id:
+                self._sessions.bind(job.session_key, source)
+            request = SubmissionRequest.text(
+                session_key=job.session_key,
+                text=job.prompt,
+                origin=SubmissionOrigin.CRON,
+                response_mode=ResponseMode.DELIVER if job.chat_id else ResponseMode.SILENT,
+                source=source,
+                owner_id=job.job_id,
+                metadata={"cron_job_id": job.job_id, "cron_job_name": job.name},
+            )
+            handle = await submission_port.submit(request)
+            outcome = await handle.outcome()
+            logger.info("Cron job completed: %s status=%s", job.name, outcome.status.value)
         except Exception:
             logger.exception("Cron job '%s' failed", job.name)
 

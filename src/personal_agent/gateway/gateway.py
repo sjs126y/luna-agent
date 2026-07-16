@@ -116,7 +116,12 @@ class Gateway:
             from personal_agent.cron.scheduler import CronScheduler
             cron_store = CronStore(self.config.agent_data_dir / "cron" / "jobs.json")
             cron_store.seed_defaults()
-            self._cron_scheduler = CronScheduler(cron_store, self)
+            submission_port = self._conversation_coordinator or self
+            self._cron_scheduler = CronScheduler(
+                cron_store,
+                submission_port,
+                sessions=self._session_router,
+            )
             self._cron_scheduler.start()
         else:
             self._cron_scheduler = None
