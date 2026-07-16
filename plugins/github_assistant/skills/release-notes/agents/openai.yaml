@@ -1,0 +1,4 @@
+interface:
+  display_name: "Draft Release Notes"
+  short_description: "Draft release notes from GitHub changes"
+  default_prompt: "Draft release notes from verified GitHub changes in the requested range."

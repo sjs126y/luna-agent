@@ -1,0 +1,12 @@
+schema_version: 1
+key: integrations/github-assistant
+name: GitHub Assistant
+version: "0.1.0"
+description: GitHub MCP workflows for repository summaries, pull request review, issue triage, and release notes.
+kind: integration
+entrypoint: github_assistant:register
+requires_env: [GITHUB_MCP_AUTH]
+provides: [mcp, skill, command, hook]
+tags: [github, mcp, development, review]
+enabled_by_default: false
+source: local

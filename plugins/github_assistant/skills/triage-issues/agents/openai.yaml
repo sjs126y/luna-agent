@@ -1,0 +1,4 @@
+interface:
+  display_name: "Triage GitHub Issues"
+  short_description: "Triage and prioritize GitHub issue reports"
+  default_prompt: "Triage the requested GitHub issues with evidence and suggested priorities."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repository Summary"
+  short_description: "Summarize a GitHub repository"
+  default_prompt: "Summarize the requested GitHub repository using verified repository data."
