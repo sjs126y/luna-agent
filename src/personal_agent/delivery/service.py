@@ -11,11 +11,11 @@ from personal_agent.delivery.models import (
     PlatformSendResult,
 )
 from personal_agent.hooks import (
-    GatewayBeforeSendOutcome,
     HookEnvelope,
     HookEvent,
     HookScope,
     HookSourceContext,
+    PreDeliveryOutcome,
 )
 from personal_agent.models.messages import OutboundMessage
 
@@ -128,7 +128,7 @@ class DeliveryService:
         if self.hook_manager is None:
             return message
         outcome = await self.hook_manager.dispatch(HookEnvelope(
-            event_name=HookEvent.GATEWAY_BEFORE_SEND,
+            event_name=HookEvent.PRE_DELIVERY,
             scope=HookScope.SESSION,
             session_key=request.session_key,
             source=HookSourceContext(
@@ -143,7 +143,7 @@ class DeliveryService:
                 "metadata": dict(request.metadata),
             },
         ))
-        if isinstance(outcome, GatewayBeforeSendOutcome):
+        if isinstance(outcome, PreDeliveryOutcome):
             if outcome.suppressed:
                 return None
             if outcome.text is not None:
@@ -154,7 +154,7 @@ class DeliveryService:
         if self.hook_manager is None:
             return
         await self.hook_manager.dispatch(HookEnvelope(
-            event_name=HookEvent.GATEWAY_AFTER_SEND,
+            event_name=HookEvent.POST_DELIVERY,
             scope=HookScope.SESSION,
             session_key=request.session_key,
             source=HookSourceContext(

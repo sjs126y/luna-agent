@@ -89,10 +89,10 @@ async def boot() -> None:
     # ── 7.5. Default hooks — non-restrictive utility hooks ──
 
     from personal_agent.hooks import (
-        GatewayBeforeSendOutcome,
         GatewayMessageOutcome,
         HookEvent,
         HookSource,
+        PreDeliveryOutcome,
     )
 
     async def _norm_message(event):
@@ -104,8 +104,8 @@ async def boot() -> None:
         text = str(event.payload.get("text") or "")
         if len(text) > 4000:
             text = text[:4000] + f"\n\n…(截断 {len(text) - 4000} 字符)"
-            return GatewayBeforeSendOutcome.replace_text(text)
-        return GatewayBeforeSendOutcome()
+            return PreDeliveryOutcome.replace_text(text)
+        return PreDeliveryOutcome()
 
     runtime.hook_manager.register(
         owner="core.gateway.defaults",
@@ -118,7 +118,7 @@ async def boot() -> None:
     runtime.hook_manager.register(
         owner="core.gateway.defaults",
         source=HookSource.CORE,
-        event=HookEvent.GATEWAY_BEFORE_SEND,
+        event=HookEvent.PRE_DELIVERY,
         callback=_truncate_response,
         name="truncate_text",
         priority=10,

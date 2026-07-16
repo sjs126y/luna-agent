@@ -13,6 +13,7 @@ from personal_agent.hooks.models import (
     PostToolUseOutcome,
     PreToolUseOutcome,
     PermissionRequestOutcome,
+    PreDeliveryOutcome,
     StopOutcome,
 )
 
@@ -36,6 +37,8 @@ HOOK_SPECS: dict[HookEvent, HookSpec] = {
     HookEvent.GATEWAY_MESSAGE_RECEIVED: HookSpec("pipeline", GatewayMessageOutcome, 3.0),
     HookEvent.GATEWAY_BEFORE_SEND: HookSpec("pipeline", GatewayBeforeSendOutcome, 3.0),
     HookEvent.GATEWAY_AFTER_SEND: HookSpec("observer", None, 3.0),
+    HookEvent.PRE_DELIVERY: HookSpec("pipeline", PreDeliveryOutcome, 3.0),
+    HookEvent.POST_DELIVERY: HookSpec("observer", None, 3.0),
     HookEvent.SESSION_START: HookSpec("context", ContextHookOutcome, 10.0),
     HookEvent.USER_PROMPT_SUBMIT: HookSpec("context", ContextHookOutcome, 3.0),
     HookEvent.PRE_COMPACT: HookSpec("context", ContextHookOutcome, 10.0),
@@ -59,6 +62,8 @@ def matcher_value(event: HookEvent, envelope) -> str | None:
         HookEvent.GATEWAY_AFTER_SEND,
         HookEvent.PLATFORM_CONNECTED,
         HookEvent.PLATFORM_DISCONNECTED,
+        HookEvent.PRE_DELIVERY,
+        HookEvent.POST_DELIVERY,
     }:
         return envelope.source.platform if envelope.source else str(payload.get("platform") or "")
     if event == HookEvent.SESSION_START:

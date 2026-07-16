@@ -19,6 +19,7 @@ from personal_agent.hooks.models import (
     HookSource,
     PermissionDecision,
     PermissionRequestOutcome,
+    PreDeliveryOutcome,
     PostToolUseOutcome,
     PreToolUseOutcome,
     StopOutcome,
@@ -276,6 +277,20 @@ class HookManager:
                     current = current.with_payload(**changes)
                     accumulated.update(changes)
             return GatewayMessageOutcome(**accumulated)
+        if envelope.event_name == HookEvent.PRE_DELIVERY:
+            final_delivery = PreDeliveryOutcome()
+            for registration in registrations:
+                execution = await self._execute(registration, current)
+                outcome = execution.outcome if not execution.error else None
+                if not isinstance(outcome, PreDeliveryOutcome):
+                    continue
+                if outcome.suppressed:
+                    self._mark_blocked(registration)
+                    return outcome
+                if outcome.text is not None:
+                    current = current.with_payload(text=outcome.text)
+                    final_delivery = PreDeliveryOutcome(text=outcome.text)
+            return final_delivery
         final_send = GatewayBeforeSendOutcome()
         for registration in registrations:
             execution = await self._execute(registration, current)

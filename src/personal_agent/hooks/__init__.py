@@ -13,6 +13,7 @@ from personal_agent.hooks.models import (
     PermissionDecision,
     PermissionRequestOutcome,
     PostToolUseOutcome,
+    PreDeliveryOutcome,
     PreToolUseOutcome,
     StopOutcome,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "PermissionDecision",
     "PermissionRequestOutcome",
     "PostToolUseOutcome",
+    "PreDeliveryOutcome",
     "PreToolUseOutcome",
     "StopOutcome",
 ]

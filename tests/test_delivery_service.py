@@ -10,7 +10,7 @@ from personal_agent.delivery import (
     DeliveryStatus,
     PlatformDirectory,
 )
-from personal_agent.hooks import GatewayBeforeSendOutcome, HookEvent, HookManager
+from personal_agent.hooks import HookEvent, HookManager, PreDeliveryOutcome
 from personal_agent.models.messages import OutboundMessage, SessionSource
 
 
@@ -52,10 +52,10 @@ async def test_delivery_hook_can_replace_or_suppress_normal_message():
 
     async def replace(event):
         if event.payload["text"] == "hide":
-            return GatewayBeforeSendOutcome.suppress("hidden")
-        return GatewayBeforeSendOutcome.replace_text("changed")
+            return PreDeliveryOutcome.suppress("hidden")
+        return PreDeliveryOutcome.replace_text("changed")
 
-    hooks.register(owner="test", event=HookEvent.GATEWAY_BEFORE_SEND, callback=replace)
+    hooks.register(owner="test", event=HookEvent.PRE_DELIVERY, callback=replace)
     service, adapter = _runtime(hooks)
 
     changed = await service.deliver(DeliveryRequest(
@@ -77,8 +77,8 @@ async def test_protected_delivery_cannot_be_suppressed_by_plugin_hook():
     hooks = HookManager()
     hooks.register(
         owner="test",
-        event=HookEvent.GATEWAY_BEFORE_SEND,
-        callback=lambda event: GatewayBeforeSendOutcome.suppress("blocked"),
+        event=HookEvent.PRE_DELIVERY,
+        callback=lambda event: PreDeliveryOutcome.suppress("blocked"),
     )
     service, adapter = _runtime(hooks)
 

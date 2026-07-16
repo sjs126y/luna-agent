@@ -17,6 +17,8 @@ class HookEvent(str, Enum):
     GATEWAY_MESSAGE_RECEIVED = "GatewayMessageReceived"
     GATEWAY_BEFORE_SEND = "GatewayBeforeSend"
     GATEWAY_AFTER_SEND = "GatewayAfterSend"
+    PRE_DELIVERY = "PreDelivery"
+    POST_DELIVERY = "PostDelivery"
     SESSION_START = "SessionStart"
     USER_PROMPT_SUBMIT = "UserPromptSubmit"
     PRE_COMPACT = "PreCompact"
@@ -116,6 +118,21 @@ class GatewayBeforeSendOutcome:
 
     @classmethod
     def replace_text(cls, text: str) -> GatewayBeforeSendOutcome:
+        return cls(text=str(text))
+
+
+@dataclass(frozen=True)
+class PreDeliveryOutcome:
+    suppressed: bool = False
+    reason: str = ""
+    text: str | None = None
+
+    @classmethod
+    def suppress(cls, reason: str) -> "PreDeliveryOutcome":
+        return cls(suppressed=True, reason=str(reason or "delivery suppressed by hook"))
+
+    @classmethod
+    def replace_text(cls, text: str) -> "PreDeliveryOutcome":
         return cls(text=str(text))
 
 
