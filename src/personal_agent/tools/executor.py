@@ -10,6 +10,7 @@ import logging
 import shutil
 import time as _time_module
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 8000
 DEFAULT_TOOL_TIMEOUT_SECONDS = 120.0
+CHECKPOINTS_PER_FILE = 5
 
 ToolExecutionStatus = Literal["success", "error", "denied", "timeout", "interrupted", "skipped"]
 
@@ -886,9 +888,17 @@ def _checkpoint_file_write(tc: dict) -> None:
         base = sandbox.roots[0] if sandbox.roots else Path(full).parent
         backup_dir = base / "checkpoints"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = _time_module.strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         backup_path = backup_dir / f"{full.name}.{timestamp}.bak"
         shutil.copy2(full, backup_path)
+        backups = sorted(
+            item for item in backup_dir.iterdir()
+            if item.is_file()
+            and item.name.startswith(f"{full.name}.")
+            and item.name.endswith(".bak")
+        )
+        for stale in backups[:-CHECKPOINTS_PER_FILE]:
+            stale.unlink(missing_ok=True)
         logger.info("Checkpoint saved: %s → %s", path, backup_path.name)
     except Exception:
         logger.exception("Checkpoint failed for file_write — tool execution will proceed")

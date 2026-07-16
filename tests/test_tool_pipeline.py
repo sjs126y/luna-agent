@@ -1475,6 +1475,28 @@ def test_checkpoint_noop_for_new_file(tmp_path: Path):
     assert not checkpoints.exists() or len(list(checkpoints.glob("*.bak"))) == 0
 
 
+def test_checkpoint_keeps_only_recent_backups_for_each_file(tmp_path: Path):
+    from personal_agent.tools.sandbox import init_sandbox
+    from personal_agent.tools.executor import CHECKPOINTS_PER_FILE, _checkpoint_file_write
+
+    init_sandbox([tmp_path], [])
+    target = tmp_path / "test.txt"
+    target.write_text("current")
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    for index in range(CHECKPOINTS_PER_FILE + 2):
+        (checkpoints / f"test.txt.20260101_00000{index}.bak").write_text(str(index))
+    unrelated = checkpoints / "other.txt.20260101_000000.bak"
+    unrelated.write_text("keep")
+
+    _checkpoint_file_write({"name": "write", "input": {"path": "test.txt", "content": "new"}})
+
+    backups = sorted(checkpoints.glob("test.txt.*.bak"))
+    assert len(backups) == CHECKPOINTS_PER_FILE
+    assert not (checkpoints / "test.txt.20260101_000000.bak").exists()
+    assert unrelated.exists()
+
+
 # ── BM25 search now returns input_schema ───────────────
 
 
