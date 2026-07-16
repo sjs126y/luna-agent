@@ -177,6 +177,7 @@ class BasePlatformAdapter(ABC):
         self._last_response_at = ""
         self._send_stats = SendStats()
         self._attachment_store: AttachmentStore | None = None
+        self._coordinator_managed = False
 
     # ── abstract methods (subclass MUST implement) ───
 
@@ -204,6 +205,10 @@ class BasePlatformAdapter(ABC):
 
     def set_message_handler(self, handler: Callable[[MessageEvent], Awaitable[str | None]]) -> None:
         self._message_handler = handler
+
+    def set_coordinator_managed(self, enabled: bool = True) -> None:
+        """Let the application coordinator own queueing and control bypass."""
+        self._coordinator_managed = bool(enabled)
 
     def set_message_bypass_predicate(self, predicate: Callable[[MessageEvent], bool] | None) -> None:
         self._message_bypass_predicate = predicate
@@ -254,6 +259,10 @@ class BasePlatformAdapter(ABC):
             )
             return
 
+        if self._coordinator_managed:
+            asyncio.create_task(self._process_coordinator_message(event))
+            return
+
         session_key = self._make_session_key(event.source)
         if self._should_bypass_queue(event):
             asyncio.create_task(self._process_bypass_message_background(event, session_key))
@@ -271,6 +280,20 @@ class BasePlatformAdapter(ABC):
             return
         self._active_sessions[session_key] = True
         asyncio.create_task(self._process_message_background(event, session_key))
+
+    async def _process_coordinator_message(self, event: MessageEvent) -> None:
+        """Forward immediately; Coordinator owns per-session ordering."""
+        try:
+            try:
+                await self._send_typing(event.source.chat_id)
+            except Exception:
+                logger.exception("Typing indicator failed for coordinator submission")
+            response = await self._message_handler(event) if self._message_handler else None
+            self._last_response_at = _now()
+            if response:
+                await self._send_gateway_response(event.source, response)
+        except Exception:
+            logger.exception("Coordinator-managed message processing failed")
 
     async def _process_message_background(self, event: MessageEvent, session_key: str) -> None:
         """Background task: typing → Gateway → send → drain queue."""

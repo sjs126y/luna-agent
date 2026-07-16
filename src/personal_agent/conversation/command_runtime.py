@@ -158,6 +158,11 @@ class ConversationCommandRuntime:
         return changed
 
     async def is_session_running(self) -> bool:
+        coordinator = getattr(self, "conversation_coordinator", None)
+        if coordinator is None:
+            coordinator = getattr(getattr(self, "app_runtime", None), "conversation_coordinator", None)
+        if coordinator is not None:
+            return coordinator.active_turns.active_turn(self.session_key) is not None
         snapshot = self.conversation_service.steer_snapshot(self.session_key)
         return bool(snapshot.get("active_turn_id"))
 
@@ -166,13 +171,30 @@ class ConversationCommandRuntime:
             return "用法: /steer <运行中修正内容>"
         if not await self.is_session_running():
             return "当前没有运行中的任务可修正。"
-        signal = self.conversation_service.add_steer(self.session_key, self.source, text)
+        coordinator = getattr(self, "conversation_coordinator", None)
+        if coordinator is None:
+            coordinator = getattr(getattr(self, "app_runtime", None), "conversation_coordinator", None)
+        signal = (
+            coordinator.active_turns.add(self.session_key, self.source, text)
+            if coordinator is not None
+            else self.conversation_service.add_steer(self.session_key, self.source, text)
+        )
         return f"已收到，会在当前任务下一步应用。（{signal.id}）"
 
     async def steer_snapshot(self) -> dict:
+        coordinator = getattr(self, "conversation_coordinator", None)
+        if coordinator is None:
+            coordinator = getattr(getattr(self, "app_runtime", None), "conversation_coordinator", None)
+        if coordinator is not None:
+            return coordinator.active_turns.snapshot(self.session_key)
         return self.conversation_service.steer_snapshot(self.session_key)
 
     async def stop_agents(self) -> str:
+        coordinator = getattr(self, "conversation_coordinator", None)
+        if coordinator is None:
+            coordinator = getattr(getattr(self, "app_runtime", None), "conversation_coordinator", None)
+        if coordinator is not None:
+            coordinator.active_turns.cancel(self.session_key)
         stopped = self.conversation_service.request_stop(None)
         if stopped:
             return f"已停止。已请求停止 {stopped} 个子 agent。"

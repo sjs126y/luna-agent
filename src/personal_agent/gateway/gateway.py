@@ -238,6 +238,8 @@ class Gateway:
         try:
             adapter = entry.factory(self.config, self.db)
             adapter.set_message_handler(self._handle_message)
+            if self._conversation_coordinator is not None and hasattr(adapter, "set_coordinator_managed"):
+                adapter.set_coordinator_managed(True)
             if hasattr(adapter, "set_outbound_handlers"):
                 adapter.set_outbound_handlers(
                     before_send=self._before_platform_send,
@@ -610,6 +612,7 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
         self.settings = gateway.config
         self.plugin_manager = gateway.plugin_manager
         self.conversation_service = gateway._conversation_service
+        self.conversation_coordinator = gateway._conversation_coordinator
 
     @property
     def session_key(self) -> str:
@@ -660,6 +663,8 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
         return self.gateway._confirmations.snapshot(self.session_key)
 
     async def is_session_running(self) -> bool:
+        if self.conversation_coordinator is not None:
+            return self.conversation_coordinator.active_turns.active_turn(self._session_key) is not None
         return self.gateway._run_state.is_running(self._session_key)
 
     def plugin_command_kwargs(self, args: str) -> dict:
@@ -672,7 +677,8 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
 
     async def stop_agents(self) -> str:
         self.gateway._confirmations.cancel(None)
-        self.gateway._run_state.request_stop(self._session_key)
+        if self.conversation_coordinator is None:
+            self.gateway._run_state.request_stop(self._session_key)
         return await super().stop_agents()
 
     def session_list_current_key(self) -> str:
