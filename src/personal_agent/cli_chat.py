@@ -15,7 +15,11 @@ from personal_agent.models.messages import SessionSource
 from personal_agent.conversation import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
     ConversationCommandRuntime,
+    ConversationCoordinator,
     ConversationService,
+    ResponseMode,
+    SubmissionOrigin,
+    SubmissionRequest,
 )
 from personal_agent.runtime import AppRuntime, create_app_runtime
 
@@ -35,6 +39,7 @@ class CliChatRuntime(ConversationCommandRuntime):
     mcp_manager: object | None = None
     app_runtime: AppRuntime | None = None
     conversation_service: ConversationService | None = None
+    conversation_coordinator: ConversationCoordinator | None = None
     system_prompt_template: str = CLI_SYSTEM_PROMPT
     session_name: str = "default"
     agent_cache: dict[str, object] | None = None
@@ -87,11 +92,18 @@ class CliChatRuntime(ConversationCommandRuntime):
         return await self.run_message(text)
 
     async def run_message(self, text: str) -> str:
+        if self.conversation_coordinator is not None:
+            outcome = await self._submit(text)
+            return outcome.response or EMPTY_FINAL_RESPONSE_MESSAGE
         assert self.conversation_service is not None
         result = await self.conversation_service.run_turn(self.session_key, self.source, text)
         return result.final_response or EMPTY_FINAL_RESPONSE_MESSAGE
 
     async def run_message_events(self, text: str, *, event_sink=None, confirm=None):
+        if self.conversation_coordinator is not None:
+            outcome = await self._submit(text, event_sink=event_sink, confirm=confirm)
+            turn_result = outcome.payload.get("turn_result")
+            return turn_result if turn_result is not None else outcome
         assert self.conversation_service is not None
         return await self.conversation_service.run_turn_events(
             self.session_key,
@@ -140,6 +152,11 @@ class CliChatRuntime(ConversationCommandRuntime):
         }
 
     async def handle_command(self, text: str) -> str | None:
+        if self.conversation_coordinator is not None and str(text or "").strip().startswith("/"):
+            outcome = await self._submit(text)
+            if outcome.kind.value == "conversation":
+                return None
+            return outcome.response or outcome.error or None
         from personal_agent.commands.runtime import handle_slash_command
 
         result = await handle_slash_command(self, text)
@@ -148,6 +165,31 @@ class CliChatRuntime(ConversationCommandRuntime):
         if result.continue_text is not None:
             return await self.run_message(result.continue_text)
         return result.response
+
+    async def _submit(self, text: str, *, event_sink=None, confirm=None):
+        assert self.conversation_coordinator is not None
+        base = SubmissionRequest.text(
+            session_key=self.session_key,
+            text=text,
+            origin=SubmissionOrigin.TUI if event_sink is not None else SubmissionOrigin.CLI,
+            response_mode=ResponseMode.RETURN_ONLY,
+            source=self.source,
+            owner_id="local",
+        )
+        request = SubmissionRequest(
+            session_key=base.session_key,
+            input=base.input,
+            origin=base.origin,
+            response_mode=base.response_mode,
+            request_id=base.request_id,
+            owner_id=base.owner_id,
+            metadata=base.metadata,
+            event_sink=event_sink,
+            confirm=confirm,
+            command_runtime=self,
+            created_at=base.created_at,
+        )
+        return await (await self.conversation_coordinator.submit(request)).outcome()
 
 
 async def create_cli_runtime(
@@ -167,6 +209,7 @@ async def create_cli_runtime(
         mcp_manager=app_runtime.mcp_manager,
         app_runtime=app_runtime,
         conversation_service=app_runtime.conversation_service,
+        conversation_coordinator=app_runtime.conversation_coordinator,
         session_name=_clean_session_name(session_name),
     )
 

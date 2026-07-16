@@ -15,6 +15,7 @@ from personal_agent.memory.manager import MemoryManager
 from personal_agent.models.messages import NormalizedResponse
 from personal_agent.llm.provider import ProviderProfile
 from personal_agent.plugins.models import CommandEntry
+from personal_agent.conversation import SubmissionKind, SubmissionOutcome, SubmissionStatus
 
 
 class StaticMemory:
@@ -145,6 +146,38 @@ async def test_cli_chat_run_message_events_forwards_confirm(runtime, monkeypatch
 
     assert result == "ok"
     assert seen == [(runtime.session_key, runtime.source, "hello", "sink", confirm)]
+
+
+@pytest.mark.asyncio
+async def test_cli_runtime_submits_tui_turn_through_coordinator(runtime):
+    captured = []
+    turn_result = object()
+
+    class Coordinator:
+        async def submit(self, request):
+            captured.append(request)
+
+            class Handle:
+                async def outcome(self):
+                    return SubmissionOutcome(
+                        request_id=request.request_id,
+                        session_key=request.session_key,
+                        status=SubmissionStatus.COMPLETED,
+                        kind=SubmissionKind.CONVERSATION,
+                        response="ok",
+                        payload={"turn_result": turn_result},
+                    )
+
+            return Handle()
+
+    runtime.conversation_coordinator = Coordinator()
+    result = await runtime.run_message_events("hello", event_sink="sink", confirm="confirm")
+
+    assert result is turn_result
+    assert captured[0].origin.value == "tui"
+    assert captured[0].event_sink == "sink"
+    assert captured[0].confirm == "confirm"
+    assert captured[0].command_runtime is runtime
 
 
 @pytest.mark.asyncio
