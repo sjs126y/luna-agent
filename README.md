@@ -258,7 +258,7 @@ Provider 不只是 base URL 和 model。`ProviderProfile` 描述 provider 能力
 
 ### 12. 插件、MCP、Skill 都能扩展
 
-工具、平台、LLM transport、外部 memory provider、workflow 都通过插件系统装配。被动插件通过 `register(ctx)` 原子注册 Tool、Skill、MCP、Hook 等能力，插件配置隔离在 `plugins.config.<key>`；普通插件在各 Manager 前加载，只有平台插件允许 deferred。记忆领域模型、internal Markdown、archive、review worker、router 和 fallback 属于核心；`memory/lumora` 与 `memory/mem0` 是可替换插件。MCP runtime 支持 stdio 与 Streamable HTTP、单 server 隔离恢复和动态工具刷新。
+工具、平台、LLM transport、外部 memory provider、workflow 都通过插件系统装配。被动插件通过 `register(ctx)` 原子注册 Tool、Skill、MCP、Hook 等能力，插件配置隔离在 `plugins.config.<key>`；普通插件在各 Manager 前加载，只有平台插件允许 deferred。记忆领域模型、internal Markdown、archive、review worker、router 和 fallback 属于核心；`memory/lumora` 与 `memory/mem0` 是可替换插件。MCP runtime 支持 stdio 与 Streamable HTTP、后台并发启动、单 server 隔离恢复和下一轮动态工具刷新，不阻塞 Gateway 核心启动。
 
 ## Memory
 

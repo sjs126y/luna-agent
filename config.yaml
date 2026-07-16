@@ -219,6 +219,7 @@ mcp:
       command: "uvx"
       args: ["mcp-server-time", "--local-timezone", "Asia/Shanghai"]
       connect_timeout_seconds: 60
+      allow_network: true
       enabled: true
 
     - name: "fetch"

@@ -693,6 +693,8 @@ MCP 更适合作为外部工具服务接入。
 
 用户需要安装和配置 MCP server；Lumora 负责启动、连接、列工具、执行工具和纳入权限链路。
 
+MCP 不属于核心 Runtime 的启动屏障。插件、Hook 和 Sandbox 完成注册后，MCP Manager 调度每个 server 的长期后台 task 并立即返回；Gateway 可以先上线。server 首次连接成功后通过 Tool Registrar 更新 Registry，当前 turn 保持原工具快照，缓存 Agent 从下一轮开始看到新工具。断线时已知工具保留在目录中但标记为不可用，Runtime 独立退避重连；单个 MCP 启动失败不会阻塞其他 server 或 Gateway。
+
 ### Skills
 
 Skill 更适合沉淀：

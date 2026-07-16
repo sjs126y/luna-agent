@@ -30,6 +30,27 @@ def test_tokens_estimate_command_outputs_number():
     assert result.output.strip().isdigit()
 
 
+def test_doctor_mcp_summary_reports_background_states():
+    from personal_agent.cli import _doctor_mcp_summary
+
+    summary = _doctor_mcp_summary({"mcp_enabled": True}, {
+        "configured_count": 5,
+        "connected_count": 1,
+        "starting_count": 1,
+        "degraded_count": 1,
+        "failed_count": 1,
+        "servers": [
+            {"name": "ready", "enabled": True, "connected": True},
+            {"name": "starting", "enabled": True, "connected": False},
+            {"name": "retry", "enabled": True, "connected": False},
+            {"name": "failed", "enabled": True, "connected": False},
+            {"name": "disabled", "enabled": False, "connected": False},
+        ],
+    })
+
+    assert summary == "1 已连接, 1 启动中, 1 重连中, 1 失败, 1 禁用"
+
+
 def test_protocol_schema_command_outputs_frontend_contract():
     result = runner.invoke(app, ["protocol", "schema", "--json"])
 

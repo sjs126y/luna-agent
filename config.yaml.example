@@ -206,10 +206,19 @@ mcp:
       transport: "stdio"
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-memory", "--storage-path", "./data/mcp/memory.json"]
+      allow_network: true           # npx 首次安装或检查包索引需要网络
       enabled: true
 
     - name: "sequential-thinking"
       transport: "stdio"
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      allow_network: true
       enabled: true
+
+    - name: "time"
+      transport: "stdio"
+      command: "uvx"
+      args: ["mcp-server-time", "--local-timezone", "Asia/Shanghai"]
+      allow_network: true           # uvx 首次安装或检查包索引需要网络
+      enabled: false

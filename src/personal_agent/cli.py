@@ -2016,13 +2016,25 @@ def _doctor_mcp_summary(report: dict[str, Any], mcp_runtime: dict[str, Any]) -> 
     connected = int(mcp_runtime.get("connected_count") or 0)
     if not connected:
         connected = sum(1 for item in mcp_runtime.get("servers", []) if item.get("connected"))
-    disabled = sum(1 for item in report.get("mcp_servers", []) if not item.get("enabled", True))
-    configured = len(report.get("mcp_servers", []) or mcp_runtime.get("servers", []) or [])
+    starting = int(mcp_runtime.get("starting_count") or 0)
+    degraded = int(mcp_runtime.get("degraded_count") or 0)
+    failed = int(mcp_runtime.get("failed_count") or 0)
+    disabled = sum(1 for item in mcp_runtime.get("servers", []) if not item.get("enabled", True))
+    configured = int(mcp_runtime.get("configured_count") or 0)
+    if not configured:
+        configured = len(report.get("mcp_servers", []) or mcp_runtime.get("servers", []) or [])
     parts = [f"{connected} 已连接"]
+    if starting:
+        parts.append(f"{starting} 启动中")
+    if degraded:
+        parts.append(f"{degraded} 重连中")
+    if failed:
+        parts.append(f"{failed} 失败")
     if disabled:
         parts.append(f"{disabled} 禁用")
-    elif configured and connected < configured:
-        parts.append(f"{configured - connected} 未连接")
+    accounted = connected + starting + degraded + failed + disabled
+    if configured > accounted:
+        parts.append(f"{configured - accounted} 未连接")
     return ", ".join(parts)
 
 

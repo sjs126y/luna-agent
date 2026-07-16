@@ -791,3 +791,13 @@ uv run pytest -q
 - 每个原文件只保留最近 5 份快照，其他文件的快照互不影响。
 - `checkpoints/` 加入 Git 忽略规则，运行时安全快照不再污染 worktree。
 - 快照聚焦测试 `63 passed`，全量回归 `959 passed`。
+
+## 2026-07-17：MCP 后台启动
+
+状态：实现中。
+
+- MCP Runtime 启动与首次连接等待已拆分；AppRuntime 调度各 server 后继续初始化核心服务，`doctor` 和 `serve --dry-run` 仍显式等待稳定诊断。
+- MCP 连接任务支持启动期间取消和有界关闭，单个慢连接不再拖住 Gateway 启动或退出。
+- MCP 健康快照新增 enabled、starting、degraded、failed 和首次尝试耗时；工具不可用原因显示具体 runtime 状态，不再只返回 `check_fn returned False`。
+- Tool Registry generation 保证后台注册只在 Agent 下一轮刷新，不改变当前 turn 的工具快照。
+- Time MCP 增加 stdio 网络权限，避免 `uvx` 在 Bubblewrap 中因无法访问包索引反复等待 DNS 失败。
