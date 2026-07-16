@@ -14,6 +14,7 @@ from personal_agent.conversation import (
     SubmissionRequest,
     SubmissionStatus,
 )
+from personal_agent.commands.runtime import CommandResult
 
 
 def _request(session_key: str, text: str) -> SubmissionRequest:
@@ -139,4 +140,46 @@ async def test_coordinator_owns_active_turn_lifecycle():
     assert active.turn_id == turn_id
     assert active.request_id == handle.request_id
     assert coordinator.active_turns.active_turn("session") is None
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_control_command_bypasses_busy_session_queue():
+    service = RecordingService()
+    service.release.clear()
+    commands = []
+
+    async def dispatch(request):
+        commands.append(request.input.text)
+        return CommandResult.reply("stopped")
+
+    coordinator = ConversationCoordinator(service, command_dispatcher=dispatch)
+    running = await coordinator.submit(_request("session", "work"))
+    await asyncio.sleep(0)
+    stop = await coordinator.submit(_request("session", "/stop"))
+
+    stop_outcome = await stop.outcome()
+    assert stop.receipt.queue_position == 0
+    assert stop_outcome.response == "stopped"
+    assert stop_outcome.kind.value == "control"
+    assert commands == ["/stop"]
+
+    service.release.set()
+    await running.outcome()
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_skill_command_forward_is_ordered_as_conversation():
+    service = RecordingService()
+
+    async def dispatch(request):
+        return CommandResult.continue_with("expanded skill prompt")
+
+    coordinator = ConversationCoordinator(service, command_dispatcher=dispatch)
+    handle = await coordinator.submit(_request("session", "/skill"))
+
+    outcome = await handle.outcome()
+    assert outcome.response == "echo:expanded skill prompt"
+    assert service.calls == [("session", "expanded skill prompt")]
     await coordinator.close()
