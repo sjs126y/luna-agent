@@ -53,6 +53,8 @@ class PluginManager:
         self._commands: dict[str, CommandEntry] = {}
         self.hook_manager = hook_manager or HookManager()
         self.mcp_server_registry = MCPServerRegistry()
+        self._conversation_coordinator = None
+        self._delivery_service = None
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -70,6 +72,31 @@ class PluginManager:
     @property
     def hooks(self) -> dict[str, list[HookRegistration]]:
         return {name: list(items) for name, items in self._hooks.items()}
+
+    def bind_application_ports(self, *, conversation_coordinator, delivery_service) -> None:
+        self._conversation_coordinator = conversation_coordinator
+        self._delivery_service = delivery_service
+
+    def plugin_conversation_port(self, plugin_key: str):
+        if self._conversation_coordinator is None:
+            raise RuntimeError("active plugin runtime is unavailable")
+        from personal_agent.plugins.core.ports import PluginConversationPort
+
+        return PluginConversationPort(
+            plugin=self._plugins[plugin_key],
+            coordinator=self._conversation_coordinator,
+        )
+
+    def plugin_notification_port(self, plugin_key: str):
+        if self._conversation_coordinator is None or self._delivery_service is None:
+            raise RuntimeError("active plugin runtime is unavailable")
+        from personal_agent.plugins.core.ports import PluginNotificationPort
+
+        return PluginNotificationPort(
+            plugin=self._plugins[plugin_key],
+            coordinator=self._conversation_coordinator,
+            delivery_service=self._delivery_service,
+        )
 
     def discover(self) -> list[LoadedPlugin]:
         for directory in self._plugin_dirs:
