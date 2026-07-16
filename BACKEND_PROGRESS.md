@@ -1,6 +1,17 @@
 # Backend Progress
 
-更新时间：2026-07-14 CST
+更新时间：2026-07-16 CST
+
+## 2026-07-16：Conversation Runtime 与 Delivery 架构重构
+
+- 新增统一 `SubmissionRequest -> SubmissionHandle -> SubmissionOutcome` 契约；Gateway、CLI、TUI、Cron 和主动插件使用同一提交边界。
+- 新增 `ConversationCoordinator`：同 session 串行、跨 session 并发；`/stop`、`/steer` 走实时控制通道，查询和 mode 命令可即时执行，会话破坏性命令保持 barrier 顺序。
+- `ActiveTurnRegistry`、turn id 和 steer 生命周期归 Coordinator；每轮捕获 `TurnPolicySnapshot`，运行中 mode 不变，切换只影响下一轮，撤销 grants 仍即时收紧。
+- `SessionDirectory` 统一平台来源、逻辑 session 和投递目标；Cron 不再伪装 `MessageEvent` 或调用 Gateway 私有方法。
+- 新增 `DeliveryService`、`PreDelivery/PostDelivery` Hook、受保护 AUTH/APPROVAL/SYSTEM 消息和 SQLite Outbox；后台 Worker 支持退避重试、重启恢复、ambiguous timeout 与原子 claim 防重复发送。
+- 新 Runtime 下 Adapter 不再负责会话排队和控制旁路；Gateway 只完成鉴权、入站 Hook、附件准备和提交。现有平台 Adapter 的单次发送 API 保持兼容。
+- 插件新增受能力约束的 `ctx.conversation` 和 `ctx.notifications`；校验 manifest capability、插件状态和允许访问的 sessions，禁用后旧端口立即失效。
+- 阶段提交从 `92a0f2d` 至 `7fc0c3c`；中段完整回归为 `948 passed`，最终完整回归在文档提交前再次执行。
 
 ## 2026-07-14：Local Auto 只读根与 Codex Bridge 插件
 

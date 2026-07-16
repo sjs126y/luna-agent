@@ -1,8 +1,19 @@
 # Backend Interface Contract
 
-更新时间：2026-07-13
+更新时间：2026-07-16
 
 本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
+
+## 0. 统一提交边界
+
+后端入口现统一提交 `SubmissionRequest` 到 `ConversationCoordinator`。TUI/CLI 使用 `ResponseMode.RETURN_ONLY`，因此继续直接消费 `ConversationTurnResult` 和本文件定义的事件流；Gateway 使用 `DELIVER`，最终文本由 `DeliveryService` 投递，Adapter 不再返回响应字符串。
+
+`SubmissionHandle` 会立即提供 accepted receipt，并可异步等待最终 `SubmissionOutcome`。Outcome 的 `kind` 为 `conversation`、`command` 或 `control`；`status` 为 `completed`、`failed`、`cancelled` 或 `rejected`。这套对象目前属于后端应用接口，前端事件协议版本仍为 `1`，现有事件字段没有破坏性变化。
+
+- `/stop`、`/steer` 不等待当前对话队列，可实时响应。
+- `/mode` 立即修改会话的下一轮策略；当前运行轮次保持启动时快照。
+- `/new`、session rename/delete/switch 等操作与会话队列有序执行。
+- Skill slash command 展开后作为普通 Agent 请求进入队列。
 
 ## 1. Conversation Event Stream
 

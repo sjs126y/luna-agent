@@ -1,5 +1,31 @@
 # 架构说明
 
+> 2026-07-16：会话与发送主链路已重构。本文后续历史章节中若出现 Gateway busy state、Adapter 会话队列、`ConversationService` 持有 SteerManager 或 Cron 调用 `Gateway._handle_message()`，均以本节的新结构为准。
+
+## 统一 Conversation Runtime
+
+```text
+Gateway / TUI / CLI / Cron / Active Plugin
+                    |
+                    v
+        ConversationCoordinator
+          |-- per-session conversation queue
+          |-- real-time control channel (/stop, /steer)
+          `-- slash command execution lanes
+                    |
+                    v
+          ConversationService (one turn)
+                    |
+                    v
+          DeliveryService -> SQLite Outbox -> Adapter.send_message
+```
+
+`ConversationCoordinator` 是应用层唯一提交边界。同一 `session_key` 的 Agent turn 串行，不同 session 并发；每轮开始时捕获 `TurnPolicySnapshot` 并登记 `ActiveTurnRegistry`。`ConversationService` 只处理 session/history、AgentLoop、持久化、memory review 和事件。
+
+Gateway 负责平台连接、鉴权、入站 Hook、附件准备与请求规范化。新 Runtime 下 Adapter 只转发入站并执行平台单次发送，不再决定会话忙碌、steer 旁路或 Agent 排队。
+
+Delivery 使用 `SessionDirectory` 从 session 解析平台目标，执行 `PreDelivery/PostDelivery`，并在发送前写入 Outbox。AUTH、APPROVAL、SYSTEM 类型跳过插件可变 Hook；临时失败后台重试，不确定超时标记 ambiguous，Outbox 通过原子 claim 避免重复消费者。
+
 这份文档对应 README 里的 `Runtime Flow`，用于帮助开发者理解 Lumora 内部怎么从“用户输入”流转到“模型调用、工具执行、持久化和观测”。
 
 README 放项目展示和架构图；这里放更详细的分层职责、关键模块和边界。
