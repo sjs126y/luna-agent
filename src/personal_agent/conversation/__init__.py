@@ -14,6 +14,16 @@ from personal_agent.conversation.service import (
     ConversationTurnResult,
 )
 from personal_agent.conversation.steer import SteerManager, SteerSignal
+from personal_agent.conversation.submission import (
+    ResponseMode,
+    SubmissionHandle,
+    SubmissionKind,
+    SubmissionOrigin,
+    SubmissionOutcome,
+    SubmissionReceipt,
+    SubmissionRequest,
+    SubmissionStatus,
+)
 
 __all__ = [
     "ConversationCommandRuntime",
@@ -26,5 +36,13 @@ __all__ = [
     "EventRecorder",
     "SteerManager",
     "SteerSignal",
+    "ResponseMode",
+    "SubmissionHandle",
+    "SubmissionKind",
+    "SubmissionOrigin",
+    "SubmissionOutcome",
+    "SubmissionReceipt",
+    "SubmissionRequest",
+    "SubmissionStatus",
     "frontend_protocol_schema",
 ]
