@@ -11,7 +11,7 @@
 - 新增 `DeliveryService`、`PreDelivery/PostDelivery` Hook、受保护 AUTH/APPROVAL/SYSTEM 消息和 SQLite Outbox；后台 Worker 支持退避重试、重启恢复、ambiguous timeout 与原子 claim 防重复发送。
 - 新 Runtime 下 Adapter 不再负责会话排队和控制旁路；Gateway 只完成鉴权、入站 Hook、附件准备和提交。现有平台 Adapter 的单次发送 API 保持兼容。
 - 插件新增受能力约束的 `ctx.conversation` 和 `ctx.notifications`；校验 manifest capability、插件状态和允许访问的 sessions，禁用后旧端口立即失效。
-- 阶段提交从 `92a0f2d` 至 `7fc0c3c`；中段完整回归为 `948 passed`，最终完整回归在文档提交前再次执行。
+- 阶段提交从 `92a0f2d` 至 `378885b`；最终完成 `952 passed`，`compileall` 与 `git diff --check` 均通过。
 
 ## 2026-07-14：Local Auto 只读根与 Codex Bridge 插件
 
