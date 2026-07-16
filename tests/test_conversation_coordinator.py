@@ -48,6 +48,18 @@ class RecordingService:
         )
 
 
+class TurnAwareService(RecordingService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.turns = []
+
+    async def run_turn_input_events(self, session_key, user_input, **kwargs):
+        steer = kwargs["steer"]
+        turn_id = kwargs["turn_id"]
+        self.turns.append((turn_id, steer.active_turn(session_key)))
+        return await super().run_turn_input_events(session_key, user_input, **kwargs)
+
+
 @pytest.mark.asyncio
 async def test_coordinator_serializes_same_session_in_submission_order():
     service = RecordingService()
@@ -112,4 +124,19 @@ async def test_failed_turn_does_not_block_next_submission():
     assert (await failed.outcome()).status == SubmissionStatus.FAILED
     assert (await next_turn.outcome()).status == SubmissionStatus.COMPLETED
     assert service.calls == [("session", "fail"), ("session", "next")]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_owns_active_turn_lifecycle():
+    service = TurnAwareService()
+    coordinator = ConversationCoordinator(service)
+
+    handle = await coordinator.submit(_request("session", "hello"))
+    await handle.outcome()
+
+    turn_id, active = service.turns[0]
+    assert active.turn_id == turn_id
+    assert active.request_id == handle.request_id
+    assert coordinator.active_turns.active_turn("session") is None
     await coordinator.close()

@@ -14,7 +14,12 @@ from personal_agent.conversation.service import (
     ConversationService,
     ConversationTurnResult,
 )
-from personal_agent.conversation.steer import SteerManager, SteerSignal
+from personal_agent.conversation.steer import (
+    ActiveTurn,
+    ActiveTurnRegistry,
+    SteerManager,
+    SteerSignal,
+)
 from personal_agent.conversation.submission import (
     ResponseMode,
     SubmissionHandle,
@@ -38,6 +43,8 @@ __all__ = [
     "EventRecorder",
     "SteerManager",
     "SteerSignal",
+    "ActiveTurn",
+    "ActiveTurnRegistry",
     "ResponseMode",
     "SubmissionHandle",
     "SubmissionKind",

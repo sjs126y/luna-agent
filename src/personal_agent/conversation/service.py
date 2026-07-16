@@ -133,6 +133,8 @@ class ConversationService:
         *,
         event_sink=None,
         confirm=None,
+        turn_id: str = "",
+        steer=None,
     ) -> ConversationTurnResult:
         recorder = EventRecorder(event_sink)
         if self.plugin_manager is not None:
@@ -144,8 +146,11 @@ class ConversationService:
         current_id = self.resolve_session_id(session.session_id)
         history = await self.session_store.load_history(current_id)
         previous_count = len(history)
-        turn_id = f"{uuid.uuid4().hex[:8]}"
-        self.steer_manager.begin_turn(session_key, turn_id)
+        turn_id = str(turn_id or f"{uuid.uuid4().hex[:8]}")
+        turn_steer = steer or self.steer_manager
+        owns_turn = steer is None
+        if owns_turn:
+            turn_steer.begin_turn(session_key, turn_id)
 
         from personal_agent.agent.context import build_turn_context
         from personal_agent.agent.loop import run_conversation
@@ -184,7 +189,7 @@ class ConversationService:
             if _accepts_confirm(run_conversation):
                 kwargs["confirm"] = confirm
             if _accepts_steer(run_conversation):
-                kwargs["steer"] = self.steer_manager
+                kwargs["steer"] = turn_steer
                 kwargs["session_key"] = session_key
             result = await run_conversation(agent, ctx, **kwargs)
         except _HookTurnStopped as exc:
@@ -224,11 +229,12 @@ class ConversationService:
                 "error": error,
             }
         finally:
-            self.steer_manager.end_turn(session_key, turn_id)
+            if owns_turn:
+                turn_steer.end_turn(session_key, turn_id)
 
         if isinstance(result, dict):
             report = dict(result.get("turn_report") or {})
-            steer_summary = self.steer_manager.turn_summary(session_key, turn_id)
+            steer_summary = turn_steer.turn_summary(session_key, turn_id)
             if report or int(steer_summary.get("received") or 0):
                 report["steer"] = steer_summary
                 result["turn_report"] = report

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections import deque
@@ -178,6 +179,98 @@ class SteerManager:
             "active_steer_sessions": sessions,
             "recent_steers": [signal.snapshot() for signal in self._recent],
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveTurn:
+    session_key: str
+    turn_id: str
+    request_id: str
+    started_at: float
+
+
+class ActiveTurnRegistry:
+    """Authoritative active-turn state owned by the conversation coordinator."""
+
+    def __init__(self, *, steer: SteerManager | None = None) -> None:
+        self._steer = steer or SteerManager()
+        self._turns: dict[str, ActiveTurn] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+
+    def begin_turn(
+        self,
+        session_key: str,
+        turn_id: str,
+        *,
+        request_id: str = "",
+        task: asyncio.Task | None = None,
+    ) -> ActiveTurn:
+        session = _clean_key(session_key)
+        turn = _clean_key(turn_id)
+        if not session or not turn:
+            raise ValueError("session_key and turn_id are required")
+        if session in self._turns:
+            raise RuntimeError(f"session already has an active turn: {session}")
+        active = ActiveTurn(
+            session_key=session,
+            turn_id=turn,
+            request_id=_clean_key(request_id),
+            started_at=time.time(),
+        )
+        self._turns[session] = active
+        if task is not None:
+            self._tasks[session] = task
+        self._steer.begin_turn(session, turn)
+        return active
+
+    def end_turn(self, session_key: str, turn_id: str) -> list[SteerSignal]:
+        session = _clean_key(session_key)
+        turn = _clean_key(turn_id)
+        current = self._turns.get(session)
+        if current is not None and current.turn_id == turn:
+            self._turns.pop(session, None)
+            self._tasks.pop(session, None)
+        return self._steer.end_turn(session, turn)
+
+    def active_turn(self, session_key: str) -> ActiveTurn | None:
+        return self._turns.get(_clean_key(session_key))
+
+    def add(self, session_key: str, source: Any, text: str) -> SteerSignal:
+        session = _clean_key(session_key)
+        if session not in self._turns:
+            raise RuntimeError("session has no active turn")
+        return self._steer.add(session, source, text)
+
+    def consume(self, session_key: str, turn_id: str, *, limit: int = MAX_PENDING_PER_SESSION) -> list[SteerSignal]:
+        return self._steer.consume(session_key, turn_id, limit=limit)
+
+    def turn_summary(self, session_key: str, turn_id: str) -> dict[str, Any]:
+        return self._steer.turn_summary(session_key, turn_id)
+
+    def snapshot(self, session_key: str | None = None) -> dict[str, Any]:
+        snapshot = self._steer.snapshot(session_key)
+        if session_key is not None:
+            active = self.active_turn(session_key)
+            snapshot["active_request_id"] = active.request_id if active else ""
+            return snapshot
+        snapshot["active_turn_count"] = len(self._turns)
+        snapshot["active_turns"] = [
+            {
+                "session_key": item.session_key,
+                "turn_id": item.turn_id,
+                "request_id": item.request_id,
+                "started_at": item.started_at,
+            }
+            for item in self._turns.values()
+        ]
+        return snapshot
+
+    def cancel(self, session_key: str) -> bool:
+        task = self._tasks.get(_clean_key(session_key))
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
 
 def steer_items_summary(items: list[dict[str, Any]]) -> dict[str, Any]:

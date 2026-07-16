@@ -6,6 +6,9 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
+import uuid
+
+from personal_agent.conversation.steer import ActiveTurnRegistry
 
 from personal_agent.conversation.submission import (
     SubmissionHandle,
@@ -24,6 +27,8 @@ class ConversationTurnRunner(Protocol):
         *,
         event_sink=None,
         confirm=None,
+        turn_id: str = "",
+        steer=None,
     ): ...
 
 
@@ -36,8 +41,14 @@ class _QueuedSubmission:
 class ConversationCoordinator:
     """Serializes turns per session while allowing independent sessions to run."""
 
-    def __init__(self, conversation_service: ConversationTurnRunner) -> None:
+    def __init__(
+        self,
+        conversation_service: ConversationTurnRunner,
+        *,
+        active_turns: ActiveTurnRegistry | None = None,
+    ) -> None:
         self.conversation_service = conversation_service
+        self.active_turns = active_turns or ActiveTurnRegistry()
         self._queues: dict[str, asyncio.Queue[_QueuedSubmission]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._active: dict[str, SubmissionRequest] = {}
@@ -138,15 +149,30 @@ class ConversationCoordinator:
 
     async def _execute(self, request: SubmissionRequest) -> SubmissionOutcome:
         started_at = datetime.now(UTC)
+        turn_id = f"turn_{uuid.uuid4().hex[:12]}"
+        self.active_turns.begin_turn(
+            request.session_key,
+            turn_id,
+            request_id=request.request_id,
+            task=asyncio.current_task(),
+        )
         try:
             result = await self.conversation_service.run_turn_input_events(
                 request.session_key,
                 request.input,
                 event_sink=request.event_sink,
                 confirm=request.confirm,
+                turn_id=turn_id,
+                steer=self.active_turns,
             )
         except asyncio.CancelledError:
-            raise
+            return SubmissionOutcome(
+                request_id=request.request_id,
+                session_key=request.session_key,
+                status=SubmissionStatus.CANCELLED,
+                error="conversation turn cancelled",
+                started_at=started_at,
+            )
         except Exception as exc:
             return SubmissionOutcome(
                 request_id=request.request_id,
@@ -155,6 +181,8 @@ class ConversationCoordinator:
                 error=f"{type(exc).__name__}: {exc}",
                 started_at=started_at,
             )
+        finally:
+            self.active_turns.end_turn(request.session_key, turn_id)
 
         result_status = str(getattr(result, "status", "completed") or "completed")
         status = (
