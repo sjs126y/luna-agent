@@ -9,6 +9,7 @@
 - 保持职责边界：文件写入不会自动附加，`response_attach` 仍只接受当前 session/turn 的 `artifact_id`，Delivery 与平台 adapter 不接触源文件路径。
 - 新增从本地文件物化、ArtifactStore 内容复制、`response_attach` 选择、精确只读资源声明及失败边界测试；聚焦回归 `132 passed`。
 - 阶段提交：`53220ee`。
+- 最终验证：`python -m compileall -q src/personal_agent` 通过；全量回归 `1050 passed`，仅有原有飞书 SDK 弃用警告。
 
 ## 2026-07-17：出站多模态与 Artifact Delivery
 
