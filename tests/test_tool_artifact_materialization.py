@@ -154,3 +154,61 @@ async def test_mcp_file_resource_becomes_model_visible_artifact_id(
     assert artifact.mime_type == "image/png"
     assert artifact.artifact_id in format_tool_result(result)
     assert (await artifact_runtime.resolve_path(artifact)).read_bytes() == b"playwright-png"
+
+
+@pytest.mark.asyncio
+async def test_nested_tool_call_does_not_rematerialize_stored_artifact(artifact_runtime):
+    agent = Agent(_memory_session_key="wechat:user", _hook_turn_id="turn-nested")
+    agent._artifact_store = artifact_runtime
+
+    async def handler():
+        return ToolHandlerOutput(
+            text="screenshot captured",
+            artifacts=[ToolArtifact(
+                kind="image",
+                name="nested.png",
+                mime_type="image/png",
+                data=base64.b64encode(b"nested-png").decode(),
+            )],
+        )
+
+    async def wrapper():
+        return await execute_tool_call_result(
+            {"id": "inner-call", "name": "nested_artifact_demo", "input": {}},
+            agent=agent,
+        )
+
+    tool_registry.register(ToolEntry(
+        name="nested_artifact_demo",
+        description="nested artifact demo",
+        schema={},
+        handler=handler,
+        approval_mode="auto",
+    ))
+    tool_registry.register(ToolEntry(
+        name="nested_artifact_wrapper",
+        description="nested artifact wrapper",
+        schema={},
+        handler=wrapper,
+        approval_mode="auto",
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {
+                "id": "outer-call",
+                "name": "nested_artifact_wrapper",
+                "input": {},
+            },
+            agent=agent,
+        )
+    finally:
+        tool_registry.unregister("nested_artifact_wrapper")
+        tool_registry.unregister("nested_artifact_demo")
+
+    assert result.status == "success", result.error
+    assert len(result.artifacts) == 1
+    artifact = result.artifacts[0]
+    assert artifact.artifact_id.startswith("art_")
+    assert "artifact unavailable" not in result.content
+    assert artifact.artifact_id in format_tool_result(result)
+    assert (await artifact_runtime.resolve_path(artifact)).read_bytes() == b"nested-png"

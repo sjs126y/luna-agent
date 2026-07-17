@@ -667,7 +667,7 @@ async def execute_tool_call_result(
     materialized_artifacts = list(handler_output.artifacts)
     artifact_warnings: list[str] = []
     artifact_store = getattr(agent, "_artifact_store", None) if agent is not None else None
-    if artifact_store is not None and materialized_artifacts:
+    if artifact_store is not None and materialized_artifacts and nested_result is None:
         from personal_agent.artifacts import ArtifactStoreError, materialize_tool_artifact
 
         stored = []
