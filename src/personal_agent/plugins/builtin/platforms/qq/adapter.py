@@ -136,7 +136,7 @@ class QQAdapter(BasePlatformAdapter):
             started = await companion.ensure_started()
             logger.info(
                 "Managed NapCat %s; waiting up to %.1fs for OneBot WebSocket",
-                "started" if started else "already active",
+                "started" if started else "not relaunched",
                 companion.startup_timeout_seconds,
             )
             try:

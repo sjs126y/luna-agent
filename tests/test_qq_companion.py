@@ -40,6 +40,41 @@ def test_qq_plugin_config_requires_command_for_managed_mode():
     assert parsed.runtime.command == []
 
 
+def test_qq_plugin_registers_shared_managed_companion(tmp_path: Path):
+    from personal_agent.plugins.builtin.platforms.qq import register
+
+    executable = tmp_path / "NapCatWinBootMain.exe"
+    executable.write_bytes(b"placeholder")
+    settings = SimpleNamespace(
+        agent_data_dir=tmp_path / "data",
+        qq_bot_ws_url="ws://127.0.0.1:16611",
+    )
+
+    class FakeContext:
+        def __init__(self):
+            self.settings = settings
+            self.entry = None
+
+        def parse_config(self, model_type):
+            return model_type.model_validate({
+                "runtime": {
+                    "mode": "managed",
+                    "command": [str(executable), "10001"],
+                },
+            })
+
+        def register_platform(self, entry):
+            self.entry = entry
+
+    context = FakeContext()
+    register(context)
+
+    first = context.entry.factory(settings, None)
+    second = context.entry.factory(settings, None)
+    assert first._companion is second._companion
+    assert first._companion.enabled is True
+
+
 @pytest.mark.asyncio
 async def test_napcat_companion_starts_once_and_stops_owned_process(tmp_path: Path, monkeypatch):
     executable = tmp_path / "NapCatWinBootMain.exe"
@@ -80,14 +115,19 @@ async def test_napcat_companion_starts_once_and_stops_owned_process(tmp_path: Pa
     assert companion.snapshot()["last_exit_code"] == -15
 
 
+def test_napcat_companion_requires_absolute_executable():
+    with pytest.raises(ValidationError, match="absolute path"):
+        QQRuntimeConfig(mode="managed", command=["NapCatWinBootMain.exe"])
+
+
 @pytest.mark.asyncio
-async def test_napcat_companion_requires_absolute_existing_executable(tmp_path: Path):
+async def test_napcat_companion_reports_missing_executable(tmp_path: Path):
     companion = NapCatCompanion(
-        QQRuntimeConfig(mode="managed", command=["NapCatWinBootMain.exe"]),
+        QQRuntimeConfig(mode="managed", command=[str(tmp_path / "missing.exe")]),
         data_dir=tmp_path / "data",
     )
 
-    with pytest.raises(RuntimeError, match="absolute path"):
+    with pytest.raises(RuntimeError, match="not found"):
         await companion.ensure_started()
 
 

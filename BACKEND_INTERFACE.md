@@ -1075,8 +1075,11 @@ QQ/NapCat 平台在 Gateway health 的 `platforms[].adapter_health` 中额外提
 - `pending_actions: integer`：等待 OneBot `echo` 响应的 action 数。
 - `last_ws_event_at: string`：最后收到 WebSocket JSON 帧的本地 ISO 时间。
 - `self_id: string`：最后事件报告的机器人 QQ 号。
+- `companion: object`：NapCat 伴随进程状态。稳定字段包括 `mode`、`managed`、`owned`、`running`、`pid`、`starts`、`restarts`、`stop_on_shutdown`、`startup_timeout_seconds`、`last_started_at`、`last_exit_code`、`last_error` 和 `log_path`。
 
 QQ 平台现要求 `.env` 配置 `QQ_BOT_WS_URL`。`QQ_BOT_BASE_URL` 为可选 HTTP action 通道；留空时后端通过 WebSocket 发送 action，不影响完整收发。
+
+QQ 插件的 `plugins.config.platforms/qq.runtime.mode` 可为 `external` 或 `managed`。受管模式只执行用户明确配置的绝对可执行路径，不经过 shell；前端或诊断界面不应提供任意命令编辑与立即执行能力。
 
 ## 16. Compatibility Notes
 

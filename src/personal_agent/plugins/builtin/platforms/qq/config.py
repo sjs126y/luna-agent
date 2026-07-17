@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -23,6 +24,10 @@ class QQRuntimeConfig(BaseModel):
             raise ValueError("runtime.command is required when runtime.mode is managed")
         if any(not str(item).strip() for item in self.command):
             raise ValueError("runtime.command items must be non-empty strings")
+        if self.command and not Path(self.command[0]).expanduser().is_absolute():
+            raise ValueError("runtime.command executable must be an absolute path")
+        if self.working_dir and not Path(self.working_dir).expanduser().is_absolute():
+            raise ValueError("runtime.working_dir must be an absolute path")
         return self
 
 
