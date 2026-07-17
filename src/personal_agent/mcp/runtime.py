@@ -41,7 +41,8 @@ class MCPServerRuntime:
         self._env_values = dict(env_values or {})
         self._process_backend = process_backend
         self._sandbox_roots = list(sandbox_roots or [])
-        self._work_dir = Path(work_dir).resolve() if work_dir is not None else Path.cwd()
+        base_work_dir = Path(work_dir).resolve() if work_dir is not None else Path.cwd()
+        self._work_dir = _resolve_work_dir(base_work_dir, config.work_dir)
         self._connection_factory = connection_factory or self._create_connection
         self._reconnect_delays = reconnect_delays or DEFAULT_RECONNECT_DELAYS
         self._health_interval = health_interval_seconds
@@ -94,6 +95,7 @@ class MCPServerRuntime:
             return 0
         if self._owner_task is not None and not self._owner_task.done():
             return len(self.registered_names)
+        self._work_dir.mkdir(parents=True, exist_ok=True)
         self._reset_events()
         self.state = MCPRuntimeState.CONNECTING
         self._initial_attempt_started_at = time.monotonic()
@@ -364,3 +366,15 @@ def _is_permanent_error(exc: BaseException) -> bool:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _resolve_work_dir(base: Path, configured: str) -> Path:
+    root = base.resolve()
+    if not configured:
+        return root
+    candidate = (root / configured).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("MCP work_dir must remain inside the MCP data directory") from exc
+    return candidate

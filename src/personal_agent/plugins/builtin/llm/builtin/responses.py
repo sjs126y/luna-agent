@@ -250,12 +250,34 @@ class OpenAIResponsesTransport(BaseTransport):
 class CodexResponsesTransport(OpenAIResponsesTransport):
     """Semantic alias for Codex-style middle stations using Responses API."""
 
+    async def parse_stream(
+        self,
+        stream: AsyncIterator[dict],
+        on_delta: DeltaCallback | None = None,
+    ) -> NormalizedResponse:
+        # Middle stations may flatten an internal channel marker into output_text.
+        # Buffer this transport so analysis cannot be streamed before we see the marker.
+        normalized = await super().parse_stream(stream, on_delta=None)
+        normalized.text = _codex_visible_text(normalized.text)
+        if on_delta is not None and normalized.text:
+            await on_delta("text", normalized.text)
+        return normalized
+
     def convert_messages(self, messages: list[dict], system_prompt: str = "") -> list[dict]:
         # Some Codex-style middle stations expose the Responses endpoint but do
         # not accept previous function_call/function_call_output items as input.
         # Keep the tool result visible to the model without using those item
         # types, so the main loop remains usable with those providers.
         return self._convert_messages(messages, system_prompt, structured_tools=False)
+
+
+def _codex_visible_text(value: str) -> str:
+    text = str(value or "")
+    marker = "assistant_final"
+    index = text.lower().rfind(marker)
+    if index < 0:
+        return text
+    return text[index + len(marker):].lstrip(" \t\r\n:>#*_`|-")
 
 
 def _text_part_type(role: str) -> str:

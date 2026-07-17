@@ -210,7 +210,7 @@ def _effective_approval_mode(
 
 
 def _builtin_resources(name: str, inp: dict[str, Any]) -> list[ResourceRequirement]:
-    if name in {"read", "grep", "glob"}:
+    if name in {"read", "grep", "glob", "artifact_from_file"}:
         path = str(inp.get("path") or ".")
         return [_filesystem_requirement(path, "read", name)]
     if name in {"write", "edit"}:

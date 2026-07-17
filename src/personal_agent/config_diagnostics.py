@@ -120,14 +120,14 @@ PLATFORM_ENV = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
     "feishu": ["FEISHU_APP_ID", "FEISHU_APP_SECRET"],
     "wechat": ["WEIXIN_TOKEN", "WEIXIN_ACCOUNT_ID", "WEIXIN_USER_ID"],
-    "qq": ["QQ_BOT_BASE_URL"],
+    "qq": ["QQ_BOT_WS_URL"],
 }
 
 PLATFORM_HINTS = {
     "telegram": "填写 TELEGRAM_BOT_TOKEN，或从 plugins.enabled 移除 platforms/telegram。",
     "feishu": "填写 FEISHU_APP_ID/FEISHU_APP_SECRET，或从 plugins.enabled 移除 platforms/feishu。",
     "wechat": "填写 WEIXIN_TOKEN/WEIXIN_ACCOUNT_ID/WEIXIN_USER_ID，或完成微信凭据初始化。",
-    "qq": "填写 QQ_BOT_BASE_URL，确保 OneBot HTTP 服务地址可用。",
+    "qq": "填写 QQ_BOT_WS_URL，确保 NapCat OneBot WebSocket Server 可用。",
 }
 
 MCP_SERVER_KEYS = {
@@ -149,6 +149,9 @@ MCP_SERVER_KEYS = {
     "max_schema_bytes",
     "max_result_chars",
     "max_artifact_bytes",
+    "work_dir",
+    "artifact_roots",
+    "artifact_extensions",
 }
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -627,6 +630,22 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
                 or raw[key] <= 0
             ):
                 errors.append(f"{label}.{key} 必须是正整数。")
+        for key in ("artifact_roots", "artifact_extensions"):
+            if key in raw and (
+                not isinstance(raw[key], list)
+                or any(not isinstance(value, str) for value in raw[key])
+            ):
+                errors.append(f"{label}.{key} 必须是字符串列表。")
+        if "work_dir" in raw:
+            work_dir = raw["work_dir"]
+            if not isinstance(work_dir, str):
+                errors.append(f"{label}.work_dir 必须是字符串。")
+            elif (
+                Path(work_dir).is_absolute()
+                or _WINDOWS_DRIVE_RE.match(work_dir)
+                or ".." in Path(work_dir).parts
+            ):
+                errors.append(f"{label}.work_dir 必须是 data/mcp 下的相对路径。")
         if transport not in {"stdio", "streamable_http"}:
             errors.append(f"MCP 服务器 {name} 使用不支持的 transport: {transport}")
         elif mcp_enabled and enabled and transport == "stdio" and not command:

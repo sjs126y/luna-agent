@@ -17,6 +17,8 @@ ConversationEventType = Literal[
     "tool_start",
     "tool_decision",
     "tool_end",
+    "artifact_available",
+    "response_artifact_selected",
     "retry",
     "compression",
     "steer_consumed",
@@ -127,6 +129,23 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("context_remaining_tokens", "integer", "Estimated remaining tokens in the context window."),
             EventFieldSpec("context_percent", "number", "Estimated percent of the context window in use."),
             EventFieldSpec("context_budget", "object", "Estimated context budget breakdown for the current request."),
+        ),
+    ),
+    "artifact_available": EventSchema(
+        "artifact_available",
+        "A tool artifact was validated and stored for the current turn.",
+        fields=(
+            EventFieldSpec("tool_name", "string", "Tool that produced the artifact."),
+            EventFieldSpec("tool_use_id", "string", "Tool call identifier."),
+            EventFieldSpec("artifacts", "list[object]", "Safe stored artifact summaries."),
+        ),
+    ),
+    "response_artifact_selected": EventSchema(
+        "response_artifact_selected",
+        "The model selected managed artifacts for the final response.",
+        fields=(
+            EventFieldSpec("artifact_ids", "list[string]", "Selected managed artifact ids."),
+            EventFieldSpec("count", "integer", "Number of selected artifacts."),
         ),
     ),
     "assistant_message": EventSchema(

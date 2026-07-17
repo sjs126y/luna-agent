@@ -4,6 +4,7 @@ import importlib
 
 
 _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
+    ("personal_agent.plugins.builtin.tools.builtin.artifact_from_file", ("artifact_from_file",)),
     ("personal_agent.plugins.builtin.tools.builtin.bash", ("bash",)),
     ("personal_agent.plugins.builtin.tools.builtin.calculator", ("calculator",)),
     ("personal_agent.plugins.builtin.tools.builtin.clarify", ("clarify",)),
@@ -34,6 +35,7 @@ _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
         "process_wait",
     )),
     ("personal_agent.plugins.builtin.tools.builtin.random_tool", ("random",)),
+    ("personal_agent.plugins.builtin.tools.builtin.response_attach", ("response_attach",)),
     ("personal_agent.plugins.builtin.tools.builtin.skill_tools", ("skill_search", "skill_load")),
     ("personal_agent.plugins.builtin.tools.builtin.task", ("task",)),
     ("personal_agent.plugins.builtin.tools.builtin.timer", ("timer",)),

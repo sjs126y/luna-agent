@@ -192,6 +192,18 @@ class BasePlatformAdapter(ABC):
             last_result = result
         return last_result
 
+    async def send_artifact(
+        self,
+        chat_id: str,
+        *,
+        kind: str,
+        path: Path,
+        filename: str,
+        mime_type: str,
+    ) -> SendResult:
+        """Send one managed artifact. Concrete adapters opt in via capabilities."""
+        return SendResult(success=False, error=f"{kind} delivery is not supported")
+
     @abstractmethod
     async def get_chat_info(self, chat_id: str) -> ChatInfo:
         """Return chat metadata for system prompt & logging."""

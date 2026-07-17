@@ -310,11 +310,11 @@ sandbox:
     qq = next(item for item in report["env"]["platforms"] if item["name"] == "qq")
     assert qq["enabled"] is True
     assert qq["key"] == "platforms/qq"
-    assert qq["required_env"] == ["QQ_BOT_BASE_URL"]
+    assert qq["required_env"] == ["QQ_BOT_WS_URL"]
     assert qq["configured"] is False
     assert qq["status"] == "incomplete"
-    assert qq["missing_env"] == ["QQ_BOT_BASE_URL"]
-    assert "QQ_BOT_BASE_URL" in qq["hint"]
+    assert qq["missing_env"] == ["QQ_BOT_WS_URL"]
+    assert "QQ_BOT_WS_URL" in qq["hint"]
     assert any("平台 qq 缺少环境变量" in warning for warning in report["warnings"])
 
 
@@ -527,6 +527,17 @@ mcp:
     assert any("MCP 服务器 missing-binary 的命令不可用" in warning for warning in report["warnings"])
     assert report["mcp_servers"][0]["missing_command"] is True
     assert report["mcp_servers"][1]["unknown_keys"] == ["extra"]
+
+
+def test_config_report_rejects_mcp_work_dir_escape(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        "mcp:\n  enabled: true\n  servers:\n    - name: bad\n      command: python\n      work_dir: ../outside\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("work_dir 必须是 data/mcp 下的相对路径" in error for error in report["errors"])
 
 
 def test_config_report_validates_mcp_transports_and_duplicate_names(tmp_path):

@@ -382,7 +382,9 @@ def _platform_env_fields() -> tuple[ConfigField, ...]:
         _env_field("WEIXIN_ACCOUNT_ID", "weixin_account_id", "", "str", "platforms", "WeChat account id."),
         _env_field("WEIXIN_USER_ID", "weixin_user_id", "", "str", "platforms", "WeChat user id."),
         _env_field("WEIXIN_BASE_URL", "weixin_base_url", "https://ilinkai.weixin.qq.com", "str", "platforms", "WeChat API base URL."),
-        _env_field("QQ_BOT_BASE_URL", "qq_bot_base_url", "", "str", "platforms", "QQ/OneBot HTTP base URL."),
+        _env_field("WEIXIN_CDN_BASE_URL", "weixin_cdn_base_url", "https://novac2c.cdn.weixin.qq.com/c2c", "str", "platforms", "WeChat media CDN base URL."),
+        _env_field("QQ_BOT_WS_URL", "qq_bot_ws_url", "", "str", "platforms", "QQ/OneBot WebSocket server URL."),
+        _env_field("QQ_BOT_BASE_URL", "qq_bot_base_url", "", "str", "platforms", "Optional QQ/OneBot HTTP action base URL."),
         _env_field("QQ_BOT_TOKEN", "qq_bot_token", "", "str", "platforms", "QQ/OneBot token.", sensitive=True),
         _env_field("QQ_BOT_WEBHOOK_SECRET", "qq_bot_webhook_secret", "", "str", "platforms", "QQ webhook secret.", sensitive=True),
     )
@@ -404,6 +406,9 @@ def _storage_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("storage.data_dir", "agent_data_dir", "./data", "path", "storage", "Runtime data directory."),
         _yaml_field("storage.log_level", "log_level", "INFO", "str", "storage", "Log level."),
+        _yaml_field("artifacts.max_file_bytes", "artifact_max_file_bytes", 20971520, "int", "artifacts", "Maximum managed artifact size in bytes.", minimum=1),
+        _yaml_field("artifacts.max_per_turn", "artifact_max_per_turn", 10, "int", "artifacts", "Maximum managed artifacts produced per turn.", minimum=1),
+        _yaml_field("artifacts.retention_hours", "artifact_retention_hours", 24, "int", "artifacts", "Artifact retention period in hours.", minimum=1),
     )
 
 

@@ -1,10 +1,10 @@
 key: platforms/qq
 name: QQ Platform
-version: "0.1.0"
-description: QQ HTTP bot adapter registration.
+version: "0.2.0"
+description: QQ OneBot WebSocket and HTTP adapter registration.
 kind: platform
 entrypoint: personal_agent.plugins.builtin.platforms.qq:register
-requires_env: [QQ_BOT_BASE_URL]
+requires_env: [QQ_BOT_WS_URL]
 provides: [platforms]
 enabled_by_default: true
 source: builtin

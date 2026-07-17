@@ -285,6 +285,7 @@ class HookManager:
             return GatewayMessageOutcome(**accumulated)
         if envelope.event_name == HookEvent.PRE_DELIVERY:
             final_delivery = PreDeliveryOutcome()
+            removed_artifact_ids: set[str] = set()
             for registration in registrations:
                 execution = await self._execute(registration, current)
                 outcome = execution.outcome if not execution.error else None
@@ -295,7 +296,17 @@ class HookManager:
                     return outcome
                 if outcome.text is not None:
                     current = current.with_payload(text=outcome.text)
-                    final_delivery = PreDeliveryOutcome(text=outcome.text)
+                if outcome.removed_artifact_ids:
+                    removed_artifact_ids.update(outcome.removed_artifact_ids)
+                    artifacts = [
+                        item for item in list(current.payload.get("artifacts") or [])
+                        if str(item.get("artifact_id") or "") not in removed_artifact_ids
+                    ]
+                    current = current.with_payload(artifacts=artifacts)
+                final_delivery = PreDeliveryOutcome(
+                    text=outcome.text if outcome.text is not None else final_delivery.text,
+                    removed_artifact_ids=tuple(sorted(removed_artifact_ids)),
+                )
             return final_delivery
         raise RuntimeError(f"Unsupported pipeline hook: {envelope.event_name.value}")
 

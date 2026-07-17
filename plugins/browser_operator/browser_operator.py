@@ -27,10 +27,12 @@ class BrowserOperatorConfig(BaseModel):
     allow_code_execution: bool = False
     connect_timeout_seconds: float = Field(default=120.0, gt=0)
     call_timeout_seconds: float = Field(default=120.0, gt=0)
+    max_artifact_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
 
 
 def register(ctx) -> None:
     config = ctx.parse_config(BrowserOperatorConfig)
+    work_dir = "playwright"
     args = ["-y", config.package]
     if config.browser.strip().lower() == "chromium":
         executable = _configured_browser_executable(config)
@@ -42,6 +44,7 @@ def register(ctx) -> None:
         args.append("--headless")
     if config.isolated:
         args.append("--isolated")
+    args.extend(["--output-dir", "."])
     ctx.register_mcp_server({
         "name": "playwright",
         "transport": "stdio",
@@ -51,6 +54,10 @@ def register(ctx) -> None:
         "call_timeout_seconds": config.call_timeout_seconds,
         "allow_network": True,
         "max_tools": 40,
+        "max_artifact_bytes": config.max_artifact_bytes,
+        "work_dir": work_dir,
+        "artifact_roots": ["."],
+        "artifact_extensions": [".png", ".jpg", ".jpeg", ".pdf", ".webm"],
     })
     ctx.register_skills("skills")
 

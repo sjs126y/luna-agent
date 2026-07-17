@@ -66,7 +66,7 @@ class ToolExecutionResult:
     grant_scope: str = ""
     grant_expires_at: float = 0.0
     temporary_grant_ttl_seconds: int = 0
-    artifacts: list[ToolArtifact] = field(default_factory=list)
+    artifacts: list[Any] = field(default_factory=list)
     result_metadata: dict[str, Any] = field(default_factory=dict)
     hook_feedback: str = ""
 
@@ -422,6 +422,29 @@ async def execute_tool_call_result(
             result_metadata=_safe_result_metadata(result.result_metadata or {}),
             count_as_tool=bool(entry is None or entry.report_as_tool),
         )
+        stored_summaries = [
+            item.safe_summary()
+            for item in (result.artifacts or [])
+            if getattr(item, "artifact_id", "")
+        ]
+        if stored_summaries:
+            await emit_event(
+                event_sink,
+                "artifact_available",
+                "工具产物已保存",
+                tool_name=result.tool_name,
+                tool_use_id=result.tool_use_id,
+                artifacts=stored_summaries,
+            )
+        selected_ids = list((result.result_metadata or {}).get("selected_artifact_ids") or [])
+        if selected_ids and result.status == "success":
+            await emit_event(
+                event_sink,
+                "response_artifact_selected",
+                "已选择回复附件",
+                artifact_ids=[str(value) for value in selected_ids[:10]],
+                count=len(selected_ids),
+            )
         if one_time_security_context is not None and any(one_time_security_grants):
             from personal_agent.security.evaluator import revoke_grants
 
@@ -641,6 +664,32 @@ async def execute_tool_call_result(
         ))
 
     # ── 3. post-process ──────────────────────────────
+    materialized_artifacts = list(handler_output.artifacts)
+    artifact_warnings: list[str] = []
+    artifact_store = getattr(agent, "_artifact_store", None) if agent is not None else None
+    if artifact_store is not None and materialized_artifacts and nested_result is None:
+        from personal_agent.artifacts import ArtifactStoreError, materialize_tool_artifact
+
+        stored = []
+        for artifact in materialized_artifacts:
+            try:
+                stored.append(await materialize_tool_artifact(
+                    artifact_store,
+                    artifact,
+                    session_key=str(
+                        getattr(getattr(agent, "_security_context", None), "session_key", "")
+                        or getattr(agent, "_memory_session_key", "")
+                    ),
+                    turn_id=str(getattr(agent, "_hook_turn_id", "") or ""),
+                    tool_name=name,
+                    result_metadata=handler_output.metadata,
+                ))
+            except ArtifactStoreError as exc:
+                artifact_warnings.append(f"{exc.reason}: {exc.detail or str(exc)}")
+        materialized_artifacts = stored
+        if artifact_warnings:
+            warning = "; ".join(artifact_warnings)
+            result = f"{result}\n\n[artifact unavailable: {warning}]".strip()
     output_truncated = False
     if len(result) > MAX_RESULT_CHARS:
         result = result[:MAX_RESULT_CHARS] + f"\n\n...({len(result) - MAX_RESULT_CHARS} more chars truncated)"
@@ -670,7 +719,7 @@ async def execute_tool_call_result(
         category=category,
         content=result,
         error=error,
-        artifacts=handler_output.artifacts,
+        artifacts=materialized_artifacts,
         result_metadata=handler_output.metadata,
         attempts=attempts,
         started=started,
@@ -712,7 +761,19 @@ def format_tool_result(result: ToolExecutionResult) -> str:
     if result.hook_feedback:
         return result.hook_feedback
     if result.content:
-        return result.content
+        visible = result.content
+        summaries = [
+            item.safe_summary()
+            for item in (result.artifacts or [])
+            if getattr(item, "artifact_id", "")
+        ]
+        if summaries:
+            visible += "\n\nAvailable response artifacts:\n" + json.dumps(
+                summaries,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        return visible
     if result.error:
         return result.error if result.error.lower().startswith("error:") else f"Error: {result.error}"
     return "Error: tool execution produced no result"
@@ -891,7 +952,7 @@ def _result(
     attempts: int = 0,
     started: float | None = None,
     output_truncated: bool = False,
-    artifacts: list[ToolArtifact] | None = None,
+    artifacts: list[Any] | None = None,
     result_metadata: dict[str, Any] | None = None,
 ) -> ToolExecutionResult:
     normalized = _normalize_tool_call(tc)
@@ -954,6 +1015,8 @@ def _safe_result_metadata(value: dict[str, Any]) -> dict[str, Any]:
             result[key] = str(item)[:200]
         elif isinstance(item, (bool, int, float)) or item is None:
             result[str(key)[:100]] = item
+        elif key == "selected_artifact_ids" and isinstance(item, list):
+            result[key] = [str(value)[:100] for value in item[:10]]
     return result
 
 

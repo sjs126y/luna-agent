@@ -109,6 +109,7 @@ class PreDeliveryOutcome:
     suppressed: bool = False
     reason: str = ""
     text: str | None = None
+    removed_artifact_ids: tuple[str, ...] = ()
 
     @classmethod
     def suppress(cls, reason: str) -> "PreDeliveryOutcome":
@@ -117,6 +118,15 @@ class PreDeliveryOutcome:
     @classmethod
     def replace_text(cls, text: str) -> "PreDeliveryOutcome":
         return cls(text=str(text))
+
+    @classmethod
+    def remove_artifacts(cls, *artifact_ids: str, reason: str = "") -> "PreDeliveryOutcome":
+        return cls(
+            reason=str(reason or ""),
+            removed_artifact_ids=tuple(
+                dict.fromkeys(str(value or "").strip() for value in artifact_ids if str(value or "").strip())
+            ),
+        )
 
 
 @dataclass(frozen=True)

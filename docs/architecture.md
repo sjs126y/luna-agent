@@ -17,14 +17,14 @@ Gateway / TUI / CLI / Cron / Active Plugin
           ConversationService (one turn)
                     |
                     v
-          DeliveryService -> SQLite Outbox -> Adapter.send_message
+          DeliveryService -> DeliveryPlanner -> SQLite multipart Outbox -> Adapter.send_message/send_artifact
 ```
 
 `ConversationCoordinator` 是应用层唯一提交边界。同一 `session_key` 的 Agent turn 串行，不同 session 并发；每轮开始时捕获 `TurnPolicySnapshot` 并登记 `ActiveTurnRegistry`。`ConversationService` 只处理 session/history、AgentLoop、持久化、memory review 和事件。
 
 Gateway 负责平台连接、鉴权、入站 Hook、附件准备与请求规范化。新 Runtime 下 Adapter 只转发入站并执行平台单次发送，不再决定会话忙碌、steer 旁路或 Agent 排队。
 
-Delivery 使用 `SessionDirectory` 从 session 解析平台目标，执行 `PreDelivery/PostDelivery`，并在发送前写入 Outbox。AUTH、APPROVAL、SYSTEM 类型跳过插件可变 Hook；临时失败后台重试，超时或部分分段已送达标记 ambiguous，Outbox 通过原子 claim 避免重复消费者。重试次数由 `gateway.delivery_max_attempts` 控制。
+Delivery 使用 `SessionDirectory` 从 session 解析平台目标，执行 `PreDelivery/PostDelivery`，并在发送前写入 Outbox。工具/MCP 产物先进入 ArtifactStore，模型通过 `response_attach` 将当前 turn 的产物选入 `OutboundMessage`；DeliveryPlanner 再按平台能力生成 text/image/file/audio/video operation。AUTH、APPROVAL、SYSTEM 类型跳过插件可变 Hook；临时失败按分片后台重试，超时或部分内容已送达标记 ambiguous，已成功 part 不会重复发送。重试次数由 `gateway.delivery_max_attempts` 控制。
 
 这份文档对应 README 里的 `Runtime Flow`，用于帮助开发者理解 Lumora 内部怎么从“用户输入”流转到“模型调用、工具执行、持久化和观测”。
 

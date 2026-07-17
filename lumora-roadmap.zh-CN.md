@@ -10,7 +10,7 @@ Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工
 
 1. **已完成基础**：被动插件的作用域配置、Registry 归属、冲突检查和失败回滚；运行期热替换留待 Manager reconcile。
 2. **已完成**：MCP transport、单 server runtime、连接恢复、动态工具快照和结构化结果。
-3. **待推进**：完整的“入站媒体 -> 模型/工具 -> 出站媒体”路径。
+3. **已完成基础**：完整的“入站媒体 -> 模型/工具 -> Artifact -> 出站媒体”路径；后续按真实平台反馈补格式与 caption 体验。
 4. **已完成基础**：统一 turn 分发、Delivery/Outbox、Cron 正式提交和主动插件端口；主动决策策略仍待推进。
 5. **已完成**：长期记忆与知识 RAG 已拆分；RAG 不再由 memory provider 承担。
 
@@ -98,7 +98,7 @@ Lumora 当前 Cron 已直接向 `ConversationCoordinator` 提交带 `origin=cron
 
 Hermes 用 `MEDIA:/actual/local/file.png` 这样的文本指令表达媒体，并从可见文本中拆出本地路径后原生发送。优点是任何返回文本的工具都能参与媒体投递；缺点是附件意图和自然语言混在同一字符串。
 
-Lumora 已有结构化 `MessagePart` 与 `AttachmentRef`，架构上更好，应保留它。可以借鉴 Hermes 的工程细节：共享媒体缓存、输入大小限制、SSRF/重定向防护、MIME 和扩展名分类、各平台音频/语音差异、单/多附件 caption 策略、原生附件投递与降级。
+Lumora 已保留结构化消息并完成出站基础：工具/MCP 的 `ToolArtifact` 经 ArtifactStore 生成稳定引用，LLM 使用 `response_attach` 选择本轮产物，`OutboundMessage -> DeliveryPlanner -> multipart Outbox -> Adapter` 负责平台能力降级、分片状态、重启恢复和原生发送。当前微信支持图片/视频/文件，Telegram 支持图片/文件/音频/视频，飞书支持图片/文件，QQ 支持图片/音频/视频；caption、格式转换和真实平台限制继续按需打磨。
 
 ## 6. Memory 与 RAG 方向
 
@@ -128,7 +128,7 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 | --- | --- | --- | --- |
 | MCP runtime | stdio、Streamable HTTP、重连、动态工具、结构化结果、诊断 | OAuth、sampling、elicitation 仅按需补充 | 核心完成 |
 | 被动插件 | `register(ctx)`、作用域配置、Skill/MCP 文件注册、所有权、冲突检查和事务回滚 | Manager reconcile、异步资源关闭和版本代际 | 基础完成 |
-| 出站多模态 | `OutboundMessage`、`PlatformCapabilities`、MCP/tool artifact 已有骨架 | TurnResult artifact、平台原生发送、降级、安全和投递审计 | 适合下一步讨论 |
+| 出站多模态 | ArtifactStore、`response_attach`、结构化 Outcome、能力规划、分片 Outbox 和四平台原生发送 | caption、格式转换和真实平台限制按使用反馈补充 | 基础完成 |
 | 主动能力 | Cron、插件 submit、统一 Coordinator、Delivery/Outbox 已完成 | 候选生成、去重、冷却、静默时间和决策策略 | 基础完成 |
 | Memory / RAG | internal snapshot、buffer、Lumora/Mem0、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件 | 记忆重构完成 |
 
@@ -148,4 +148,4 @@ Memory / RAG 拆分（独立领域）
   -> 外部知识证据检索
 ```
 
-当前更自然的后续方向是出站多模态与主动决策。文本 Delivery/Outbox 和统一提交边界已经完成；下一步可把 MCP/tool artifact 转成结构化出站附件，或在现有 Cron/插件触发源之上增加候选、冷却和静默策略。插件热替换仍需 Manager reconcile、RuntimeSnapshot 和版本代际。
+出站多模态基础链路已经完成，下一步更自然的产品方向是主动决策，或先继续处理真实长对话、插件安装卸载和平台联调反馈。主动能力可直接复用现有 Artifact、Coordinator、Delivery 和 Outbox；插件热替换仍需 Manager reconcile、RuntimeSnapshot 和版本代际。

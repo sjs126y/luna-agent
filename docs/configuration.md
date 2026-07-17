@@ -55,7 +55,35 @@ WEIXIN_TOKEN=
 WEIXIN_ACCOUNT_ID=
 WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
+QQ_BOT_WS_URL=ws://127.0.0.1:16611
+QQ_BOT_BASE_URL=
+QQ_BOT_TOKEN=
+QQ_BOT_WEBHOOK_SECRET=
 ```
+
+QQ 使用 NapCat OneBot 11。`QQ_BOT_WS_URL` 是必填的 WebSocket Server 地址，用于接收 QQ 事件，也可直接发送 OneBot action。`QQ_BOT_BASE_URL` 可选；配置时出站 action 优先走 HTTP，未配置时复用 WebSocket。新配置建议先留空 HTTP，只开一个 WebSocket Server，减少 NapCat 端口和配置项。`QQ_BOT_TOKEN` 同时用于 WebSocket Bearer 鉴权和 HTTP Bearer 鉴权。
+
+出站图片、语音、视频和文件统一通过 `base64://` message segment 传输，因此 Lumora 运行在 WSL、NapCat 运行在 Windows 时不需要共享本地路径。当前单附件上限为 20 MiB；更大的文件应后续接入 NapCat Stream API，避免超大 JSON 请求。
+
+QQ 插件默认使用 `external` 模式，只连接已运行的 NapCat。需要 Lumora 随 `serve` 自动启动 NapCat 时，在 `config.yaml` 中开启受管模式：
+
+```yaml
+plugins:
+  config:
+    platforms/qq:
+      runtime:
+        mode: managed
+        command:
+          - /mnt/c/absolute/path/to/NapCatWinBootMain.exe
+          - "123456789"
+        working_dir: /mnt/c/absolute/path/to/napcat
+        startup_timeout_seconds: 30
+        stop_on_shutdown: true
+        restart_grace_seconds: 30
+```
+
+`command` 是 argv 数组，第一项必须是 WSL 可访问的绝对可执行文件路径，不经过 shell。`working_dir` 可留空。插件会先探测 WebSocket；已运行时直接复用，未运行时启动 NapCat 并等待就绪。NapCat 输出写入 `data/logs/napcat.log`。只有插件自己启动的进程会在 `stop_on_shutdown: true` 时随 Lumora 退出；已有的外部 NapCat 不会被终止。
 
 ## config.yaml
 
@@ -198,6 +226,8 @@ mcp:
 
 stdio server 在应用 Runtime 中会进入 `sandbox.process_backend` 指定的进程沙箱，默认工作目录为 `data/mcp`。需要联网的 stdio server 必须显式设置 `allow_network: true`。远程 transport 默认要求 HTTPS；连接明文 HTTP 或私网地址时，分别需要显式设置 `allow_insecure_http: true`、`allow_private_network: true`。MCP 还会限制工具数量/分页、schema、文本结果、结构化结果和 artifact 大小；对应 server 字段为 `max_tools`、`max_tool_pages`、`max_schema_bytes`、`max_result_chars`、`max_artifact_bytes`。
 
+本地 MCP 如果只在文本结果中返回 Markdown 文件链接，默认不会被读取。server 可配置相对 `work_dir` 获得 `data/mcp` 下的独立工作目录；Runtime 会拒绝绝对路径和 `..` 逃逸，并在启动时创建目录。需要由受信 server 显式配置 `artifact_roots`（相对该 server 工作目录）与可选的 `artifact_extensions`，连接层才会把根目录内、非符号链接且大小合规的文件提升为 Artifact。路径穿越、绝对路径、未允许扩展名和超限文件均不会进入发送链路。Browser Operator 已固定使用隔离的 `data/mcp/playwright/` 工作目录并启用图片、PDF 与 WebM 产物。
+
 正常 Runtime 启动不会等待 MCP 完成首次连接。插件和安全 Hook 注册完成后，MCP server 在主 asyncio 事件循环中作为独立后台任务并发连接；Gateway、CLI 和 TUI 可以先进入可用状态。连接成功的 MCP 会动态注册工具，缓存 Agent 在下一轮根据 Tool Registry generation 刷新工具快照。`doctor` 和 `serve --dry-run` 会显式等待首次连接尝试，以输出稳定诊断。使用 `npx`、`uvx` 且需要下载或检查包索引的 stdio server 必须允许网络，生产环境建议预安装并固定依赖版本。
 
 GitHub 官方远程 MCP 可以使用 PAT 认证：
@@ -287,6 +317,20 @@ permissions:
 所有工具和资源授权共享 `grant_ttl_minutes`，只保存在当前会话的内存状态中；切换 Mode、重置/删除会话或服务重启都会清空。
 
 ## 多模态配置
+
+`artifacts` 控制工具、MCP 和 provider 产生的出站文件。Artifact 使用 `data/artifacts/` 受控存储，SQLite 只保存 metadata：
+
+| 字段 | 说明 |
+| --- | --- |
+| `max_file_bytes` | 单个 Artifact 的最大字节数，默认 20 MiB |
+| `max_per_turn` | 每个 turn 最多物化的 Artifact 数，默认 10 |
+| `retention_hours` | 无活跃 Outbox 引用时的保留时间，默认 24 小时 |
+
+Artifact 与入站 `attachments` 是两套方向相反的存储：`attachments` 缓存用户发来的内容，`artifacts` 保存工具准备发给用户的产物。已被 pending/retry/ambiguous Outbox 引用的 Artifact 不会被过期清理。
+
+普通文件工具只负责修改工作区，不会自动把每次写入都变成待发送附件。用户明确要求接收某个已有文件时，Agent 使用 `artifact_from_file(path)`；该工具会沿用统一的 filesystem read 权限、sandbox roots 和 blocked paths，拒绝目录、符号链接、空文件及超限文件，并把内容复制进 ArtifactStore。返回的 `artifact_id` 只在当前 session/turn 内可供 `response_attach` 选择。`filename` 只能覆盖展示名称，不能改变源路径。
+
+Browser Operator 的 `max_artifact_bytes` 默认 10 MiB，避免 Playwright 截图先被 MCP 的通用 1 MiB 上限截断；它仍受全局 `artifacts.max_file_bytes` 二次限制。Playwright 返回的相对截图链接会在受控输出目录中物化，并向当前 turn 返回可供 `response_attach` 使用的 `artifact_id`。
 
 `multimodal` 控制 gateway/平台附件进入 agent 前的处理方式：
 

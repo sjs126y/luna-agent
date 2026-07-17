@@ -4,12 +4,20 @@
 def register(ctx) -> None:
     from personal_agent.platforms.core import PlatformEntry
     from .adapter import QQAdapter
+    from .companion import NapCatCompanion
+    from .config import QQPluginConfig
+
+    plugin_config = ctx.parse_config(QQPluginConfig)
+    companion = NapCatCompanion(
+        plugin_config.runtime,
+        data_dir=ctx.settings.agent_data_dir,
+    )
 
     def _factory(config, db):
-        return QQAdapter(config, db)
+        return QQAdapter(config, db, companion=companion)
 
     def _check(config):
-        return bool(getattr(config, "qq_bot_base_url", ""))
+        return bool(getattr(config, "qq_bot_ws_url", ""))
 
     ctx.register_platform(PlatformEntry(
         name="qq",

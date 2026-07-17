@@ -38,6 +38,11 @@ storage:
   data_dir: "./data"
   log_level: "INFO"
 
+artifacts:
+  max_file_bytes: 20971520       # 单个受控出站产物最大 20 MiB
+  max_per_turn: 10
+  retention_hours: 24
+
 compression:
   engine: "compressor"            # compressor（内置）| none | disabled
   model: ""                       # 留空使用主模型；也可以指定便宜模型
@@ -209,6 +214,7 @@ plugins:
       allow_code_execution: false
       connect_timeout_seconds: 120
       call_timeout_seconds: 120
+      max_artifact_bytes: 10485760
 
 mcp:
   enabled: true

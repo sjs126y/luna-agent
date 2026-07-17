@@ -267,9 +267,9 @@ Provider 不只是 base URL 和 model。`ProviderProfile` 描述 provider 能力
 
 `/steer <text>` 可以向正在运行的同会话 turn 注入高优先级修正。Gateway 侧支持旁路 busy check 入队，agent loop 会在下一步消费 steer 并调整后续行为。
 
-### 11. 多模态链路已打底
+### 11. 入站与出站多模态链路
 
-平台 adapter 会把图片、文件、音频等标准化为 attachment。后端按配置处理 native、text fallback、notice 或 off；图片原生输入、文档文本抽取、vision fallback 和 OCR HTTP 扩展点已经预留。
+平台 adapter 会把用户发来的图片、文件、音频等标准化为 attachment。后端按配置处理 native、text fallback、notice 或 off；图片原生输入、文档文本抽取、vision fallback 和 OCR HTTP 扩展点已经预留。工具与 MCP 产生的图片、音频、视频和文件则进入受控 ArtifactStore；`write`、`edit` 或 `bash` 已经生成的普通本地文件可由 `artifact_from_file` 安全复制进当前 turn。模型拿到 `artifact_id` 后通过 `response_attach` 明确选入最终回复，再由 DeliveryPlanner 和分片 Outbox 完成平台原生发送、降级、重试和恢复。
 
 ### 12. 插件、MCP、Skill 都能扩展
 

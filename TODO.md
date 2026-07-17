@@ -5,10 +5,11 @@
 ## Conversation Runtime 后续项
 
 1. 插件安装、卸载与热加载仍需正式 `RuntimeSnapshot + lease + drain`；本轮只完成已加载插件的能力约束 submit/notification 端口。
-2. 出站多模态仍需将 Agent/tool artifact 转成结构化 `OutboundMessage`，补平台 capability fallback、原生附件发送与逐分片投递状态。
-3. 主动决策系统仍需候选事项、冷却、静默时间、优先级和反馈策略；Cron 目前只是正式的主动触发源，不等于主动决策。
+2. 主动决策系统仍需候选事项、冷却、静默时间、优先级和反馈策略；Cron 目前只是正式的主动触发源，不等于主动决策。
 
 已完成收尾：Adapter 旧队列、busy/旁路、发送重试和 Gateway 兼容 Agent 路径已经删除；会话顺序统一由 Coordinator 管理，发送重试统一由 Delivery Outbox 管理。
+
+已完成出站多模态基础：Tool/MCP Artifact 受控物化、`response_attach`、结构化 Outcome、平台能力降级、分片 Outbox、四平台原生媒体发送和投递审计。
 
 ## 已完成：Execution Mode 与工具安全重构
 

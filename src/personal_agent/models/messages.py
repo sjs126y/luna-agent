@@ -13,6 +13,7 @@ class MessagePart:
     url: str = ""
     path: str = ""
     file_id: str = ""
+    artifact_id: str = ""
     name: str = ""
     mime_type: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -25,7 +26,7 @@ class MessagePart:
         if self.type == "quote":
             target = self.file_id or self.text or self.name
             return f"[reply:{target}]" if target else "[reply]"
-        detail = self.name or self.url or self.path or self.file_id or self.text
+        detail = self.name or self.artifact_id or self.url or self.path or self.file_id or self.text
         return f"[{self.type}: {detail}]" if detail else f"[{self.type}]"
 
     def to_attachment_ref(self, attachment_id: str = "") -> "AttachmentRef":
@@ -54,6 +55,7 @@ class MessagePart:
             "url": self.url,
             "path": self.path,
             "file_id": self.file_id,
+            "artifact_id": self.artifact_id,
             "name": self.name,
             "mime_type": self.mime_type,
             "metadata": dict(self.metadata),
@@ -74,6 +76,9 @@ class OutboundMessage:
             return ""
         return "".join(part.render_text() for part in self.parts)
 
+    def text_content(self) -> str:
+        return "".join(part.text for part in self.parts if part.type == "text")
+
     def as_dict(self) -> dict[str, Any]:
         return {"parts": [part.as_dict() for part in self.parts]}
 
@@ -92,6 +97,9 @@ class PlatformCapabilities:
     typing: bool = False
     attachments_in: bool = False
     max_text_length: int = 0
+    max_file_bytes: int = 0
+    max_attachments: int = 0
+    media_caption: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +115,9 @@ class PlatformCapabilities:
             "typing": self.typing,
             "attachments_in": self.attachments_in,
             "max_text_length": self.max_text_length,
+            "max_file_bytes": self.max_file_bytes,
+            "max_attachments": self.max_attachments,
+            "media_caption": self.media_caption,
         }
 
 

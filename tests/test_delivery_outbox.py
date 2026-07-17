@@ -151,3 +151,25 @@ async def test_database_recovers_interrupted_sending_record(tmp_path: Path):
     assert record["status"] == "retry"
     assert record["next_attempt_at"] == 0
     await reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_database_recovers_interrupted_sending_part(tmp_path: Path):
+    from personal_agent.delivery import DeliveryOperation
+
+    path = tmp_path / "state.db"
+    db = Database(path)
+    await db.initialize()
+    outbox = DeliveryOutbox(db)
+    request = DeliveryRequest(session_key="wechat:c1:u1", message=OutboundMessage.text("hello"))
+    await outbox.enqueue(request)
+    await outbox.ensure_parts(request.delivery_id, (DeliveryOperation(0, "text", text="hello"),))
+    await outbox.start_part(request.delivery_id, 0)
+    await db.close()
+
+    reopened = Database(path)
+    await reopened.initialize()
+    parts = await DeliveryOutbox(reopened).parts(request.delivery_id)
+
+    assert parts[0].status == "retry"
+    await reopened.close()

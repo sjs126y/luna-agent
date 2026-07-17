@@ -125,6 +125,51 @@ CREATE TABLE IF NOT EXISTS delivery_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_delivery_outbox_due
 ON delivery_outbox(status, next_attempt_at, created_at);
+
+CREATE TABLE IF NOT EXISTS delivery_outbox_parts (
+    delivery_id     TEXT NOT NULL REFERENCES delivery_outbox(delivery_id) ON DELETE CASCADE,
+    part_index      INTEGER NOT NULL,
+    operation_json  TEXT NOT NULL,
+    artifact_id     TEXT DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    attempts        INTEGER DEFAULT 0,
+    platform_file_id TEXT DEFAULT '',
+    message_id      TEXT DEFAULT '',
+    last_error      TEXT DEFAULT '',
+    ambiguous       INTEGER DEFAULT 0,
+    updated_at      REAL NOT NULL,
+    PRIMARY KEY (delivery_id, part_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_parts_status
+ON delivery_outbox_parts(delivery_id, status, part_index);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    artifact_id       TEXT PRIMARY KEY,
+    session_key       TEXT NOT NULL,
+    turn_id           TEXT NOT NULL,
+    owner_id          TEXT DEFAULT '',
+    kind              TEXT NOT NULL,
+    filename          TEXT NOT NULL,
+    mime_type         TEXT DEFAULT '',
+    size_bytes        INTEGER NOT NULL,
+    content_hash      TEXT NOT NULL,
+    relative_path     TEXT NOT NULL,
+    source            TEXT DEFAULT 'tool',
+    source_name       TEXT DEFAULT '',
+    status            TEXT DEFAULT 'candidate',
+    delivery_eligible INTEGER DEFAULT 1,
+    truncated         INTEGER DEFAULT 0,
+    metadata_json     TEXT DEFAULT '{}',
+    created_at        REAL NOT NULL,
+    expires_at        REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_turn
+ON artifacts(session_key, turn_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_expiry
+ON artifacts(status, expires_at);
 """
 
 
@@ -140,8 +185,13 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
         await self._ensure_tool_run_columns()
+        await self._ensure_delivery_part_columns()
         await self._conn.execute(
             "UPDATE delivery_outbox SET status = 'retry', next_attempt_at = 0 "
+            "WHERE status = 'sending'"
+        )
+        await self._conn.execute(
+            "UPDATE delivery_outbox_parts SET status = 'retry' "
             "WHERE status = 'sending'"
         )
         await self._conn.commit()
@@ -159,6 +209,14 @@ class Database:
         }.items():
             if name not in columns:
                 await self._conn.execute(ddl)
+
+    async def _ensure_delivery_part_columns(self) -> None:
+        rows = await self._conn.execute("PRAGMA table_info(delivery_outbox_parts)")
+        columns = {row["name"] async for row in rows}
+        if "artifact_id" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE delivery_outbox_parts ADD COLUMN artifact_id TEXT DEFAULT ''"
+            )
 
     async def close(self) -> None:
         if self._conn:
@@ -221,6 +279,116 @@ class Database:
             )
             await self._conn.commit()
             return cursor.rowcount == 1
+
+    async def ensure_delivery_parts(self, delivery_id: str, operations: list[dict], *, updated_at: float) -> None:
+        async with self._write_lock:
+            await self._conn.executemany(
+                """INSERT OR IGNORE INTO delivery_outbox_parts
+                   (delivery_id, part_index, operation_json, artifact_id, status, attempts, updated_at)
+                   VALUES (?, ?, ?, ?, 'pending', 0, ?)""",
+                [
+                    (
+                        delivery_id,
+                        int(operation.get("index") or 0),
+                        json.dumps(operation, ensure_ascii=False),
+                        str(operation.get("artifact_id") or ""),
+                        updated_at,
+                    )
+                    for operation in operations
+                ],
+            )
+            await self._conn.commit()
+
+    async def delivery_part_records(self, delivery_id: str) -> list[dict]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM delivery_outbox_parts WHERE delivery_id = ? ORDER BY part_index",
+            (delivery_id,),
+        )
+        return [dict(row) async for row in cursor]
+
+    async def update_delivery_part(self, delivery_id: str, part_index: int, **changes) -> None:
+        allowed = {
+            "status", "attempts", "platform_file_id", "message_id",
+            "last_error", "ambiguous", "updated_at",
+        }
+        values = {key: value for key, value in changes.items() if key in allowed}
+        if not values:
+            return
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        async with self._write_lock:
+            await self._conn.execute(
+                f"UPDATE delivery_outbox_parts SET {assignments} "
+                "WHERE delivery_id = ? AND part_index = ?",
+                (*values.values(), delivery_id, int(part_index)),
+            )
+            await self._conn.commit()
+
+    # ── managed artifacts ─────────────────────────────
+
+    async def insert_artifact(self, ref) -> None:
+        async with self._write_lock:
+            await self._conn.execute(
+                """INSERT INTO artifacts
+                   (artifact_id, session_key, turn_id, owner_id, kind, filename,
+                    mime_type, size_bytes, content_hash, relative_path, source,
+                    source_name, status, delivery_eligible, truncated, metadata_json,
+                    created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    ref.artifact_id, ref.session_key, ref.turn_id, ref.owner_id,
+                    ref.kind, ref.filename, ref.mime_type, ref.size_bytes,
+                    ref.content_hash, ref.relative_path, ref.source, ref.source_name,
+                    ref.status, int(ref.delivery_eligible), int(ref.truncated),
+                    json.dumps(ref.metadata or {}, ensure_ascii=False),
+                    ref.created_at, ref.expires_at,
+                ),
+            )
+            await self._conn.commit()
+
+    async def artifact_record(self, artifact_id: str) -> dict | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM artifacts WHERE artifact_id = ?",
+            (artifact_id,),
+        )
+        async for row in cursor:
+            return dict(row)
+        return None
+
+    async def count_turn_artifacts(self, session_key: str, turn_id: str) -> int:
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) AS count FROM artifacts WHERE session_key = ? AND turn_id = ?",
+            (session_key, turn_id),
+        )
+        row = await cursor.fetchone()
+        return int(row["count"] if row else 0)
+
+    async def update_artifact_status(self, artifact_id: str, status: str) -> None:
+        async with self._write_lock:
+            await self._conn.execute(
+                "UPDATE artifacts SET status = ? WHERE artifact_id = ?",
+                (status, artifact_id),
+            )
+            await self._conn.commit()
+
+    async def expired_artifacts(self, now: float) -> list[dict]:
+        cursor = await self._conn.execute(
+            """SELECT a.* FROM artifacts AS a
+               WHERE a.expires_at <= ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM delivery_outbox_parts AS p
+                   JOIN delivery_outbox AS d ON d.delivery_id = p.delivery_id
+                   WHERE p.artifact_id = a.artifact_id
+                     AND d.status IN ('pending', 'retry', 'sending', 'ambiguous')
+                 )
+               ORDER BY a.expires_at""",
+            (now,),
+        )
+        return [dict(row) async for row in cursor]
+
+    async def delete_artifact(self, artifact_id: str) -> None:
+        async with self._write_lock:
+            await self._conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (artifact_id,))
+            await self._conn.commit()
 
     # ── sessions ──────────────────────────────────────
 

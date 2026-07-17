@@ -57,6 +57,7 @@ async def test_create_app_runtime_initializes_shared_resources(tmp_path):
         assert runtime.db is not None
         assert runtime.session_store is not None
         assert runtime.compression_chain is not None
+        assert runtime.artifact_store.root == tmp_path / "data" / "artifacts"
         assert "行为规则" in runtime.memory_manager.get_system_prompt_text()
         assert runtime.conversation_service.session_store is runtime.session_store
         assert runtime.conversation_service.memory_manager is runtime.memory_manager

@@ -108,6 +108,16 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 
 ## 验证命令
 
+多模态出站排错时同时检查：
+
+- `data/artifacts/` 是否可写，文件是否仍存在。
+- `delivery_outbox` 与 `delivery_outbox_parts` 是否处于 `pending/retry/ambiguous`。
+- `tool_end.artifacts` 是否返回了 `artifact_id` 和 `delivery_eligible=true`。
+- Agent 是否实际调用 `response_attach`；只有生成文件而未选择，不会发送附件。
+- `write`、`edit` 或 `bash` 生成的普通本地文件是否先经过 `artifact_from_file`；该工具成功后才会产生可选择的 `artifact_id`。
+- 平台 capability 是否支持对应类型；不支持时应收到文字降级，而不是本地路径。
+- 微信媒体需要 `WEIXIN_CDN_BASE_URL` 可访问，并经过 `getuploadurl`、加密 CDN 上传和 `sendmessage` 三步。
+
 提交前建议运行：
 
 ```bash

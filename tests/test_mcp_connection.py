@@ -241,6 +241,73 @@ def test_mcp_result_payloads_are_bounded():
     assert normalized.metadata["structured_content_truncated"] is True
 
 
+def test_mcp_text_links_are_promoted_only_from_configured_artifact_root(tmp_path):
+    from personal_agent.mcp.connection import _normalize_call_result
+
+    output = tmp_path / "playwright"
+    output.mkdir()
+    screenshot = output / "example.png"
+    screenshot.write_bytes(b"png-data")
+    (output / "snapshot.yml").write_text("private", encoding="utf-8")
+
+    class Block:
+        def model_dump(self, **_kwargs):
+            return {
+                "type": "text",
+                "text": (
+                    "### Result\n- [Screenshot](./example.png)\n"
+                    "- [Snapshot](./snapshot.yml)\n- [Outside](../secret.png)"
+                ),
+            }
+
+    result = SimpleNamespace(content=[Block()], structuredContent=None, isError=False)
+    config = MCPServerConfig.from_mapping({
+        "name": "playwright",
+        "command": "npx",
+        "artifact_roots": ["playwright"],
+        "artifact_extensions": ["png"],
+        "max_artifact_bytes": 1024,
+    })
+
+    normalized = _normalize_call_result(result, config, work_dir=tmp_path)
+
+    resources = [block for block in normalized.content if block.type == "resource"]
+    assert len(resources) == 1
+    assert resources[0].uri == screenshot.resolve().as_uri()
+    assert resources[0].mime_type == "image/png"
+    assert resources[0].metadata == {"filename": "example.png", "truncated": False}
+
+
+def test_mcp_text_link_promotion_rejects_symlinks_and_marks_oversize(tmp_path):
+    from personal_agent.mcp.connection import _normalize_call_result
+
+    output = tmp_path / "playwright"
+    output.mkdir()
+    large = output / "large.png"
+    large.write_bytes(b"too-large")
+    linked = output / "linked.png"
+    linked.symlink_to(large)
+
+    class Block:
+        def model_dump(self, **_kwargs):
+            return {"type": "text", "text": "[Large](./large.png) [Link](./linked.png)"}
+
+    result = SimpleNamespace(content=[Block()], structuredContent=None, isError=False)
+    config = MCPServerConfig.from_mapping({
+        "name": "playwright",
+        "command": "npx",
+        "artifact_roots": ["playwright"],
+        "artifact_extensions": [".png"],
+        "max_artifact_bytes": 4,
+    })
+
+    normalized = _normalize_call_result(result, config, work_dir=tmp_path)
+
+    resources = [block for block in normalized.content if block.type == "resource"]
+    assert len(resources) == 1
+    assert resources[0].metadata["truncated"] is True
+
+
 @pytest.mark.asyncio
 async def test_mcp_tool_count_limit_is_enforced():
     class Session:

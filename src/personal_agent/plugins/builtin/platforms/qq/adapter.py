@@ -1,8 +1,7 @@
-"""QQ adapter — generic HTTP bot bridge.
+"""QQ adapter backed by a NapCat-compatible OneBot 11 connection.
 
-The adapter uses a small OneBot-compatible HTTP surface when available:
-send_private_msg / send_group_msg for outbound messages, and a public
-handle_webhook_payload method for future HTTP gateway integration.
+WebSocket carries inbound events and can also carry outbound actions. An
+optional HTTP endpoint remains available for action calls when configured.
 """
 
 from __future__ import annotations
@@ -15,8 +14,10 @@ import logging
 import mimetypes
 import re
 import time
+import uuid
+from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
 import aiohttp
@@ -36,54 +37,338 @@ from personal_agent.tools.url_safety import check_url
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from .companion import NapCatCompanion
+
 
 class QQAdapter(BasePlatformAdapter):
     capabilities = PlatformCapabilities(
         text=True,
         rich_text=True,
         image_send=True,
+        file_send=True,
         audio_send=True,
         video_send=True,
         mention=True,
         reply=True,
         attachments_in=True,
         max_text_length=4000,
+        max_file_bytes=20 * 1024 * 1024,
+        max_attachments=10,
     )
     MAX_MESSAGE_LENGTH = 4000
 
-    def __init__(self, config, db) -> None:
+    def __init__(self, config, db, *, companion: NapCatCompanion | None = None) -> None:
         super().__init__(config, db)
+        self._companion = companion
         self._base_url: str = str(getattr(config, "qq_bot_base_url", "") or "").rstrip("/")
+        self._ws_url: str = str(getattr(config, "qq_bot_ws_url", "") or "").strip()
         self._token: str = str(getattr(config, "qq_bot_token", "") or "")
         self._webhook_secret: str = str(getattr(config, "qq_bot_webhook_secret", "") or "")
         self._session: aiohttp.ClientSession | None = None
+        self._websocket: aiohttp.ClientWebSocketResponse | None = None
+        self._ws_task: asyncio.Task | None = None
+        self._ws_stop = asyncio.Event()
+        self._ws_send_lock = asyncio.Lock()
+        self._pending_actions: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._reconnect_delays = tuple(
+            getattr(config, "platform_reconnect_delays", (1, 2, 5, 10, 30, 60))
+        ) or (1, 2, 5, 10, 30, 60)
+        self._ws_reconnect_attempts = 0
+        self._last_ws_event_at = ""
+        self._self_id = ""
 
     async def connect(self) -> None:
         self._loop = asyncio.get_running_loop()
-        if not self._base_url:
-            error = "QQ bot base URL not configured"
+        if not self._ws_url:
+            error = "QQ bot WebSocket URL not configured"
             logger.warning(error)
             self.mark_connect_error(error, name="qq")
             raise RuntimeError(error)
         timeout = aiohttp.ClientTimeout(total=30)
         self._session = aiohttp.ClientSession(trust_env=True, timeout=timeout)
+        self._ws_stop = asyncio.Event()
+        try:
+            self._websocket = await self._connect_initial_websocket()
+        except Exception:
+            await self._session.close()
+            self._session = None
+            raise
         await self.hooks.fire("on_connect")
         self.mark_connected(name="qq")
-        logger.info("QQ adapter connected via HTTP base_url=%s", self._base_url)
+        self._ws_task = asyncio.create_task(
+            self._websocket_supervisor(self._websocket),
+            name="qq-onebot-websocket",
+        )
+        logger.info(
+            "QQ adapter connected via OneBot WebSocket ws_url=%s action_transport=%s",
+            self._ws_url,
+            "http" if self._base_url else "websocket",
+        )
 
     async def disconnect(self) -> None:
         await self.hooks.fire("on_disconnect")
+        self._ws_stop.set()
+        self._fail_pending_actions("QQ adapter disconnected")
+        if self._websocket is not None:
+            await self._websocket.close()
+            self._websocket = None
+        if self._ws_task is not None:
+            self._ws_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._ws_task
+            self._ws_task = None
         if self._session:
             await self._session.close()
             self._session = None
+        if self._companion is not None:
+            await self._companion.stop()
         self.mark_disconnected()
         logger.info("QQ adapter disconnected")
+
+    async def _connect_initial_websocket(self) -> aiohttp.ClientWebSocketResponse:
+        companion = self._companion
+        if companion is None or not companion.enabled:
+            return await self._open_websocket()
+        try:
+            return await asyncio.wait_for(self._open_websocket(), timeout=3)
+        except Exception as initial_error:
+            started = await companion.ensure_started()
+            logger.info(
+                "Managed NapCat %s; waiting up to %.1fs for OneBot WebSocket",
+                "started" if started else "not relaunched",
+                companion.startup_timeout_seconds,
+            )
+            try:
+                return await self._wait_for_websocket(companion.startup_timeout_seconds)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Managed NapCat did not expose QQ WebSocket {self._ws_url}: {exc}"
+                ) from initial_error
+
+    async def _wait_for_websocket(self, timeout_seconds: float) -> aiohttp.ClientWebSocketResponse:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        last_error: Exception | None = None
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError(last_error or "startup timeout")
+            try:
+                return await asyncio.wait_for(self._open_websocket(), timeout=min(3, remaining))
+            except Exception as exc:
+                last_error = exc
+                await asyncio.sleep(min(1, max(0, remaining)))
+
+    async def _open_websocket(self) -> aiohttp.ClientWebSocketResponse:
+        if self._session is None:
+            raise RuntimeError("QQ HTTP session is not connected")
+        headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
+        try:
+            return await self._session.ws_connect(
+                self._ws_url,
+                headers=headers,
+                heartbeat=30,
+                autoping=True,
+                max_msg_size=16 * 1024 * 1024,
+                timeout=aiohttp.ClientWSTimeout(ws_close=10),
+            )
+        except Exception as exc:
+            error = f"QQ WebSocket connect failed: {type(exc).__name__}: {exc}"
+            self.mark_connect_error(error, name="qq")
+            raise RuntimeError(error) from exc
+
+    async def _websocket_supervisor(
+        self,
+        websocket: aiohttp.ClientWebSocketResponse,
+    ) -> None:
+        current = websocket
+        while not self._ws_stop.is_set():
+            try:
+                await self._consume_websocket(current)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("QQ WebSocket receive loop failed")
+            finally:
+                if self._websocket is current:
+                    self._websocket = None
+                if not current.closed:
+                    await current.close()
+                self._fail_pending_actions("QQ WebSocket disconnected")
+
+            if self._ws_stop.is_set():
+                break
+            self.mark_disconnected()
+            current = await self._reconnect_websocket()
+            if current is None:
+                break
+
+    async def _reconnect_websocket(self) -> aiohttp.ClientWebSocketResponse | None:
+        attempt = 0
+        while not self._ws_stop.is_set():
+            delay = self._reconnect_delays[min(attempt, len(self._reconnect_delays) - 1)]
+            attempt += 1
+            self._ws_reconnect_attempts += 1
+            logger.warning("QQ WebSocket disconnected; reconnecting in %ss", delay)
+            try:
+                await asyncio.wait_for(self._ws_stop.wait(), timeout=float(delay))
+                return None
+            except TimeoutError:
+                pass
+            if self._companion is not None and self._companion.enabled:
+                try:
+                    await self._companion.ensure_started()
+                except Exception as exc:
+                    logger.warning("Managed NapCat restart failed: %s", exc)
+            try:
+                websocket = await self._open_websocket()
+            except Exception as exc:
+                logger.warning("QQ WebSocket reconnect failed: %s", exc)
+                continue
+            self._websocket = websocket
+            self.mark_connected(name="qq")
+            logger.info("QQ WebSocket reconnected after %d attempt(s)", attempt)
+            return websocket
+        return None
+
+    async def _consume_websocket(self, websocket: aiohttp.ClientWebSocketResponse) -> None:
+        async for message in websocket:
+            if message.type == aiohttp.WSMsgType.TEXT:
+                await self._handle_websocket_text(str(message.data or ""))
+            elif message.type == aiohttp.WSMsgType.BINARY:
+                try:
+                    await self._handle_websocket_text(bytes(message.data).decode("utf-8"))
+                except UnicodeDecodeError:
+                    logger.warning("QQ WebSocket ignored non-UTF-8 binary frame")
+            elif message.type == aiohttp.WSMsgType.ERROR:
+                error = websocket.exception()
+                raise RuntimeError(f"QQ WebSocket error: {error}")
+            elif message.type in {aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED}:
+                break
+
+    async def _handle_websocket_text(self, raw: str) -> None:
+        import json
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("QQ WebSocket ignored invalid JSON frame: %s", raw[:200])
+            return
+        if not isinstance(payload, dict):
+            logger.warning("QQ WebSocket ignored non-object frame")
+            return
+        self._last_ws_event_at = _timestamp()
+        if payload.get("self_id") is not None:
+            self._self_id = str(payload.get("self_id") or "")
+
+        echo = str(payload.get("echo") or "")
+        if echo:
+            future = self._pending_actions.pop(echo, None)
+            if future is not None and not future.done():
+                future.set_result(payload)
+            return
+        await self._handle_onebot_payload(payload)
+
+    async def _call_websocket_action(
+        self,
+        action: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        websocket = self._websocket
+        if websocket is None or websocket.closed:
+            raise RuntimeError("QQ WebSocket is not connected")
+        echo = uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        self._pending_actions[echo] = future
+        try:
+            async with self._ws_send_lock:
+                await websocket.send_json({"action": action, "params": params, "echo": echo})
+            return await asyncio.wait_for(future, timeout=30)
+        finally:
+            self._pending_actions.pop(echo, None)
+
+    def _fail_pending_actions(self, reason: str) -> None:
+        pending = list(self._pending_actions.values())
+        self._pending_actions.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(RuntimeError(reason))
+
+    def health_snapshot(self) -> dict[str, Any]:
+        snapshot = super().health_snapshot()
+        websocket = self._websocket
+        snapshot.update({
+            "ws_url": self._ws_url,
+            "ws_connected": bool(websocket is not None and not websocket.closed),
+            "action_transport": "http" if self._base_url else "websocket",
+            "ws_reconnect_attempts": self._ws_reconnect_attempts,
+            "pending_actions": len(self._pending_actions),
+            "last_ws_event_at": self._last_ws_event_at,
+            "self_id": self._self_id,
+            "companion": (
+                self._companion.snapshot()
+                if self._companion is not None
+                else {"mode": "external", "managed": False}
+            ),
+        })
+        return snapshot
 
     async def send(self, chat_id: str, content: str) -> SendResult:
         if not self._session:
             return SendResult(success=False, error="Not connected")
 
         endpoint, payload = self._build_send_request(chat_id, content)
+        try:
+            result = await self._post_json(endpoint, payload)
+            if _is_success_response(result):
+                message_id = result.get("message_id") or (result.get("data") or {}).get("message_id")
+                return SendResult(success=True, message_id=str(message_id) if message_id else None)
+            return SendResult(success=False, error=_response_error(result))
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc))
+
+    async def send_artifact(
+        self,
+        chat_id: str,
+        *,
+        kind: str,
+        path: Path,
+        filename: str,
+        mime_type: str,
+    ) -> SendResult:
+        if not self._session:
+            return SendResult(success=False, error="Not connected")
+        segment_type = {
+            "image": "image",
+            "audio": "record",
+            "video": "video",
+            "file": "file",
+        }.get(kind)
+        if segment_type is None:
+            return SendResult(success=False, error=f"QQ does not support outbound {kind}")
+        try:
+            content = await asyncio.to_thread(path.read_bytes)
+        except OSError as exc:
+            return SendResult(success=False, error=f"QQ artifact read failed: {exc}")
+        if len(content) > self.capabilities.max_file_bytes:
+            return SendResult(
+                success=False,
+                error=f"QQ artifact exceeds {self.capabilities.max_file_bytes} bytes",
+            )
+        segment_data = {
+            "file": f"base64://{base64.b64encode(content).decode('ascii')}",
+        }
+        if kind == "file" and filename:
+            segment_data["name"] = filename
+        chat_type, raw_id = _split_chat_id(chat_id)
+        payload = {
+            "group_id" if chat_type == "group" else "user_id": raw_id,
+            "message": [{
+                "type": segment_type,
+                "data": segment_data,
+            }],
+        }
+        endpoint = "send_group_msg" if chat_type == "group" else "send_private_msg"
         try:
             result = await self._post_json(endpoint, payload)
             if _is_success_response(result):
@@ -162,6 +447,11 @@ class QQAdapter(BasePlatformAdapter):
             logger.warning("QQ webhook signature rejected")
             return False
 
+        return await self._handle_onebot_payload(payload)
+
+    async def _handle_onebot_payload(self, payload: dict[str, Any]) -> bool:
+        """Run an authenticated OneBot event through hooks and message parsing."""
+
         modified = await self.hooks.fire("on_before_parse", payload)
         if modified is not None:
             payload = modified
@@ -186,6 +476,8 @@ class QQAdapter(BasePlatformAdapter):
     async def _post_json(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self._session:
             raise RuntimeError("QQ HTTP session is not connected")
+        if not self._base_url:
+            return await self._call_websocket_action(endpoint, payload)
         headers = {}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
@@ -309,6 +601,10 @@ def _split_chat_id(chat_id: str) -> tuple[str, str]:
         if prefix in {"group", "private"}:
             return prefix, raw
     return "private", value
+
+
+def _timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _onebot_data(ref) -> dict[str, Any]:
