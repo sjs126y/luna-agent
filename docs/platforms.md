@@ -93,19 +93,19 @@ plugins:
 Lumora 作为 OneBot WebSocket 客户端主动连接 NapCat，不需要对外开 webhook 端口。NapCat 的 WebSocket Server 同时推送入站事件并接受 Lumora 的 OneBot action。
 
 1. 在 NapCat WebUI 进入“网络配置”，新建 **WebSocket 服务端**（正向 WS）。
-2. 监听主机填 `0.0.0.0`，端口例如 `3001`，消息上报格式选 `array`。
+2. 监听主机填 `0.0.0.0`，端口建议 `16611`，消息上报格式选 `array`。
 3. 设置一个非空 Token，启用并保存该配置。
 4. 如果希望 action 单独走 HTTP，再新建 **HTTP 服务端**，例如端口 `3000`；这一步可选。
 
 `.env`：
 
 ```dotenv
-QQ_BOT_WS_URL=ws://127.0.0.1:3001
+QQ_BOT_WS_URL=ws://127.0.0.1:16611
 QQ_BOT_BASE_URL=
 QQ_BOT_TOKEN=replace-with-the-same-napcat-token
 ```
 
-Lumora 在 WSL、NapCat 在 Windows 时，先尝试 `127.0.0.1`（WSL mirrored networking）。无法连接时，在 WSL 执行 `ip route show default`，将默认网关 IP 用作 Windows 主机地址，例如 `ws://172.20.64.1:3001`。Windows 防火墙需允许对应端口的本地网络访问，不要把未鉴权的 NapCat 端口暴露到公网。
+Lumora 在 WSL、NapCat 在 Windows 时，先尝试 `127.0.0.1`（WSL mirrored networking）。无法连接时，在 WSL 执行 `ip route show default`，将默认网关 IP 用作 Windows 主机地址，例如 `ws://172.20.64.1:16611`。Windows 防火墙需允许对应端口的本地网络访问，不要把未鉴权的 NapCat 端口暴露到公网。
 
 插件 key：
 
