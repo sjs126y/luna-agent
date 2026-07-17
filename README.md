@@ -388,7 +388,7 @@ python -m compileall -q src/personal_agent
 uv run pytest -q
 ```
 
-当前主干最近一次全量验证结果：`804 passed`。
+当前主干最近一次全量验证结果：`1050 passed, 1 warning`。
 
 ## 文档索引
 
@@ -402,4 +402,5 @@ uv run pytest -q
 | [docs/operations.md](docs/operations.md) | 运行、排错、doctor、常用维护命令。 |
 | [BACKEND_INTERFACE.md](BACKEND_INTERFACE.md) | 后端提供给前端的结构化事件和接口契约。 |
 | [FRONTEND_INTERFACE_REQUIREMENTS.md](FRONTEND_INTERFACE_REQUIREMENTS.md) | 前端提出的后端字段和接口需求。 |
+| [PROJECT_EVOLUTION.md](PROJECT_EVOLUTION.md) | 从原型到当前 Runtime 的阶段性项目变化、代表提交和代码规模。 |
 | [CODEX_HANDOFF.md](CODEX_HANDOFF.md) | 前后端 Codex 协作和交接状态。 |
