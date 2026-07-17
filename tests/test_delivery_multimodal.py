@@ -165,3 +165,24 @@ async def test_pre_delivery_text_replacement_preserves_artifact_parts(tmp_path):
         assert adapter.sent == [("text", "改写后的说明。"), ("image", "image-data")]
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_delivery_hook_can_remove_one_artifact(tmp_path):
+    db, ref, adapter, outbox, service = await _runtime(tmp_path)
+    hooks = HookManager()
+    hooks.register(
+        owner="test",
+        event=HookEvent.PRE_DELIVERY,
+        callback=lambda event: PreDeliveryOutcome.remove_artifacts(ref.artifact_id),
+    )
+    service.hook_manager = hooks
+    try:
+        result = await service.deliver(DeliveryRequest(
+            session_key="wechat:c1:u1",
+            message=_message(ref),
+        ))
+        assert result.delivered
+        assert adapter.sent == [("text", "这是图片。")]
+    finally:
+        await db.close()

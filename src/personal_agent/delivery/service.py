@@ -264,9 +264,16 @@ class DeliveryService:
         if isinstance(outcome, PreDeliveryOutcome):
             if outcome.suppressed:
                 return None
+            removed = set(outcome.removed_artifact_ids)
+            parts = [
+                part for part in message.parts
+                if not (part.artifact_id and part.artifact_id in removed)
+                and not (outcome.text is not None and part.type == "text")
+            ]
             if outcome.text is not None:
-                parts = [part for part in message.parts if part.type != "text"]
-                return OutboundMessage(parts=[MessagePart(type="text", text=outcome.text), *parts])
+                parts.insert(0, MessagePart(type="text", text=outcome.text))
+            if removed or outcome.text is not None:
+                return OutboundMessage(parts=parts)
         return message
 
     async def _post_delivery(self, request, source, result) -> None:
