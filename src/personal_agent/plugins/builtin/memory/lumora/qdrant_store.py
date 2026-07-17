@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 
 _FILTER_PAYLOAD_INDEXES = ("user_id", "profile")
@@ -91,7 +92,7 @@ class QdrantMemoryIndex:
             points = await self.client.search(
                 self.collection, query_vector=vector, query_filter=query_filter, limit=limit
             )
-        return [(str(point.id), float(point.score)) for point in points]
+        return [(_canonical_memory_id(point.id), float(point.score)) for point in points]
 
     async def delete(self, memory_id: str) -> None:
         from qdrant_client.models import PointIdsList
@@ -109,3 +110,11 @@ def _payload_schema_type(value: Any) -> str:
         value = getattr(value, "data_type", value)
     value = getattr(value, "value", value)
     return str(value or "").strip().lower()
+
+
+def _canonical_memory_id(value: Any) -> str:
+    text = str(value)
+    try:
+        return UUID(text).hex
+    except (AttributeError, TypeError, ValueError):
+        return text

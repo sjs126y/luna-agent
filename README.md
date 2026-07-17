@@ -282,8 +282,7 @@ Provider 不只是 base URL 和 model。`ProviderProfile` 描述 provider 能力
 外部记忆保存事实、偏好、事件、关系、承诺和行为。Lumora provider 使用两次 Memory LLM 调用完成提取与变更决策，以 SQLite 保存权威数据和历史，以阿里百炼 embedding + Qdrant 提供语义检索，并与 SQLite FTS5/BM25 通过 RRF 融合。Mem0 provider 直接适配官方依赖；配置或运行条件不满足时自动切换 SQLite + BM25 fallback。知识 RAG 不与个人记忆共用 provider。
 
 ```bash
-uv sync --extra memory-lumora
-# 或
+# Lumora/Qdrant 随默认依赖安装；启用 Mem0 时再安装可选依赖
 uv sync --extra memory-mem0
 ```
 
