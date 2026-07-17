@@ -992,6 +992,8 @@ def _safe_result_metadata(value: dict[str, Any]) -> dict[str, Any]:
             result[key] = str(item)[:200]
         elif isinstance(item, (bool, int, float)) or item is None:
             result[str(key)[:100]] = item
+        elif key == "selected_artifact_ids" and isinstance(item, list):
+            result[key] = [str(value)[:100] for value in item[:10]]
     return result
 
 

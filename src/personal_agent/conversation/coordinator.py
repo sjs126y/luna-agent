@@ -238,6 +238,9 @@ class ConversationCoordinator:
             if result_status == "stopped"
             else SubmissionStatus.FAILED
         )
+        structured_message = getattr(result, "outbound_message", None)
+        if structured_message is not None and not getattr(structured_message, "parts", None):
+            structured_message = None
         return SubmissionOutcome(
             request_id=request.request_id,
             session_key=request.session_key,
@@ -245,6 +248,7 @@ class ConversationCoordinator:
             response=str(getattr(result, "final_response", "") or ""),
             error=str(getattr(result, "error", "") or ""),
             payload={"turn_result": result},
+            message=structured_message,
             started_at=started_at,
         )
 
@@ -302,7 +306,7 @@ class ConversationCoordinator:
         request: SubmissionRequest,
         outcome: SubmissionOutcome,
     ) -> SubmissionOutcome:
-        if request.response_mode != ResponseMode.DELIVER or not outcome.response:
+        if request.response_mode != ResponseMode.DELIVER or not (outcome.response or outcome.message):
             return outcome
         if self.delivery_service is None:
             return SubmissionOutcome(
@@ -318,7 +322,11 @@ class ConversationCoordinator:
         kind = DeliveryKind.COMMAND if outcome.kind == SubmissionKind.COMMAND else DeliveryKind.CONVERSATION
         delivery = await self.delivery_service.deliver(DeliveryRequest(
             session_key=request.session_key,
-            message=OutboundMessage.text(outcome.response),
+            message=(
+                outcome.message
+                if outcome.message is not None and outcome.message.parts
+                else OutboundMessage.text(outcome.response)
+            ),
             kind=kind,
             metadata={"submission_id": request.request_id},
         ))
@@ -332,6 +340,7 @@ class ConversationCoordinator:
             response=outcome.response,
             error=outcome.error or delivery.error,
             payload=payload,
+            message=outcome.message,
             started_at=outcome.started_at,
         )
 

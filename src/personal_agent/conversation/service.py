@@ -17,7 +17,7 @@ from personal_agent.conversation.events import ConversationEvent, EventRecorder,
 from personal_agent.conversation.input import ConversationInput, ensure_conversation_input
 from personal_agent.conversation.steer import SteerManager, SteerSignal
 from personal_agent.conversation.transcript import build_stopped_turn_transcript
-from personal_agent.models.messages import SessionSource
+from personal_agent.models.messages import MessagePart, OutboundMessage, SessionSource
 from personal_agent.multimodal.processor import MultiAttachmentProcessor
 
 TURN_REPORT_HISTORY_LIMIT = 50
@@ -41,6 +41,7 @@ class ConversationTurnResult:
     error: str = ""
     events: list[ConversationEvent] = field(default_factory=list)
     turn_report: dict[str, Any] = field(default_factory=dict)
+    outbound_message: OutboundMessage = field(default_factory=OutboundMessage)
 
 
 class ConversationService:
@@ -250,6 +251,11 @@ class ConversationService:
         status = _turn_status(result, completed=completed, context_overflow=context_overflow)
         error = str(result.get("error") or "")
         final_response = _final_response_for_status(status, result.get("final_response", ""), error)
+        outbound_message = _outbound_message_for_turn(
+            final_response,
+            agent if "agent" in locals() else None,
+            include_artifacts=status == "completed" and completed,
+        )
         was_compressed = bool(ctx.was_compressed) if ctx is not None else False
         should_review_memory = (
             bool(result.get("should_review_memory", ctx.should_review_memory))
@@ -334,6 +340,7 @@ class ConversationService:
             error=error,
             events=list(recorder.events),
             turn_report=turn_report,
+            outbound_message=outbound_message,
         )
 
     def add_steer(self, session_key: str, source, text: str) -> SteerSignal:
@@ -1144,6 +1151,21 @@ def _final_response_for_status(status: str, final_response: Any, error: str = ""
     if status == "failed":
         return f"抱歉，本轮处理出错了：{error}" if error else "抱歉，本轮处理出错了。"
     return EMPTY_FINAL_RESPONSE_MESSAGE
+
+
+def _outbound_message_for_turn(final_response: str, agent, *, include_artifacts: bool) -> OutboundMessage:
+    parts = [MessagePart(type="text", text=str(final_response or ""))]
+    draft = getattr(agent, "_response_draft", None) if agent is not None else None
+    selected = list(getattr(draft, "selected", []) or []) if include_artifacts else []
+    for ref in selected:
+        parts.append(MessagePart(
+            type=str(getattr(ref, "kind", "") or "file"),
+            artifact_id=str(getattr(ref, "artifact_id", "") or ""),
+            name=str(getattr(ref, "filename", "") or ""),
+            mime_type=str(getattr(ref, "mime_type", "") or ""),
+            metadata={"size_bytes": int(getattr(ref, "size_bytes", 0) or 0)},
+        ))
+    return OutboundMessage(parts=parts)
 
 
 def _accepts_event_sink(func: Any) -> bool:

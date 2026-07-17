@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+
+from personal_agent.models.messages import OutboundMessage
 import uuid
 
 from personal_agent.conversation.input import ConversationInput
@@ -116,6 +118,7 @@ class SubmissionOutcome:
     response: str = ""
     error: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
+    message: OutboundMessage | None = None
     started_at: datetime | None = None
     finished_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

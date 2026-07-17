@@ -15,7 +15,8 @@ TOOL_PROTOCOL_PROMPT = (
     "工具调用规则：\n"
     "- 如果需要读取文件、搜索、执行命令、访问外部状态或使用任何可用工具，必须通过 tool call 调用对应工具。\n"
     "- 不要用文字声称已经调用、读取、搜索或执行了工具，除非本轮实际产生了对应 tool call。\n"
-    "- 如果不需要或无法调用工具，请直接说明并回答，不要伪装成已调用工具。"
+    "- 如果不需要或无法调用工具，请直接说明并回答，不要伪装成已调用工具。\n"
+    "- 工具结果返回 artifact_id 且用户要求接收该图片、音频、视频或文件时，先调用 response_attach 选择产物，再正常输出最终文字回复。"
 )
 
 
@@ -75,6 +76,7 @@ class Agent:
     _last_memory_injections: str = ""
     _last_tool_results: list[dict] = field(default_factory=list)
     _artifact_store: Any = None
+    _response_draft: Any = None
 
     # ── pool split (same pool for MVP, separate later) ──
     _llm_pool: Any = None

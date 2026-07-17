@@ -80,6 +80,11 @@ async def build_turn_context(
     agent._last_skill_summaries = ""
     agent._last_memory_injections = ""
     agent._last_tool_results = []
+    from personal_agent.artifacts import TurnResponseDraft
+    agent._response_draft = TurnResponseDraft(
+        session_key=str(getattr(agent, "_memory_session_key", "") or ""),
+        turn_id=resolved_turn_id,
+    )
     agent._hook_turn_id = resolved_turn_id
     agent._hook_additional_contexts = []
     from personal_agent.tools.executor import clear_interrupted

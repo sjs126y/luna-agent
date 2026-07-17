@@ -13,6 +13,7 @@ class MessagePart:
     url: str = ""
     path: str = ""
     file_id: str = ""
+    artifact_id: str = ""
     name: str = ""
     mime_type: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -25,7 +26,7 @@ class MessagePart:
         if self.type == "quote":
             target = self.file_id or self.text or self.name
             return f"[reply:{target}]" if target else "[reply]"
-        detail = self.name or self.url or self.path or self.file_id or self.text
+        detail = self.name or self.artifact_id or self.url or self.path or self.file_id or self.text
         return f"[{self.type}: {detail}]" if detail else f"[{self.type}]"
 
     def to_attachment_ref(self, attachment_id: str = "") -> "AttachmentRef":
@@ -54,6 +55,7 @@ class MessagePart:
             "url": self.url,
             "path": self.path,
             "file_id": self.file_id,
+            "artifact_id": self.artifact_id,
             "name": self.name,
             "mime_type": self.mime_type,
             "metadata": dict(self.metadata),
