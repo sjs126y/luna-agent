@@ -214,6 +214,7 @@ plugins:
       allow_code_execution: false
       connect_timeout_seconds: 120
       call_timeout_seconds: 120
+      max_artifact_bytes: 10485760
 
 mcp:
   enabled: true

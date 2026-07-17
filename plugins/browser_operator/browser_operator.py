@@ -27,6 +27,7 @@ class BrowserOperatorConfig(BaseModel):
     allow_code_execution: bool = False
     connect_timeout_seconds: float = Field(default=120.0, gt=0)
     call_timeout_seconds: float = Field(default=120.0, gt=0)
+    max_artifact_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
 
 
 def register(ctx) -> None:
@@ -51,6 +52,7 @@ def register(ctx) -> None:
         "call_timeout_seconds": config.call_timeout_seconds,
         "allow_network": True,
         "max_tools": 40,
+        "max_artifact_bytes": config.max_artifact_bytes,
     })
     ctx.register_skills("skills")
 

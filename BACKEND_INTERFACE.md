@@ -6,9 +6,11 @@
 
 ## 0. 统一提交边界
 
-后端入口现统一提交 `SubmissionRequest` 到 `ConversationCoordinator`。TUI/CLI 使用 `ResponseMode.RETURN_ONLY`，因此继续直接消费 `ConversationTurnResult` 和本文件定义的事件流；Gateway 使用 `DELIVER`，最终文本由 `DeliveryService` 投递，Adapter 不再返回响应字符串。
+后端入口现统一提交 `SubmissionRequest` 到 `ConversationCoordinator`。TUI/CLI 使用 `ResponseMode.RETURN_ONLY`，因此继续直接消费 `ConversationTurnResult` 和本文件定义的事件流；Gateway 使用 `DELIVER`，最终 `OutboundMessage` 由 `DeliveryService` 投递，Adapter 不再返回响应字符串。
 
 `SubmissionHandle` 会立即提供 accepted receipt，并可异步等待最终 `SubmissionOutcome`。Outcome 的 `kind` 为 `conversation`、`command` 或 `control`；`status` 为 `completed`、`failed`、`cancelled` 或 `rejected`。这套对象目前属于后端应用接口，前端事件协议版本仍为 `1`，现有事件字段没有破坏性变化。
+
+多模态出站保持文本兼容：`ConversationTurnResult.final_response` 和 `SubmissionOutcome.response` 仍为普通字符串；结构化结果分别位于 `ConversationTurnResult.outbound_message` 和 `SubmissionOutcome.message`。`OutboundMessage.parts[]` 的媒体 part 使用宿主管理的 `artifact_id`，不暴露本地路径，也不复用平台 `file_id`。
 
 - `/stop`、`/steer` 不等待当前对话队列，可实时响应。
 - `/mode` 立即修改会话的下一轮策略；当前运行轮次保持启动时快照。
@@ -301,7 +303,7 @@
 - `full_output: string`
 - `output_truncated: boolean`
 - `artifact_count: integer`
-- `artifacts: list[object]`，只包含类型、MIME、编码大小和引用存在性等安全摘要，不包含 base64、完整 URI 或本地路径
+- `artifacts: list[object]`。Runtime 管理的产物包含 `artifact_id`、`kind`、`filename`、`mime_type`、`size_bytes`、`source`、`delivery_eligible`；旧的纯内存结果仍只包含类型、编码大小和引用存在性。两者都不包含 base64、完整 URI 或本地路径
 - `result_metadata: object`，MCP server、远端工具名和结构化内容存在性等安全元数据
 - `count_as_tool: boolean`，透明路由包装器（当前为 `tool_call`）为 `false`；UI 统计实际工具次数时应排除，但仍可保留 trace
 - `guard_stage: string`
@@ -324,6 +326,23 @@
 - `command_preview: string`
 - `url_preview: string`
 - `host: string`
+
+### `artifact_available`
+
+工具或 MCP 产物完成校验并进入 ArtifactStore。字段：
+
+- `tool_name: string`
+- `tool_use_id: string`
+- `artifacts: list[object]`，只包含安全的 `StoredArtifactRef` 摘要
+
+### `response_artifact_selected`
+
+模型通过 `response_attach` 将当前 turn 的 Artifact 选入最终回复。字段：
+
+- `artifact_ids: list[string]`
+- `count: integer`
+
+前端可以用这两个事件展示“产物可用”和“已附加”状态，但不能把 `artifact_id` 当成本地路径读取。
 
 ### `retry`
 
@@ -528,6 +547,32 @@ CLI 说明：
 - `POST /ocr` 请求体为 `{"image_path": "...", "mime_type": "image/png", "language": "auto"}`。
 - `POST /ocr` 成功返回 `{"ok": true, "text": "...", "confidence": 0.92, "blocks": [], "engine": "paddleocr"}`。
 - OCR 服务由用户本地部署，后端只调用 HTTP 接口，不内置 OCR 引擎依赖。
+
+### 出站 Artifact 与 Delivery
+
+LLM 不返回结构化 JSON。工具/MCP 先产生 `ToolArtifact`，后端物化为当前 session/turn 的 `StoredArtifactRef`；模型需要把产物发给用户时调用 `response_attach({artifact_ids: [...]})`，随后照常返回最终文本。没有明确选择的产物不会自动发送。
+
+媒体 `MessagePart` 的稳定字段：
+
+```json
+{
+  "type": "image",
+  "artifact_id": "art_...",
+  "name": "homepage.png",
+  "mime_type": "image/png",
+  "metadata": {"size_bytes": 58241}
+}
+```
+
+Delivery 根据 `PlatformCapabilities` 生成 text/image/file/audio/video operation；不支持的媒体确定性降级为普通文件或明确的文字提示，绝不显示宿主本地路径。Outbox 持久化每个 operation 的状态，已成功 part 在重试和重启恢复后不会再次发送；不确定是否送达的 part 标记 `ambiguous`，不会盲目重试。
+
+`PostDelivery` Hook payload 现包含：
+
+- `partial: boolean`
+- `degraded: boolean`
+- `parts[]`: `index`、`kind`、`success`、`error`、`ambiguous`、`attempts`
+
+平台当前出站能力：微信图片/视频/文件，Telegram 图片/文件/音频/视频，飞书图片/文件，QQ 图片/音频/视频。最终仍以 Adapter 的 `PlatformCapabilities` 为准。
 
 ## 4. Inline Tool Confirmation
 

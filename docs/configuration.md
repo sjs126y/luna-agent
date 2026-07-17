@@ -55,6 +55,7 @@ WEIXIN_TOKEN=
 WEIXIN_ACCOUNT_ID=
 WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
 ```
 
 ## config.yaml
@@ -287,6 +288,18 @@ permissions:
 所有工具和资源授权共享 `grant_ttl_minutes`，只保存在当前会话的内存状态中；切换 Mode、重置/删除会话或服务重启都会清空。
 
 ## 多模态配置
+
+`artifacts` 控制工具、MCP 和 provider 产生的出站文件。Artifact 使用 `data/artifacts/` 受控存储，SQLite 只保存 metadata：
+
+| 字段 | 说明 |
+| --- | --- |
+| `max_file_bytes` | 单个 Artifact 的最大字节数，默认 20 MiB |
+| `max_per_turn` | 每个 turn 最多物化的 Artifact 数，默认 10 |
+| `retention_hours` | 无活跃 Outbox 引用时的保留时间，默认 24 小时 |
+
+Artifact 与入站 `attachments` 是两套方向相反的存储：`attachments` 缓存用户发来的内容，`artifacts` 保存工具准备发给用户的产物。已被 pending/retry/ambiguous Outbox 引用的 Artifact 不会被过期清理。
+
+Browser Operator 的 `max_artifact_bytes` 默认 10 MiB，避免 Playwright 截图先被 MCP 的通用 1 MiB 上限截断；它仍受全局 `artifacts.max_file_bytes` 二次限制。
 
 `multimodal` 控制 gateway/平台附件进入 agent 前的处理方式：
 

@@ -82,3 +82,39 @@ def test_stopped_turn_does_not_include_selected_artifacts():
     agent._response_draft = TurnResponseDraft("cli:user", "turn-1", selected=[])
     message = _outbound_message_for_turn("已停止。", agent, include_artifacts=False)
     assert [part.type for part in message.parts] == ["text"]
+
+
+@pytest.mark.asyncio
+async def test_response_attach_through_executor_emits_selection_event(response_runtime):
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.tools.executor import execute_tool_call_result
+
+    ref = await response_runtime.create(
+        b"report",
+        kind="file",
+        filename="report.txt",
+        mime_type="text/plain",
+        session_key="wechat:user",
+        turn_id="turn-1",
+    )
+    agent = Agent(
+        _memory_session_key="wechat:user",
+        _hook_turn_id="turn-1",
+        _artifact_store=response_runtime,
+        _response_draft=TurnResponseDraft("wechat:user", "turn-1"),
+    )
+    events = EventRecorder()
+
+    result = await execute_tool_call_result(
+        {
+            "id": "attach-1",
+            "name": "response_attach",
+            "input": {"artifact_ids": [ref.artifact_id]},
+        },
+        agent=agent,
+        event_sink=events,
+    )
+
+    assert result.status == "success"
+    selected = [event for event in events.events if event.type == "response_artifact_selected"]
+    assert selected[0].data == {"artifact_ids": [ref.artifact_id], "count": 1}

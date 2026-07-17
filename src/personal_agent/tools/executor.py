@@ -422,6 +422,29 @@ async def execute_tool_call_result(
             result_metadata=_safe_result_metadata(result.result_metadata or {}),
             count_as_tool=bool(entry is None or entry.report_as_tool),
         )
+        stored_summaries = [
+            item.safe_summary()
+            for item in (result.artifacts or [])
+            if getattr(item, "artifact_id", "")
+        ]
+        if stored_summaries:
+            await emit_event(
+                event_sink,
+                "artifact_available",
+                "工具产物已保存",
+                tool_name=result.tool_name,
+                tool_use_id=result.tool_use_id,
+                artifacts=stored_summaries,
+            )
+        selected_ids = list((result.result_metadata or {}).get("selected_artifact_ids") or [])
+        if selected_ids and result.status == "success":
+            await emit_event(
+                event_sink,
+                "response_artifact_selected",
+                "已选择回复附件",
+                artifact_ids=[str(value) for value in selected_ids[:10]],
+                count=len(selected_ids),
+            )
         if one_time_security_context is not None and any(one_time_security_grants):
             from personal_agent.security.evaluator import revoke_grants
 

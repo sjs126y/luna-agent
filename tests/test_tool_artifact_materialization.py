@@ -25,6 +25,8 @@ async def artifact_runtime(tmp_path):
 
 @pytest.mark.asyncio
 async def test_executor_materializes_artifact_and_exposes_only_reference(artifact_runtime):
+    from personal_agent.conversation.events import EventRecorder
+
     async def handler():
         return ToolHandlerOutput(
             text="screenshot captured",
@@ -44,10 +46,12 @@ async def test_executor_materializes_artifact_and_exposes_only_reference(artifac
     ))
     agent = Agent(_memory_session_key="wechat:user", _hook_turn_id="turn-1")
     agent._artifact_store = artifact_runtime
+    events = EventRecorder()
     try:
         result = await execute_tool_call_result(
             {"id": "call-1", "name": "artifact_materialize_demo", "input": {}},
             agent=agent,
+            event_sink=events,
         )
     finally:
         tool_registry.unregister("artifact_materialize_demo")
@@ -61,6 +65,8 @@ async def test_executor_materializes_artifact_and_exposes_only_reference(artifac
     assert ref.artifact_id in visible
     assert "png-data" not in visible
     assert "relative_path" not in visible
+    available = [event for event in events.events if event.type == "artifact_available"]
+    assert available[0].data["artifacts"][0]["artifact_id"] == ref.artifact_id
 
 
 @pytest.mark.asyncio
