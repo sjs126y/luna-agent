@@ -197,16 +197,16 @@ class WeChatAdapter(BasePlatformAdapter):
             uploaded = await self._upload_artifact(chat_id, path, media_type=media_type)
             media = {
                 "encrypt_query_param": uploaded["download_param"],
-                "aes_key": base64.b64encode(uploaded["aes_key"]).decode(),
+                "aes_key": base64.b64encode(uploaded["aes_key"].hex().encode("ascii")).decode("ascii"),
                 "encrypt_type": 1,
             }
             if kind == "image":
                 item = {"type": 2, "image_item": {"media": media, "mid_size": uploaded["cipher_size"]}}
             elif kind == "video":
-                item = {"type": 4, "video_item": {"media": media, "video_size": uploaded["cipher_size"]}}
+                item = {"type": 5, "video_item": {"media": media, "video_size": uploaded["cipher_size"]}}
             else:
                 item = {
-                    "type": 5,
+                    "type": 4,
                     "file_item": {
                         "media": media,
                         "file_name": filename,
@@ -637,8 +637,8 @@ def _media_kind(itype, item: dict | None = None) -> str:
     mapping = {
         2: "image",
         3: "audio",
-        4: "video",
-        5: "file",
+        4: "file",
+        5: "video",
         "image": "image",
         "voice": "audio",
         "audio": "audio",

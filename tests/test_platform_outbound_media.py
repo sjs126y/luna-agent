@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -109,6 +110,11 @@ async def test_wechat_encrypts_upload_and_sends_image_item(tmp_path, monkeypatch
 
     path = tmp_path / "image.png"
     path.write_bytes(b"plain-image")
+    aes_key = bytes.fromhex("00112233445566778899aabbccddeeff")
+    monkeypatch.setattr(
+        "personal_agent.plugins.builtin.platforms.wechat.adapter.secrets.token_bytes",
+        lambda size: aes_key if size == 16 else b"x" * size,
+    )
     adapter = WeChatAdapter(Settings(), db=None)
     api_calls = []
 
@@ -159,4 +165,61 @@ async def test_wechat_encrypts_upload_and_sends_image_item(tmp_path, monkeypatch
     image_item = api_calls[1][1]["msg"]["item_list"][0]
     assert image_item["type"] == 2
     assert image_item["image_item"]["media"]["encrypt_query_param"] == "download-token"
-    assert "aes_key" in image_item["image_item"]["media"]
+    assert image_item["image_item"]["media"]["aes_key"] == base64.b64encode(
+        aes_key.hex().encode("ascii")
+    ).decode("ascii")
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_media_type", "expected_item_type", "payload_key"),
+    [
+        ("file", 3, 4, "file_item"),
+        ("video", 2, 5, "video_item"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_wechat_uses_official_file_and_video_item_types(
+    tmp_path,
+    monkeypatch,
+    kind,
+    expected_media_type,
+    expected_item_type,
+    payload_key,
+):
+    from personal_agent.config import Settings
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    path = tmp_path / f"sample.{kind}"
+    path.write_bytes(b"content")
+    adapter = WeChatAdapter(Settings(), db=None)
+    adapter._send_session = object()
+    captured = {}
+
+    async def upload(chat_id, artifact_path, *, media_type):
+        captured["media_type"] = media_type
+        return {
+            "download_param": "download-token",
+            "aes_key": bytes.fromhex("00112233445566778899aabbccddeeff"),
+            "raw_size": 7,
+            "cipher_size": 16,
+        }
+
+    async def send_item(chat_id, item):
+        captured["item"] = item
+        return SimpleNamespace(success=True, message_id="sent", error="")
+
+    monkeypatch.setattr(adapter, "_upload_artifact", upload)
+    monkeypatch.setattr(adapter, "_send_item", send_item)
+
+    result = await adapter.send_artifact(
+        "wx-user",
+        kind=kind,
+        path=path,
+        filename=path.name,
+        mime_type="application/octet-stream",
+    )
+
+    assert result.success
+    assert captured["media_type"] == expected_media_type
+    assert captured["item"]["type"] == expected_item_type
+    assert payload_key in captured["item"]

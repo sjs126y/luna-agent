@@ -367,8 +367,8 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
             {"type": 1, "text_item": {"text": "see"}},
             {"type": 2, "image_item": {"file_id": "img-1"}},
             {"type": 3, "voice_item": {"file_name": "voice.amr"}},
-            {"type": 4, "video_item": {"media_id": "video-1"}},
-            {"type": 5, "file_item": {"file_name": "report.pdf"}},
+            {"type": 5, "video_item": {"media_id": "video-1"}},
+            {"type": 4, "file_item": {"file_name": "report.pdf"}},
         ],
     })
 
