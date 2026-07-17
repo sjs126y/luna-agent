@@ -115,4 +115,5 @@ tool_registry.register(ToolEntry(
     risk_level="medium",
     usage_hint="Use for a discovered tool that is not directly visible; direct calls remain preferred.",
     is_parallel_safe=False,
+    report_as_tool=False,
 ))

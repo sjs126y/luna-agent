@@ -303,6 +303,7 @@
 - `artifact_count: integer`
 - `artifacts: list[object]`，只包含类型、MIME、编码大小和引用存在性等安全摘要，不包含 base64、完整 URI 或本地路径
 - `result_metadata: object`，MCP server、远端工具名和结构化内容存在性等安全元数据
+- `count_as_tool: boolean`，透明路由包装器（当前为 `tool_call`）为 `false`；UI 统计实际工具次数时应排除，但仍可保留 trace
 - `guard_stage: string`
 - `guard_reason_code: string`
 - `permission_category: string`

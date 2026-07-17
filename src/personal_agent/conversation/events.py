@@ -226,6 +226,7 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("timeout_seconds", "number", "Configured timeout in seconds when available."),
             EventFieldSpec("method", "string", "HTTP method preview for network tools."),
             EventFieldSpec("process_label", "string", "User-facing label for background process tools."),
+            EventFieldSpec("count_as_tool", "boolean", "False for transparent routing wrappers."),
         ),
     ),
     "retry": EventSchema(

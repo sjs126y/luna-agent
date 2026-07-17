@@ -976,6 +976,57 @@ async def test_tool_end_event_includes_guard_metadata_for_success():
 
 
 @pytest.mark.asyncio
+async def test_tool_call_wrapper_is_excluded_from_turn_tool_count():
+    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+
+    from personal_agent.agent.report import AgentTurnReport
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    recorder = EventRecorder()
+
+    async def handler(value: str):
+        return f"real:{value}"
+
+    tool_registry.register(ToolEntry(
+        name="wrapper_count_target",
+        description="real nested tool",
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        handler=handler,
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {
+                "id": "outer-wrapper",
+                "name": "tool_call",
+                "input": {"name": "wrapper_count_target", "arguments": {"value": "ok"}},
+            },
+            agent=MockAgent(),
+            event_sink=recorder,
+        )
+    finally:
+        tool_registry.unregister("wrapper_count_target")
+
+    assert result.status == "success"
+    tool_end_events = [event for event in recorder.events if event.type == "tool_end"]
+    assert [event.data["tool_name"] for event in tool_end_events] == [
+        "wrapper_count_target",
+        "tool_call",
+    ]
+    assert [event.data["count_as_tool"] for event in tool_end_events] == [True, False]
+
+    report = AgentTurnReport()
+    for event in recorder.events:
+        report.apply_event(event)
+    payload = report.as_dict()
+    assert payload["tools"]["total"] == 1
+    assert payload["tool_truth"]["calls_total"] == 1
+    assert payload["tool_truth"]["tool_names"] == ["wrapper_count_target"]
+
+
+@pytest.mark.asyncio
 async def test_structured_tool_output_keeps_artifacts_in_memory_and_redacts_events():
     from personal_agent.conversation.events import EventRecorder
     from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput

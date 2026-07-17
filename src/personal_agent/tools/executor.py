@@ -339,6 +339,7 @@ async def execute_tool_call_result(
     started = _time_module.monotonic()
     tc = _normalize_tool_call(tc)
     name = tc["name"]
+    entry = tool_registry.get(name)
     guard_decision: GuardDecision | None = None
     tool_decision: ToolDecision | None = None
     one_time_security_context = None
@@ -418,6 +419,7 @@ async def execute_tool_call_result(
             artifact_count=len(result.artifacts or []),
             artifacts=[item.safe_summary() for item in (result.artifacts or [])],
             result_metadata=_safe_result_metadata(result.result_metadata or {}),
+            count_as_tool=bool(entry is None or entry.report_as_tool),
         )
         if one_time_security_context is not None and any(one_time_security_grants):
             from personal_agent.security.evaluator import revoke_grants
@@ -439,7 +441,6 @@ async def execute_tool_call_result(
             started=started,
         ))
 
-    entry = tool_registry.get(name)
     if entry is None:
         tool_decision = tool_decision_for_unknown_tool(tc)
         await _emit_tool_decision(event_sink, tool_decision)

@@ -54,3 +54,4 @@ class ToolEntry:
     idempotent: bool | None = None
     is_parallel_safe: bool = True
     is_destructive: bool = False
+    report_as_tool: bool = True

@@ -937,6 +937,25 @@ async def test_turn_report_flags_claimed_tool_use_without_tool_call(provider):
 
 
 @pytest.mark.asyncio
+async def test_turn_report_does_not_treat_tool_advice_as_completed_use(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我建议你读取 README，搜索结果需要进一步验证。",
+            finish_reason="end_turn",
+            usage={"input_tokens": 4, "output_tokens": 8},
+        ),
+    ])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "怎么检查项目？")
+
+    result = await run_conversation(agent, ctx)
+
+    claim = result["turn_report"]["tool_truth"]["assistant_claim"]
+    assert claim["claimed_tool_use"] is False
+    assert claim["claimed_but_no_tool_call"] is False
+
+
+@pytest.mark.asyncio
 async def test_llm_failure_returns_failed_status(provider):
     from personal_agent.conversation.events import EventRecorder
 
