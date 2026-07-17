@@ -396,6 +396,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 platforms=platform_directory,
                 hook_manager=hook_manager,
                 outbox=delivery_outbox,
+                artifact_store=artifact_store,
             )
             delivery_worker = DeliveryWorker(delivery_service, delivery_outbox)
 

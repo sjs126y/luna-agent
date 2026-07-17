@@ -7,6 +7,7 @@ from typing import Any
 import uuid
 
 from personal_agent.models.messages import OutboundMessage
+from personal_agent.delivery.planner import DeliveryOperation
 
 
 class DeliveryKind(StrEnum):
@@ -47,6 +48,18 @@ class PlatformSendResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DeliveryPartResult:
+    index: int
+    operation: DeliveryOperation
+    success: bool
+    message_id: str = ""
+    error: str = ""
+    attempts: int = 0
+    ambiguous: bool = False
+    skipped: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class DeliveryResult:
     delivery_id: str
     session_key: str
@@ -57,6 +70,9 @@ class DeliveryResult:
     error: str = ""
     attempts: int = 0
     ambiguous: bool = False
+    partial: bool = False
+    degraded: bool = False
+    parts: tuple[DeliveryPartResult, ...] = field(default_factory=tuple)
     completed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property

@@ -126,6 +126,23 @@ CREATE TABLE IF NOT EXISTS delivery_outbox (
 CREATE INDEX IF NOT EXISTS idx_delivery_outbox_due
 ON delivery_outbox(status, next_attempt_at, created_at);
 
+CREATE TABLE IF NOT EXISTS delivery_outbox_parts (
+    delivery_id     TEXT NOT NULL REFERENCES delivery_outbox(delivery_id) ON DELETE CASCADE,
+    part_index      INTEGER NOT NULL,
+    operation_json  TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    attempts        INTEGER DEFAULT 0,
+    platform_file_id TEXT DEFAULT '',
+    message_id      TEXT DEFAULT '',
+    last_error      TEXT DEFAULT '',
+    ambiguous       INTEGER DEFAULT 0,
+    updated_at      REAL NOT NULL,
+    PRIMARY KEY (delivery_id, part_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_parts_status
+ON delivery_outbox_parts(delivery_id, status, part_index);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id       TEXT PRIMARY KEY,
     session_key       TEXT NOT NULL,
@@ -169,6 +186,10 @@ class Database:
         await self._ensure_tool_run_columns()
         await self._conn.execute(
             "UPDATE delivery_outbox SET status = 'retry', next_attempt_at = 0 "
+            "WHERE status = 'sending'"
+        )
+        await self._conn.execute(
+            "UPDATE delivery_outbox_parts SET status = 'retry' "
             "WHERE status = 'sending'"
         )
         await self._conn.commit()
@@ -248,6 +269,48 @@ class Database:
             )
             await self._conn.commit()
             return cursor.rowcount == 1
+
+    async def ensure_delivery_parts(self, delivery_id: str, operations: list[dict], *, updated_at: float) -> None:
+        async with self._write_lock:
+            await self._conn.executemany(
+                """INSERT OR IGNORE INTO delivery_outbox_parts
+                   (delivery_id, part_index, operation_json, status, attempts, updated_at)
+                   VALUES (?, ?, ?, 'pending', 0, ?)""",
+                [
+                    (
+                        delivery_id,
+                        int(operation.get("index") or 0),
+                        json.dumps(operation, ensure_ascii=False),
+                        updated_at,
+                    )
+                    for operation in operations
+                ],
+            )
+            await self._conn.commit()
+
+    async def delivery_part_records(self, delivery_id: str) -> list[dict]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM delivery_outbox_parts WHERE delivery_id = ? ORDER BY part_index",
+            (delivery_id,),
+        )
+        return [dict(row) async for row in cursor]
+
+    async def update_delivery_part(self, delivery_id: str, part_index: int, **changes) -> None:
+        allowed = {
+            "status", "attempts", "platform_file_id", "message_id",
+            "last_error", "ambiguous", "updated_at",
+        }
+        values = {key: value for key, value in changes.items() if key in allowed}
+        if not values:
+            return
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        async with self._write_lock:
+            await self._conn.execute(
+                f"UPDATE delivery_outbox_parts SET {assignments} "
+                "WHERE delivery_id = ? AND part_index = ?",
+                (*values.values(), delivery_id, int(part_index)),
+            )
+            await self._conn.commit()
 
     # ── managed artifacts ─────────────────────────────
 

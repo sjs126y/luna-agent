@@ -7,7 +7,14 @@ from dataclasses import dataclass
 import json
 import time
 
-from personal_agent.delivery.models import DeliveryKind, DeliveryRequest, DeliveryResult, DeliveryStatus
+from personal_agent.delivery.models import (
+    DeliveryKind,
+    DeliveryPartResult,
+    DeliveryRequest,
+    DeliveryResult,
+    DeliveryStatus,
+)
+from personal_agent.delivery.planner import DeliveryOperation
 from personal_agent.models.messages import MessagePart, OutboundMessage
 
 
@@ -17,6 +24,18 @@ class OutboxRecord:
     status: str
     attempts: int
     next_attempt_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class OutboxPartRecord:
+    delivery_id: str
+    operation: DeliveryOperation
+    status: str
+    attempts: int
+    message_id: str = ""
+    platform_file_id: str = ""
+    error: str = ""
+    ambiguous: bool = False
 
 
 class DeliveryOutbox:
@@ -49,6 +68,65 @@ class DeliveryOutbox:
 
     async def claim(self, delivery_id: str) -> bool:
         return await self.db.claim_delivery(delivery_id, updated_at=time.time())
+
+    async def ensure_parts(
+        self,
+        delivery_id: str,
+        operations: tuple[DeliveryOperation, ...],
+    ) -> list[OutboxPartRecord]:
+        await self.db.ensure_delivery_parts(
+            delivery_id,
+            [operation.as_dict() for operation in operations],
+            updated_at=time.time(),
+        )
+        return await self.parts(delivery_id)
+
+    async def parts(self, delivery_id: str) -> list[OutboxPartRecord]:
+        rows = await self.db.delivery_part_records(delivery_id)
+        result = []
+        for row in rows:
+            result.append(OutboxPartRecord(
+                delivery_id=str(row["delivery_id"]),
+                operation=DeliveryOperation.from_dict(json.loads(row["operation_json"] or "{}")),
+                status=str(row["status"] or "pending"),
+                attempts=int(row["attempts"] or 0),
+                message_id=str(row["message_id"] or ""),
+                platform_file_id=str(row["platform_file_id"] or ""),
+                error=str(row["last_error"] or ""),
+                ambiguous=bool(row["ambiguous"]),
+            ))
+        return result
+
+    async def record_part_result(self, delivery_id: str, result: DeliveryPartResult) -> OutboxPartRecord:
+        records = await self.parts(delivery_id)
+        current = next((item for item in records if item.operation.index == result.index), None)
+        attempts = (current.attempts if current else 0) + (0 if result.skipped else 1)
+        status = (
+            "delivered" if result.success else
+            "ambiguous" if result.ambiguous else
+            "retry" if attempts < self.max_attempts else
+            "failed"
+        )
+        await self.db.update_delivery_part(
+            delivery_id,
+            result.index,
+            status=status,
+            attempts=attempts,
+            message_id=result.message_id,
+            last_error=result.error,
+            ambiguous=int(result.ambiguous),
+            updated_at=time.time(),
+        )
+        updated = await self.parts(delivery_id)
+        return next(item for item in updated if item.operation.index == result.index)
+
+    async def start_part(self, delivery_id: str, part_index: int) -> None:
+        await self.db.update_delivery_part(
+            delivery_id,
+            part_index,
+            status="sending",
+            updated_at=time.time(),
+        )
 
     async def record_result(self, result: DeliveryResult) -> DeliveryResult:
         record = await self.get(result.delivery_id)
@@ -84,6 +162,10 @@ class DeliveryOutbox:
                 chat_id=result.chat_id,
                 error=result.error,
                 attempts=attempts,
+                ambiguous=ambiguous,
+                partial=result.partial,
+                degraded=result.degraded,
+                parts=result.parts,
             )
         return DeliveryResult(
             delivery_id=result.delivery_id,
@@ -95,6 +177,9 @@ class DeliveryOutbox:
             error=result.error,
             attempts=attempts,
             ambiguous=ambiguous,
+            partial=result.partial,
+            degraded=result.degraded,
+            parts=result.parts,
         )
 
     @staticmethod
