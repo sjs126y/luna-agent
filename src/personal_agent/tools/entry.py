@@ -55,3 +55,5 @@ class ToolEntry:
     is_parallel_safe: bool = True
     is_destructive: bool = False
     report_as_tool: bool = True
+    timeout_seconds: float | None = None
+    timeout_resolver: Callable[[dict[str, Any]], float | None] | None = None

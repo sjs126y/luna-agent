@@ -976,6 +976,61 @@ async def test_tool_end_event_includes_guard_metadata_for_success():
 
 
 @pytest.mark.asyncio
+async def test_entry_timeout_overrides_executor_default():
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    async def slow_handler():
+        await asyncio.sleep(0.05)
+        return "late"
+
+    tool_registry.register(ToolEntry(
+        name="short_timeout_demo",
+        description="short timeout",
+        schema={},
+        handler=slow_handler,
+        timeout_seconds=0.01,
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {"id": "timeout", "name": "short_timeout_demo", "input": {}},
+        )
+    finally:
+        tool_registry.unregister("short_timeout_demo")
+
+    assert result.status == "timeout"
+    assert "0.01s" in result.error
+
+
+def test_tool_call_inherits_nested_tool_timeout():
+    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import _resolve_tool_timeout
+    from personal_agent.tools.registry import tool_registry
+
+    tool_registry.register(ToolEntry(
+        name="long_nested_demo",
+        description="long nested timeout",
+        schema={},
+        handler=lambda: None,
+        timeout_seconds=1800,
+    ))
+    try:
+        wrapper = tool_registry.get("tool_call")
+        resolved = _resolve_tool_timeout(
+            wrapper,
+            {"name": "long_nested_demo", "arguments": {}},
+            None,
+        )
+    finally:
+        tool_registry.unregister("long_nested_demo")
+
+    assert resolved == 1800
+
+
+@pytest.mark.asyncio
 async def test_tool_call_wrapper_is_excluded_from_turn_tool_count():
     import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
 

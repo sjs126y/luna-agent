@@ -326,7 +326,7 @@ async def execute_tool_call_result(
     agent: Any = None,
     event_sink: Any = None,
     confirm: Any = None,
-    timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> ToolExecutionResult:
     """Execute a single tool call through the security pipeline.
 
@@ -340,6 +340,7 @@ async def execute_tool_call_result(
     tc = _normalize_tool_call(tc)
     name = tc["name"]
     entry = tool_registry.get(name)
+    execution_timeout = _resolve_tool_timeout(entry, tc["input"], timeout)
     guard_decision: GuardDecision | None = None
     tool_decision: ToolDecision | None = None
     one_time_security_context = None
@@ -583,7 +584,7 @@ async def execute_tool_call_result(
             raw_result = await _run_handler(
                 entry.handler,
                 tc["input"],
-                timeout=timeout,
+                timeout=execution_timeout,
                 agent=agent,
                 confirm=confirm,
                 event_sink=event_sink,
@@ -607,7 +608,7 @@ async def execute_tool_call_result(
                 tc,
                 status="timeout",
                 category="timeout",
-                error=f"tool '{name}' timed out after {timeout:g}s",
+                error=f"tool '{name}' timed out after {execution_timeout:g}s",
                 attempts=attempts,
                 started=started,
             ))
@@ -997,6 +998,25 @@ async def _run_handler(
         reset_current_tool_confirm(confirm_token)
         reset_current_tool_agent(agent_token)
         _active_tool_executions = max(0, _active_tool_executions - 1)
+
+
+def _resolve_tool_timeout(entry: Any, tool_input: dict[str, Any], explicit: float | None) -> float:
+    if explicit is not None:
+        value = float(explicit)
+        return value if value > 0 else DEFAULT_TOOL_TIMEOUT_SECONDS
+    if entry is not None:
+        resolver = getattr(entry, "timeout_resolver", None)
+        if callable(resolver):
+            try:
+                value = resolver(dict(tool_input or {}))
+                if value is not None and float(value) > 0:
+                    return float(value)
+            except Exception:
+                logger.exception("Tool timeout resolver failed for '%s'", entry.name)
+        value = getattr(entry, "timeout_seconds", None)
+        if value is not None and float(value) > 0:
+            return float(value)
+    return DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
 # ── checkpoint ────────────────────────────────────────

@@ -57,6 +57,7 @@ class MCPServerRuntime:
             config.name,
             self.call_tool,
             server_url=config.url,
+            call_timeout_seconds=config.call_timeout_seconds,
             availability_reason=self.availability_reason,
         )
         self._server_info: MCPServerInfo | None = None
@@ -145,6 +146,13 @@ class MCPServerRuntime:
             result = await connection.call_tool(name, arguments)
             self._last_call_error = "" if not result.is_error else result.text
             return result
+        except asyncio.CancelledError:
+            self._last_call_error = "MCP tool call cancelled; reconnecting transport"
+            self._last_error = self._last_call_error
+            self.state = MCPRuntimeState.RECONNECTING
+            self._registrar.set_available(False)
+            self._reconnect_event.set()
+            raise
         except Exception as exc:
             self._last_call_error = _error_text(exc, self.config)
             self._last_error = self._last_call_error
