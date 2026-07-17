@@ -310,11 +310,11 @@ sandbox:
     qq = next(item for item in report["env"]["platforms"] if item["name"] == "qq")
     assert qq["enabled"] is True
     assert qq["key"] == "platforms/qq"
-    assert qq["required_env"] == ["QQ_BOT_BASE_URL"]
+    assert qq["required_env"] == ["QQ_BOT_WS_URL"]
     assert qq["configured"] is False
     assert qq["status"] == "incomplete"
-    assert qq["missing_env"] == ["QQ_BOT_BASE_URL"]
-    assert "QQ_BOT_BASE_URL" in qq["hint"]
+    assert qq["missing_env"] == ["QQ_BOT_WS_URL"]
+    assert "QQ_BOT_WS_URL" in qq["hint"]
     assert any("平台 qq 缺少环境变量" in warning for warning in report["warnings"])
 
 

@@ -9,7 +9,7 @@ def register(ctx) -> None:
         return QQAdapter(config, db)
 
     def _check(config):
-        return bool(getattr(config, "qq_bot_base_url", ""))
+        return bool(getattr(config, "qq_bot_ws_url", ""))
 
     ctx.register_platform(PlatformEntry(
         name="qq",

@@ -23,6 +23,7 @@ def _settings(tmp_path: Path, **overrides):
         "weixin_user_id": "wx-user",
         "weixin_base_url": "https://ilinkai.weixin.qq.com",
         "qq_bot_base_url": "http://127.0.0.1:5700",
+        "qq_bot_ws_url": "ws://127.0.0.1:5701",
         "qq_bot_token": "",
         "qq_bot_webhook_secret": "",
         "platform_message_dedupe_max_size": 1024,
@@ -418,18 +419,123 @@ async def test_wechat_update_enters_base_message_pipeline_once(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
-async def test_qq_connect_without_base_url_reports_error(tmp_path: Path):
+async def test_qq_connect_without_websocket_url_reports_error(tmp_path: Path):
     from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
-    adapter = QQAdapter(_settings(tmp_path, qq_bot_base_url=""), db=None)
+    adapter = QQAdapter(_settings(tmp_path, qq_bot_ws_url=""), db=None)
 
-    with pytest.raises(RuntimeError, match="base URL"):
+    with pytest.raises(RuntimeError, match="WebSocket URL"):
         await adapter.connect()
 
     health = adapter.health_snapshot()
     assert health["connected"] is False
-    assert "base URL" in health["last_connect_error"]
+    assert "WebSocket URL" in health["last_connect_error"]
     assert health["capabilities"]["image_send"] is True
+
+
+@pytest.mark.asyncio
+async def test_qq_websocket_connect_uses_bearer_token(tmp_path: Path):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path, qq_bot_token="secret"), db=None)
+    calls = []
+
+    class FakeSession:
+        async def ws_connect(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return object()
+
+    adapter._session = FakeSession()
+
+    result = await adapter._open_websocket()
+
+    assert result is not None
+    assert calls[0][0] == "ws://127.0.0.1:5701"
+    assert calls[0][1]["headers"] == {"Authorization": "Bearer secret"}
+    assert calls[0][1]["heartbeat"] == 30
+
+
+@pytest.mark.asyncio
+async def test_qq_websocket_event_enters_message_pipeline(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path, qq_bot_webhook_secret="legacy-secret"), db=None)
+    captured = []
+    monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
+
+    await adapter._handle_websocket_text(json.dumps({
+        "time": 123456,
+        "self_id": 90000,
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": 10001,
+        "message_id": 99,
+        "message": [{"type": "text", "data": {"text": "hello"}}],
+    }))
+
+    assert len(captured) == 1
+    assert captured[0].text == "hello"
+    assert captured[0].source.platform == "qq"
+    assert adapter.health_snapshot()["self_id"] == "90000"
+    assert adapter.health_snapshot()["last_ws_event_at"]
+
+
+@pytest.mark.asyncio
+async def test_qq_websocket_action_matches_echo_without_http(tmp_path: Path):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path, qq_bot_base_url=""), db=None)
+    sent = []
+
+    class FakeWebSocket:
+        closed = False
+
+        async def send_json(self, payload):
+            sent.append(payload)
+            await adapter._handle_websocket_text(json.dumps({
+                "status": "ok",
+                "retcode": 0,
+                "data": {"message_id": 321},
+                "echo": payload["echo"],
+            }))
+
+    adapter._session = object()
+    adapter._websocket = FakeWebSocket()
+
+    result = await adapter.send("private:10001", "hello")
+
+    assert result.success is True
+    assert result.message_id == "321"
+    assert sent[0]["action"] == "send_private_msg"
+    assert sent[0]["params"] == {"user_id": "10001", "message": "hello"}
+    assert sent[0]["echo"]
+    assert adapter._pending_actions == {}
+
+
+@pytest.mark.asyncio
+async def test_qq_websocket_reconnect_retries_until_available(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    adapter = QQAdapter(_settings(tmp_path), db=None)
+    adapter._reconnect_delays = (0,)
+    websocket = SimpleNamespace(closed=False)
+    attempts = 0
+
+    async def fake_open():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("offline")
+        return websocket
+
+    monkeypatch.setattr(adapter, "_open_websocket", fake_open)
+
+    result = await adapter._reconnect_websocket()
+
+    assert result is websocket
+    assert attempts == 2
+    assert adapter.health_snapshot()["connected"] is True
+    assert adapter.health_snapshot()["ws_reconnect_attempts"] == 2
 
 
 @pytest.mark.asyncio

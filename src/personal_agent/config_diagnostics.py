@@ -120,14 +120,14 @@ PLATFORM_ENV = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
     "feishu": ["FEISHU_APP_ID", "FEISHU_APP_SECRET"],
     "wechat": ["WEIXIN_TOKEN", "WEIXIN_ACCOUNT_ID", "WEIXIN_USER_ID"],
-    "qq": ["QQ_BOT_BASE_URL"],
+    "qq": ["QQ_BOT_WS_URL"],
 }
 
 PLATFORM_HINTS = {
     "telegram": "填写 TELEGRAM_BOT_TOKEN，或从 plugins.enabled 移除 platforms/telegram。",
     "feishu": "填写 FEISHU_APP_ID/FEISHU_APP_SECRET，或从 plugins.enabled 移除 platforms/feishu。",
     "wechat": "填写 WEIXIN_TOKEN/WEIXIN_ACCOUNT_ID/WEIXIN_USER_ID，或完成微信凭据初始化。",
-    "qq": "填写 QQ_BOT_BASE_URL，确保 OneBot HTTP 服务地址可用。",
+    "qq": "填写 QQ_BOT_WS_URL，确保 NapCat OneBot WebSocket Server 可用。",
 }
 
 MCP_SERVER_KEYS = {

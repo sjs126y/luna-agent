@@ -550,7 +550,7 @@ def test_init_platform_profiles_generate_platform_specific_env(tmp_path):
     cases = {
         "feishu": ("platforms/feishu", "FEISHU_APP_ID", "TELEGRAM_BOT_TOKEN"),
         "wechat": ("platforms/wechat", "WEIXIN_ACCOUNT_ID", "FEISHU_APP_ID"),
-        "qq": ("platforms/qq", "QQ_BOT_BASE_URL", "FEISHU_APP_ID"),
+        "qq": ("platforms/qq", "QQ_BOT_WS_URL", "FEISHU_APP_ID"),
     }
     for profile, (plugin_key, expected_env, absent_env) in cases.items():
         target = tmp_path / profile

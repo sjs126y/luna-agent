@@ -255,7 +255,7 @@ def test_serve_check_platform_fails_when_enabled_platform_is_incomplete(tmp_path
     data = json.loads(result.output)
     assert data["ok"] is False
     assert data["platforms"][0]["enabled"] is True
-    assert data["platforms"][0]["missing_env"] == ["QQ_BOT_BASE_URL"]
+    assert data["platforms"][0]["missing_env"] == ["QQ_BOT_WS_URL"]
 
 
 def test_serve_check_platform_rejects_unknown_platform(tmp_path, monkeypatch):

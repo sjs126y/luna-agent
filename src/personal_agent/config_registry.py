@@ -383,7 +383,8 @@ def _platform_env_fields() -> tuple[ConfigField, ...]:
         _env_field("WEIXIN_USER_ID", "weixin_user_id", "", "str", "platforms", "WeChat user id."),
         _env_field("WEIXIN_BASE_URL", "weixin_base_url", "https://ilinkai.weixin.qq.com", "str", "platforms", "WeChat API base URL."),
         _env_field("WEIXIN_CDN_BASE_URL", "weixin_cdn_base_url", "https://novac2c.cdn.weixin.qq.com/c2c", "str", "platforms", "WeChat media CDN base URL."),
-        _env_field("QQ_BOT_BASE_URL", "qq_bot_base_url", "", "str", "platforms", "QQ/OneBot HTTP base URL."),
+        _env_field("QQ_BOT_WS_URL", "qq_bot_ws_url", "", "str", "platforms", "QQ/OneBot WebSocket server URL."),
+        _env_field("QQ_BOT_BASE_URL", "qq_bot_base_url", "", "str", "platforms", "Optional QQ/OneBot HTTP action base URL."),
         _env_field("QQ_BOT_TOKEN", "qq_bot_token", "", "str", "platforms", "QQ/OneBot token.", sensitive=True),
         _env_field("QQ_BOT_WEBHOOK_SECRET", "qq_bot_webhook_secret", "", "str", "platforms", "QQ webhook secret.", sensitive=True),
     )
