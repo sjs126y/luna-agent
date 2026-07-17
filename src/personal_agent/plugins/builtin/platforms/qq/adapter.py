@@ -17,7 +17,7 @@ import time
 import uuid
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
 import aiohttp
@@ -37,6 +37,9 @@ from personal_agent.tools.url_safety import check_url
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from .companion import NapCatCompanion
+
 
 class QQAdapter(BasePlatformAdapter):
     capabilities = PlatformCapabilities(
@@ -55,8 +58,9 @@ class QQAdapter(BasePlatformAdapter):
     )
     MAX_MESSAGE_LENGTH = 4000
 
-    def __init__(self, config, db) -> None:
+    def __init__(self, config, db, *, companion: NapCatCompanion | None = None) -> None:
         super().__init__(config, db)
+        self._companion = companion
         self._base_url: str = str(getattr(config, "qq_bot_base_url", "") or "").rstrip("/")
         self._ws_url: str = str(getattr(config, "qq_bot_ws_url", "") or "").strip()
         self._token: str = str(getattr(config, "qq_bot_token", "") or "")
@@ -85,7 +89,7 @@ class QQAdapter(BasePlatformAdapter):
         self._session = aiohttp.ClientSession(trust_env=True, timeout=timeout)
         self._ws_stop = asyncio.Event()
         try:
-            self._websocket = await self._open_websocket()
+            self._websocket = await self._connect_initial_websocket()
         except Exception:
             await self._session.close()
             self._session = None
@@ -117,8 +121,43 @@ class QQAdapter(BasePlatformAdapter):
         if self._session:
             await self._session.close()
             self._session = None
+        if self._companion is not None:
+            await self._companion.stop()
         self.mark_disconnected()
         logger.info("QQ adapter disconnected")
+
+    async def _connect_initial_websocket(self) -> aiohttp.ClientWebSocketResponse:
+        companion = self._companion
+        if companion is None or not companion.enabled:
+            return await self._open_websocket()
+        try:
+            return await asyncio.wait_for(self._open_websocket(), timeout=3)
+        except Exception as initial_error:
+            started = await companion.ensure_started()
+            logger.info(
+                "Managed NapCat %s; waiting up to %.1fs for OneBot WebSocket",
+                "started" if started else "already active",
+                companion.startup_timeout_seconds,
+            )
+            try:
+                return await self._wait_for_websocket(companion.startup_timeout_seconds)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Managed NapCat did not expose QQ WebSocket {self._ws_url}: {exc}"
+                ) from initial_error
+
+    async def _wait_for_websocket(self, timeout_seconds: float) -> aiohttp.ClientWebSocketResponse:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        last_error: Exception | None = None
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError(last_error or "startup timeout")
+            try:
+                return await asyncio.wait_for(self._open_websocket(), timeout=min(3, remaining))
+            except Exception as exc:
+                last_error = exc
+                await asyncio.sleep(min(1, max(0, remaining)))
 
     async def _open_websocket(self) -> aiohttp.ClientWebSocketResponse:
         if self._session is None:
@@ -176,6 +215,11 @@ class QQAdapter(BasePlatformAdapter):
                 return None
             except TimeoutError:
                 pass
+            if self._companion is not None and self._companion.enabled:
+                try:
+                    await self._companion.ensure_started()
+                except Exception as exc:
+                    logger.warning("Managed NapCat restart failed: %s", exc)
             try:
                 websocket = await self._open_websocket()
             except Exception as exc:
@@ -261,6 +305,11 @@ class QQAdapter(BasePlatformAdapter):
             "pending_actions": len(self._pending_actions),
             "last_ws_event_at": self._last_ws_event_at,
             "self_id": self._self_id,
+            "companion": (
+                self._companion.snapshot()
+                if self._companion is not None
+                else {"mode": "external", "managed": False}
+            ),
         })
         return snapshot
 
