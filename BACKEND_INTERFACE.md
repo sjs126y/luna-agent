@@ -1064,7 +1064,21 @@ Review worker payload 提供：
 
 `servers[]` 新增 `initial_attempt_done` 和 `initial_attempt_duration_seconds`。MCP 工具断线后仍可出现在 Tool Catalog，但 `available=false`，`unavailable_reason` 会说明 server 正在 starting、reconnecting、failed 或 stopped，并可附带最近错误。MCP 工具只在下一轮刷新进入 Agent 工具快照，前端不要假定 `core_ready=true` 等于所有 MCP 已连接。
 
-## 15. Compatibility Notes
+## 15. QQ Runtime Diagnostics
+
+QQ/NapCat 平台在 Gateway health 的 `platforms[].adapter_health` 中额外提供：
+
+- `ws_url: string`：当前 OneBot WebSocket Server 地址。
+- `ws_connected: boolean`：WebSocket 入站通道是否实时连接。
+- `action_transport: "http" | "websocket"`：当前 OneBot action 出站通道。
+- `ws_reconnect_attempts: integer`：本进程 WebSocket 重连尝试次数。
+- `pending_actions: integer`：等待 OneBot `echo` 响应的 action 数。
+- `last_ws_event_at: string`：最后收到 WebSocket JSON 帧的本地 ISO 时间。
+- `self_id: string`：最后事件报告的机器人 QQ 号。
+
+QQ 平台现要求 `.env` 配置 `QQ_BOT_WS_URL`。`QQ_BOT_BASE_URL` 为可选 HTTP action 通道；留空时后端通过 WebSocket 发送 action，不影响完整收发。
+
+## 16. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

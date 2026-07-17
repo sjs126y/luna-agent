@@ -88,6 +88,42 @@ plugins:
     - platforms/wechat
 ```
 
+## QQ（NapCat）
+
+Lumora 作为 OneBot WebSocket 客户端主动连接 NapCat，不需要对外开 webhook 端口。NapCat 的 WebSocket Server 同时推送入站事件并接受 Lumora 的 OneBot action。
+
+1. 在 NapCat WebUI 进入“网络配置”，新建 **WebSocket 服务端**（正向 WS）。
+2. 监听主机填 `0.0.0.0`，端口例如 `3001`，消息上报格式选 `array`。
+3. 设置一个非空 Token，启用并保存该配置。
+4. 如果希望 action 单独走 HTTP，再新建 **HTTP 服务端**，例如端口 `3000`；这一步可选。
+
+`.env`：
+
+```dotenv
+QQ_BOT_WS_URL=ws://127.0.0.1:3001
+QQ_BOT_BASE_URL=
+QQ_BOT_TOKEN=replace-with-the-same-napcat-token
+```
+
+Lumora 在 WSL、NapCat 在 Windows 时，先尝试 `127.0.0.1`（WSL mirrored networking）。无法连接时，在 WSL 执行 `ip route show default`，将默认网关 IP 用作 Windows 主机地址，例如 `ws://172.20.64.1:3001`。Windows 防火墙需允许对应端口的本地网络访问，不要把未鉴权的 NapCat 端口暴露到公网。
+
+插件 key：
+
+```yaml
+plugins:
+  enabled:
+    - platforms/qq
+```
+
+检查并启动：
+
+```bash
+uv run personal-agent serve --check-platform qq
+uv run personal-agent serve
+```
+
+启动日志应出现 `QQ adapter connected via OneBot WebSocket`。`doctor` 的 QQ `adapter_health` 会显示 `ws_connected`、`action_transport`、`ws_reconnect_attempts`、`last_ws_event_at` 和 `self_id`。
+
 ## Gateway 状态
 
 `personal-agent doctor` 会展示平台运行状态：
@@ -109,4 +145,3 @@ plugins:
 - `runtime=reconnecting`：连接失败，Gateway 正在按 backoff 重试。
 - `connected=否` 且没有 error：通常是平台未启用或 doctor 没启动 Gateway。
 - `pending` 持续增长：平台能收消息，但 agent 或发送链路处理不过来，需要看 Gateway 和 LLM 日志。
-
