@@ -149,6 +149,7 @@ MCP_SERVER_KEYS = {
     "max_schema_bytes",
     "max_result_chars",
     "max_artifact_bytes",
+    "work_dir",
     "artifact_roots",
     "artifact_extensions",
 }
@@ -635,6 +636,16 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
                 or any(not isinstance(value, str) for value in raw[key])
             ):
                 errors.append(f"{label}.{key} 必须是字符串列表。")
+        if "work_dir" in raw:
+            work_dir = raw["work_dir"]
+            if not isinstance(work_dir, str):
+                errors.append(f"{label}.work_dir 必须是字符串。")
+            elif (
+                Path(work_dir).is_absolute()
+                or _WINDOWS_DRIVE_RE.match(work_dir)
+                or ".." in Path(work_dir).parts
+            ):
+                errors.append(f"{label}.work_dir 必须是 data/mcp 下的相对路径。")
         if transport not in {"stdio", "streamable_http"}:
             errors.append(f"MCP 服务器 {name} 使用不支持的 transport: {transport}")
         elif mcp_enabled and enabled and transport == "stdio" and not command:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -45,6 +46,7 @@ class MCPServerConfig:
     max_schema_bytes: int = 65536
     max_result_chars: int = 100000
     max_artifact_bytes: int = 1048576
+    work_dir: str = ""
     artifact_roots: list[str] = field(default_factory=list)
     artifact_extensions: list[str] = field(default_factory=list)
 
@@ -87,6 +89,7 @@ class MCPServerConfig:
             max_schema_bytes=_positive_int(value.get("max_schema_bytes"), 65536),
             max_result_chars=_positive_int(value.get("max_result_chars"), 100000),
             max_artifact_bytes=_positive_int(value.get("max_artifact_bytes"), 1048576),
+            work_dir=_relative_work_dir(value.get("work_dir")),
             artifact_roots=_string_list(value.get("artifact_roots")),
             artifact_extensions=_normalized_extensions(value.get("artifact_extensions")),
         )
@@ -147,6 +150,16 @@ def _normalized_extensions(value: Any) -> list[str]:
         for item in (entry.strip().lower() for entry in _string_list(value))
         if item
     ]
+
+
+def _relative_work_dir(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("MCP work_dir must be a relative path without '..'")
+    return text
 
 
 def _positive_float(value: Any, default: float) -> float:

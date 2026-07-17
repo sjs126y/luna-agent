@@ -73,7 +73,7 @@
 
 ## Playwright Artifact 断点排查
 
-- 截图成功但只有 `./xxx.png`：确认 Gateway 已重启，Playwright 启动参数包含 `--output-dir playwright`。
+- 截图成功但只有 `./xxx.png`：确认 Gateway 已重启，Playwright 进程 cwd 为 `data/mcp/playwright`，启动参数包含 `--output-dir .`。
 - 正常工具结果应同时保留截图说明，并追加 `Available response artifacts` 及 `artifact_id`。
 - `data/mcp/playwright/` 是 MCP 临时输出目录；真正发送使用的是 `data/artifacts/<artifact_id>/` 中的受控副本。
 - 不要把任意 MCP 的文本路径直接提升为附件；未配置 `artifact_roots` 的 server 必须保持文本行为。

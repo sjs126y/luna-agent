@@ -89,6 +89,26 @@ async def wait_until(predicate, timeout: float = 1.0):
 
 
 @pytest.mark.asyncio
+async def test_runtime_uses_isolated_server_work_dir(tmp_path):
+    runtime = MCPServerRuntime(
+        MCPServerConfig.from_mapping({
+            "name": "browser",
+            "command": "python",
+            "work_dir": "playwright",
+        }),
+        connection_factory=lambda config, callback: FakeConnection(config, callback),
+        work_dir=tmp_path / "mcp",
+    )
+    try:
+        await runtime.start()
+        await runtime.wait_initial_attempt()
+        assert runtime._work_dir == (tmp_path / "mcp" / "playwright").resolve()
+        assert runtime._work_dir.is_dir()
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_runtime_start_does_not_wait_for_initial_connection():
     gate = asyncio.Event()
     created = []

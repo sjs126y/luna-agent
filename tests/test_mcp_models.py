@@ -32,3 +32,19 @@ def test_invalid_transport_is_rejected():
 def test_http_transport_requires_http_url():
     with pytest.raises(ValueError, match=r"http\(s\) URL"):
         MCPServerConfig.from_mapping({"name": "bad", "transport": "streamable_http", "url": "file:///tmp/mcp"})
+
+
+def test_stdio_config_accepts_only_relative_server_work_dir():
+    config = MCPServerConfig.from_mapping({
+        "name": "browser",
+        "command": "npx",
+        "work_dir": "playwright",
+    })
+
+    assert config.work_dir == "playwright"
+    with pytest.raises(ValueError, match="relative path"):
+        MCPServerConfig.from_mapping({
+            "name": "bad",
+            "command": "npx",
+            "work_dir": "../outside",
+        })

@@ -182,8 +182,9 @@ async def test_browser_operator_registers_playwright_and_enforces_policy(tmp_pat
     assert plugin.status == PluginStatus.LOADED
     server = manager.get_mcp_servers()[0]
     assert server.name == "playwright"
-    assert server.args[-2:] == ["--output-dir", "playwright"]
-    assert server.artifact_roots == ["playwright"]
+    assert server.args[-2:] == ["--output-dir", "."]
+    assert server.work_dir == "playwright"
+    assert server.artifact_roots == ["."]
     assert ".png" in server.artifact_extensions
     assert "--browser" not in server.args
     if "--executable-path" in server.args:

@@ -529,6 +529,17 @@ mcp:
     assert report["mcp_servers"][1]["unknown_keys"] == ["extra"]
 
 
+def test_config_report_rejects_mcp_work_dir_escape(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        "mcp:\n  enabled: true\n  servers:\n    - name: bad\n      command: python\n      work_dir: ../outside\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("work_dir 必须是 data/mcp 下的相对路径" in error for error in report["errors"])
+
+
 def test_config_report_validates_mcp_transports_and_duplicate_names(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """
