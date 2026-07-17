@@ -10,9 +10,9 @@
 - `ConversationTurnResult`/`SubmissionOutcome` 新增结构化 `OutboundMessage`，同时保留 `final_response`/`response` 文本兼容；新增 `artifact_available` 和 `response_artifact_selected` 事件。
 - 新增 `DeliveryPlanner` 和 `delivery_outbox_parts`：按平台 capability 规划 text/image/file/audio/video operation，不支持类型确定性降级；已成功 part 在重试和重启后不重复发送，partial/ambiguous 状态进入 PostDelivery 审计。
 - 平台原生出站：微信按腾讯官方 iLink `getuploadurl -> AES-128-ECB CDN upload -> sendmessage` 支持图片/视频/文件；Telegram 支持图片/文件/音频/视频；飞书支持图片/文件；QQ 支持图片/音频/视频。
-- 阶段提交：`997665a`、`4489e70`、`1d95f61`、`9ce254e`、`07bef47`。
+- 阶段提交：`997665a`、`4489e70`、`1d95f61`、`9ce254e`、`07bef47`、`b0a3feb`、`222e335`。
 - Browser Operator 单独允许最多 10 MiB 的 MCP Artifact，避免正常截图先被通用 1 MiB 上限截断；进入 ArtifactStore 后仍受全局 20 MiB 默认上限约束。
-- 自动验证：`1015 passed`；真实 Runtime doctor 通过，17 个启动步骤全部正常、8 个启用 MCP server 全部 ready；新增检查清单 `OUTBOUND_MULTIMODAL_TEST_CHECKLIST.md`，等待微信端工具截图实测后合并。
+- 自动验证：`1016 passed`；真实 Runtime doctor 通过，17 个启动步骤全部正常、8 个启用 MCP server 全部 ready；新增检查清单 `OUTBOUND_MULTIMODAL_TEST_CHECKLIST.md`，等待微信端工具截图实测后合并。
 
 ## 2026-07-17：独立评测问题收口
 
