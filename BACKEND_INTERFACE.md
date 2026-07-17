@@ -550,7 +550,7 @@ CLI 说明：
 
 ### 出站 Artifact 与 Delivery
 
-LLM 不返回结构化 JSON。工具/MCP 先产生 `ToolArtifact`，后端物化为当前 session/turn 的 `StoredArtifactRef`；模型需要把产物发给用户时调用 `response_attach({artifact_ids: [...]})`，随后照常返回最终文本。没有明确选择的产物不会自动发送。对于只返回 Markdown 本地文件链接的 stdio MCP，只有该 server 显式声明的受控 `artifact_roots` 内文件才会物化；前端仍只接收 `artifact_id` 和安全摘要，不接收 MCP 工作目录或 `file://` URI。
+LLM 不返回结构化 JSON。工具/MCP 先产生 `ToolArtifact`，后端物化为当前 session/turn 的 `StoredArtifactRef`；模型需要把产物发给用户时调用 `response_attach({artifact_ids: [...]})`，随后照常返回最终文本。没有明确选择的产物不会自动发送。对于只返回 Markdown 本地文件链接的 stdio MCP，只有该 server 显式声明的受控 `artifact_roots` 内文件才会物化；前端仍只接收 `artifact_id` 和安全摘要，不接收 MCP 工作目录或 `file://` URI。通用 `resource`/`document` 会按可信 MIME 规范为 `image`、`audio`、`video` 或 `file`，前端和平台 adapter 应使用规范后的 `kind`。
 
 媒体 `MessagePart` 的稳定字段：
 

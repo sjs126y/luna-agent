@@ -77,3 +77,5 @@
 - 正常工具结果应同时保留截图说明，并追加 `Available response artifacts` 及 `artifact_id`。
 - `data/mcp/playwright/` 是 MCP 临时输出目录；真正发送使用的是 `data/artifacts/<artifact_id>/` 中的受控副本。
 - 不要把任意 MCP 的文本路径直接提升为附件；未配置 `artifact_roots` 的 server 必须保持文本行为。
+- PNG/JPEG 的 Outbox operation 应为 `kind: image`，不能是 `kind: file, degraded_from: resource`；后者会让微信按文件协议发送图片。
+- 最终文字不得包含 `assistant_final` 或其前面的英文内部分析；Codex Responses 若只有内部通道内容，应触发无工具安全收尾。

@@ -4,6 +4,7 @@ from personal_agent.artifacts.models import (
     ArtifactSource,
     ArtifactStatus,
     StoredArtifactRef,
+    normalize_artifact_kind,
 )
 from personal_agent.artifacts.store import ArtifactStore, ArtifactStoreError
 from personal_agent.artifacts.materializer import materialize_tool_artifact
@@ -16,5 +17,6 @@ __all__ = [
     "ArtifactStoreError",
     "StoredArtifactRef",
     "materialize_tool_artifact",
+    "normalize_artifact_kind",
     "TurnResponseDraft",
 ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from personal_agent.artifacts import normalize_artifact_kind
 from personal_agent.models.messages import OutboundMessage, PlatformCapabilities
 
 
@@ -70,12 +71,13 @@ class DeliveryPlanner:
                 degraded = True
                 continue
 
-            kind = _delivery_kind(part.type, capabilities)
+            requested_kind = normalize_artifact_kind(part.type, part.mime_type)
+            kind = _delivery_kind(requested_kind, capabilities)
             if kind is None:
                 operations.append(_unsupported_operation(len(operations), part, "platform does not support this media type"))
                 degraded = True
                 continue
-            degraded_from = part.type if kind != part.type else ""
+            degraded_from = requested_kind if kind != requested_kind else ""
             degraded = degraded or bool(degraded_from)
             operations.append(DeliveryOperation(
                 index=len(operations),

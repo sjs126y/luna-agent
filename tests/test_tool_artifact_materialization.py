@@ -151,6 +151,7 @@ async def test_mcp_file_resource_becomes_model_visible_artifact_id(
     assert len(result.artifacts) == 1
     artifact = result.artifacts[0]
     assert artifact.filename == screenshot.name
+    assert artifact.kind == "image"
     assert artifact.mime_type == "image/png"
     assert artifact.artifact_id in format_tool_result(result)
     assert (await artifact_runtime.resolve_path(artifact)).read_bytes() == b"playwright-png"

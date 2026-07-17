@@ -19,6 +19,17 @@ class ArtifactSource(StrEnum):
     PLUGIN = "plugin"
 
 
+def normalize_artifact_kind(kind: str, mime_type: str = "") -> str:
+    normalized = str(kind or "file").strip().lower() or "file"
+    if normalized not in {"resource", "document"}:
+        return normalized
+    mime = str(mime_type or "").strip().lower()
+    for media_kind in ("image", "audio", "video"):
+        if mime.startswith(f"{media_kind}/"):
+            return media_kind
+    return "file"
+
+
 @dataclass(frozen=True, slots=True)
 class StoredArtifactRef:
     artifact_id: str

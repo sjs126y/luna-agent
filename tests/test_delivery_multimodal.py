@@ -107,6 +107,29 @@ async def test_delivery_sends_text_and_managed_image_parts(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_delivery_uses_mime_for_legacy_resource_image(tmp_path):
+    db, ref, adapter, outbox, service = await _runtime(tmp_path)
+    message = OutboundMessage(parts=[MessagePart(
+        type="resource",
+        artifact_id=ref.artifact_id,
+        name="legacy.png",
+        mime_type="image/png",
+    )])
+    try:
+        result = await service.deliver(DeliveryRequest(
+            session_key="wechat:c1:u1",
+            message=message,
+        ))
+
+        assert result.status == DeliveryStatus.DELIVERED
+        assert adapter.sent == [("image", "image-data")]
+        parts = await outbox.parts(result.delivery_id)
+        assert parts[0].operation.kind == "image"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_delivery_retry_skips_already_delivered_text_part(tmp_path):
     db, ref, adapter, outbox, service = await _runtime(tmp_path)
     adapter.fail_image_once = True

@@ -4,7 +4,7 @@ import base64
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from personal_agent.artifacts.models import ArtifactSource, StoredArtifactRef
+from personal_agent.artifacts.models import ArtifactSource, StoredArtifactRef, normalize_artifact_kind
 from personal_agent.artifacts.store import ArtifactStore, ArtifactStoreError
 
 
@@ -27,11 +27,12 @@ async def materialize_tool_artifact(
     mcp_server = str(result_metadata.get("mcp_server") or "")
     source = ArtifactSource.MCP.value if mcp_server else ArtifactSource.TOOL.value
     source_name = f"{mcp_server}:{tool_name}" if mcp_server else tool_name
+    mime_type = str(getattr(artifact, "mime_type", "") or "application/octet-stream")
     return await store.create(
         data,
-        kind=str(getattr(artifact, "kind", "") or "file"),
+        kind=normalize_artifact_kind(getattr(artifact, "kind", ""), mime_type),
         filename=str(getattr(artifact, "name", "") or ""),
-        mime_type=str(getattr(artifact, "mime_type", "") or "application/octet-stream"),
+        mime_type=mime_type,
         session_key=session_key,
         turn_id=turn_id,
         source=source,

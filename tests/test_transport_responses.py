@@ -179,6 +179,42 @@ def test_codex_responses_transport_alias_is_registered():
 
 
 @pytest.mark.asyncio
+async def test_codex_responses_hides_flattened_analysis_channel():
+    transport = CodexResponsesTransport(_provider())
+    deltas: list[tuple[str, str]] = []
+
+    async def events():
+        yield {
+            "model": "gpt-test",
+            "output_text": "We need answer the user. assistant_final最终答复。",
+            "status": "completed",
+        }
+
+    async def on_delta(kind: str, chunk: str) -> None:
+        deltas.append((kind, chunk))
+
+    response = await transport.parse_stream(events(), on_delta=on_delta)
+
+    assert response.text == "最终答复。"
+    assert deltas == [("text", "最终答复。")]
+
+
+@pytest.mark.asyncio
+async def test_codex_responses_returns_empty_when_final_channel_has_no_text():
+    transport = CodexResponsesTransport(_provider())
+
+    async def events():
+        yield {
+            "output_text": "We need answer in Chinese. assistant_final",
+            "status": "completed",
+        }
+
+    response = await transport.parse_stream(events())
+
+    assert response.text == ""
+
+
+@pytest.mark.asyncio
 async def test_responses_transport_parses_non_stream_output_text():
     transport = OpenAIResponsesTransport(_provider())
 
