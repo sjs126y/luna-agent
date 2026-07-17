@@ -398,7 +398,11 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 outbox=delivery_outbox,
                 artifact_store=artifact_store,
             )
-            delivery_worker = DeliveryWorker(delivery_service, delivery_outbox)
+            delivery_worker = DeliveryWorker(
+                delivery_service,
+                delivery_outbox,
+                artifact_store=artifact_store,
+            )
 
             async def dispatch_command(request):
                 from personal_agent.commands.runtime import CommandResult, handle_slash_command

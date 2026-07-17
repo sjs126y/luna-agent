@@ -93,6 +93,38 @@ class QQAdapter(BasePlatformAdapter):
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
 
+    async def send_artifact(
+        self,
+        chat_id: str,
+        *,
+        kind: str,
+        path: Path,
+        filename: str,
+        mime_type: str,
+    ) -> SendResult:
+        if not self._session:
+            return SendResult(success=False, error="Not connected")
+        segment_type = {"image": "image", "audio": "record", "video": "video"}.get(kind)
+        if segment_type is None:
+            return SendResult(success=False, error=f"QQ does not support outbound {kind}")
+        chat_type, raw_id = _split_chat_id(chat_id)
+        payload = {
+            "group_id" if chat_type == "group" else "user_id": raw_id,
+            "message": [{
+                "type": segment_type,
+                "data": {"file": path.resolve().as_uri()},
+            }],
+        }
+        endpoint = "send_group_msg" if chat_type == "group" else "send_private_msg"
+        try:
+            result = await self._post_json(endpoint, payload)
+            if _is_success_response(result):
+                message_id = result.get("message_id") or (result.get("data") or {}).get("message_id")
+                return SendResult(success=True, message_id=str(message_id) if message_id else None)
+            return SendResult(success=False, error=_response_error(result))
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc))
+
     async def get_chat_info(self, chat_id: str) -> ChatInfo:
         chat_type, raw_id = _split_chat_id(chat_id)
         if chat_type == "group":

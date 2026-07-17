@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import mimetypes
@@ -20,6 +21,8 @@ from typing import Any
 from urllib.parse import quote
 
 import aiohttp
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
 
 from personal_agent.attachments import DownloadedAttachment
 from personal_agent.attachments.store import DEFAULT_MAX_BYTES
@@ -38,6 +41,7 @@ from personal_agent.tools.url_safety import check_url
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://ilinkai.weixin.qq.com"
+CDN_API_BASE = "https://novac2c.cdn.weixin.qq.com/c2c"
 ILINK_APP_ID = "bot"
 CHANNEL_VERSION = "2.2.0"
 ILINK_APP_CLIENT_VERSION = (2 << 16) | (2 << 8) | 0
@@ -71,9 +75,14 @@ class WeChatAdapter(BasePlatformAdapter):
     supports_code_blocks = True
     capabilities = PlatformCapabilities(
         text=True,
+        image_send=True,
+        file_send=True,
+        video_send=True,
         typing=True,
         attachments_in=True,
         max_text_length=2000,
+        max_file_bytes=20 * 1024 * 1024,
+        max_attachments=10,
     )
     MAX_MESSAGE_LENGTH = 2000
 
@@ -83,6 +92,7 @@ class WeChatAdapter(BasePlatformAdapter):
         self._account_id: str = getattr(config, "weixin_account_id", "") or ""
         self._user_id: str = getattr(config, "weixin_user_id", "") or ""
         self._base_url: str = getattr(config, "weixin_base_url", "") or API_BASE
+        self._cdn_base_url: str = getattr(config, "weixin_cdn_base_url", "") or CDN_API_BASE
 
         self._state_dir = config.agent_data_dir / "wechat"
         self._state_dir.mkdir(parents=True, exist_ok=True)
@@ -168,6 +178,118 @@ class WeChatAdapter(BasePlatformAdapter):
                 error=f"WeChat error ret={result.get('ret')} errcode={result.get('errcode')}")
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
+
+    async def send_artifact(
+        self,
+        chat_id: str,
+        *,
+        kind: str,
+        path: Path,
+        filename: str,
+        mime_type: str,
+    ) -> SendResult:
+        if not self._send_session:
+            return SendResult(success=False, error="Not connected")
+        media_type = {"image": 1, "video": 2, "file": 3}.get(kind)
+        if media_type is None:
+            return SendResult(success=False, error=f"WeChat does not support outbound {kind}")
+        try:
+            uploaded = await self._upload_artifact(chat_id, path, media_type=media_type)
+            media = {
+                "encrypt_query_param": uploaded["download_param"],
+                "aes_key": base64.b64encode(uploaded["aes_key"]).decode(),
+                "encrypt_type": 1,
+            }
+            if kind == "image":
+                item = {"type": 2, "image_item": {"media": media, "mid_size": uploaded["cipher_size"]}}
+            elif kind == "video":
+                item = {"type": 4, "video_item": {"media": media, "video_size": uploaded["cipher_size"]}}
+            else:
+                item = {
+                    "type": 5,
+                    "file_item": {
+                        "media": media,
+                        "file_name": filename,
+                        "len": str(uploaded["raw_size"]),
+                    },
+                }
+            return await self._send_item(chat_id, item)
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc))
+
+    async def _upload_artifact(self, chat_id: str, path: Path, *, media_type: int) -> dict:
+        content = await asyncio.to_thread(path.read_bytes)
+        aes_key = secrets.token_bytes(16)
+        encrypted = AES.new(aes_key, AES.MODE_ECB).encrypt(pad(content, AES.block_size))
+        file_key = secrets.token_hex(16)
+        request = {
+            "filekey": file_key,
+            "media_type": media_type,
+            "to_user_id": chat_id,
+            "rawsize": len(content),
+            "rawfilemd5": hashlib.md5(content).hexdigest(),  # noqa: S324 - protocol field
+            "filesize": len(encrypted),
+            "no_need_thumb": True,
+            "aeskey": aes_key.hex(),
+            "base_info": {"channel_version": CHANNEL_VERSION},
+        }
+        response = await self._api(
+            "ilink/bot/getuploadurl",
+            request,
+            self._send_session,
+            API_TIMEOUT_MS,
+        )
+        upload_url = str(response.get("upload_full_url") or "").strip()
+        if not upload_url:
+            upload_param = str(response.get("upload_param") or "")
+            if not upload_param:
+                raise RuntimeError("WeChat getuploadurl returned no upload URL")
+            upload_url = (
+                f"{self._cdn_base_url.rstrip('/')}/upload"
+                f"?encrypted_query_param={quote(upload_param, safe='')}&filekey={quote(file_key, safe='')}"
+            )
+        async with self._send_session.post(
+            upload_url,
+            data=encrypted,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=aiohttp.ClientTimeout(total=API_TIMEOUT_MS / 1000),
+        ) as uploaded:
+            if uploaded.status != 200:
+                detail = await uploaded.text()
+                raise RuntimeError(f"WeChat CDN upload HTTP {uploaded.status}: {detail[:200]}")
+            download_param = str(uploaded.headers.get("x-encrypted-param") or "")
+            if not download_param:
+                raise RuntimeError("WeChat CDN upload returned no x-encrypted-param")
+        return {
+            "download_param": download_param,
+            "aes_key": aes_key,
+            "raw_size": len(content),
+            "cipher_size": len(encrypted),
+        }
+
+    async def _send_item(self, chat_id: str, item: dict) -> SendResult:
+        client_id = f"pa-weixin-{uuid.uuid4().hex[:12]}"
+        payload = {
+            "base_info": {"channel_version": CHANNEL_VERSION},
+            "msg": {
+                "from_user_id": "",
+                "to_user_id": chat_id,
+                "client_id": client_id,
+                "message_type": 2,
+                "message_state": 2,
+                "item_list": [item],
+            },
+        }
+        context_token = self._context_tokens.get(chat_id)
+        if context_token:
+            payload["msg"]["context_token"] = context_token
+        result = await self._api("ilink/bot/sendmessage", payload, self._send_session, API_TIMEOUT_MS)
+        if result.get("errcode") in (0, None) and result.get("ret") in (0, None):
+            return SendResult(success=True, message_id=client_id)
+        return SendResult(
+            success=False,
+            error=f"WeChat error ret={result.get('ret')} errcode={result.get('errcode')}",
+        )
 
     async def get_chat_info(self, chat_id: str) -> ChatInfo:
         return ChatInfo(chat_id=chat_id, chat_type="dm")

@@ -202,13 +202,24 @@ class DeliveryOutbox:
 
 
 class DeliveryWorker:
-    def __init__(self, service, outbox: DeliveryOutbox, *, poll_interval: float = 1.0) -> None:
+    def __init__(
+        self,
+        service,
+        outbox: DeliveryOutbox,
+        *,
+        poll_interval: float = 1.0,
+        artifact_store=None,
+        artifact_cleanup_interval: float = 300.0,
+    ) -> None:
         self.service = service
         self.outbox = outbox
         self._lock = asyncio.Lock()
         self.poll_interval = max(0.05, float(poll_interval))
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self.artifact_store = artifact_store
+        self.artifact_cleanup_interval = max(10.0, float(artifact_cleanup_interval))
+        self._last_artifact_cleanup = 0.0
 
     def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -236,7 +247,22 @@ class DeliveryWorker:
     async def _run(self) -> None:
         while not self._stop.is_set():
             await self.process_due()
+            await self._cleanup_artifacts_if_due()
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval)
             except asyncio.TimeoutError:
                 pass
+
+    async def _cleanup_artifacts_if_due(self) -> None:
+        if self.artifact_store is None:
+            return
+        now = time.time()
+        if now - self._last_artifact_cleanup < self.artifact_cleanup_interval:
+            return
+        self._last_artifact_cleanup = now
+        try:
+            await self.artifact_store.cleanup_expired(now=now)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Artifact cleanup failed")

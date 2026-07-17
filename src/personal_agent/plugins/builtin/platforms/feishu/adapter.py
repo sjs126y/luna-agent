@@ -9,6 +9,7 @@ import time
 from collections import OrderedDict
 from contextlib import suppress
 from typing import Any
+from pathlib import Path
 
 from personal_agent.platforms.core import (
     BasePlatformAdapter,
@@ -22,11 +23,24 @@ from personal_agent.platforms.attachments import attachment_part
 logger = logging.getLogger(__name__)
 
 
+def _feishu_file_type(filename: str, mime_type: str) -> str:
+    suffix = Path(str(filename or "")).suffix.lower().lstrip(".")
+    if suffix in {"pdf", "doc", "xls", "ppt", "mp4", "opus"}:
+        return suffix
+    if str(mime_type or "").lower() == "video/mp4":
+        return "mp4"
+    return "stream"
+
+
 class FeishuAdapter(BasePlatformAdapter):
     capabilities = PlatformCapabilities(
         text=True,
+        image_send=True,
+        file_send=True,
         attachments_in=True,
         max_text_length=20000,
+        max_file_bytes=20 * 1024 * 1024,
+        max_attachments=10,
     )
 
     def __init__(self, config, db) -> None:
@@ -210,6 +224,64 @@ class FeishuAdapter(BasePlatformAdapter):
             if resp.success():
                 return SendResult(success=True, message_id=resp.data.message_id)
             return SendResult(success=False, error=_response_error(resp))
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc))
+
+    async def send_artifact(
+        self,
+        chat_id: str,
+        *,
+        kind: str,
+        path: Path,
+        filename: str,
+        mime_type: str,
+    ) -> SendResult:
+        if self._lark_client is None:
+            return SendResult(success=False, error="Feishu client not connected")
+        try:
+            import lark_oapi as lark
+
+            with path.open("rb") as stream:
+                if kind == "image":
+                    upload_request = lark.im.v1.CreateImageRequest.builder().request_body(
+                        lark.im.v1.CreateImageRequestBody.builder()
+                        .image_type("message")
+                        .image(stream)
+                        .build()
+                    ).build()
+                    uploaded = self._lark_client.im.v1.image.create(upload_request)
+                    if not uploaded.success():
+                        return SendResult(success=False, error=_response_error(uploaded))
+                    msg_type = "image"
+                    content = {"image_key": uploaded.data.image_key}
+                else:
+                    upload_request = lark.im.v1.CreateFileRequest.builder().request_body(
+                        lark.im.v1.CreateFileRequestBody.builder()
+                        .file_type(_feishu_file_type(filename, mime_type))
+                        .file_name(filename)
+                        .file(stream)
+                        .build()
+                    ).build()
+                    uploaded = self._lark_client.im.v1.file.create(upload_request)
+                    if not uploaded.success():
+                        return SendResult(success=False, error=_response_error(uploaded))
+                    msg_type = "file"
+                    content = {"file_key": uploaded.data.file_key}
+
+            receive_id_type = _receive_id_type(chat_id)
+            request = lark.im.v1.CreateMessageRequest.builder() \
+                .receive_id_type(receive_id_type) \
+                .request_body(
+                    lark.im.v1.CreateMessageRequestBody.builder()
+                    .receive_id(chat_id)
+                    .msg_type(msg_type)
+                    .content(json.dumps(content))
+                    .build()
+                ).build()
+            response = self._lark_client.im.v1.message.create(request)
+            if response.success():
+                return SendResult(success=True, message_id=response.data.message_id)
+            return SendResult(success=False, error=_response_error(response))
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
 

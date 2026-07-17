@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS delivery_outbox_parts (
     delivery_id     TEXT NOT NULL REFERENCES delivery_outbox(delivery_id) ON DELETE CASCADE,
     part_index      INTEGER NOT NULL,
     operation_json  TEXT NOT NULL,
+    artifact_id     TEXT DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'pending',
     attempts        INTEGER DEFAULT 0,
     platform_file_id TEXT DEFAULT '',
@@ -184,6 +185,7 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
         await self._ensure_tool_run_columns()
+        await self._ensure_delivery_part_columns()
         await self._conn.execute(
             "UPDATE delivery_outbox SET status = 'retry', next_attempt_at = 0 "
             "WHERE status = 'sending'"
@@ -207,6 +209,14 @@ class Database:
         }.items():
             if name not in columns:
                 await self._conn.execute(ddl)
+
+    async def _ensure_delivery_part_columns(self) -> None:
+        rows = await self._conn.execute("PRAGMA table_info(delivery_outbox_parts)")
+        columns = {row["name"] async for row in rows}
+        if "artifact_id" not in columns:
+            await self._conn.execute(
+                "ALTER TABLE delivery_outbox_parts ADD COLUMN artifact_id TEXT DEFAULT ''"
+            )
 
     async def close(self) -> None:
         if self._conn:
@@ -274,13 +284,14 @@ class Database:
         async with self._write_lock:
             await self._conn.executemany(
                 """INSERT OR IGNORE INTO delivery_outbox_parts
-                   (delivery_id, part_index, operation_json, status, attempts, updated_at)
-                   VALUES (?, ?, ?, 'pending', 0, ?)""",
+                   (delivery_id, part_index, operation_json, artifact_id, status, attempts, updated_at)
+                   VALUES (?, ?, ?, ?, 'pending', 0, ?)""",
                 [
                     (
                         delivery_id,
                         int(operation.get("index") or 0),
                         json.dumps(operation, ensure_ascii=False),
+                        str(operation.get("artifact_id") or ""),
                         updated_at,
                     )
                     for operation in operations
@@ -361,9 +372,15 @@ class Database:
 
     async def expired_artifacts(self, now: float) -> list[dict]:
         cursor = await self._conn.execute(
-            """SELECT * FROM artifacts
-               WHERE expires_at <= ? AND status NOT IN ('selected')
-               ORDER BY expires_at""",
+            """SELECT a.* FROM artifacts AS a
+               WHERE a.expires_at <= ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM delivery_outbox_parts AS p
+                   JOIN delivery_outbox AS d ON d.delivery_id = p.delivery_id
+                   WHERE p.artifact_id = a.artifact_id
+                     AND d.status IN ('pending', 'retry', 'sending', 'ambiguous')
+                 )
+               ORDER BY a.expires_at""",
             (now,),
         )
         return [dict(row) async for row in cursor]

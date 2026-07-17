@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 
 from personal_agent.platforms.core import (
     BasePlatformAdapter,
@@ -28,8 +29,15 @@ class TelegramAdapter(BasePlatformAdapter):
         text=True,
         markdown=True,
         typing=True,
+        image_send=True,
+        file_send=True,
+        audio_send=True,
+        video_send=True,
         attachments_in=True,
         max_text_length=4096,
+        max_file_bytes=20 * 1024 * 1024,
+        max_attachments=10,
+        media_caption=True,
     )
 
     def __init__(self, config, db) -> None:
@@ -94,6 +102,31 @@ class TelegramAdapter(BasePlatformAdapter):
                     return SendResult(success=True, message_id=str(msg.message_id))
                 except Exception as exc2:
                     return SendResult(success=False, error=str(exc2))
+            return SendResult(success=False, error=str(exc))
+
+    async def send_artifact(
+        self,
+        chat_id: str,
+        *,
+        kind: str,
+        path: Path,
+        filename: str,
+        mime_type: str,
+    ) -> SendResult:
+        if not self._bot:
+            return SendResult(success=False, error="Bot not connected")
+        try:
+            with path.open("rb") as stream:
+                if kind == "image":
+                    message = await self._bot.send_photo(chat_id=chat_id, photo=stream)
+                elif kind == "audio":
+                    message = await self._bot.send_audio(chat_id=chat_id, audio=stream, filename=filename)
+                elif kind == "video":
+                    message = await self._bot.send_video(chat_id=chat_id, video=stream, filename=filename)
+                else:
+                    message = await self._bot.send_document(chat_id=chat_id, document=stream, filename=filename)
+            return SendResult(success=True, message_id=str(message.message_id))
+        except Exception as exc:
             return SendResult(success=False, error=str(exc))
 
     # ── get_chat_info ─────────────────────────────────
