@@ -1,6 +1,14 @@
 # Backend Progress
 
-更新时间：2026-07-17 CST
+更新时间：2026-07-18 CST
+
+## 2026-07-18：本地文件提升为出站 Artifact
+
+- 新增独立核心工具 `artifact_from_file`，把 `write`、`edit`、`bash` 等工具已经生成的普通文件显式复制进当前 turn 的 ArtifactStore，并返回可交给 `response_attach` 的稳定 `artifact_id`。
+- 工具复用统一的 filesystem read 资源审批、sandbox roots 与 blocked paths；目录外访问在资源权限层拒绝，工具自身拒绝受保护路径、符号链接、目录、空文件和超过 ArtifactStore 上限的文件。
+- 保持职责边界：文件写入不会自动附加，`response_attach` 仍只接受当前 session/turn 的 `artifact_id`，Delivery 与平台 adapter 不接触源文件路径。
+- 新增从本地文件物化、ArtifactStore 内容复制、`response_attach` 选择、精确只读资源声明及失败边界测试；聚焦回归 `132 passed`。
+- 阶段提交：`53220ee`。
 
 ## 2026-07-17：出站多模态与 Artifact Delivery
 

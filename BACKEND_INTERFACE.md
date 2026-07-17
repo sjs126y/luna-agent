@@ -552,6 +552,8 @@ CLI 说明：
 
 LLM 不返回结构化 JSON。工具/MCP 先产生 `ToolArtifact`，后端物化为当前 session/turn 的 `StoredArtifactRef`；模型需要把产物发给用户时调用 `response_attach({artifact_ids: [...]})`，随后照常返回最终文本。没有明确选择的产物不会自动发送。对于只返回 Markdown 本地文件链接的 stdio MCP，只有该 server 显式声明的受控 `artifact_roots` 内文件才会物化；前端仍只接收 `artifact_id` 和安全摘要，不接收 MCP 工作目录或 `file://` URI。通用 `resource`/`document` 会按可信 MIME 规范为 `image`、`audio`、`video` 或 `file`，前端和平台 adapter 应使用规范后的 `kind`。
 
+普通工作区文件不会因 `write`、`edit` 或 `bash` 自动进入 ArtifactStore。新增核心工具 `artifact_from_file({path, filename?})`，在统一 filesystem read 权限与 sandbox 检查后复制文件内容，并通过现有 `tool_end.artifacts[]` / `artifact_available` 契约返回当前 turn 的 `artifact_id`。前端无需增加事件类型，也不能直接提交本地路径给 `response_attach`。
+
 媒体 `MessagePart` 的稳定字段：
 
 ```json

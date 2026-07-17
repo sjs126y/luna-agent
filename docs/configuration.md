@@ -328,6 +328,8 @@ permissions:
 
 Artifact 与入站 `attachments` 是两套方向相反的存储：`attachments` 缓存用户发来的内容，`artifacts` 保存工具准备发给用户的产物。已被 pending/retry/ambiguous Outbox 引用的 Artifact 不会被过期清理。
 
+普通文件工具只负责修改工作区，不会自动把每次写入都变成待发送附件。用户明确要求接收某个已有文件时，Agent 使用 `artifact_from_file(path)`；该工具会沿用统一的 filesystem read 权限、sandbox roots 和 blocked paths，拒绝目录、符号链接、空文件及超限文件，并把内容复制进 ArtifactStore。返回的 `artifact_id` 只在当前 session/turn 内可供 `response_attach` 选择。`filename` 只能覆盖展示名称，不能改变源路径。
+
 Browser Operator 的 `max_artifact_bytes` 默认 10 MiB，避免 Playwright 截图先被 MCP 的通用 1 MiB 上限截断；它仍受全局 `artifacts.max_file_bytes` 二次限制。Playwright 返回的相对截图链接会在受控输出目录中物化，并向当前 turn 返回可供 `response_attach` 使用的 `artifact_id`。
 
 `multimodal` 控制 gateway/平台附件进入 agent 前的处理方式：
