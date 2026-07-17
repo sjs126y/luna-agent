@@ -141,6 +141,21 @@ def test_openai_cached_tokens_are_normalized():
     assert usage["cache_read_tokens"] == 80
     assert usage["cache_miss_tokens"] == 120
     assert usage["cache_hit_rate"] == 0.4
+    assert usage["cache_usage_reported"] is True
+
+
+def test_missing_provider_cache_fields_are_not_reported_as_zero_hit_evidence():
+    provider = provider_registry.get("openai", _settings("openai", "gpt-test"))
+    transport = ChatCompletionsTransport(provider)
+
+    usage = transport.normalize_usage({
+        "prompt_tokens": 200,
+        "completion_tokens": 10,
+    })
+
+    assert usage["cache_hit_tokens"] == 0
+    assert usage["cache_hit_rate"] == 0.0
+    assert usage["cache_usage_reported"] is False
 
 
 def test_cache_diagnostics_hash_stability_for_system_and_tools():

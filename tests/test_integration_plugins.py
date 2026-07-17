@@ -121,7 +121,12 @@ async def test_browser_operator_registers_playwright_and_enforces_policy(tmp_pat
     plugin = next(item for item in manager.list_plugins() if item.key == key)
 
     assert plugin.status == PluginStatus.LOADED
-    assert [item.name for item in manager.get_mcp_servers()] == ["playwright"]
+    server = manager.get_mcp_servers()[0]
+    assert server.name == "playwright"
+    assert "--browser" not in server.args
+    if "--executable-path" in server.args:
+        executable = Path(server.args[server.args.index("--executable-path") + 1])
+        assert executable.is_file()
     assert set(plugin.skills_registered) == {
         "inspect-web-page", "test-web-page", "operate-web-page",
     }
@@ -138,6 +143,8 @@ async def test_browser_operator_registers_playwright_and_enforces_policy(tmp_pat
     assert outside.blocked and "allowlist" in outside.reason
     assert upload.blocked and "uploads" in upload.reason
     assert allowed.blocked is False
+    status = await manager.execute_command("browser-status", scope="cli")
+    assert "readiness:" in status
     manager.unload_plugin(key)
 
 

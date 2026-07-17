@@ -183,7 +183,8 @@ plugins:
     integrations/browser-operator:
       command: "npx"
       package: "@playwright/mcp@0.0.78"
-      browser: "chromium"
+      browser: "chromium"          # chromium 表示 Playwright 默认浏览器，不会传无效的 --browser chromium
+      executable_path: ""          # 可选；留空时自动查找 ~/.cache/ms-playwright 下的 Chromium
       headless: true
       isolated: true
       allowed_domains: []          # 空列表表示只使用核心网络策略

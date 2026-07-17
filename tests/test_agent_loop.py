@@ -143,6 +143,10 @@ async def test_simple_response(provider):
     assert report["llm"]["output_tokens"] == 3
     assert report["llm"]["cache_hit_tokens"] == 0
     assert report["llm"]["cache_hit_rate"] == 0.0
+    assert report["llm"]["cache_diagnostics"]["usage_reported"] is False
+    assert report["llm"]["cache_diagnostics"]["usage_interpretation"] == (
+        "provider_did_not_report_cache_usage"
+    )
     assert report["tools"]["total"] == 0
     assert report["tool_truth"]["calls_total"] == 0
     assert report["tool_truth"]["results_total"] == 0

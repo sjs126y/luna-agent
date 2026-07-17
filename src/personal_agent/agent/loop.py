@@ -250,6 +250,14 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             if hasattr(agent._transport, "last_cache_diagnostics")
             else {}
         )
+        cache_diagnostics = dict(cache_diagnostics or {})
+        cache_usage_reported = bool(response.usage.get("cache_usage_reported", False))
+        cache_diagnostics["usage_reported"] = cache_usage_reported
+        cache_diagnostics["usage_interpretation"] = (
+            "provider_reported"
+            if cache_usage_reported
+            else "provider_did_not_report_cache_usage"
+        )
         await emit_event(
             report_recorder,
             "llm_end",

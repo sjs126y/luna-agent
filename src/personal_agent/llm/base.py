@@ -178,6 +178,18 @@ class BaseTransport(ABC):
             cache_miss_tokens = input_tokens - cache_hit_tokens
 
         cache_hit_rate = (cache_hit_tokens / input_tokens) if input_tokens else 0.0
+        cache_usage_paths = {
+            *field_map.values(),
+            "cache_hit_tokens",
+            "prompt_cache_hit_tokens",
+            "prompt_cache_miss_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "prompt_tokens_details.cached_tokens",
+        }
+        cache_usage_reported = any(
+            _path_exists(raw_usage, path) for path in cache_usage_paths if path
+        )
         return {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -186,6 +198,7 @@ class BaseTransport(ABC):
             "cache_write_tokens": cache_write_tokens,
             "cache_read_tokens": cache_read_tokens,
             "cache_hit_rate": cache_hit_rate,
+            "cache_usage_reported": cache_usage_reported,
         }
 
     def cache_diagnostics(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -226,6 +239,15 @@ class BaseTransport(ABC):
 def stable_request_hash(value: Any, *, length: int = 16) -> str:
     payload = json.dumps(_sanitize_for_hash(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()[:length]
+
+
+def _path_exists(value: Any, path: str) -> bool:
+    current = value
+    for part in str(path or "").split("."):
+        if not part or not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return True
 
 
 def _sanitize_for_hash(value: Any) -> Any:
