@@ -30,6 +30,11 @@ storage:
   data_dir: "./data"
   log_level: "INFO"
 
+artifacts:
+  max_file_bytes: 20971520       # 20 MiB per managed outbound artifact
+  max_per_turn: 10
+  retention_hours: 24
+
 compression:
   engine: "compressor"       # compressor (built-in) | lcm (future)
   model: ""                  # empty = use main model; set = cheap model

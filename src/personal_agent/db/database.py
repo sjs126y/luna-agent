@@ -125,6 +125,33 @@ CREATE TABLE IF NOT EXISTS delivery_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_delivery_outbox_due
 ON delivery_outbox(status, next_attempt_at, created_at);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    artifact_id       TEXT PRIMARY KEY,
+    session_key       TEXT NOT NULL,
+    turn_id           TEXT NOT NULL,
+    owner_id          TEXT DEFAULT '',
+    kind              TEXT NOT NULL,
+    filename          TEXT NOT NULL,
+    mime_type         TEXT DEFAULT '',
+    size_bytes        INTEGER NOT NULL,
+    content_hash      TEXT NOT NULL,
+    relative_path     TEXT NOT NULL,
+    source            TEXT DEFAULT 'tool',
+    source_name       TEXT DEFAULT '',
+    status            TEXT DEFAULT 'candidate',
+    delivery_eligible INTEGER DEFAULT 1,
+    truncated         INTEGER DEFAULT 0,
+    metadata_json     TEXT DEFAULT '{}',
+    created_at        REAL NOT NULL,
+    expires_at        REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_turn
+ON artifacts(session_key, turn_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_expiry
+ON artifacts(status, expires_at);
 """
 
 
@@ -221,6 +248,67 @@ class Database:
             )
             await self._conn.commit()
             return cursor.rowcount == 1
+
+    # ── managed artifacts ─────────────────────────────
+
+    async def insert_artifact(self, ref) -> None:
+        async with self._write_lock:
+            await self._conn.execute(
+                """INSERT INTO artifacts
+                   (artifact_id, session_key, turn_id, owner_id, kind, filename,
+                    mime_type, size_bytes, content_hash, relative_path, source,
+                    source_name, status, delivery_eligible, truncated, metadata_json,
+                    created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    ref.artifact_id, ref.session_key, ref.turn_id, ref.owner_id,
+                    ref.kind, ref.filename, ref.mime_type, ref.size_bytes,
+                    ref.content_hash, ref.relative_path, ref.source, ref.source_name,
+                    ref.status, int(ref.delivery_eligible), int(ref.truncated),
+                    json.dumps(ref.metadata or {}, ensure_ascii=False),
+                    ref.created_at, ref.expires_at,
+                ),
+            )
+            await self._conn.commit()
+
+    async def artifact_record(self, artifact_id: str) -> dict | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM artifacts WHERE artifact_id = ?",
+            (artifact_id,),
+        )
+        async for row in cursor:
+            return dict(row)
+        return None
+
+    async def count_turn_artifacts(self, session_key: str, turn_id: str) -> int:
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) AS count FROM artifacts WHERE session_key = ? AND turn_id = ?",
+            (session_key, turn_id),
+        )
+        row = await cursor.fetchone()
+        return int(row["count"] if row else 0)
+
+    async def update_artifact_status(self, artifact_id: str, status: str) -> None:
+        async with self._write_lock:
+            await self._conn.execute(
+                "UPDATE artifacts SET status = ? WHERE artifact_id = ?",
+                (status, artifact_id),
+            )
+            await self._conn.commit()
+
+    async def expired_artifacts(self, now: float) -> list[dict]:
+        cursor = await self._conn.execute(
+            """SELECT * FROM artifacts
+               WHERE expires_at <= ? AND status NOT IN ('selected')
+               ORDER BY expires_at""",
+            (now,),
+        )
+        return [dict(row) async for row in cursor]
+
+    async def delete_artifact(self, artifact_id: str) -> None:
+        async with self._write_lock:
+            await self._conn.execute("DELETE FROM artifacts WHERE artifact_id = ?", (artifact_id,))
+            await self._conn.commit()
 
     # ── sessions ──────────────────────────────────────
 

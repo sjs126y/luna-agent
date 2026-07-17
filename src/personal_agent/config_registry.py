@@ -404,6 +404,9 @@ def _storage_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("storage.data_dir", "agent_data_dir", "./data", "path", "storage", "Runtime data directory."),
         _yaml_field("storage.log_level", "log_level", "INFO", "str", "storage", "Log level."),
+        _yaml_field("artifacts.max_file_bytes", "artifact_max_file_bytes", 20971520, "int", "artifacts", "Maximum managed artifact size in bytes.", minimum=1),
+        _yaml_field("artifacts.max_per_turn", "artifact_max_per_turn", 10, "int", "artifacts", "Maximum managed artifacts produced per turn.", minimum=1),
+        _yaml_field("artifacts.retention_hours", "artifact_retention_hours", 24, "int", "artifacts", "Artifact retention period in hours.", minimum=1),
     )
 
 

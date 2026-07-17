@@ -8,6 +8,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 
+from personal_agent.artifacts import ArtifactStore
 from personal_agent.config import Settings
 from personal_agent.db.database import Database
 from personal_agent.gateway.compression_chain import CompressionChain
@@ -36,6 +37,7 @@ BOOT_STEP_NAMES: tuple[str, ...] = (
     "audit",
     "mcp",
     "database",
+    "artifact_store",
     "compression_chain",
     "session_store",
     "system_files",
@@ -170,6 +172,7 @@ class AppRuntime:
     hook_manager: HookManager
     plugin_manager: PluginManager
     db: Database
+    artifact_store: ArtifactStore
     compression_chain: CompressionChain
     session_store: SessionStore
     memory_manager: MemoryManager
@@ -271,6 +274,11 @@ class AppRuntime:
             "gateway": gateway,
             "coordinator": self.conversation_coordinator.snapshot(),
             "delivery": self.platform_directory.snapshot(),
+            "artifacts": {
+                "root": str(self.artifact_store.root),
+                "max_file_bytes": self.artifact_store.max_file_bytes,
+                "max_per_turn": self.artifact_store.max_artifacts_per_turn,
+            },
             "activity": activity_snapshot(gateway_snapshot=gateway),
             "turns": turns,
             "llm_cache": _llm_cache_health_snapshot(self.settings, turns),
@@ -336,6 +344,15 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
         with boot_report.step("database", str(data_dir / "state.db")):
             db = Database(data_dir / "state.db")
             await db.initialize()
+        with boot_report.step("artifact_store", str(data_dir / "artifacts")):
+            artifact_store = ArtifactStore(
+                data_dir / "artifacts",
+                db,
+                max_file_bytes=settings.artifact_max_file_bytes,
+                max_artifacts_per_turn=settings.artifact_max_per_turn,
+                retention_hours=settings.artifact_retention_hours,
+            )
+            await artifact_store.initialize()
 
         with boot_report.step("compression_chain", str(data_dir / "compression_chain.json")):
             compression_chain = CompressionChain(data_dir / "compression_chain.json")
@@ -404,6 +421,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 hook_manager=hook_manager,
                 plugin_manager=plugin_manager,
                 db=db,
+                artifact_store=artifact_store,
                 compression_chain=compression_chain,
                 session_store=session_store,
                 memory_manager=memory_manager,
