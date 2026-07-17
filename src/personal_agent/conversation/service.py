@@ -16,6 +16,7 @@ from personal_agent.attachments import AttachmentStore
 from personal_agent.conversation.events import ConversationEvent, EventRecorder, emit_event
 from personal_agent.conversation.input import ConversationInput, ensure_conversation_input
 from personal_agent.conversation.steer import SteerManager, SteerSignal
+from personal_agent.conversation.transcript import build_stopped_turn_transcript
 from personal_agent.models.messages import SessionSource
 from personal_agent.multimodal.processor import MultiAttachmentProcessor
 
@@ -254,6 +255,7 @@ class ConversationService:
             else False
         )
 
+        persistence_summary: dict[str, Any] = {"partial": False}
         if status == "completed" and completed and not context_overflow:
             if was_compressed:
                 stored_session_id = await self.session_store.create_compressed_session(
@@ -266,12 +268,27 @@ class ConversationService:
                     current_id, result["messages"], previous_count
                 )
                 stored_session_id = current_id
+        elif status == "stopped" and ctx is not None:
+            partial = build_stopped_turn_transcript(
+                list(result.get("messages") or ctx.messages),
+                current_turn_user_idx=getattr(ctx, "current_turn_user_idx", None),
+                user_text=user_input.text,
+                stop_text=final_response,
+            )
+            await self.session_store.save_transcript(
+                current_id, history + partial.messages, previous_count
+            )
+            stored_session_id = current_id
+            persistence_summary = partial.summary
         else:
             minimal_messages = _minimal_turn_messages(user_input.text, final_response)
             await self.session_store.save_transcript(
                 current_id, history + minimal_messages, previous_count
             )
             stored_session_id = current_id
+        result["persistence"] = persistence_summary
+        if isinstance(result.get("turn_report"), dict) and result["turn_report"]:
+            result["turn_report"]["persistence"] = dict(persistence_summary)
         await emit_event(
             recorder,
             "turn_end",
@@ -281,6 +298,8 @@ class ConversationService:
             completed=completed,
             was_compressed=was_compressed,
             context_overflow=context_overflow,
+            partial=bool(persistence_summary.get("partial")),
+            messages_saved=int(persistence_summary.get("messages_saved") or 0),
         )
 
         turn_report = dict(result.get("turn_report") or {})
