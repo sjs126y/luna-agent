@@ -1,6 +1,6 @@
 # 架构说明
 
-> 2026-07-16：会话与发送主链路已重构。本文后续历史章节中若出现 Gateway busy state、Adapter 会话队列、`ConversationService` 持有 SteerManager 或 Cron 调用 `Gateway._handle_message()`，均以本节的新结构为准。
+> 2026-07-17：会话与发送主链路已经收尾。Adapter 旧队列/重试、Gateway busy state 和兼容 Agent 路径均已删除；所有入口以本节的新结构为准。
 
 ## 统一 Conversation Runtime
 
@@ -24,7 +24,7 @@ Gateway / TUI / CLI / Cron / Active Plugin
 
 Gateway 负责平台连接、鉴权、入站 Hook、附件准备与请求规范化。新 Runtime 下 Adapter 只转发入站并执行平台单次发送，不再决定会话忙碌、steer 旁路或 Agent 排队。
 
-Delivery 使用 `SessionDirectory` 从 session 解析平台目标，执行 `PreDelivery/PostDelivery`，并在发送前写入 Outbox。AUTH、APPROVAL、SYSTEM 类型跳过插件可变 Hook；临时失败后台重试，不确定超时标记 ambiguous，Outbox 通过原子 claim 避免重复消费者。
+Delivery 使用 `SessionDirectory` 从 session 解析平台目标，执行 `PreDelivery/PostDelivery`，并在发送前写入 Outbox。AUTH、APPROVAL、SYSTEM 类型跳过插件可变 Hook；临时失败后台重试，超时或部分分段已送达标记 ambiguous，Outbox 通过原子 claim 避免重复消费者。重试次数由 `gateway.delivery_max_attempts` 控制。
 
 这份文档对应 README 里的 `Runtime Flow`，用于帮助开发者理解 Lumora 内部怎么从“用户输入”流转到“模型调用、工具执行、持久化和观测”。
 
@@ -85,13 +85,10 @@ Gateway 负责：
 - 创建和连接 adapter。
 - 管理平台连接状态和重连。
 - 做平台用户鉴权。
-- 维护平台 session key。
-- 处理 pending message 和 busy session。
+- 将平台来源绑定到逻辑 session key。
 - 处理平台侧异步工具确认。
-- 允许 `/stop`、`/steer`、确认回复旁路 busy check。
 - 授权通过后触发 adapter 准备附件。
-- 调用 `ConversationService`。
-- 将最终回复交给 adapter 发送。
+- 构造 `SubmissionRequest` 并提交 Coordinator。
 
 平台 adapter 负责：
 
@@ -101,6 +98,7 @@ Gateway 负责：
 - 把平台消息解析为统一事件。
 - 把平台图片、文件、语音等解析为 attachment ref。
 - 在平台支持时下载附件或获取下载 URL。
+- 按平台最大长度编码和分段逻辑消息，但不负责失败重试。
 
 关键边界：
 
@@ -199,11 +197,15 @@ PluginManager 负责插件生命周期：
 
 ## 会话层
 
-会话层负责“这条输入属于哪个会话、要不要执行命令、是否进入 agent、结果如何保存”。
+会话层负责“这条输入属于哪个会话、如何排队、要不要执行命令、是否进入 agent、结果如何保存与投递”。
+
+### ConversationCoordinator
+
+`ConversationCoordinator` 是 CLI、TUI、Gateway、Cron 和主动插件共享的应用入口。它负责同 session 串行、跨 session 并发、命令执行通道、`/stop`/`/steer` 实时控制、每轮策略快照，以及根据 `ResponseMode` 返回或交给 Delivery。
 
 ### ConversationService
 
-`ConversationService` 是 CLI、Gateway、未来 Desktop/Web 的统一入口。
+`ConversationService` 是单轮对话执行边界，由 Coordinator 调用。
 
 核心职责：
 
@@ -217,7 +219,6 @@ PluginManager 负责插件生命周期：
 - 保存 transcript。
 - 记录 turn report。
 - 记录 tool runs。
-- 管理 steer。
 - 提供 query service。
 
 入口方法：
@@ -256,7 +257,7 @@ Slash command 共用 command registry，但不同入口需要不同 runtime。
 - stop agents。
 - plugin command kwargs。
 
-Gateway 会有自己的 command runtime，因为它要处理平台 session、pending confirmation 和 busy state。
+Gateway 会有自己的 command runtime，因为它要处理平台 session 和 pending confirmation；命令的并发与 barrier 语义由 Coordinator 统一决定。
 
 ### Slash command path
 
@@ -274,6 +275,7 @@ Gateway 会有自己的 command runtime，因为它要处理平台 session、pen
 
 ```text
 entry
+  -> ConversationCoordinator
   -> ConversationService
   -> SessionStore
   -> get_or_create_agent
@@ -435,11 +437,9 @@ Skill 影响模型上下文，不直接绕过工具执行。
 - 产出 final response。
 - 产出 turn report。
 
-### SteerManager
+### ActiveTurnRegistry
 
-`SteerManager` 属于 `ConversationService`，按 `session_key` 和 `turn_id` 管理运行中修正。
-
-Gateway 中 `/steer` 可以绕过 busy check 入队。agent loop 在下一步循环消费 steer，把它作为高优先级用户修正注入。
+`ActiveTurnRegistry` 属于 Coordinator，按 `session_key` 和 `turn_id` 管理运行中的任务与 steer。`/stop`、`/steer` 走独立控制通道，不等待普通会话队列；agent loop 在下一步循环消费 steer，把它作为高优先级用户修正注入。
 
 ### Turn report recorder
 

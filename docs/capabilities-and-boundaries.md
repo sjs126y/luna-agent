@@ -47,7 +47,7 @@ transport 还负责归一化 usage、context、cache diagnostics、流式 delta 
 
 ### Gateway 与平台
 
-Gateway 不是简单地把平台消息转发给模型。它管理平台 adapter、会话路由、pending 队列、busy session、异步确认、附件准备、发送重试和连接状态。
+Gateway 不是简单地把平台消息转发给模型。它管理平台 adapter、来源到 session 的绑定、异步确认、附件准备和连接状态；会话队列属于 Coordinator，发送重试属于 Delivery Outbox。
 
 平台侧当前覆盖：
 
@@ -144,7 +144,7 @@ filesystem(read/write), network(connect)
 - 平台 adapter 连接状态
 - 连接失败后的 reconnect delay
 - pending 消息数量
-- busy session 队列
+- Coordinator 同 session 队列
 - 异步确认旁路
 - `/stop` 中断
 - 发送失败重试

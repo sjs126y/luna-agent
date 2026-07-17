@@ -1,6 +1,17 @@
 # Backend Progress
 
-更新时间：2026-07-16 CST
+更新时间：2026-07-17 CST
+
+## 2026-07-17：Conversation Runtime 收尾
+
+- `/stop` 不再丢弃本轮已经完成的事实：ConversationService 在统一持久化边界保留完整助手文本和成对的 tool use/result，移除孤立工具块，并在 Turn Report 记录 partial persistence 摘要。
+- 删除 Adapter 内的 session queue、busy state、control bypass、chat lock 和发送重试；Adapter 现在只负责入站转发、去重、附件、平台编码/分段和单次发送。
+- 删除 Gateway 的兼容 Agent 执行路径与 `GatewayRunState`；Gateway 启动必须注入 Coordinator、DeliveryService 和 PlatformDirectory，运行诊断直接来自 Coordinator。
+- 删除旧 `GatewayBeforeSend/GatewayAfterSend` Hook，出站扩展统一使用 `PreDelivery/PostDelivery`；AUTH、APPROVAL、SYSTEM 仍为不可抑制的受保护投递。
+- 旧 `platform_pending_warning_threshold`、`platform_chat_locks_maxsize`、`platform_send_max_retries` 配置已移除，持久发送改用 `gateway.delivery_max_attempts`，默认 3 次。
+- 长消息仍由 Adapter 按平台限制分段；前序分段已经送达而后续失败时标记 `partial delivery`/ambiguous，Outbox 不自动重发整个消息。
+- 新增真实 SQLite、ConversationService、Coordinator、Delivery/Outbox 组合测试，覆盖正常轮和停止工具轮的持久化与发送。
+- 最终全量回归 `967 passed`；`compileall`、`git diff --check` 和真实 `personal-agent doctor` 通过，配置正常、Runtime 已就绪。
 
 ## 2026-07-16：GitHub、Developer Docs 与 Browser Operator 插件
 
@@ -135,7 +146,6 @@
 暂停期间最值得关注的后续方向：
 
 - 真实长对话下的上下文压缩质量：路径、任务状态、工具结果是否被保留得足够好。
-- stop/interrupted turn 的 partial tool results 是否需要持久化，避免“工具已经执行但被 stop 后下一轮忘记”。
 - codex_responses 中转站真实使用下，文本化工具结果是否足够降低重复工具调用；如果仍重复，再考虑同轮只读工具去重或更强的 tool-result 提示。
 - Feishu / Telegram 真实附件下载器、OCR/ASR/vision 服务接入，可以等实际平台需求再做。
 - Desktop/Web 客户端如果启动，优先复用 `ConversationInput + attachments + ConversationService.run_turn_input()`，不要绕开后端主链路。
@@ -642,7 +652,6 @@ uv run pytest -q
 
 ## 暂停期后续 Backlog
 
-- stop/interrupted turn partial persistence：工具已经成功执行但本轮被 stop 时，评估是否保存 partial `ctx.messages`，避免下一轮忘记已读取内容。
 - 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段与命中率，尤其是中转站是否返回标准 usage。
 - 上下文压缩质量：优化长对话压缩后的任务状态、路径、工具结果保留。
 - 工具失败恢复策略：改进工具错误、权限拒绝、格式错误后的模型恢复提示；暂不做“声称调用工具但无 tool_call”的正则触发 retry。

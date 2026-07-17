@@ -223,8 +223,8 @@ def register(ctx) -> None:
 | `GatewayStart` / `GatewayStop` | 无 | `None` | Gateway 生命周期观察 |
 | `PlatformConnected` / `PlatformDisconnected` | platform | `None` | 平台连接状态观察 |
 | `GatewayMessageReceived` | platform | `GatewayMessageOutcome` | 鉴权后按顺序变换或阻止入站消息 |
-| `GatewayBeforeSend` | platform | `GatewayBeforeSendOutcome` | 实际平台发送前按顺序变换或抑制文本 |
-| `GatewayAfterSend` | platform | `None` | 重试结束后的发送结果观察 |
+| `PreDelivery` | platform | `PreDeliveryOutcome` | Delivery 发送前按顺序变换或抑制普通消息 |
+| `PostDelivery` | platform | `None` | Outbox 单次投递结果观察 |
 | `SessionStart` | `new` / `resume` / `clear` | `ContextHookOutcome` | 会话首次使用时添加上下文或停止本轮 |
 | `UserPromptSubmit` | platform | `ContextHookOutcome` | 用户提示进入 Agent 前添加上下文或停止本轮 |
 | `PreCompact` / `PostCompact` | `auto` | `ContextHookOutcome` / `None` | 压缩前延期/补上下文，压缩后观察 |
@@ -236,7 +236,7 @@ def register(ctx) -> None:
 执行规则：
 
 - `priority` 越小优先级越高；matcher 使用正则 `fullmatch`，`"*"` 表示全部匹配。
-- Gateway 消息和发送前事件按优先级串行变换，后一个 Hook 能看到前一个 Hook 的结果。
+- Gateway 入站消息和 PreDelivery 按优先级串行变换，后一个 Hook 能看到前一个 Hook 的结果。
 - Context、policy 和 observer 事件中的多个回调并发执行，再按事件规则保守聚合。
 - 多个 `PreToolUse` 参数改写冲突时只采用最高优先级的改写；任意 deny/block 都优先于 allow。
 - `PreToolUse` 异常或超时 fail-closed；`PermissionRequest` 异常视为 abstain；Gateway、context 和 observer 默认 fail-open。
