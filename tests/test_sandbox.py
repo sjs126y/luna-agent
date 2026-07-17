@@ -445,6 +445,39 @@ class TestGlobIntegration:
         r = await _glob("*.py", str(o.parent))
         assert "outside" in r.lower() or "Error" in r
 
+    @pytest.mark.asyncio
+    async def test_glob_explicit_blocked_file_returns_hard_denial(self, tmp_path: Path):
+        from personal_agent.tools.entry import ToolHandlerOutput
+        from personal_agent.tools.sandbox import init_sandbox
+
+        protected = tmp_path / "pyproject.toml"
+        protected.write_text("secret-marker", encoding="utf-8")
+        init_sandbox([tmp_path], ["**/pyproject.toml"])
+
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+
+        result = await _glob("pyproject.toml", str(tmp_path))
+
+        assert isinstance(result, ToolHandlerOutput)
+        assert result.is_error is True
+        assert result.metadata["reason_code"] == "sandbox_blocked"
+        assert "secret-marker" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_glob_broad_pattern_omits_blocked_files(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        (tmp_path / "allowed.toml").write_text("visible", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
+        init_sandbox([tmp_path], ["**/pyproject.toml"])
+
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+
+        result = await _glob("*.toml", str(tmp_path))
+
+        assert "allowed.toml" in result
+        assert "pyproject.toml" not in result
+
 
 class TestGrepIntegration:
     @pytest.mark.asyncio
@@ -465,6 +498,39 @@ class TestGrepIntegration:
         from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
         r = await _grep("x", str(o.parent))
         assert "outside" in r.lower() or "Error" in r
+
+    @pytest.mark.asyncio
+    async def test_grep_explicit_blocked_file_returns_hard_denial(self, tmp_path: Path):
+        from personal_agent.tools.entry import ToolHandlerOutput
+        from personal_agent.tools.sandbox import init_sandbox
+
+        (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
+        init_sandbox([tmp_path], ["**/pyproject.toml"])
+
+        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+
+        result = await _grep("secret-marker", str(tmp_path), glob="pyproject.toml")
+
+        assert isinstance(result, ToolHandlerOutput)
+        assert result.is_error is True
+        assert result.metadata["reason_code"] == "sandbox_blocked"
+        assert "secret-marker" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_grep_broad_search_skips_blocked_files(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        (tmp_path / "allowed.toml").write_text("visible-marker", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
+        init_sandbox([tmp_path], ["**/pyproject.toml"])
+
+        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+
+        result = await _grep("marker", str(tmp_path), glob="*.toml")
+
+        assert "visible-marker" in result
+        assert "secret-marker" not in result
+        assert "pyproject.toml" not in result
 
 
 class TestFileEditIntegration:

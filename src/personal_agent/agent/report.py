@@ -17,8 +17,8 @@ _CLAIM_PHRASE_LIMIT = 5
 _TOOL_CLAIM_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
-        r"(?:我|现在|立刻|马上|重新|单独|同时|并行|这次|真正).{0,16}(?:调用|调|读取|读|搜索|搜|查)",
-        r"(?:调用|读取|搜索|并行读取|并行调用|同时读取|同时调用).{0,16}(?:了|完成|成功|结果|返回)",
+        r"我.{0,8}(?:已经|已|正在|刚刚|刚才|现在).{0,12}(?:调用|读取|搜索|查询|执行)",
+        r"(?:调用|读取|搜索|查询|执行).{0,12}(?:完成|成功|到了|出来了|返回了)",
         r"(?:读出来了|读到了|搜到了|调用了|已调用|已读取|已搜索|正在调用|正在读取|正在搜索)",
     )
 )
@@ -262,6 +262,9 @@ class AgentTurnReport:
 
     def _apply_tool_end(self, data: dict[str, Any]) -> None:
         tool_use_id = str(data.get("tool_use_id") or data.get("tool_name") or "tool")
+        if data.get("count_as_tool") is False:
+            self._tool_items.pop(tool_use_id, None)
+            return
         item = self._tool(tool_use_id, str(data.get("tool_name") or ""))
         item.status = str(data.get("status") or "")
         item.category = str(data.get("category") or "")

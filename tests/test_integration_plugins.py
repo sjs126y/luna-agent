@@ -96,6 +96,65 @@ async def test_github_assistant_blocks_writes_and_unlisted_repositories(tmp_path
     manager.unload_plugin(key)
 
 
+@pytest.mark.asyncio
+async def test_github_policy_applies_to_lazily_registered_mcp_tool(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    key = "integrations/github-assistant"
+    manager = _manager(tmp_path, monkeypatch, key, {
+        "repositories": ["owner/repo"],
+        "write_enabled": False,
+    })
+    called = False
+
+    async def create_issue(owner: str, repo: str):
+        nonlocal called
+        called = True
+        return "created"
+
+    name = "mcp__github__create_issue"
+    tool_registry.register(ToolEntry(
+        name=name,
+        description="late GitHub MCP write tool",
+        schema={"type": "object", "properties": {}},
+        handler=create_issue,
+    ))
+    agent = SimpleNamespace(
+        _hook_manager=manager.hook_manager,
+        _hook_turn_id="late-tool",
+        _hook_source=None,
+        _hook_additional_contexts=[],
+        _memory_session_key="test",
+        _security_context=None,
+        _interrupt_requested=False,
+        _tool_calls_this_turn=0,
+        _max_tool_calls_per_turn=10,
+        _destructive_calls_this_turn=0,
+        _max_destructive_per_turn=3,
+    )
+    try:
+        result = await execute_tool_call_result(
+            {
+                "id": "late-write",
+                "name": name,
+                "input": {"owner": "owner", "repo": "repo"},
+            },
+            agent=agent,
+        )
+    finally:
+        tool_registry.unregister(name)
+        manager.unload_plugin(key)
+
+    assert result.status == "denied"
+    assert result.category == "hook"
+    assert "write operations" in result.error
+    assert called is False
+
+
 def test_developer_docs_registers_context7_and_skills(tmp_path, monkeypatch):
     key = "integrations/developer-docs"
     manager = _manager(tmp_path, monkeypatch, key, {})
@@ -121,7 +180,12 @@ async def test_browser_operator_registers_playwright_and_enforces_policy(tmp_pat
     plugin = next(item for item in manager.list_plugins() if item.key == key)
 
     assert plugin.status == PluginStatus.LOADED
-    assert [item.name for item in manager.get_mcp_servers()] == ["playwright"]
+    server = manager.get_mcp_servers()[0]
+    assert server.name == "playwright"
+    assert "--browser" not in server.args
+    if "--executable-path" in server.args:
+        executable = Path(server.args[server.args.index("--executable-path") + 1])
+        assert executable.is_file()
     assert set(plugin.skills_registered) == {
         "inspect-web-page", "test-web-page", "operate-web-page",
     }
@@ -138,6 +202,8 @@ async def test_browser_operator_registers_playwright_and_enforces_policy(tmp_pat
     assert outside.blocked and "allowlist" in outside.reason
     assert upload.blocked and "uploads" in upload.reason
     assert allowed.blocked is False
+    status = await manager.execute_command("browser-status", scope="cli")
+    assert "readiness:" in status
     manager.unload_plugin(key)
 
 

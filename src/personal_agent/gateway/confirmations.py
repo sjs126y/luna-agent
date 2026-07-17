@@ -33,6 +33,7 @@ class PendingConfirmation:
             "tool_name": _decision_field(self.decision, "tool_name"),
             "display_name": _decision_field(self.decision, "display_name"),
             "permission_category": _decision_field(self.decision, "permission_category"),
+            "batch_items": list(_decision_value(self.decision, "batch_items") or []),
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "waiting_seconds": max(0.0, time.time() - self.created_at),
@@ -141,13 +142,21 @@ def _format_confirmation_prompt(decision: Any, *, ttl_seconds: int, timeout_seco
     tool = _decision_field(decision, "display_name") or _decision_field(decision, "tool_name") or "tool"
     category = _decision_field(decision, "permission_category") or "default"
     preview = _decision_field(decision, "input_preview") or _decision_field(decision, "risk_summary")
-    lines = [
-        "需要授权工具调用",
-        f"工具: {tool}",
-        f"权限: {category}",
-    ]
-    if preview:
-        lines.append(f"操作: {preview}")
+    batch_items = _decision_value(decision, "batch_items")
+    lines = ["需要授权工具调用"]
+    if isinstance(batch_items, (list, tuple)) and len(batch_items) > 1:
+        lines.append(f"本批次共 {len(batch_items)} 项:")
+        for index, item in enumerate(batch_items, start=1):
+            item_tool = _decision_field(item, "display_name") or _decision_field(item, "tool_name") or "tool"
+            item_preview = _decision_field(item, "input_preview") or _decision_field(item, "risk_summary")
+            line = f"{index}. {item_tool}"
+            if item_preview:
+                line += f" - {item_preview}"
+            lines.append(line)
+    else:
+        lines.extend([f"工具: {tool}", f"权限: {category}"])
+        if preview:
+            lines.append(f"操作: {preview}")
     duration = format_grant_duration(ttl_seconds)
     lines.extend([
         f"回复 1 允许一次 / 2 拒绝 / 3 {duration}允许",
@@ -176,8 +185,10 @@ def _parse_confirmation_answer(text: str) -> str | None:
 
 
 def _decision_field(decision: Any, name: str) -> str:
+    return str(_decision_value(decision, name) or "")
+
+
+def _decision_value(decision: Any, name: str) -> Any:
     if isinstance(decision, dict):
-        value = decision.get(name)
-    else:
-        value = getattr(decision, name, "")
-    return str(value or "")
+        return decision.get(name)
+    return getattr(decision, name, "")

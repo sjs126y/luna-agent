@@ -149,6 +149,13 @@ class HookManager:
             for registration in self._registrations.get(hook_event, ())
         ]
 
+    def has_matching_registration(self, envelope: HookEnvelope) -> bool:
+        """Return whether dispatch would invoke at least one registered hook."""
+        return any(
+            self._matches(registration, envelope)
+            for registration in self._registrations.get(envelope.event_name, ())
+        )
+
     async def dispatch(self, envelope: HookEnvelope) -> Any:
         event = envelope.event_name
         registrations = tuple(

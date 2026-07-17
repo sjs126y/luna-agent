@@ -1006,6 +1006,8 @@ def _tool_runs_from_events(
         if event.type != "tool_end":
             continue
         data = event.data
+        if data.get("count_as_tool") is False:
+            continue
         runs.append({
             "session_id": session_id,
             "session_key": session_key,

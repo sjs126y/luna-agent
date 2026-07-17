@@ -90,6 +90,7 @@ def test_http_mcp_tools_declare_server_network_resource():
         "github",
         call_tool,
         server_url="https://mcp.github.example/api",
+        call_timeout_seconds=1800,
     )
     registrar.sync([MCPToolSpec(name="issues")])
     try:
@@ -101,6 +102,7 @@ def test_http_mcp_tools_declare_server_network_resource():
     assert len(resources) == 1
     assert resources[0].resource == "https://mcp.github.example:443"
     assert resources[0].access == "connect"
+    assert entry.timeout_seconds == 1800
 
 
 # ── MCPClient tests ─────────────────────────────────────

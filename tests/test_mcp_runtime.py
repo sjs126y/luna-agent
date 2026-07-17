@@ -68,6 +68,18 @@ class BlockingConnection(FakeConnection):
         return await super().connect()
 
 
+class BlockingCallConnection(FakeConnection):
+    def __init__(self, config, callback):
+        super().__init__(config, callback, tools=[tool("slow")])
+        self.call_started = asyncio.Event()
+        self.call_gate = asyncio.Event()
+
+    async def call_tool(self, name, arguments):
+        self.call_started.set()
+        await self.call_gate.wait()
+        return MCPCallResult(text="late")
+
+
 async def wait_until(predicate, timeout: float = 1.0):
     end = asyncio.get_running_loop().time() + timeout
     while not predicate():
@@ -291,5 +303,38 @@ async def test_runtime_keeps_tool_registered_but_unavailable_during_recovery():
         catalog = {item["name"]: item for item in tool_registry.catalog()}
         assert "reconnecting" in catalog["mcp__unstable__fragile"]["unavailable_reason"]
         assert "lost" in catalog["mcp__unstable__fragile"]["unavailable_reason"]
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tool_call_reconnects_mcp_transport():
+    created = []
+
+    def factory(config, callback):
+        connection = BlockingCallConnection(config, callback)
+        created.append(connection)
+        return connection
+
+    runtime = MCPServerRuntime(
+        MCPServerConfig(name="cancelled", command="python"),
+        connection_factory=factory,
+        reconnect_delays=(0.01,),
+        health_interval_seconds=60,
+        jitter=lambda: 0,
+    )
+    try:
+        await runtime.start()
+        await runtime.wait_initial_attempt()
+        first = created[0]
+        task = asyncio.create_task(runtime.call_tool("slow", {}))
+        await first.call_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        await wait_until(lambda: len(created) >= 2 and runtime.ready)
+        assert first.closed is True
+        assert "cancelled" in runtime.health_snapshot()["last_call_error"].lower()
     finally:
         await runtime.stop()

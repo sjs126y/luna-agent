@@ -490,6 +490,15 @@ async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
             execution_mode="full-auto",
             grant_matched="",
         )
+        await emit_event(
+            event_sink,
+            "tool_end",
+            "工具 tool_call success",
+            tool_name="tool_call",
+            tool_use_id="wrapper-1",
+            status="success",
+            count_as_tool=False,
+        )
         return {
             "final_response": "done",
             "messages": _messages(user_text="run pwd", assistant_text="done"),

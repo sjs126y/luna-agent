@@ -27,13 +27,13 @@ dependencies = [
     "typer>=0.12",
     "prompt-toolkit>=3.0.52",
     "mcp>=1.27,<2",
+    "qdrant-client>=1.12",
 ]
 
 [project.scripts]
 personal-agent = "personal_agent.cli:run"
 
 [project.optional-dependencies]
-memory-lumora = ["qdrant-client>=1.12"]
 memory-mem0 = ["mem0ai>=0.1"]
 
 [build-system]

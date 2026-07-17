@@ -12,6 +12,7 @@ uv.lock
 
 # Runtime data
 checkpoints/
+.playwright-mcp/
 data/*
 !data/.gitkeep
 !data/attachments/

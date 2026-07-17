@@ -76,6 +76,14 @@ class ToolExecutionResult:
         data["result_metadata"] = _safe_result_metadata(self.result_metadata or {})
         return data
 
+
+@dataclass
+class _BatchConfirmation:
+    confirm: Any
+    security_context: Any = None
+    one_time_tool_keys: set[str] = field(default_factory=set)
+    one_time_resource_keys: set[str] = field(default_factory=set)
+
 # ── Interrupt support ────────────────────────────────
 # Long-running tools (bash, execute_code) check this to abort early.
 # Set by Gateway on /stop, cleared each turn.
@@ -121,57 +129,75 @@ async def execute_tool_calls(
     barriers that preserve LLM ordering. Destructive tools are always barriers.
     """
     results: dict[int, ToolExecutionResult] = {}
+    batch_confirmation = await _prepare_batch_confirmation(
+        tool_calls,
+        agent=agent,
+        confirm=confirm,
+    )
+    effective_confirm = batch_confirmation.confirm
 
-    i = 0
-    while i < len(tool_calls):
-        current = tool_calls[i]
-        entry = tool_registry.get(str(current.get("name", "")))
+    try:
+        i = 0
+        while i < len(tool_calls):
+            current = tool_calls[i]
+            entry = tool_registry.get(str(current.get("name", "")))
 
-        if _can_run_in_parallel(current, entry, agent, confirm=confirm):
-            # Collect adjacent safe parallel tools into a batch.
-            batch: list[tuple[int, dict]] = []
-            while i < len(tool_calls):
-                e = tool_registry.get(str(tool_calls[i].get("name", "")))
-                if _can_run_in_parallel(tool_calls[i], e, agent, confirm=confirm):
-                    batch.append((i, tool_calls[i]))
-                    i += 1
-                else:
-                    break
+            if _can_run_in_parallel(current, entry, agent, confirm=effective_confirm):
+                # Collect adjacent safe parallel tools into a batch.
+                batch: list[tuple[int, dict]] = []
+                while i < len(tool_calls):
+                    e = tool_registry.get(str(tool_calls[i].get("name", "")))
+                    if _can_run_in_parallel(tool_calls[i], e, agent, confirm=effective_confirm):
+                        batch.append((i, tool_calls[i]))
+                        i += 1
+                    else:
+                        break
 
-            gathered = await asyncio.gather(
-                *[
-                    execute_tool_call_result(
-                        tc,
-                        agent=agent,
-                        event_sink=event_sink,
-                        confirm=confirm,
-                    )
-                    for _, tc in batch
-                ],
-                return_exceptions=True,
+                gathered = await asyncio.gather(
+                    *[
+                        execute_tool_call_result(
+                            tc,
+                            agent=agent,
+                            event_sink=event_sink,
+                            confirm=effective_confirm,
+                        )
+                        for _, tc in batch
+                    ],
+                    return_exceptions=True,
+                )
+                for j, (idx, tc) in enumerate(batch):
+                    item = gathered[j]
+                    if isinstance(item, ToolExecutionResult):
+                        results[idx] = item
+                    elif isinstance(item, BaseException):
+                        results[idx] = _result(
+                            tc,
+                            status="error",
+                            category="executor",
+                            error=f"{type(item).__name__}: {item}",
+                        )
+                    else:
+                        results[idx] = _result(tc, content=str(item))
+            else:
+                idx, tc = i, tool_calls[i]
+                results[idx] = await execute_tool_call_result(
+                    tc,
+                    agent=agent,
+                    event_sink=event_sink,
+                    confirm=effective_confirm,
+                )
+                i += 1
+    finally:
+        if batch_confirmation.security_context is not None and (
+            batch_confirmation.one_time_tool_keys or batch_confirmation.one_time_resource_keys
+        ):
+            from personal_agent.security.evaluator import revoke_grants
+
+            revoke_grants(
+                batch_confirmation.security_context,
+                tool_keys=batch_confirmation.one_time_tool_keys,
+                resource_keys=batch_confirmation.one_time_resource_keys,
             )
-            for j, (idx, tc) in enumerate(batch):
-                item = gathered[j]
-                if isinstance(item, ToolExecutionResult):
-                    results[idx] = item
-                elif isinstance(item, BaseException):
-                    results[idx] = _result(
-                        tc,
-                        status="error",
-                        category="executor",
-                        error=f"{type(item).__name__}: {item}",
-                    )
-                else:
-                    results[idx] = _result(tc, content=str(item))
-        else:
-            idx, tc = i, tool_calls[i]
-            results[idx] = await execute_tool_call_result(
-                tc,
-                agent=agent,
-                event_sink=event_sink,
-                confirm=confirm,
-            )
-            i += 1
 
     # ── append ALL results as ONE user message (Anthropic requires this) ──
     result_blocks = []
@@ -193,6 +219,102 @@ async def execute_tool_calls(
     return ordered_results
 
 
+async def _prepare_batch_confirmation(
+    tool_calls: list[dict],
+    *,
+    agent: Any,
+    confirm: Any,
+) -> _BatchConfirmation:
+    if confirm is None or agent is None:
+        return _BatchConfirmation(confirm=confirm)
+    security_context = getattr(agent, "_security_context", None)
+    if security_context is None:
+        return _BatchConfirmation(confirm=confirm)
+
+    from personal_agent.security.evaluator import grant_prepared_call, prepare_tool_call
+
+    candidates: list[tuple[dict, Any, ToolDecision]] = []
+    for raw_call in tool_calls:
+        tc = _normalize_tool_call(raw_call)
+        entry = tool_registry.get(tc["name"])
+        if entry is None or _has_matching_tool_policy_hook(agent, tc, entry):
+            continue
+        try:
+            guard = evaluate_execution_guards(tc, entry, agent)
+        except Exception:
+            continue
+        decision = _with_agent_grant_metadata(tool_decision_from_guard(tc, guard), agent)
+        if _needs_tool_confirm(decision):
+            candidates.append((tc, entry, decision))
+
+    if len(candidates) < 2:
+        return _BatchConfirmation(confirm=confirm)
+
+    aggregate = _aggregate_confirmation_decision([item[2] for item in candidates])
+    answer = await _confirm_tool_decision(confirm, aggregate, agent=agent)
+    candidate_ids = {item[0]["id"] for item in candidates}
+
+    async def effective_confirm(decision: ToolDecision) -> str:
+        if decision.tool_use_id in candidate_ids:
+            return answer
+        return await confirm(decision)
+
+    batch = _BatchConfirmation(confirm=effective_confirm, security_context=security_context)
+    if answer not in {"allow", "always"}:
+        return batch
+
+    ttl = int(getattr(agent, "_security_grant_ttl_seconds", 3600) or 3600)
+    for tc, entry, decision in candidates:
+        one_time = answer == "allow" or decision.tool_approval_mode == "prompt"
+        granted_tools, granted_resources = grant_prepared_call(
+            prepare_tool_call(tc, entry),
+            security_context,
+            ttl_seconds=60 if one_time else ttl,
+        )
+        if one_time:
+            batch.one_time_tool_keys.update(granted_tools)
+            batch.one_time_resource_keys.update(granted_resources)
+    return batch
+
+
+def _has_matching_tool_policy_hook(agent: Any, tc: dict, entry: Any) -> bool:
+    manager = getattr(agent, "_hook_manager", None)
+    if manager is None or not hasattr(manager, "has_matching_registration"):
+        return False
+    for event in (HookEvent.PRE_TOOL_USE, HookEvent.PERMISSION_REQUEST):
+        envelope = _tool_hook_envelope(agent, event, tc, entry=entry)
+        if manager.has_matching_registration(envelope):
+            return True
+    return False
+
+
+def _aggregate_confirmation_decision(decisions: list[ToolDecision]) -> ToolDecision:
+    first = decisions[0]
+    resources: dict[tuple[str, str, str], dict[str, str]] = {}
+    for decision in decisions:
+        for resource in decision.requested_resources:
+            key = (
+                str(resource.get("kind") or ""),
+                str(resource.get("access") or ""),
+                str(resource.get("resource") or ""),
+            )
+            resources[key] = resource
+    return replace(
+        first,
+        tool_name="batch",
+        tool_use_id="batch:" + ",".join(item.tool_use_id for item in decisions),
+        display_name=f"{len(decisions)} 个工具调用",
+        permission_category="batch",
+        input_summary="",
+        input_preview="",
+        affected_paths=tuple(
+            path for item in decisions for path in item.affected_paths
+        ),
+        requested_resources=tuple(resources.values()),
+        batch_items=tuple(item.as_dict() for item in decisions),
+    )
+
+
 async def _exec_one(tc: dict, *, agent: Any = None) -> str:
     """Compatibility wrapper that returns only the tool-result string."""
     return format_tool_result(await execute_tool_call_result(tc, agent=agent))
@@ -204,7 +326,7 @@ async def execute_tool_call_result(
     agent: Any = None,
     event_sink: Any = None,
     confirm: Any = None,
-    timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> ToolExecutionResult:
     """Execute a single tool call through the security pipeline.
 
@@ -217,6 +339,8 @@ async def execute_tool_call_result(
     started = _time_module.monotonic()
     tc = _normalize_tool_call(tc)
     name = tc["name"]
+    entry = tool_registry.get(name)
+    execution_timeout = _resolve_tool_timeout(entry, tc["input"], timeout)
     guard_decision: GuardDecision | None = None
     tool_decision: ToolDecision | None = None
     one_time_security_context = None
@@ -234,8 +358,10 @@ async def execute_tool_call_result(
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
         nonlocal one_time_security_grants
         if tool_decision is not None and not preserve_nested_guard:
-            result.guard_stage = tool_decision.stage
-            result.reason_code = tool_decision.reason_code
+            if not result.guard_stage:
+                result.guard_stage = tool_decision.stage
+            if not result.reason_code:
+                result.reason_code = tool_decision.reason_code
             result.permission_category = tool_decision.permission_category
             result.permission_decision = tool_decision.permission_decision
             result.required_allow = tool_decision.required_allow
@@ -294,6 +420,7 @@ async def execute_tool_call_result(
             artifact_count=len(result.artifacts or []),
             artifacts=[item.safe_summary() for item in (result.artifacts or [])],
             result_metadata=_safe_result_metadata(result.result_metadata or {}),
+            count_as_tool=bool(entry is None or entry.report_as_tool),
         )
         if one_time_security_context is not None and any(one_time_security_grants):
             from personal_agent.security.evaluator import revoke_grants
@@ -315,7 +442,6 @@ async def execute_tool_call_result(
             started=started,
         ))
 
-    entry = tool_registry.get(name)
     if entry is None:
         tool_decision = tool_decision_for_unknown_tool(tc)
         await _emit_tool_decision(event_sink, tool_decision)
@@ -458,7 +584,7 @@ async def execute_tool_call_result(
             raw_result = await _run_handler(
                 entry.handler,
                 tc["input"],
-                timeout=timeout,
+                timeout=execution_timeout,
                 agent=agent,
                 confirm=confirm,
                 event_sink=event_sink,
@@ -482,7 +608,7 @@ async def execute_tool_call_result(
                 tc,
                 status="timeout",
                 category="timeout",
-                error=f"tool '{name}' timed out after {timeout:g}s",
+                error=f"tool '{name}' timed out after {execution_timeout:g}s",
                 attempts=attempts,
                 started=started,
             ))
@@ -523,6 +649,7 @@ async def execute_tool_call_result(
     status: ToolExecutionStatus = "success"
     category = ""
     error = ""
+    handler_reason_code = ""
     if nested_result is not None:
         status = nested_result.status
         category = nested_result.category
@@ -531,8 +658,9 @@ async def execute_tool_call_result(
             error = error or result or f"nested tool '{nested_result.tool_name}' failed"
             result = ""
     elif handler_output.is_error:
-        status = "error"
-        category = "handler"
+        handler_reason_code = str(handler_output.metadata.get("reason_code") or "")
+        status = "denied" if handler_reason_code in {"sandbox_blocked", "hard_blacklist"} else "error"
+        category = "precheck" if status == "denied" else "handler"
         error = result or "MCP tool call failed"
         result = ""
     logger.debug("Tool '%s' done: %d chars", name, len(result))
@@ -548,6 +676,9 @@ async def execute_tool_call_result(
         started=started,
         output_truncated=output_truncated,
     )
+    if handler_reason_code:
+        final_result.guard_stage = "runtime_guard"
+        final_result.reason_code = handler_reason_code
     if nested_result is not None:
         preserve_nested_guard = True
         final_result.guard_stage = nested_result.guard_stage
@@ -867,6 +998,25 @@ async def _run_handler(
         reset_current_tool_confirm(confirm_token)
         reset_current_tool_agent(agent_token)
         _active_tool_executions = max(0, _active_tool_executions - 1)
+
+
+def _resolve_tool_timeout(entry: Any, tool_input: dict[str, Any], explicit: float | None) -> float:
+    if explicit is not None:
+        value = float(explicit)
+        return value if value > 0 else DEFAULT_TOOL_TIMEOUT_SECONDS
+    if entry is not None:
+        resolver = getattr(entry, "timeout_resolver", None)
+        if callable(resolver):
+            try:
+                value = resolver(dict(tool_input or {}))
+                if value is not None and float(value) > 0:
+                    return float(value)
+            except Exception:
+                logger.exception("Tool timeout resolver failed for '%s'", entry.name)
+        value = getattr(entry, "timeout_seconds", None)
+        if value is not None and float(value) > 0:
+            return float(value)
+    return DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
 # ── checkpoint ────────────────────────────────────────

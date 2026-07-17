@@ -689,7 +689,7 @@ async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_parallel_safe_tools_requiring_confirm_are_serialized():
+async def test_parallel_safe_tools_share_one_batch_confirmation():
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_calls
     from personal_agent.tools.registry import tool_registry
@@ -708,7 +708,7 @@ async def test_parallel_safe_tools_requiring_confirm_are_serialized():
 
     async def confirm(decision):
         nonlocal running_confirms, max_running_confirms
-        decisions.append(decision.tool_name)
+        decisions.append(decision)
         running_confirms += 1
         max_running_confirms = max(max_running_confirms, running_confirms)
         await asyncio.sleep(0)
@@ -758,10 +758,80 @@ async def test_parallel_safe_tools_requiring_confirm_are_serialized():
 
     assert [result.status for result in results] == ["success", "success"]
     assert [result.content for result in results] == ["first", "second"]
-    assert decisions == ["confirm_parallel_first", "confirm_parallel_second"]
+    assert len(decisions) == 1
+    assert decisions[0].tool_name == "batch"
+    assert [item["tool_name"] for item in decisions[0].batch_items] == [
+        "confirm_parallel_first",
+        "confirm_parallel_second",
+    ]
     assert max_running_confirms == 1
     assert messages[-1]["content"][0]["content"] == "first"
     assert messages[-1]["content"][1]["content"] == "second"
+
+
+@pytest.mark.asyncio
+async def test_batch_allow_once_grants_exact_resources_then_revokes(tmp_path: Path):
+    from personal_agent.security.models import ResourceRequirement
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_calls
+    from personal_agent.tools.registry import tool_registry
+
+    names = ("batch_resource_first", "batch_resource_second")
+    targets = (tmp_path / "first.txt", tmp_path / "second.txt")
+    confirmations = []
+    executions = []
+
+    async def handler(path: str):
+        executions.append(path)
+        return path
+
+    async def confirm(decision):
+        confirmations.append(decision)
+        return "allow"
+
+    for name in names:
+        tool_registry.register(ToolEntry(
+            name=name,
+            description="batch resource",
+            schema={"type": "object", "properties": {"path": {"type": "string"}}},
+            handler=handler,
+            permission_category="write",
+            is_parallel_safe=True,
+            resource_resolver=lambda inp: [
+                ResourceRequirement("filesystem", str(Path(inp["path"]).resolve()), "write")
+            ],
+        ))
+    agent = MockAgent()
+    messages = []
+    try:
+        results = await execute_tool_calls(
+            [
+                {"id": "r1", "name": names[0], "input": {"path": str(targets[0])}},
+                {"id": "r2", "name": names[1], "input": {"path": str(targets[1])}},
+            ],
+            messages,
+            agent=agent,
+            confirm=confirm,
+        )
+    finally:
+        for name in names:
+            tool_registry.unregister(name)
+
+    assert [item.status for item in results] == ["success", "success"]
+    assert executions == [str(targets[0]), str(targets[1])]
+    assert len(confirmations) == 1
+    requested = confirmations[0].requested_resources
+    assert {item["resource"] for item in requested} == {str(path.resolve()) for path in targets}
+    from personal_agent.gateway.confirmations import _format_confirmation_prompt
+
+    prompt = _format_confirmation_prompt(
+        confirmations[0], ttl_seconds=3600, timeout_seconds=120
+    )
+    assert "本批次共 2 项" in prompt
+    assert "Batch Resource First" in prompt
+    assert "Batch Resource Second" in prompt
+    assert agent._security_context.state.tool_grants == {}
+    assert agent._security_context.state.resource_grants == {}
 
 
 @pytest.mark.asyncio
@@ -903,6 +973,112 @@ async def test_tool_end_event_includes_guard_metadata_for_success():
     assert decision_event.data["status"] == "allowed"
     assert event.data["guard_stage"] == "runtime_guard"
     assert event.data["permission_category"] == "read"
+
+
+@pytest.mark.asyncio
+async def test_entry_timeout_overrides_executor_default():
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    async def slow_handler():
+        await asyncio.sleep(0.05)
+        return "late"
+
+    tool_registry.register(ToolEntry(
+        name="short_timeout_demo",
+        description="short timeout",
+        schema={},
+        handler=slow_handler,
+        timeout_seconds=0.01,
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {"id": "timeout", "name": "short_timeout_demo", "input": {}},
+        )
+    finally:
+        tool_registry.unregister("short_timeout_demo")
+
+    assert result.status == "timeout"
+    assert "0.01s" in result.error
+
+
+def test_tool_call_inherits_nested_tool_timeout():
+    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import _resolve_tool_timeout
+    from personal_agent.tools.registry import tool_registry
+
+    tool_registry.register(ToolEntry(
+        name="long_nested_demo",
+        description="long nested timeout",
+        schema={},
+        handler=lambda: None,
+        timeout_seconds=1800,
+    ))
+    try:
+        wrapper = tool_registry.get("tool_call")
+        resolved = _resolve_tool_timeout(
+            wrapper,
+            {"name": "long_nested_demo", "arguments": {}},
+            None,
+        )
+    finally:
+        tool_registry.unregister("long_nested_demo")
+
+    assert resolved == 1800
+
+
+@pytest.mark.asyncio
+async def test_tool_call_wrapper_is_excluded_from_turn_tool_count():
+    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+
+    from personal_agent.agent.report import AgentTurnReport
+    from personal_agent.conversation.events import EventRecorder
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    recorder = EventRecorder()
+
+    async def handler(value: str):
+        return f"real:{value}"
+
+    tool_registry.register(ToolEntry(
+        name="wrapper_count_target",
+        description="real nested tool",
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        handler=handler,
+    ))
+    try:
+        result = await execute_tool_call_result(
+            {
+                "id": "outer-wrapper",
+                "name": "tool_call",
+                "input": {"name": "wrapper_count_target", "arguments": {"value": "ok"}},
+            },
+            agent=MockAgent(),
+            event_sink=recorder,
+        )
+    finally:
+        tool_registry.unregister("wrapper_count_target")
+
+    assert result.status == "success"
+    tool_end_events = [event for event in recorder.events if event.type == "tool_end"]
+    assert [event.data["tool_name"] for event in tool_end_events] == [
+        "wrapper_count_target",
+        "tool_call",
+    ]
+    assert [event.data["count_as_tool"] for event in tool_end_events] == [True, False]
+
+    report = AgentTurnReport()
+    for event in recorder.events:
+        report.apply_event(event)
+    payload = report.as_dict()
+    assert payload["tools"]["total"] == 1
+    assert payload["tool_truth"]["calls_total"] == 1
+    assert payload["tool_truth"]["tool_names"] == ["wrapper_count_target"]
 
 
 @pytest.mark.asyncio

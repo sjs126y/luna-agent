@@ -59,6 +59,18 @@ async def _tool_call(name: str, arguments: dict) -> object:
     return result
 
 
+def _nested_tool_timeout(arguments: dict) -> float | None:
+    name = str(arguments.get("name") or "")
+    entry = tool_registry.get(name)
+    if entry is None:
+        return None
+    resolver = entry.timeout_resolver
+    if callable(resolver):
+        nested_arguments = arguments.get("arguments")
+        return resolver(nested_arguments if isinstance(nested_arguments, dict) else {})
+    return entry.timeout_seconds
+
+
 tool_registry.register(ToolEntry(
     name="tool_search",
     description="Search for tools by keyword. Returns matching tools with name, description, and "
@@ -115,4 +127,6 @@ tool_registry.register(ToolEntry(
     risk_level="medium",
     usage_hint="Use for a discovered tool that is not directly visible; direct calls remain preferred.",
     is_parallel_safe=False,
+    report_as_tool=False,
+    timeout_resolver=_nested_tool_timeout,
 ))

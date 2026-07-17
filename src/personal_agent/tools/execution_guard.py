@@ -79,6 +79,7 @@ class ToolDecision:
     process_label: str = ""
     tool_approval_mode: str = ""
     requested_resources: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    batch_items: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     def as_dict(self) -> dict:
         return {
@@ -115,6 +116,7 @@ class ToolDecision:
             "process_label": self.process_label,
             "tool_approval_mode": self.tool_approval_mode,
             "requested_resources": list(self.requested_resources),
+            "batch_items": list(self.batch_items),
         }
 
 

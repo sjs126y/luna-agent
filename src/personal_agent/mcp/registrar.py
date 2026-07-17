@@ -22,11 +22,13 @@ class MCPToolRegistrar:
         call_tool: ToolCaller,
         *,
         server_url: str = "",
+        call_timeout_seconds: float = 120.0,
         availability_reason: Callable[[], str] | None = None,
     ) -> None:
         self.server_name = server_name
         self._call_tool = call_tool
         self._network_requirement = _network_requirement(server_url, server_name)
+        self._call_timeout_seconds = float(call_timeout_seconds)
         self._availability_reason = availability_reason
         self._registered: dict[str, str] = {}
         self._available = False
@@ -108,6 +110,7 @@ class MCPToolRegistrar:
             idempotent=False,
             is_parallel_safe=False,
             is_destructive=False,
+            timeout_seconds=self._call_timeout_seconds,
         )
 
     def _local_name(self, remote_name: str) -> str:

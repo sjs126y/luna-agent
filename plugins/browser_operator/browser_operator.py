@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import shutil
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,7 +18,8 @@ class BrowserOperatorConfig(BaseModel):
 
     command: str = "npx"
     package: str = "@playwright/mcp@0.0.78"
-    browser: str = "chromium"
+    browser: Literal["chromium", "chrome", "firefox", "webkit", "msedge"] = "chromium"
+    executable_path: str = ""
     headless: bool = True
     isolated: bool = True
     allowed_domains: list[str] = Field(default_factory=list)
@@ -27,7 +31,13 @@ class BrowserOperatorConfig(BaseModel):
 
 def register(ctx) -> None:
     config = ctx.parse_config(BrowserOperatorConfig)
-    args = ["-y", config.package, "--browser", config.browser]
+    args = ["-y", config.package]
+    if config.browser.strip().lower() == "chromium":
+        executable = _configured_browser_executable(config)
+        if executable is not None:
+            args.extend(["--executable-path", str(executable)])
+    else:
+        args.extend(["--browser", config.browser])
     if config.headless:
         args.append("--headless")
     if config.isolated:
@@ -87,10 +97,47 @@ def _normalize_domain(value: str) -> str:
 
 def _status(config, allowed_domains: set[str]) -> str:
     domains = ", ".join(sorted(allowed_domains)) if allowed_domains else "all public domains (core network policy applies)"
+    readiness = _browser_readiness(config)
     return (
         "Browser Operator\n"
-        f"- browser: {config.browser}\n"
+        f"- browser: {config.browser or 'chromium'}\n"
+        f"- readiness: {readiness}\n"
         f"- domains: {domains}\n"
         f"- file upload: {'enabled' if config.allow_file_upload else 'disabled'}\n"
         f"- page code execution: {'enabled' if config.allow_code_execution else 'disabled'}"
     )
+
+
+def _browser_readiness(config: BrowserOperatorConfig) -> str:
+    if shutil.which(config.command) is None:
+        return f"unavailable (command not found: {config.command})"
+    browser = config.browser.strip().lower()
+    if browser in {"", "chromium"}:
+        if _configured_browser_executable(config) is not None:
+            return "ready"
+        return "browser missing (run: npx playwright install chromium)"
+    executable_names = {
+        "chrome": ("google-chrome", "google-chrome-stable", "chrome"),
+        "msedge": ("microsoft-edge", "microsoft-edge-stable"),
+        "firefox": ("firefox",),
+        "webkit": (),
+    }
+    names = executable_names.get(browser)
+    if names is None:
+        return f"unsupported browser: {config.browser}"
+    if any(shutil.which(name) for name in names):
+        return "ready"
+    return f"browser missing for channel: {browser}"
+
+
+def _configured_browser_executable(config: BrowserOperatorConfig) -> Path | None:
+    if config.executable_path:
+        candidate = Path(config.executable_path).expanduser().resolve()
+        return candidate if candidate.is_file() else None
+    cache_root = Path.home() / ".cache" / "ms-playwright"
+    patterns = (
+        "chromium-*/chrome-linux*/chrome",
+        "chromium_headless_shell-*/chrome-headless-shell-linux*/headless_shell",
+    )
+    candidates = [path for pattern in patterns for path in cache_root.glob(pattern) if path.is_file()]
+    return sorted(candidates, reverse=True)[0] if candidates else None

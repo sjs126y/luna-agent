@@ -143,6 +143,10 @@ async def test_simple_response(provider):
     assert report["llm"]["output_tokens"] == 3
     assert report["llm"]["cache_hit_tokens"] == 0
     assert report["llm"]["cache_hit_rate"] == 0.0
+    assert report["llm"]["cache_diagnostics"]["usage_reported"] is False
+    assert report["llm"]["cache_diagnostics"]["usage_interpretation"] == (
+        "provider_did_not_report_cache_usage"
+    )
     assert report["tools"]["total"] == 0
     assert report["tool_truth"]["calls_total"] == 0
     assert report["tool_truth"]["results_total"] == 0
@@ -803,6 +807,61 @@ async def test_permission_required_network_tool_stops_without_looping(provider):
 
 
 @pytest.mark.asyncio
+async def test_hard_safety_denial_forces_tool_free_finalization(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我先读取受保护文件。",
+            finish_reason="tool_use",
+            tool_calls=[{"id": "g1", "name": "guarded_search", "input": {"query": "secret"}}],
+            usage={"input_tokens": 4, "output_tokens": 2},
+        ),
+        NormalizedResponse(
+            text="受保护资源未被访问。",
+            finish_reason="end_turn",
+            usage={"input_tokens": 5, "output_tokens": 3},
+        ),
+    ])
+
+    from personal_agent.tools.entry import ToolEntry, ToolHandlerOutput
+    from personal_agent.tools.registry import tool_registry
+
+    async def _guarded_search(query: str = ""):
+        return ToolHandlerOutput(
+            text="Error: path blocked by sandbox",
+            is_error=True,
+            metadata={"reason_code": "sandbox_blocked"},
+        )
+
+    tool_registry.register(ToolEntry(
+        name="guarded_search",
+        description="Guarded search",
+        schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        handler=_guarded_search,
+        permission_category="read",
+    ))
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "读取受保护文件")
+
+    result = await run_conversation(agent, ctx)
+
+    assert result["completed"] is True
+    assert result["final_response"] == "受保护资源未被访问。"
+    assert transport.calls == 2
+    assert transport.call_tools[1] == []
+    item = result["turn_report"]["tools"]["items"][0]
+    assert item["status"] == "denied"
+    assert item["reason_code"] == "sandbox_blocked"
+    assert any(
+        event["category"] == "hard_safety_denial"
+        for event in result["turn_report"]["retries"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_temporary_network_grant_survives_turn_reset(provider):
     transport = MockTransport([
         NormalizedResponse(
@@ -879,6 +938,25 @@ async def test_turn_report_flags_claimed_tool_use_without_tool_call(provider):
     assert truth["assistant_claim"]["claimed_but_no_tool_call"] is True
     assert truth["assistant_claim"]["claim_phrases"]
     assert truth["warnings"] == ["assistant_claimed_tool_use_without_tool_call"]
+
+
+@pytest.mark.asyncio
+async def test_turn_report_does_not_treat_tool_advice_as_completed_use(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我建议你读取 README，搜索结果需要进一步验证。",
+            finish_reason="end_turn",
+            usage={"input_tokens": 4, "output_tokens": 8},
+        ),
+    ])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "怎么检查项目？")
+
+    result = await run_conversation(agent, ctx)
+
+    claim = result["turn_report"]["tool_truth"]["assistant_claim"]
+    assert claim["claimed_tool_use"] is False
+    assert claim["claimed_but_no_tool_call"] is False
 
 
 @pytest.mark.asyncio

@@ -16,11 +16,13 @@ def test_reciprocal_rank_fusion_combines_semantic_and_bm25() -> None:
 
 
 class _FakeQdrantClient:
-    def __init__(self, *, exists: bool, payload_schema=None) -> None:
+    def __init__(self, *, exists: bool, payload_schema=None, dimensions: int = 1024) -> None:
         self.exists = exists
         self.payload_schema = payload_schema or {}
+        self.dimensions = dimensions
         self.created_collection = False
         self.created_indexes: list[tuple[str, str, str, bool]] = []
+        self.query_result = SimpleNamespace(points=[])
 
     async def collection_exists(self, collection: str) -> bool:
         return self.exists
@@ -30,7 +32,7 @@ class _FakeQdrantClient:
 
     async def get_collection(self, collection: str):
         return SimpleNamespace(
-            config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=1024))),
+            config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=self.dimensions))),
             payload_schema=self.payload_schema,
         )
 
@@ -38,6 +40,9 @@ class _FakeQdrantClient:
         self, *, collection_name: str, field_name: str, field_schema: str, wait: bool
     ) -> None:
         self.created_indexes.append((collection_name, field_name, field_schema, wait))
+
+    async def query_points(self, collection: str, *, query, query_filter, limit: int):
+        return self.query_result
 
 
 @pytest.mark.asyncio
@@ -84,6 +89,33 @@ async def test_qdrant_index_rejects_wrong_payload_index_type() -> None:
 
     with pytest.raises(RuntimeError, match="user_id: expected keyword, got integer"):
         await index.ensure_collection(1024)
+
+
+@pytest.mark.asyncio
+async def test_qdrant_search_normalizes_uuid_ids_to_archive_format() -> None:
+    client = _FakeQdrantClient(
+        exists=True,
+        payload_schema={"user_id": "keyword", "profile": "keyword"},
+    )
+    client.query_result = SimpleNamespace(points=[
+        SimpleNamespace(id="4b4915da-452f-440d-b750-c127856e2ace", score=0.9),
+        SimpleNamespace(id="legacy-id", score=0.5),
+    ])
+    index = QdrantMemoryIndex(
+        SimpleNamespace(collection="lumora_memories"), dimensions=1024, client=client
+    )
+
+    result = await index.search(
+        [0.1] * 1024,
+        user_id="u1",
+        profile="default",
+        limit=5,
+    )
+
+    assert result == [
+        ("4b4915da452f440db750c127856e2ace", 0.9),
+        ("legacy-id", 0.5),
+    ]
 
 
 class _Embedding:
@@ -165,4 +197,42 @@ async def test_lumora_reindexes_pending_records(tmp_path) -> None:
     assert result == {"attempted": 1, "completed": 1, "failed": 0}
     stored = await archive.get_memory("m1", scope)
     assert stored.metadata["index_status"] == "ready"
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_lumora_search_recalls_uuid_returned_by_qdrant(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    memory_id = "4b4915da452f440db750c127856e2ace"
+    record = MemoryRecord(
+        id=memory_id,
+        content="用户喜欢爵士乐",
+        provider="lumora",
+        scope=scope,
+    )
+    await archive.upsert_memory(scope, record)
+    qdrant = _FakeQdrantClient(
+        exists=True,
+        payload_schema={"user_id": "keyword", "profile": "keyword"},
+        dimensions=2,
+    )
+    qdrant.query_result = SimpleNamespace(points=[
+        SimpleNamespace(id="4b4915da-452f-440d-b750-c127856e2ace", score=0.9),
+    ])
+    provider = LumoraMemoryProvider(
+        archive=archive,
+        context=SimpleNamespace(),
+        embedding=_Embedding(),
+        vector_index=QdrantMemoryIndex(
+            SimpleNamespace(collection="lumora_memories"), dimensions=2, client=qdrant
+        ),
+        llm=_ResolutionLLM(),
+    )
+
+    result = await provider.search("音乐偏好", scope)
+
+    assert [item.id for item in result] == [memory_id]
+    assert result[0].content == "用户喜欢爵士乐"
     await archive.close()

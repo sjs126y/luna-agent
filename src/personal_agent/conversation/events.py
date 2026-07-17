@@ -163,6 +163,7 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("temporary_grant_ttl_seconds", "integer", "Configured temporary grant TTL."),
             EventFieldSpec("tool_approval_mode", "string", "auto/cached/prompt/deny tool approval mode."),
             EventFieldSpec("requested_resources", "list[object]", "Filesystem or network resources requiring approval."),
+            EventFieldSpec("batch_items", "list[object]", "Calls grouped into one confirmation, empty for normal decisions."),
             EventFieldSpec("display_name", "string", "User-facing tool label."),
             EventFieldSpec("execution_mode_label", "string", "User-facing execution mode label."),
             EventFieldSpec("risk_level", "string", "low/medium/high display risk."),
@@ -225,6 +226,7 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("timeout_seconds", "number", "Configured timeout in seconds when available."),
             EventFieldSpec("method", "string", "HTTP method preview for network tools."),
             EventFieldSpec("process_label", "string", "User-facing label for background process tools."),
+            EventFieldSpec("count_as_tool", "boolean", "False for transparent routing wrappers."),
         ),
     ),
     "retry": EventSchema(
