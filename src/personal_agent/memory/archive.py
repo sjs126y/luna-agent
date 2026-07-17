@@ -13,7 +13,7 @@ import aiosqlite
 
 from personal_agent.memory.models import MemoryRecord, MemoryScope, Observation, ObservationKind, utc_now
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_schema (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS review_checkpoints (
@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS memory_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, memory_id TEXT NOT NULL, action TEXT NOT NULL,
   previous_content TEXT DEFAULT '', content TEXT DEFAULT '', provider TEXT DEFAULT '', reason TEXT DEFAULT '', created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS memory_index_backends (
+  index_kind TEXT PRIMARY KEY, backend TEXT NOT NULL, fingerprint TEXT NOT NULL,
+  generation TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_index_state (
+  memory_id TEXT NOT NULL, index_kind TEXT NOT NULL, backend TEXT NOT NULL,
+  fingerprint TEXT NOT NULL, generation TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER DEFAULT 0, error TEXT DEFAULT '', updated_at TEXT NOT NULL,
+  PRIMARY KEY(memory_id, index_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_index_state_status
+ON memory_index_state(index_kind, status, attempts, updated_at);
 CREATE TABLE IF NOT EXISTS internal_buffer (
   observation_id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, content_hash TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending', target_file TEXT DEFAULT '', reason TEXT DEFAULT '',
@@ -122,6 +134,9 @@ class MemoryArchive:
                     )
             await self._connection.execute("UPDATE memory_schema SET version = 4")
             version = 4
+        if version == 4:
+            await self._connection.execute("UPDATE memory_schema SET version = 5")
+            version = 5
         if version != SCHEMA_VERSION:
             raise RuntimeError(f"Unsupported memory schema version: {version}")
 
@@ -195,6 +210,19 @@ class MemoryArchive:
         )
         return [_record_from_row(row, scope) for row in rows]
 
+    async def all_memories(self, *, limit: int = 100000) -> list[MemoryRecord]:
+        rows = await self._fetchall(
+            "SELECT * FROM memories ORDER BY updated_at LIMIT ?", (limit,)
+        )
+        result: list[MemoryRecord] = []
+        for row in rows:
+            agent_id, user_id, profile = str(row["scope_key"]).split(":", 2)
+            result.append(_record_from_row(
+                row,
+                MemoryScope(user_id=user_id, agent_id=agent_id, profile=profile),
+            ))
+        return result
+
     async def get_memory(self, memory_id: str, scope: MemoryScope) -> MemoryRecord | None:
         row = await self._fetchone(
             "SELECT * FROM memories WHERE id = ? AND scope_key = ?", (memory_id, _scope_key(scope))
@@ -247,11 +275,109 @@ class MemoryArchive:
 
     async def pending_index_memories(self, scope: MemoryScope, *, limit: int = 10) -> list[MemoryRecord]:
         rows = await self._fetchall(
-            """SELECT * FROM memories WHERE scope_key = ? AND index_status = 'pending'
-            ORDER BY index_attempts, updated_at LIMIT ?""",
+            """SELECT m.* FROM memories m
+            LEFT JOIN memory_index_state s ON s.memory_id = m.id AND s.index_kind = 'vector'
+            WHERE m.scope_key = ? AND COALESCE(s.status, m.index_status) = 'pending'
+            ORDER BY COALESCE(s.attempts, m.index_attempts), m.updated_at LIMIT ?""",
             (_scope_key(scope), limit),
         )
         return [_record_from_row(row, scope) for row in rows]
+
+    async def ensure_index_backend(
+        self,
+        index_kind: str,
+        backend: str,
+        fingerprint: str,
+        *,
+        initial_status: str = "pending",
+    ) -> bool:
+        if index_kind not in {"vector", "keyword"}:
+            raise ValueError(f"Unsupported memory index kind: {index_kind}")
+        generation = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
+        now = utc_now()
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                "SELECT * FROM memory_index_backends WHERE index_kind = ?", (index_kind,)
+            )
+            current = await cursor.fetchone()
+            changed = current is not None and (
+                current["backend"] != backend or current["fingerprint"] != fingerprint
+            )
+            if current is None or changed:
+                await self._connection.execute(
+                    """INSERT INTO memory_index_backends(index_kind,backend,fingerprint,generation,updated_at)
+                    VALUES (?,?,?,?,?) ON CONFLICT(index_kind) DO UPDATE SET
+                    backend=excluded.backend,fingerprint=excluded.fingerprint,
+                    generation=excluded.generation,updated_at=excluded.updated_at""",
+                    (index_kind, backend, fingerprint, generation, now),
+                )
+                status_expression = "?" if changed or index_kind == "keyword" else "index_status"
+                status_params: tuple[Any, ...] = (initial_status,) if status_expression == "?" else ()
+                await self._connection.execute(
+                    f"""INSERT INTO memory_index_state
+                    (memory_id,index_kind,backend,fingerprint,generation,status,attempts,error,updated_at)
+                    SELECT id,?,?,?,?,{status_expression},0,'',? FROM memories WHERE true
+                    ON CONFLICT(memory_id,index_kind) DO UPDATE SET
+                    backend=excluded.backend,fingerprint=excluded.fingerprint,
+                    generation=excluded.generation,status=excluded.status,attempts=0,error='',
+                    updated_at=excluded.updated_at""",
+                    (index_kind, backend, fingerprint, generation, *status_params, now),
+                )
+                await self._connection.commit()
+            return changed
+
+    async def set_backend_index_status(
+        self,
+        memory_id: str,
+        index_kind: str,
+        *,
+        backend: str,
+        fingerprint: str,
+        status: str,
+        error: str = "",
+    ) -> None:
+        generation = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
+        await self._execute_write(
+            """INSERT INTO memory_index_state
+            (memory_id,index_kind,backend,fingerprint,generation,status,attempts,error,updated_at)
+            VALUES (?,?,?,?,?,?,1,?,?) ON CONFLICT(memory_id,index_kind) DO UPDATE SET
+            backend=excluded.backend,fingerprint=excluded.fingerprint,generation=excluded.generation,
+            status=excluded.status,attempts=memory_index_state.attempts + 1,
+            error=excluded.error,updated_at=excluded.updated_at""",
+            (memory_id, index_kind, backend, fingerprint, generation, status, error, utc_now()),
+        )
+
+    async def pending_backend_index_memories(
+        self,
+        scope: MemoryScope,
+        *,
+        limit: int = 10,
+    ) -> list[MemoryRecord]:
+        rows = await self._fetchall(
+            """SELECT DISTINCT m.* FROM memories m JOIN memory_index_state s ON s.memory_id = m.id
+            WHERE m.scope_key = ? AND s.status = 'pending'
+            ORDER BY s.attempts, s.updated_at LIMIT ?""",
+            (_scope_key(scope), limit),
+        )
+        return [_record_from_row(row, scope) for row in rows]
+
+    async def backend_index_status(self, scope: MemoryScope | None = None) -> dict[str, dict[str, int]]:
+        where = "WHERE m.scope_key = ?" if scope is not None else ""
+        params = (_scope_key(scope),) if scope is not None else ()
+        rows = await self._fetchall(
+            f"""SELECT s.index_kind,s.status,COUNT(*) AS count FROM memory_index_state s
+            JOIN memories m ON m.id = s.memory_id {where}
+            GROUP BY s.index_kind,s.status""",
+            params,
+        )
+        result: dict[str, dict[str, int]] = {}
+        for row in rows:
+            result.setdefault(str(row["index_kind"]), {})[str(row["status"])] = int(row["count"])
+        return result
+
+    async def index_backend_metadata(self) -> dict[str, dict[str, str]]:
+        rows = await self._fetchall("SELECT * FROM memory_index_backends ORDER BY index_kind")
+        return {str(row["index_kind"]): dict(row) for row in rows}
 
     async def index_status_counts(self, scope: MemoryScope | None = None) -> dict[str, int]:
         where = "WHERE scope_key = ?" if scope is not None else ""
@@ -270,6 +396,7 @@ class MemoryArchive:
         async with self._write_lock:
             await self._connection.execute("DELETE FROM memories WHERE id = ? AND scope_key = ?", (memory_id, _scope_key(scope)))
             await self._connection.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
+            await self._connection.execute("DELETE FROM memory_index_state WHERE memory_id = ?", (memory_id,))
             await self._connection.execute(
                 "INSERT INTO memory_history(memory_id,action,previous_content,content,provider,reason,created_at) VALUES (?,'DELETE',?,'',?,?,?)",
                 (memory_id, existing.content, provider, reason, utc_now()),

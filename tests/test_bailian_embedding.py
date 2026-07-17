@@ -3,8 +3,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from personal_agent.memory.config import EmbeddingConfig
-from personal_agent.plugins.builtin.memory.lumora.embedding import BailianEmbeddingClient
+from personal_agent.plugins.builtin.memory.lumora.embedding import (
+    OpenAICompatibleEmbeddingBackend,
+    OpenAICompatibleEmbeddingConfig,
+)
 
 
 @pytest.mark.asyncio
@@ -21,8 +23,12 @@ async def test_bailian_embedding_uses_openai_compatible_endpoint() -> None:
         ]})
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    config = EmbeddingConfig("openai_compatible", "https://dashscope.example/v1", "secret", "text-embedding-v4", 0)
-    client = BailianEmbeddingClient(config, client=http)
+    config = OpenAICompatibleEmbeddingConfig(
+        base_url="https://dashscope.example/v1",
+        api_key="secret",
+        model="text-embedding-v4",
+    )
+    client = OpenAICompatibleEmbeddingBackend(config, client=http)
 
     vectors = await client.embed(["first", "second"])
 

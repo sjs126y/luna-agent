@@ -407,7 +407,7 @@ sandbox:
 
     assert report["ok"] is True
     assert "gateway.platform_reconnect_delays" not in report["unknown_nested_keys"]
-    assert "memory.embedding.model" not in report["unknown_nested_keys"]
+    assert "memory.providers" not in report["unknown_nested_keys"]
     assert report["errors"] == []
     assert report["warnings"] == []
 

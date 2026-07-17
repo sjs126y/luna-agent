@@ -437,17 +437,6 @@ def _memory_fields() -> tuple[ConfigField, ...]:
         _yaml_field("memory.llm.api_mode", "memory_llm_api_mode", "auto", "str", "memory", "Memory LLM API mode.", choices=LLM_API_MODES),
         _yaml_field("memory.llm.max_tokens", "memory_llm_max_tokens", 2048, "int", "memory", "Memory LLM output token limit.", minimum=1),
         _env_field("MEMORY_LLM_API_KEY", "memory_llm_api_key", "", "str", "memory", "Dedicated Memory LLM API key.", sensitive=True),
-        _yaml_field("memory.embedding.api_mode", "memory_embedding_api_mode", "openai_compatible", "str", "memory", "Embedding API compatibility mode."),
-        _yaml_field("memory.embedding.base_url", "memory_embedding_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1", "str", "memory", "Embedding API base URL."),
-        _yaml_field("memory.embedding.api_key_env", "memory_embedding_api_key_env", "DASHSCOPE_API_KEY", "str", "memory", "Environment variable containing the embedding API key."),
-        _yaml_field("memory.embedding.dimensions", "memory_embedding_dimensions", 0, "int", "memory", "Embedding vector dimensions; 0 means detect.", minimum=0),
-        _yaml_field("memory.embedding.model", "memory_embedding_model", "text-embedding-v4", "str", "memory", "Embedding model."),
-        _env_field("MEMORY_EMBEDDING_API_KEY", "memory_embedding_api_key", "", "str", "memory", "Embedding API key override.", sensitive=True),
-        _yaml_field("memory.qdrant.url", "memory_qdrant_url", "http://localhost:6333", "str", "memory", "Qdrant URL."),
-        _yaml_field("memory.qdrant.collection", "memory_qdrant_collection", "lumora_memories", "str", "memory", "Qdrant collection."),
-        _yaml_field("memory.qdrant.api_key_env", "memory_qdrant_api_key_env", "QDRANT_API_KEY", "str", "memory", "Environment variable containing the Qdrant API key."),
-        _yaml_field("memory.qdrant.timeout_seconds", "memory_qdrant_timeout_seconds", 10, "int", "memory", "Qdrant timeout.", minimum=1),
-        _env_field("MEMORY_QDRANT_API_KEY", "memory_qdrant_api_key", "", "str", "memory", "Qdrant API key override.", sensitive=True),
         _yaml_field("memory.providers", "memory_provider_options", {}, "dict", "memory", "Provider-specific memory options."),
     )
 

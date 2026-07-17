@@ -4,23 +4,49 @@ from __future__ import annotations
 
 from typing import Any
 from uuid import UUID
+from dataclasses import dataclass
+from pathlib import Path
+
+from personal_agent.memory.models import MemoryRecord, MemoryScope
+from personal_agent.plugins.builtin.memory.lumora.backends.base import BackendHealth, SearchHit
 
 
 _FILTER_PAYLOAD_INDEXES = ("user_id", "profile")
 
 
+@dataclass(frozen=True)
+class QdrantVectorConfig:
+    collection: str
+    url: str = ""
+    path: str = ""
+    api_key: str = ""
+    timeout_seconds: float = 10.0
+
+
 class QdrantMemoryIndex:
-    def __init__(self, config, *, dimensions: int = 0, client=None) -> None:
+    name = "qdrant"
+
+    def __init__(self, config: QdrantVectorConfig, *, dimensions: int = 0, client=None) -> None:
+        self._local = bool(config.path)
         if client is None:
             from qdrant_client import AsyncQdrantClient
 
-            client = AsyncQdrantClient(
-                url=config.url, api_key=config.api_key or None, timeout=config.timeout_seconds
-            )
+            if self._local:
+                Path(config.path).parent.mkdir(parents=True, exist_ok=True)
+                client = AsyncQdrantClient(path=config.path)
+            else:
+                client = AsyncQdrantClient(
+                    url=config.url, api_key=config.api_key or None, timeout=config.timeout_seconds
+                )
         self.client = client
+        self.config = config
         self.collection = config.collection
         self.dimensions = dimensions
         self._ready = False
+        self.last_error = ""
+
+    async def initialize(self, dimensions: int) -> None:
+        await self.ensure_collection(dimensions)
 
     async def ensure_collection(self, dimensions: int) -> None:
         if self._ready:
@@ -43,7 +69,8 @@ class QdrantMemoryIndex:
                     f"Qdrant collection dimension mismatch: expected {configured}, got {dimensions}"
                 )
             payload_schema = dict(getattr(info, "payload_schema", {}) or {})
-        await self._ensure_filter_indexes(payload_schema)
+        if not self._local:
+            await self._ensure_filter_indexes(payload_schema)
         self.dimensions = dimensions
         self._ready = True
 
@@ -65,23 +92,50 @@ class QdrantMemoryIndex:
                 wait=True,
             )
 
-    async def upsert(self, memory_id: str, vector: list[float], payload: dict[str, Any]) -> None:
+    async def upsert(self, memory: MemoryRecord, vector: list[float]) -> None:
+        await self.upsert_many([memory], [vector])
+
+    async def upsert_many(
+        self,
+        memories: list[MemoryRecord],
+        vectors: list[list[float]],
+    ) -> None:
         from qdrant_client.models import PointStruct
 
-        await self.ensure_collection(len(vector))
+        if len(memories) != len(vectors):
+            raise ValueError("Qdrant memory/vector batch sizes do not match")
+        if not memories:
+            return
+        await self.ensure_collection(len(vectors[0]))
+        points = []
+        for memory, vector in zip(memories, vectors, strict=True):
+            scope = memory.scope or MemoryScope(user_id="")
+            payload = {
+                "user_id": scope.user_id,
+                "profile": scope.profile,
+                "kind": memory.kind.value,
+                "content": memory.content,
+            }
+            points.append(PointStruct(id=memory.id, vector=vector, payload=payload))
         await self.client.upsert(
             self.collection,
-            points=[PointStruct(id=memory_id, vector=vector, payload=payload)],
+            points=points,
             wait=True,
         )
 
-    async def search(self, vector: list[float], *, user_id: str, profile: str, limit: int) -> list[tuple[str, float]]:
+    async def search(
+        self,
+        vector: list[float],
+        scope: MemoryScope,
+        *,
+        limit: int,
+    ) -> list[SearchHit]:
         from qdrant_client.models import FieldCondition, Filter, MatchValue
 
         await self.ensure_collection(len(vector))
         query_filter = Filter(must=[
-            FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-            FieldCondition(key="profile", match=MatchValue(value=profile)),
+            FieldCondition(key="user_id", match=MatchValue(value=scope.user_id)),
+            FieldCondition(key="profile", match=MatchValue(value=scope.profile)),
         ])
         if hasattr(self.client, "query_points"):
             result = await self.client.query_points(
@@ -92,12 +146,27 @@ class QdrantMemoryIndex:
             points = await self.client.search(
                 self.collection, query_vector=vector, query_filter=query_filter, limit=limit
             )
-        return [(_canonical_memory_id(point.id), float(point.score)) for point in points]
+        return [
+            SearchHit(
+                memory_id=_canonical_memory_id(point.id),
+                source="semantic",
+                rank=rank,
+                score=float(point.score),
+            )
+            for rank, point in enumerate(points, start=1)
+        ]
 
     async def delete(self, memory_id: str) -> None:
         from qdrant_client.models import PointIdsList
 
         await self.client.delete(self.collection, points_selector=PointIdsList(points=[memory_id]), wait=True)
+
+    def fingerprint(self) -> str:
+        location = str(Path(self.config.path).resolve()) if self._local else self.config.url
+        return f"{self.name}:{'local' if self._local else 'remote'}:{location}:{self.collection}"
+
+    def health_snapshot(self) -> BackendHealth:
+        return BackendHealth(self.name, "failed" if self.last_error else "ready", self.last_error)
 
     async def close(self) -> None:
         await self.client.close()

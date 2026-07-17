@@ -2,26 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 from personal_agent.memory.models import ProviderReadiness
 
 
 def validate_config(*, context, **kwargs) -> ProviderReadiness:
-    missing = []
-    if context.embedding.api_mode != "openai_compatible":
-        missing.append("memory.embedding.api_mode=openai_compatible")
-    for label, value in (
-        ("memory.embedding.base_url", context.embedding.base_url),
-        ("memory.embedding.model", context.embedding.model),
-        ("memory.embedding API key", context.embedding.api_key),
-        ("memory.qdrant.url", context.qdrant.url),
-        ("memory.qdrant.collection", context.qdrant.collection),
-    ):
-        if not value:
-            missing.append(label)
-    if importlib.util.find_spec("qdrant_client") is None:
-        missing.append("qdrant-client dependency")
+    from personal_agent.plugins.builtin.memory.lumora.backends.factory import validate_lumora_backends
+
+    missing = validate_lumora_backends(context)
     return ProviderReadiness(
         provider="lumora", available=not missing,
         reason=("missing: " + ", ".join(missing)) if missing else "",
@@ -29,15 +16,20 @@ def validate_config(*, context, **kwargs) -> ProviderReadiness:
 
 
 def create_provider(*, context, archive, **kwargs):
-    from personal_agent.plugins.builtin.memory.lumora.embedding import BailianEmbeddingClient
+    from personal_agent.plugins.builtin.memory.lumora.backends.factory import build_lumora_backends
     from personal_agent.plugins.builtin.memory.lumora.provider import LumoraMemoryProvider
-    from personal_agent.plugins.builtin.memory.lumora.qdrant_store import QdrantMemoryIndex
+
+    backends = build_lumora_backends(context=context, archive=archive)
 
     return LumoraMemoryProvider(
         archive=archive,
         context=context,
-        embedding=BailianEmbeddingClient(context.embedding),
-        vector_index=QdrantMemoryIndex(context.qdrant, dimensions=context.embedding.dimensions),
+        embedding=backends.embedding,
+        vector_index=backends.vector,
+        keyword_index=backends.keyword,
+        fusion=backends.fusion,
+        reranker=backends.reranker,
+        retrieval_config=backends.config.retrieval,
     )
 
 

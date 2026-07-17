@@ -377,6 +377,51 @@ async def test_empty_response_retry(provider):
     assert retry_event.data["attempt"] == 1
     assert retry_event.data["max_attempts"] == agent._retry.MAX_EMPTY_CONTENT
     assert retry_event.data["recoverable"] is True
+    assert "可发送给用户" in _user_text(transport.call_messages[-1])
+    assert "可发送给用户" not in _user_text(result["messages"])
+
+
+@pytest.mark.asyncio
+async def test_empty_response_exhaustion_uses_safe_persisted_fallback(provider):
+    transport = MockTransport([
+        NormalizedResponse(text="", finish_reason="end_turn")
+        for _ in range(3)
+    ])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "Hi")
+
+    result = await run_conversation(agent, ctx)
+
+    assert transport.calls == 3
+    assert result["final_response"] == "抱歉，模型没有返回可发送内容，请重试或让我用更短的格式回答。"
+    assert result["messages"][-1]["role"] == "assistant"
+    assert "empty response from model" not in result["final_response"]
+    assert "可发送给用户" not in _user_text(result["messages"])
+
+
+@pytest.mark.asyncio
+async def test_legacy_empty_retry_messages_are_hidden_from_model_without_rewriting_history(provider):
+    legacy_prompt = (
+        "You just executed tools but gave no response. "
+        "Please provide a summary of what was done and the results."
+    )
+    history = [
+        {"role": "user", "content": [{"type": "text", "text": "请继续。"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "之前的正常回答"}]},
+        {"role": "user", "content": [{"type": "text", "text": legacy_prompt}]},
+        {"role": "user", "content": [{"type": "text", "text": "请继续。"}]},
+        {"role": "user", "content": [{"type": "text", "text": "请继续。"}]},
+    ]
+    transport = MockTransport([NormalizedResponse(text="正常回复", finish_reason="end_turn")])
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "新问题", history=history)
+
+    result = await run_conversation(agent, ctx)
+
+    request_text = _user_text(transport.call_messages[0])
+    assert legacy_prompt not in request_text
+    assert request_text.count("请继续。") == 1
+    assert legacy_prompt in _user_text(result["messages"])
 
 
 @pytest.mark.asyncio
@@ -447,6 +492,45 @@ async def test_tool_use_loop(provider):
         if any(block.get("type") == "tool_result" for block in message.get("content", []))
     )
     assert user_index < tool_use_index < tool_result_index
+
+
+@pytest.mark.asyncio
+async def test_post_tool_empty_uses_one_tool_free_finalization_without_persisting_prompt(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="",
+            finish_reason="tool_use",
+            tool_calls=[{"id": "c1", "name": "post_tool_echo", "input": {"value": "memory"}}],
+        ),
+        NormalizedResponse(text="", finish_reason="end_turn"),
+        NormalizedResponse(text="根据记忆工具结果，当前共有若干长期记忆。", finish_reason="end_turn"),
+    ])
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    async def _echo(value: str = ""):
+        return '{"items": [{"id": "m1", "content": "likes tea"}]}'
+
+    tool_registry.register(ToolEntry(
+        name="post_tool_echo",
+        description="Post-tool empty test",
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        handler=_echo,
+    ))
+    try:
+        agent = init_agent(transport, provider)
+        ctx = await build_turn_context(agent, "列出记忆")
+        result = await run_conversation(agent, ctx)
+    finally:
+        tool_registry.unregister("post_tool_echo")
+
+    assert transport.calls == 3
+    assert transport.call_tools[-1] == []
+    assert result["final_response"] == "根据记忆工具结果，当前共有若干长期记忆。"
+    assert "The tools already completed" in _user_text(transport.call_messages[-1])
+    assert "The tools already completed" not in _user_text(result["messages"])
+    retries = result["turn_report"]["retries"]
+    assert [item["category"] for item in retries] == ["post_tool_empty"]
 
 
 @pytest.mark.asyncio

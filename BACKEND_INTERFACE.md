@@ -938,10 +938,11 @@ Memory doctor/health payload 提供：
 - `migration.global_pending: integer`，所有 scope 待迁移 observation 数量。
 - `migration.status_counts: object`
 - `migration.global_status_counts: object`
-- `index.pending: integer`，当前 scope 待写入向量索引的 memory 数量。
-- `index.global_pending: integer`，所有 scope 待写入向量索引的 memory 数量。
-- `index.status_counts: object`
-- `index.global_status_counts: object`
+- `index.pending: integer`，当前 scope 待写入 vector/keyword 派生索引的 memory 总数。
+- `index.global_pending: integer`，所有 scope 待写入派生索引的 memory 总数。
+- `index.status_counts: object`，按 `vector`、`keyword` 分组的状态计数。
+- `index.global_status_counts: object`，所有 scope 的分组状态计数。
+- `index.backends: object`，当前索引 Backend、fingerprint、generation 与更新时间。
 
 Memory `search` / `list` 的每条外部记录额外提供：
 
@@ -954,7 +955,9 @@ Memory `search` / `list` 的每条外部记录额外提供：
 
 Router 状态按 scope 隔离。幂等语义搜索遇到主提供器异常会重试一次；恢复时先真实 probe，成功后立即切回主提供器，不再用历史迁移阻塞前台请求。待迁移 observation 和待索引 memory 由现有 Memory Review worker 每次各处理一条，并逐条保存尝试次数、错误和完成状态。
 
-`personal-agent memory doctor` 会执行真实 embedding + 外部向量存储探测；普通配置诊断仍只表示配置/依赖 readiness。
+`personal-agent memory doctor` 会执行真实 embedding + 外部向量存储探测，并在外部 provider 的 `components` 与 `fingerprints` 中报告 embedding、vector、keyword、fusion、reranker 状态；普通配置诊断仍只表示所选 Backend 的配置/依赖 readiness。
+
+`personal-agent memory reindex --index all|vector|keyword` 会从 SQLite Archive 重建 Lumora 派生索引。Archive 始终是权威数据源，切换 embedding、vector 或 keyword Backend 不要求从旧索引服务导出数据。
 
 Review worker payload 提供：
 

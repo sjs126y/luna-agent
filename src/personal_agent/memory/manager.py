@@ -110,6 +110,11 @@ class MemoryManager:
         scope = self.scope(session_key=session_key, user_id=user_id)
         return await self.router.probe(scope)
 
+    async def reindex_external(self, *, index_kind: str = "all", limit: int = 100000) -> dict[str, Any]:
+        if self.router is None:
+            raise RuntimeError("External memory is disabled")
+        return await self.router.reindex_all(index_kind=index_kind, limit=limit)
+
     async def add_external(self, content: str, *, kind: str = "fact", session_key: str = ""):
         if self.router is None:
             raise RuntimeError("External memory is disabled")
@@ -146,9 +151,15 @@ class MemoryManager:
         await self.archive.set_buffer_status(observation_id, "skipped", reason="manual discard")
         return True
 
-    async def list_entries(self, *, target: str = "all", session_key: str = "") -> list[dict[str, Any]]:
+    async def list_entries(
+        self,
+        *,
+        target: str = "all",
+        session_key: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
         if self.router is not None and target in {"all", "external"}:
-            records = await self.router.list(self.scope(session_key=session_key))
+            records = await self.router.list(self.scope(session_key=session_key), limit=limit)
             return [self._external_record(item) for item in records]
         return await self._legacy_list(target)
 
@@ -197,8 +208,8 @@ class MemoryManager:
                 else {}
             )
             index = (
-                await self.archive.index_status_counts(scope)
-                if self.archive and hasattr(self.archive, "index_status_counts")
+                await self.archive.backend_index_status(scope)
+                if self.archive and hasattr(self.archive, "backend_index_status")
                 else {}
             )
             migration_global = (
@@ -207,10 +218,17 @@ class MemoryManager:
                 else migration
             )
             index_global = (
-                await self.archive.index_status_counts()
-                if self.archive and hasattr(self.archive, "index_status_counts")
+                await self.archive.backend_index_status()
+                if self.archive and hasattr(self.archive, "backend_index_status")
                 else index
             )
+            index_metadata = (
+                await self.archive.index_backend_metadata()
+                if self.archive and hasattr(self.archive, "index_backend_metadata")
+                else {}
+            )
+            index_pending = sum(values.get("pending", 0) for values in index.values())
+            index_global_pending = sum(values.get("pending", 0) for values in index_global.values())
             return {
                 "builtin_available": self.internal is not None,
                 "builtin_provider": "internal_markdown" if self.internal is not None else "",
@@ -231,9 +249,10 @@ class MemoryManager:
                 },
                 "index": {
                     "status_counts": index,
-                    "pending": int(index.get("pending", 0)),
+                    "pending": int(index_pending),
                     "global_status_counts": index_global,
-                    "global_pending": int(index_global.get("pending", 0)),
+                    "global_pending": int(index_global_pending),
+                    "backends": index_metadata,
                 },
                 "providers": {"internal": {"available": self.internal is not None}, "external": external},
                 "last_errors": dict(self._last_errors),

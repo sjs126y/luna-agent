@@ -105,9 +105,8 @@ def test_config_registry_exposes_known_yaml_sections_and_keys():
     assert "profiles" in sections
     assert "delivery_max_attempts" in keys["gateway"]
     assert "context_window" in keys["llm"]
-    assert "embedding" in keys["memory"]
+    assert "providers" in keys["memory"]
     assert "review" in keys["memory"]
-    assert "qdrant" in keys["memory"]
     assert keys["profiles"] is None
     assert "resolve_inbound" in keys["attachments"]
     assert len(CONFIG_REGISTRY.env_fields()) > 0

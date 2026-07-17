@@ -61,19 +61,36 @@ memory:
     model: ""
     api_mode: "auto"
     max_tokens: 2048
-  embedding:
-    api_mode: "openai_compatible"
-    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    api_key_env: "DASHSCOPE_API_KEY"
-    model: "text-embedding-v4"
-    dimensions: 0
-  qdrant:
-    url: "http://localhost:6333"
-    collection: "lumora_memories"
-    api_key_env: "QDRANT_API_KEY"
-    timeout_seconds: 10
   providers:
-    lumora: {}
+    lumora:
+      embedding:
+        provider: "openai_compatible"
+        base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        api_key_env: "DASHSCOPE_API_KEY"
+        model: "text-embedding-v4"
+        dimensions: 0
+        timeout_seconds: 30
+        batch_size: 10
+      vector:
+        provider: "qdrant"
+        path: "./data/memory/qdrant"  # 本地 Qdrant；远程部署改用 url 和 api_key_env
+        collection: "lumora_memories"
+        timeout_seconds: 10
+      keyword:
+        provider: "sqlite_fts5"
+        tokenizer: "unicode61"
+      fusion:
+        provider: "weighted_rrf"
+        semantic_weight: 0.6
+        keyword_weight: 0.4
+        importance_weight: 0.1
+        rrf_k: 60
+      reranker:
+        provider: "none"
+      retrieval:
+        semantic_timeout_seconds: 30
+        keyword_timeout_seconds: 5
+        reranker_timeout_seconds: 30
     mem0:
       options: {}
 
