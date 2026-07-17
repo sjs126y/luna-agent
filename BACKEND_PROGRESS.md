@@ -843,3 +843,30 @@ uv run pytest -q
 真实配置测速：核心 Runtime 在 `1.868s` 返回，此时 8 个已启用 MCP 均在后台 starting；所有首次尝试在 `20.477s` 完成，其中 GitHub 单独耗时 `20.341s`，但不再阻塞核心。最终 8/8 server ready、85 个 MCP 工具，Time MCP 在 `1.748s` 正常上线；Runtime 关闭耗时 `2.319s`。
 
 真实 GitHub 写保护复测：在 GitHub runtime 为 ready 时通过完整 executor pipeline 调用 `mcp__github__issue_write`，结果为 `status=denied`、`category=hook`，错误为 `GitHub Assistant write operations are disabled by plugin configuration`，请求未到达远端。
+
+## 2026-07-17：Lumora 内部检索 Backend
+
+状态：已完成实现并通过全量回归与真实远程环境验证。
+
+- Lumora 外部记忆提供器内部拆分为 embedding、vector、keyword、fusion 与可选 reranker Backend，通过轻量 Registry 和工厂组装；公共接口不包含 Qdrant、PostgreSQL 或本地文件数据库的专属字段。
+- 当前内置实现为 OpenAI Compatible Embedding、Qdrant、SQLite FTS5、Weighted RRF 和 No-op Reranker。Qdrant 同一 Backend 同时支持远程 `url` 与本地持久化 `path`，真实本地测试覆盖关闭重开和 scope 过滤。
+- 配置迁入 `memory.providers.lumora`，删除 embedding `api_mode` 和公共 Qdrant 配置；只校验当前选中 Backend，密钥仍统一通过 `Settings` 解析。
+- 混合检索并发运行 semantic 与 keyword 通道，保留原始相似度/BM25 分数；单通道故障会降级，双通道故障才交由 External Memory Router fallback，Reranker 故障返回 Fusion 结果。
+- SQLite Archive 继续作为权威数据源，新增 vector/keyword 独立索引状态、Backend fingerprint 与 generation；切换索引实现后从 Archive 重建，不迁移旧向量库数据。
+- 新增 `personal-agent memory reindex --index all|vector|keyword`，并扩展 memory doctor 的组件状态、fingerprint、generation 与分索引 backlog。
+
+阶段提交：
+
+- `c430b58 Define Lumora backend contracts`
+- `7841415 Configure Lumora retrieval backends`
+- `97cd71d Track Lumora backend indexes`
+
+已验证：
+
+```bash
+python -m compileall -q src/personal_agent
+uv run pytest -q
+uv run personal-agent memory doctor --json
+```
+
+结果：全量回归 `989 passed`。真实 Memory doctor 使用现有百炼 Embedding 与远程 Qdrant 探测成功，Lumora 保持主提供器，embedding/vector/keyword/fusion 均为 ready、reranker 为 disabled；102 条现有记忆的 vector 与 keyword 索引均为 ready，全局索引 pending 为 0。

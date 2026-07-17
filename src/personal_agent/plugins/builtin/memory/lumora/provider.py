@@ -379,13 +379,3 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
 
     def _vector_fingerprint(self) -> str:
         return f"{self.embedding.fingerprint()}|{self.vector_index.fingerprint()}"
-
-
-def reciprocal_rank_fusion(semantic_ids: list[str], keyword_ids: list[str], *, k: int = 60,
-                           semantic_weight: float = 0.6, keyword_weight: float = 0.4) -> dict[str, float]:
-    scores: dict[str, float] = {}
-    for rank, memory_id in enumerate(semantic_ids, start=1):
-        scores[memory_id] = scores.get(memory_id, 0) + semantic_weight / (k + rank)
-    for rank, memory_id in enumerate(keyword_ids, start=1):
-        scores[memory_id] = scores.get(memory_id, 0) + keyword_weight / (k + rank)
-    return scores

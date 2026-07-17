@@ -8,15 +8,8 @@ from personal_agent.plugins.builtin.memory.lumora.backends.base import BackendHe
 from personal_agent.plugins.builtin.memory.lumora.backends.config import RetrievalConfig
 from personal_agent.plugins.builtin.memory.lumora.backends.keyword import SqliteFts5KeywordIndex
 from personal_agent.plugins.builtin.memory.lumora.backends.ranking import NoOpReranker, WeightedRrfFusion
-from personal_agent.plugins.builtin.memory.lumora.provider import LumoraMemoryProvider, reciprocal_rank_fusion
+from personal_agent.plugins.builtin.memory.lumora.provider import LumoraMemoryProvider
 from personal_agent.plugins.builtin.memory.lumora.qdrant_store import QdrantMemoryIndex, QdrantVectorConfig
-
-
-def test_reciprocal_rank_fusion_combines_semantic_and_bm25() -> None:
-    scores = reciprocal_rank_fusion(["semantic", "both"], ["both", "keyword"])
-
-    assert scores["both"] > scores["semantic"]
-    assert scores["semantic"] > scores["keyword"]
 
 
 class _FakeQdrantClient:

@@ -147,6 +147,16 @@ auth:
   admins: []
 ```
 
+Lumora 内部通过独立 Backend 组装检索链路。`embedding`、`vector`、`keyword`、`fusion` 和 `reranker` 都采用 `provider + provider-specific options`；只有被选中的 Backend 会校验配置和可选依赖。当前内置实现为 `openai_compatible`、`qdrant`、`sqlite_fts5`、`weighted_rrf` 和 `none`。
+
+Qdrant 远程连接使用 `url`，本地持久化使用 `path`，两者只能配置一个。切换 embedding 模型、vector Backend 或 keyword Backend 后运行：
+
+```bash
+uv run personal-agent memory reindex --index all
+```
+
+重建数据来自 `data/memory/memory.db`，不会删除原始记忆。Fusion 或 Reranker 配置变化不需要重建索引。
+
 ## 主要分区
 
 | 分区 | 说明 |
@@ -156,7 +166,7 @@ auth:
 | `agents` | 子 agent 并发、工具调用、token 和历史限制 |
 | `storage` | 数据目录和日志级别 |
 | `plugins` | 用户插件目录、显式启用/禁用插件 |
-| `memory` | 外部 provider、review/buffer、Memory LLM、百炼 embedding 和 Qdrant |
+| `memory` | 外部 provider、review/buffer、Memory LLM 和 Lumora 检索 Backend |
 | `multimodal` | 平台附件、多模态降级和原生图片输入策略 |
 | `compression` | 上下文压缩阈值和 tail budget |
 | `sandbox` | 文件、bash、审计的安全边界 |

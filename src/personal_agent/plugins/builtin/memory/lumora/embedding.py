@@ -66,6 +66,3 @@ class OpenAICompatibleEmbeddingBackend:
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
-
-
-BailianEmbeddingClient = OpenAICompatibleEmbeddingBackend
