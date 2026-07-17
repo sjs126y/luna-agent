@@ -48,7 +48,7 @@ async def test_memory_archive_migrates_v1_internal_buffer(tmp_path) -> None:
 
     assert {"proposed_action", "proposed_content", "entry_id"} <= columns
     version = await archive._fetchone("SELECT version FROM memory_schema")
-    assert version["version"] == 4
+    assert version["version"] == 5
     await archive.close()
 
 
@@ -112,4 +112,52 @@ async def test_memory_archive_tracks_pending_index_retries(tmp_path) -> None:
     assert ready["index_status"] == "ready"
     assert ready["index_attempts"] == 2
     assert ready["index_error"] == ""
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_archive_tracks_vector_and_keyword_backends_independently(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    await archive.upsert_memory(scope, MemoryRecord(id="m1", content="indexed memory", scope=scope))
+
+    vector_changed = await archive.ensure_index_backend("vector", "qdrant", "embed:v1|qdrant:local")
+    keyword_changed = await archive.ensure_index_backend(
+        "keyword", "sqlite_fts5", "sqlite_fts5:unicode61", initial_status="ready"
+    )
+    await archive.set_backend_index_status(
+        "m1",
+        "vector",
+        backend="qdrant",
+        fingerprint="embed:v1|qdrant:local",
+        status="pending",
+        error="timeout",
+    )
+
+    assert vector_changed is False
+    assert keyword_changed is False
+    assert await archive.backend_index_status(scope) == {
+        "keyword": {"ready": 1},
+        "vector": {"pending": 1},
+    }
+    pending = await archive.pending_backend_index_memories(scope)
+    assert [item.id for item in pending] == ["m1"]
+    metadata = await archive.index_backend_metadata()
+    assert metadata["vector"]["backend"] == "qdrant"
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_archive_marks_new_generation_pending_on_backend_change(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    await archive.upsert_memory(scope, MemoryRecord(id="m1", content="indexed memory", scope=scope))
+    await archive.ensure_index_backend("vector", "qdrant", "embedding:v1|qdrant:remote")
+
+    changed = await archive.ensure_index_backend("vector", "pgvector", "embedding:v1|pgvector:db")
+
+    assert changed is True
+    assert await archive.backend_index_status(scope) == {"vector": {"pending": 1}}
     await archive.close()

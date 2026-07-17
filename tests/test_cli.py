@@ -334,22 +334,30 @@ def test_memory_cli_commands(monkeypatch):
     async def delete(identifier, target="all"):
         return identifier == "memory:1"
 
+    async def reindex(*, index_kind, limit):
+        assert index_kind == "vector"
+        assert limit == 10
+        return {"attempted": 2, "completed": 2, "failed": 0}
+
     monkeypatch.setattr("personal_agent.cli._memory_report", report)
     monkeypatch.setattr("personal_agent.cli._memory_entries", entries)
     monkeypatch.setattr("personal_agent.cli._memory_search_entries", search)
     monkeypatch.setattr("personal_agent.cli._memory_entry", entry)
     monkeypatch.setattr("personal_agent.cli._memory_delete", delete)
+    monkeypatch.setattr("personal_agent.cli._memory_reindex", reindex)
 
     assert runner.invoke(app, ["memory", "doctor"]).exit_code == 0
     listed = runner.invoke(app, ["memory", "list", "--json"])
     searched = runner.invoke(app, ["memory", "search", "needle"])
     shown = runner.invoke(app, ["memory", "show", "memory:1"])
     deleted = runner.invoke(app, ["memory", "delete", "memory:1", "--yes"])
+    reindexed = runner.invoke(app, ["memory", "reindex", "--index", "vector", "--limit", "10"])
 
     assert json.loads(listed.output)[0]["id"] == "memory:1"
     assert "needle" in searched.output
     assert "记忆: memory:1" in shown.output
     assert "已删除记忆: memory:1" in deleted.output
+    assert "completed=2" in reindexed.output
 
 
 def test_plugins_info_command_shows_registered_items():

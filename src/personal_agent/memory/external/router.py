@@ -288,9 +288,13 @@ class ExternalMemoryRouter:
                 break
             await self.archive.mark_observations_migrated([observation.id])
             result["migration_completed"] += 1
-        pending_index = await self.archive.pending_index_memories(
-            scope, limit=max(0, index_limit)
-        )
+        pending_reader = getattr(self.primary, "pending_reindex_records", None)
+        if pending_reader is not None:
+            pending_index = await pending_reader(scope, limit=max(0, index_limit))
+        else:
+            pending_index = await self.archive.pending_index_memories(
+                scope, limit=max(0, index_limit)
+            )
         reindex = getattr(self.primary, "reindex", None)
         if pending_index and reindex is not None:
             indexed = await reindex(pending_index, scope)
@@ -299,6 +303,14 @@ class ExternalMemoryRouter:
             result["index_failed"] += int(indexed.get("failed") or 0)
         await self._persist_state(scope, state)
         return result
+
+    async def reindex_all(self, *, index_kind: str = "all", limit: int = 100000) -> dict[str, Any]:
+        if self.primary is None or self.requested_provider != "lumora":
+            raise RuntimeError("Lumora memory provider is not active")
+        reindex = getattr(self.primary, "reindex_all", None)
+        if reindex is None:
+            raise RuntimeError(f"Memory provider does not support full reindex: {self.requested_provider}")
+        return await reindex(index_kind=index_kind, limit=limit)
 
     async def probe(self, scope: MemoryScope) -> dict[str, Any]:
         state = self._state(scope)

@@ -67,7 +67,7 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
                 timeout=self.retrieval_config.semantic_timeout_seconds,
             ),
             asyncio.wait_for(
-                self.keyword_index.search(query, scope, limit=candidate_limit),
+                self._keyword_search(query, scope, candidate_limit),
                 timeout=self.retrieval_config.keyword_timeout_seconds,
             ),
             return_exceptions=True,
@@ -175,6 +175,28 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             self.last_error = ""
         return result
 
+    async def reindex_all(self, *, index_kind: str = "all", limit: int = 100000) -> dict[str, int]:
+        if index_kind not in {"all", "vector", "keyword"}:
+            raise ValueError(f"Unsupported memory index kind: {index_kind}")
+        records = await self.archive.all_memories(limit=limit)
+        indexes = {"vector", "keyword"} if index_kind == "all" else {index_kind}
+        result = {"attempted": 0, "completed": 0, "failed": 0}
+        for record in records:
+            result["attempted"] += 1
+            try:
+                await self._write_indexes(record, indexes=indexes)
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                result["failed"] += 1
+                continue
+            result["completed"] += 1
+        if not result["failed"]:
+            self.last_error = ""
+        return result
+
+    async def pending_reindex_records(self, scope: MemoryScope, *, limit: int = 10) -> list[MemoryRecord]:
+        return await self.archive.pending_backend_index_memories(scope, limit=limit)
+
     def health_snapshot(self) -> dict[str, Any]:
         components = {
             "embedding": self.embedding.health_snapshot().as_dict(),
@@ -192,6 +214,13 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             "status": "degraded" if self._component_errors else ("failed" if self.last_error else "ready"),
             "last_error": self.last_error,
             "components": components,
+            "fingerprints": {
+                "embedding": self.embedding.fingerprint(),
+                "vector": self._vector_fingerprint(),
+                "keyword": self.keyword_index.fingerprint(),
+                "fusion": self.fusion.fingerprint(),
+                "reranker": self.reranker.fingerprint(),
+            },
         }
 
     async def close(self) -> None:
@@ -204,7 +233,21 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
 
     async def _semantic_search(self, query: str, scope: MemoryScope, limit: int):
         vector = (await self.embedding.embed([query]))[0]
+        await self.archive.ensure_index_backend(
+            "vector",
+            self.vector_index.name,
+            self._vector_fingerprint(),
+        )
         return await self.vector_index.search(vector, scope, limit=limit)
+
+    async def _keyword_search(self, query: str, scope: MemoryScope, limit: int):
+        await self.archive.ensure_index_backend(
+            "keyword",
+            self.keyword_index.name,
+            self.keyword_index.fingerprint(),
+            initial_status="ready" if self.keyword_index.name == "sqlite_fts5" else "pending",
+        )
+        return await self.keyword_index.search(query, scope, limit=limit)
 
     async def _resolve(self, observation, related: list[MemoryRecord]) -> MemoryChange:
         prompt = (
@@ -261,18 +304,81 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
         self.last_error = ""
         return applied
 
-    async def _write_indexes(self, record: MemoryRecord) -> None:
-        await self.keyword_index.upsert(record)
+    async def _write_indexes(self, record: MemoryRecord, *, indexes: set[str] | None = None) -> None:
+        indexes = indexes or {"vector", "keyword"}
+        errors: list[str] = []
+        if "keyword" in indexes:
+            keyword_fingerprint = self.keyword_index.fingerprint()
+            await self.archive.ensure_index_backend(
+                "keyword",
+                self.keyword_index.name,
+                keyword_fingerprint,
+                initial_status="ready" if self.keyword_index.name == "sqlite_fts5" else "pending",
+            )
+            try:
+                await self.keyword_index.upsert(record)
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                await self.archive.set_backend_index_status(
+                    record.id,
+                    "keyword",
+                    backend=self.keyword_index.name,
+                    fingerprint=keyword_fingerprint,
+                    status="pending",
+                    error=detail,
+                )
+                errors.append(f"keyword: {detail}")
+            else:
+                await self.archive.set_backend_index_status(
+                    record.id,
+                    "keyword",
+                    backend=self.keyword_index.name,
+                    fingerprint=keyword_fingerprint,
+                    status="ready",
+                )
         embedded_at = monotonic()
-        vector = (await self.embedding.embed([record.content]))[0]
-        upserted_at = monotonic()
-        await self.vector_index.upsert(record, vector)
+        upserted_at = embedded_at
+        if "vector" in indexes:
+            try:
+                vector = (await self.embedding.embed([record.content]))[0]
+                vector_fingerprint = self._vector_fingerprint()
+                await self.archive.ensure_index_backend(
+                    "vector", self.vector_index.name, vector_fingerprint
+                )
+                upserted_at = monotonic()
+                await self.vector_index.upsert(record, vector)
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                vector_fingerprint = self._vector_fingerprint()
+                await self.archive.set_backend_index_status(
+                    record.id,
+                    "vector",
+                    backend=self.vector_index.name,
+                    fingerprint=vector_fingerprint,
+                    status="pending",
+                    error=detail,
+                )
+                errors.append(f"vector: {detail}")
+                upserted_at = monotonic()
+            else:
+                await self.archive.set_backend_index_status(
+                    record.id,
+                    "vector",
+                    backend=self.vector_index.name,
+                    fingerprint=vector_fingerprint,
+                    status="ready",
+                )
         finished_at = monotonic()
         logger.info(
             "Lumora index write: embedding=%.3fs qdrant=%.3fs",
             upserted_at - embedded_at,
             finished_at - upserted_at,
         )
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
+    def _vector_fingerprint(self) -> str:
+        return f"{self.embedding.fingerprint()}|{self.vector_index.fingerprint()}"
 
 
 def reciprocal_rank_fusion(semantic_ids: list[str], keyword_ids: list[str], *, k: int = 60,

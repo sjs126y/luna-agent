@@ -921,6 +921,31 @@ def memory_delete(
     asyncio.run(_run())
 
 
+@memory_app.command("reindex")
+def memory_reindex(
+    index_kind: str = typer.Option("all", "--index", help="all|vector|keyword"),
+    limit: int = typer.Option(100000, "--limit", min=1, help="本次最多重建的记忆数。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """Rebuild Lumora derived indexes from the SQLite archive."""
+    if index_kind not in {"all", "vector", "keyword"}:
+        _exit_error("--index 仅支持 all、vector 或 keyword。")
+
+    async def _run() -> None:
+        result = await _memory_reindex(index_kind=index_kind, limit=limit)
+        if json_output:
+            typer.echo(_json_dumps(result))
+            return
+        typer.echo(
+            "记忆索引重建完成: "
+            f"attempted={result.get('attempted', 0)} "
+            f"completed={result.get('completed', 0)} "
+            f"failed={result.get('failed', 0)}"
+        )
+
+    asyncio.run(_run())
+
+
 def _plugin_manager(settings: Settings | None = None) -> PluginManager:
     settings = settings or Settings()
     manager = PluginManager(settings)
@@ -998,6 +1023,13 @@ async def _memory_entry(identifier: str, *, target: str) -> dict[str, Any] | Non
 async def _memory_delete(identifier: str, *, target: str) -> bool:
     async def _collect(runtime):
         return await runtime.memory_manager.delete(identifier, target=target)
+
+    return await _with_app_runtime(_collect)
+
+
+async def _memory_reindex(*, index_kind: str, limit: int) -> dict[str, Any]:
+    async def _collect(runtime):
+        return await runtime.memory_manager.reindex_external(index_kind=index_kind, limit=limit)
 
     return await _with_app_runtime(_collect)
 
@@ -2389,6 +2421,14 @@ def format_memory_doctor(report: dict[str, Any]) -> str:
         f"  last finished: {review.get('last_finished') or '-'}",
         f"  last error: {review.get('last_error') or '-'}",
     ]
+    backend_indexes = index.get("backends") or {}
+    if backend_indexes:
+        lines.extend(["", "Index backends:"])
+        for kind, data in sorted(backend_indexes.items()):
+            lines.append(
+                f"  - {kind}: {data.get('backend') or '-'} "
+                f"generation={data.get('generation') or '-'}"
+            )
     errors = report.get("last_errors") or {}
     if errors:
         lines.extend(["", "最近错误:"])
