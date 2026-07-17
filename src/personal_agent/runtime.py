@@ -383,6 +383,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 compression_chain=compression_chain,
                 memory_manager=memory_manager,
                 memory_review_service=memory_review_service,
+                artifact_store=artifact_store,
             )
             session_directory = SessionDirectory(settings.session_override)
             platform_directory = PlatformDirectory()

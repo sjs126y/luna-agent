@@ -54,6 +54,7 @@ class ConversationService:
         compression_chain,
         memory_manager,
         memory_review_service=None,
+        artifact_store=None,
         system_prompt_template: str = "",
         agent_cache: dict[str, object] | OrderedDict[str, object] | None = None,
         agent_cache_max: int | None = None,
@@ -65,6 +66,7 @@ class ConversationService:
         self.compression_chain = compression_chain
         self.memory_manager = memory_manager
         self.memory_review_service = memory_review_service
+        self.artifact_store = artifact_store
         self.system_prompt_template = system_prompt_template
         self.agent_cache_max = agent_cache_max
         self.agent_cache: OrderedDict[str, object] = (
@@ -557,6 +559,7 @@ class ConversationService:
             if agent._tools_generation == tool_registry.generation:
                 self.agent_cache.move_to_end(session_key)
                 self._apply_security_context(agent, session_key)
+                agent._artifact_store = self.artifact_store
                 return agent
             del self.agent_cache[session_key]
 
@@ -570,6 +573,7 @@ class ConversationService:
             session_key=session_key,
         )
         agent = runtime.agent
+        agent._artifact_store = self.artifact_store
         self._apply_security_context(agent, session_key)
         if self.agent_cache_max is not None:
             while len(self.agent_cache) >= self.agent_cache_max:
