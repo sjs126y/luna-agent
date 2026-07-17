@@ -27,6 +27,7 @@ def memory_tool_entry() -> ToolEntry:
                 "query": {"type": "string"},
                 "memory_id": {"type": "string"},
                 "kind": {"type": "string", "enum": ["preference", "fact", "event", "relationship", "commitment", "behavior"]},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
             },
             "required": ["action"],
         },
@@ -54,14 +55,34 @@ def memory_buffer_tool_entry() -> ToolEntry:
     )
 
 
-async def _memory_tool(action: str, content: str = "", query: str = "", memory_id: str = "", kind: str = "fact") -> str:
+async def _memory_tool(
+    action: str,
+    content: str = "",
+    query: str = "",
+    memory_id: str = "",
+    kind: str = "fact",
+    limit: int = 10,
+) -> str:
     manager, session_key = _runtime()
     if action == "add":
         return _json((await manager.add_external(content, kind=kind, session_key=session_key)).as_dict())
     if action == "search":
         return _json(await manager.search_entries(query, target="external", session_key=session_key))
     if action == "list":
-        return _json(await manager.list_entries(target="external", session_key=session_key))
+        resolved_limit = max(1, min(int(limit or 10), 10))
+        entries = await manager.list_entries(
+            target="external",
+            session_key=session_key,
+            limit=resolved_limit + 1,
+        )
+        has_more = len(entries) > resolved_limit
+        items = [_compact_memory_entry(item) for item in entries[:resolved_limit]]
+        return _json({
+            "items": items,
+            "returned": len(items),
+            "limit": resolved_limit,
+            "has_more": has_more,
+        })
     if action == "delete":
         return _json({"deleted": await manager.delete(memory_id, target="external", session_key=session_key)})
     if action == "history":
@@ -100,3 +121,19 @@ def _runtime():
 
 def _json(value) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _compact_memory_entry(entry: dict) -> dict:
+    content = str(entry.get("content") or entry.get("text") or "")
+    truncated = len(content) > 400
+    if truncated:
+        content = content[:397].rstrip() + "..."
+    return {
+        "id": str(entry.get("id") or ""),
+        "content": content,
+        "content_truncated": truncated,
+        "kind": str(entry.get("kind") or ""),
+        "importance": float(entry.get("importance") or 0.0),
+        "provider": str(entry.get("source_provider") or entry.get("provider") or ""),
+        "created_at": str(entry.get("created_at") or ""),
+    }

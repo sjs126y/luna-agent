@@ -878,3 +878,12 @@ uv run personal-agent memory doctor --json
 Conversation Runtime 重构后，微信 Adapter 的原始更新解析器仍命名为 `_process_message`，覆盖了 `BasePlatformAdapter._process_message(MessageEvent)`。微信解析完成调用 `handle_message()` 后会通过多态递归回旧解析器，导致 `MessageEvent.get` 异常。现已将微信侧入口改为 `_process_update(dict)`，结构化事件统一交回 Base 消息管线，并新增单次进入回归测试。
 
 验证：平台/网关聚焦回归 `83 passed`，全量回归 `991 passed`。
+
+### Memory 列表与空回复恢复
+
+真实微信会话发现 `memory(action=list)` 返回约 14 KB 完整记录，被工具管线在 8,000 字符处截断为无效 JSON；模型在工具后连续空回复，Agent Loop 最终把内部 `(empty response from model)` 占位符发送给用户，并将三条重试指令持久化为用户消息。
+
+- Memory list 默认最多返回 10 条精简记录，支持 `limit`，省略 scope/metadata 并限制单条 content，响应包含 `returned/limit/has_more` 且保持有效 JSON。
+- 工具后空回复改为一次无工具强制收尾；仍为空时返回稳定中文提示，不再进入两轮普通空回复重试。
+- 普通空回复、无效响应和无效工具参数的重试指令改为请求级临时上下文，不写入 transcript。
+- 已有会话中的旧版空回复重试序列会在构建模型请求时被过滤，但数据库原始记录保持不变。

@@ -151,9 +151,15 @@ class MemoryManager:
         await self.archive.set_buffer_status(observation_id, "skipped", reason="manual discard")
         return True
 
-    async def list_entries(self, *, target: str = "all", session_key: str = "") -> list[dict[str, Any]]:
+    async def list_entries(
+        self,
+        *,
+        target: str = "all",
+        session_key: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
         if self.router is not None and target in {"all", "external"}:
-            records = await self.router.list(self.scope(session_key=session_key))
+            records = await self.router.list(self.scope(session_key=session_key), limit=limit)
             return [self._external_record(item) for item in records]
         return await self._legacy_list(target)
 

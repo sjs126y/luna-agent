@@ -25,6 +25,7 @@ from personal_agent.tools.executor import execute_tool_calls
 logger = logging.getLogger(__name__)
 
 MAX_IDENTICAL_SUCCESSFUL_TOOL_CALLS = 3
+EMPTY_RESPONSE_FALLBACK = "抱歉，模型没有返回可发送内容，请重试或让我用更短的格式回答。"
 
 
 async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=None, session_key: str = "") -> dict:
@@ -36,6 +37,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
     finalization_fallback = ""
     finalization_error_label = ""
     stop_hook_active = False
+    transient_retry_instruction = ""
     report_recorder = TurnReportRecorder(event_sink)
 
     def _with_turn_report(result: dict) -> dict:
@@ -84,6 +86,11 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         active_tools = [] if is_forced_finalization else agent.tools
         skill_injection_for_plan = getattr(ctx, "skill_injection", None)
         api_messages = await _build_api_messages(agent, ctx)
+        if transient_retry_instruction:
+            api_messages.append({
+                "role": "user",
+                "content": [{"type": "text", "text": transient_retry_instruction}],
+            })
         if is_forced_finalization:
             api_messages.append({
                 "role": "user",
@@ -100,6 +107,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             skill_injection_for_plan,
             tools=active_tools,
             finalization_instruction=finalization_instruction,
+            transient_retry_instruction=transient_retry_instruction,
         )
         context_budget = _build_request_context_budget(
             agent,
@@ -224,11 +232,9 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                     error=f"{type(exc).__name__}: {exc}",
                     recoverable=True,
                 )
-                ctx.messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text":
-                        "Your previous response was malformed. Please retry with a valid response."}],
-                })
+                transient_retry_instruction = (
+                    "Your previous response was malformed. Please retry with a valid response."
+                )
                 logger.debug("Invalid JSON retry %d: %s", agent._retry.invalid_json_retries, exc)
                 continue
             logger.exception("LLM call failed (non-retryable)")
@@ -303,6 +309,10 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             # Post-tool empty: specific retry (different nudge)
             if just_executed_tools and not agent._retry.post_tool_empty_retried:
                 agent._retry.post_tool_empty_retried = True
+                finalization_pending = True
+                finalization_instruction = _tool_result_finalization_prompt()
+                finalization_fallback = _tool_result_finalization_fallback()
+                finalization_error_label = "工具执行后空回复收尾失败"
                 await emit_event(
                     report_recorder,
                     "retry",
@@ -312,13 +322,7 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                     max_attempts=1,
                     recoverable=True,
                 )
-                ctx.messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text":
-                        "You just executed tools but gave no response. "
-                        "Please provide a summary of what was done and the results."}],
-                })
-                logger.debug("Post-tool empty retry")
+                logger.debug("Post-tool empty response switched to tool-free finalization")
                 just_executed_tools = False
                 continue
             # Generic empty: retry with continue nudge
@@ -333,21 +337,25 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                     max_attempts=agent._retry.MAX_EMPTY_CONTENT,
                     recoverable=True,
                 )
-                ctx.messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": "请继续。"}],
-                })
+                transient_retry_instruction = "请直接给出可发送给用户的最终回答，不要返回空内容。"
                 logger.debug("Empty response retry %d", agent._retry.empty_content_retries)
                 just_executed_tools = False
                 continue
+            ctx.messages.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": EMPTY_RESPONSE_FALLBACK}],
+            })
+            await emit_event(report_recorder, "assistant_message", EMPTY_RESPONSE_FALLBACK)
             return _with_turn_report({
-                "final_response": "(empty response from model)",
+                "final_response": EMPTY_RESPONSE_FALLBACK,
                 "messages": ctx.messages,
                 "api_calls": agent.session_api_calls,
                 "completed": True,
                 "status": "completed",
                 "error": "",
             })
+
+        transient_retry_instruction = ""
 
         # ── retry: invalid JSON in tool calls ──
         invalid_tools = [
@@ -368,12 +376,10 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                     tool_names=bad_names,
                     recoverable=True,
                 )
-                ctx.messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text":
-                        f"Your previous tool call(s) had invalid JSON arguments: {bad_names}. "
-                        f"Please retry with valid JSON arguments."}],
-                })
+                transient_retry_instruction = (
+                    f"Your previous tool call(s) had invalid JSON arguments: {bad_names}. "
+                    "Please retry with valid JSON arguments."
+                )
                 logger.debug("Invalid tool retry %d: %s", agent._retry.invalid_tool_retries, bad_names)
                 just_executed_tools = False
                 continue
@@ -740,7 +746,7 @@ async def _run_stop_hook(agent, ctx, response_text: str):
 
 async def _build_api_messages(agent, ctx) -> list[dict]:
     """Build messages for LLM: messages + injections. NOT persisted."""
-    msgs = list(ctx.messages)
+    msgs = _strip_legacy_retry_messages(list(ctx.messages))
 
     if ctx.skill_summaries:
         msgs.insert(0, {
@@ -777,6 +783,7 @@ def _build_request_plan(
     *,
     tools: list[dict] | None = None,
     finalization_instruction: str = "",
+    transient_retry_instruction: str = "",
 ) -> LLMRequestPlan:
     dynamic_context: list[dict] = []
     dynamic_context.extend(list(getattr(ctx, "memory_prefetch_messages", []) or []))
@@ -793,8 +800,12 @@ def _build_request_plan(
     messages = list(getattr(ctx, "messages", []) or [])
     current_idx = int(getattr(ctx, "current_turn_user_idx", max(0, len(messages) - 1)) or 0)
     current_user = messages[current_idx] if 0 <= current_idx < len(messages) else None
-    history = messages[:current_idx] if current_user is not None else messages
-    turn_tail = messages[current_idx + 1:] if current_user is not None else []
+    history = _strip_legacy_retry_messages(
+        messages[:current_idx] if current_user is not None else messages
+    )
+    turn_tail = _strip_legacy_retry_messages(
+        messages[current_idx + 1:] if current_user is not None else []
+    )
     for hook_context in getattr(ctx, "hook_contexts", []) or []:
         turn_tail.append({
             "role": "user",
@@ -805,6 +816,11 @@ def _build_request_plan(
             "role": "user",
             "content": [{"type": "text", "text": finalization_instruction}],
         })
+    if transient_retry_instruction:
+        turn_tail.append({
+            "role": "user",
+            "content": [{"type": "text", "text": transient_retry_instruction}],
+        })
     return LLMRequestPlan(
         stable_system=system_prompt,
         stable_tools=list(agent.tools if tools is None else tools),
@@ -814,6 +830,46 @@ def _build_request_plan(
         current_user=current_user,
         turn_tail=turn_tail,
         metadata={"source": "agent_context"},
+    )
+
+
+def _strip_legacy_retry_messages(messages: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    skip_continue = 0
+    for message in messages:
+        text = _message_text(message).strip()
+        if _is_legacy_retry_instruction(text):
+            skip_continue = 2
+            continue
+        if skip_continue and text == "请继续。" and str(message.get("role") or "") == "user":
+            skip_continue -= 1
+            continue
+        skip_continue = 0
+        result.append(message)
+    return result
+
+
+def _is_legacy_retry_instruction(text: str) -> bool:
+    return (
+        text == (
+            "You just executed tools but gave no response. "
+            "Please provide a summary of what was done and the results."
+        )
+        or text.startswith("Your previous response was malformed.")
+        or text.startswith("Your previous tool call(s) had invalid JSON arguments:")
+    )
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        str(block.get("text") or "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
     )
 
 
@@ -916,6 +972,17 @@ def _duplicate_tool_finalization_prompt(tool_call: dict) -> str:
 
 
 def _duplicate_tool_finalization_fallback() -> str:
+    return _tool_result_finalization_fallback()
+
+
+def _tool_result_finalization_prompt() -> str:
+    return (
+        "The tools already completed. Do not call any tools. "
+        "Use the available tool results to give the user a concise final answer now."
+    )
+
+
+def _tool_result_finalization_fallback() -> str:
     return "工具已经执行，但模型未能根据已有结果生成最终回复。请换一种方式重试本次请求。"
 
 
