@@ -4,6 +4,7 @@ import importlib
 
 
 _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
+    ("personal_agent.plugins.builtin.tools.builtin.artifact_from_file", ("artifact_from_file",)),
     ("personal_agent.plugins.builtin.tools.builtin.bash", ("bash",)),
     ("personal_agent.plugins.builtin.tools.builtin.calculator", ("calculator",)),
     ("personal_agent.plugins.builtin.tools.builtin.clarify", ("clarify",)),
