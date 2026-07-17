@@ -289,6 +289,8 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("should_review_memory", "boolean", "Whether memory review should run."),
             EventFieldSpec("was_compressed", "boolean", "Whether the saved turn used compression."),
             EventFieldSpec("context_overflow", "boolean", "Whether the turn hit context overflow."),
+            EventFieldSpec("partial", "boolean", "Whether only a durable stopped-turn prefix was saved."),
+            EventFieldSpec("messages_saved", "integer", "Messages saved from a partial stopped turn."),
         ),
     ),
 }

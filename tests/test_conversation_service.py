@@ -52,10 +52,18 @@ class Agent:
 
 
 class Ctx:
-    def __init__(self, messages, *, was_compressed=False, should_review_memory=False):
+    def __init__(
+        self,
+        messages,
+        *,
+        was_compressed=False,
+        should_review_memory=False,
+        current_turn_user_idx=0,
+    ):
         self.messages = messages
         self.was_compressed = was_compressed
         self.should_review_memory = should_review_memory
+        self.current_turn_user_idx = current_turn_user_idx
 
 
 @pytest_asyncio.fixture
@@ -865,7 +873,7 @@ async def test_run_turn_persists_minimal_failed_turn(service, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_turn_persists_minimal_stopped_turn(service, monkeypatch):
+async def test_run_turn_persists_completed_assistant_text_before_stop(service, monkeypatch):
     svc, _manager, _db = service
 
     async def build_turn_context(agent, text, history):
@@ -887,7 +895,46 @@ async def test_run_turn_persists_minimal_stopped_turn(service, monkeypatch):
     session = await svc.session_store.get_or_create("cli:default:local", _source())
     history = await svc.session_store.load_history(session.session_id)
     assert result.status == "stopped"
-    assert [msg["content"][0]["text"] for msg in history] == ["hello", "已停止。"]
+    assert [msg["content"][0]["text"] for msg in history] == ["hello", "echo:hello", "已停止。"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_persists_completed_tools_before_stop(service, monkeypatch):
+    svc, _manager, _db = service
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "write it"}]},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "call-1", "name": "write_file", "input": {}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": "written"}],
+        },
+    ]
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(messages)
+
+    async def run_conversation(agent, ctx):
+        return {
+            "final_response": "已停止。",
+            "messages": ctx.messages,
+            "completed": False,
+            "status": "stopped",
+            "turn_report": _turn_report(status="stopped", llm_calls=1, tool_calls=1),
+        }
+
+    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", _source(), "write it")
+
+    session = await svc.session_store.get_or_create("cli:default:local", _source())
+    history = await svc.session_store.load_history(session.session_id)
+    assert [msg["content"][0]["text"] for msg in history] == ["write it", "written", "已停止。"]
+    assert result.turn_report["persistence"]["partial"] is True
+    assert result.turn_report["persistence"]["tool_calls_saved"] == 1
 
 
 @pytest.mark.asyncio

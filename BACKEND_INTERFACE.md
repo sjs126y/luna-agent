@@ -1,6 +1,6 @@
 # Backend Interface Contract
 
-更新时间：2026-07-16
+更新时间：2026-07-17
 
 本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
 
@@ -369,6 +369,10 @@
 - `should_review_memory: boolean`
 - `was_compressed: boolean`
 - `context_overflow: boolean`
+- `partial: boolean`，停止轮只持久化已确认完成的消息时为 `true`
+- `messages_saved: integer`，本次停止轮实际保存的消息数
+
+停止轮不会再统一退化成“用户消息 + 已停止”。后端会保留完整助手文本以及能够按 `tool_use.id` / `tool_result.tool_use_id` 配对的工具事务，丢弃没有结果的孤立工具调用。临时 memory/skill context 和强制收尾提示仍不进入 transcript。
 
 ## 3. Desktop Multimodal Input Reserved Interface
 
@@ -741,6 +745,13 @@ Gateway 异步确认：
 - `source: object`
 - `report: object`，完整 `AgentTurnReport`
 - `created_at: number`
+
+停止轮的 `report.persistence` 常见字段：
+
+- `partial: boolean`
+- `messages_saved: integer`
+- `tool_calls_saved: integer`
+- `incomplete_tool_calls_dropped: integer`
 
 完整 `report.llm` 除了 `input_tokens` / `output_tokens` / cache 字段外，也包含：
 

@@ -94,10 +94,8 @@ gateway:
     - 10
     - 30
     - 60
-  platform_pending_warning_threshold: 10
-  platform_chat_locks_maxsize: 64
   platform_message_dedupe_max_size: 1024
-  platform_send_max_retries: 2
+  delivery_max_attempts: 3
 
 execution:
   mode: ask-first
@@ -195,10 +193,8 @@ gateway:
     - 10
     - 30
     - 60
-  platform_pending_warning_threshold: 10
-  platform_chat_locks_maxsize: 64
   platform_message_dedupe_max_size: 1024
-  platform_send_max_retries: 2
+  delivery_max_attempts: 3
 
 execution:
   mode: ask-first
@@ -296,10 +292,8 @@ gateway:
     - 10
     - 30
     - 60
-  platform_pending_warning_threshold: 10
-  platform_chat_locks_maxsize: 64
   platform_message_dedupe_max_size: 1024
-  platform_send_max_retries: 2
+  delivery_max_attempts: 3
 
 execution:
   mode: ask-first
@@ -1805,10 +1799,8 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
         f"  active adapter sessions: {gateway.get('active_adapter_sessions', 0)}",
         f"  cron enabled: {_yes(gateway.get('cron_enabled', False))}",
         f"  reconnect delays: {_list_or_none(gateway.get('platform_reconnect_delays', []))}",
-        f"  pending warning threshold: {gateway.get('platform_pending_warning_threshold', 0)}",
-        f"  chat locks maxsize: {gateway.get('platform_chat_locks_maxsize', 0)}",
         f"  dedupe max size: {gateway.get('platform_message_dedupe_max_size', 0)}",
-        f"  send max retries: {gateway.get('platform_send_max_retries', 0)}",
+        f"  delivery max attempts: {gateway.get('delivery_max_attempts', 0)}",
         "",
         "Memory:",
         f"  builtin provider: {memory.get('builtin_provider') or '-'}",
@@ -2159,7 +2151,7 @@ def _format_effective_config_lines(effective_config: dict[str, Any]) -> list[str
         "sandbox.process_backend",
         "sandbox.file_max_write_bytes",
         "sandbox.audit_enabled",
-        "gateway.platform_send_max_retries",
+        "gateway.delivery_max_attempts",
         "gateway.platform_message_dedupe_max_size",
         "memory.external_provider",
         "plugins.enabled",

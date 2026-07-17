@@ -1,13 +1,14 @@
 # Lumora TODO
 
-更新时间：2026-07-16
+更新时间：2026-07-17
 
 ## Conversation Runtime 后续项
 
 1. 插件安装、卸载与热加载仍需正式 `RuntimeSnapshot + lease + drain`；本轮只完成已加载插件的能力约束 submit/notification 端口。
 2. 出站多模态仍需将 Agent/tool artifact 转成结构化 `OutboundMessage`，补平台 capability fallback、原生附件发送与逐分片投递状态。
 3. 主动决策系统仍需候选事项、冷却、静默时间、优先级和反馈策略；Cron 目前只是正式的主动触发源，不等于主动决策。
-4. Adapter 旧队列/重试代码仅服务未注入 Coordinator 的兼容构造路径；确认所有外部调用者完成迁移后可删除该兼容实现。
+
+已完成收尾：Adapter 旧队列、busy/旁路、发送重试和 Gateway 兼容 Agent 路径已经删除；会话顺序统一由 Coordinator 管理，发送重试统一由 Delivery Outbox 管理。
 
 ## 已完成：Execution Mode 与工具安全重构
 

@@ -7,7 +7,6 @@ from typing import Literal
 
 from personal_agent.hooks.models import (
     ContextHookOutcome,
-    GatewayBeforeSendOutcome,
     GatewayMessageOutcome,
     HookEvent,
     PostToolUseOutcome,
@@ -35,8 +34,6 @@ HOOK_SPECS: dict[HookEvent, HookSpec] = {
     HookEvent.PLATFORM_CONNECTED: HookSpec("observer", None, 10.0),
     HookEvent.PLATFORM_DISCONNECTED: HookSpec("observer", None, 10.0),
     HookEvent.GATEWAY_MESSAGE_RECEIVED: HookSpec("pipeline", GatewayMessageOutcome, 3.0),
-    HookEvent.GATEWAY_BEFORE_SEND: HookSpec("pipeline", GatewayBeforeSendOutcome, 3.0),
-    HookEvent.GATEWAY_AFTER_SEND: HookSpec("observer", None, 3.0),
     HookEvent.PRE_DELIVERY: HookSpec("pipeline", PreDeliveryOutcome, 3.0),
     HookEvent.POST_DELIVERY: HookSpec("observer", None, 3.0),
     HookEvent.SESSION_START: HookSpec("context", ContextHookOutcome, 10.0),
@@ -58,8 +55,6 @@ def matcher_value(event: HookEvent, envelope) -> str | None:
     payload = envelope.payload
     if event in {
         HookEvent.GATEWAY_MESSAGE_RECEIVED,
-        HookEvent.GATEWAY_BEFORE_SEND,
-        HookEvent.GATEWAY_AFTER_SEND,
         HookEvent.PLATFORM_CONNECTED,
         HookEvent.PLATFORM_DISCONNECTED,
         HookEvent.PRE_DELIVERY,

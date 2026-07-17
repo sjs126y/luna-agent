@@ -15,8 +15,6 @@ class HookEvent(str, Enum):
     PLATFORM_CONNECTED = "PlatformConnected"
     PLATFORM_DISCONNECTED = "PlatformDisconnected"
     GATEWAY_MESSAGE_RECEIVED = "GatewayMessageReceived"
-    GATEWAY_BEFORE_SEND = "GatewayBeforeSend"
-    GATEWAY_AFTER_SEND = "GatewayAfterSend"
     PRE_DELIVERY = "PreDelivery"
     POST_DELIVERY = "PostDelivery"
     SESSION_START = "SessionStart"
@@ -104,21 +102,6 @@ class GatewayMessageOutcome:
         metadata: Mapping[str, Any] | None = None,
     ) -> GatewayMessageOutcome:
         return cls(text=text, attachments=attachments, metadata=metadata)
-
-
-@dataclass(frozen=True)
-class GatewayBeforeSendOutcome:
-    suppressed: bool = False
-    reason: str = ""
-    text: str | None = None
-
-    @classmethod
-    def suppress(cls, reason: str) -> GatewayBeforeSendOutcome:
-        return cls(suppressed=True, reason=str(reason or "message suppressed by hook"))
-
-    @classmethod
-    def replace_text(cls, text: str) -> GatewayBeforeSendOutcome:
-        return cls(text=str(text))
 
 
 @dataclass(frozen=True)

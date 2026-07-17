@@ -24,10 +24,8 @@ def _settings(tmp_path: Path, **overrides):
         "qq_bot_base_url": "http://127.0.0.1:5700",
         "qq_bot_token": "",
         "qq_bot_webhook_secret": "",
-        "platform_chat_locks_maxsize": 64,
-        "platform_pending_warning_threshold": 10,
         "platform_message_dedupe_max_size": 1024,
-        "platform_send_max_retries": 2,
+        "delivery_max_attempts": 3,
     }
     values.update(overrides)
     return SimpleNamespace(**values)

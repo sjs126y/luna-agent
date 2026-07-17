@@ -517,10 +517,8 @@ def _sandbox_fields() -> tuple[ConfigField, ...]:
 def _gateway_fields() -> tuple[ConfigField, ...]:
     return (
         _yaml_field("gateway.platform_reconnect_delays", "platform_reconnect_delays", [1, 2, 5, 10, 30, 60], "list[int]", "gateway", "Platform reconnect delays.", allow_csv=True, minimum=1),
-        _yaml_field("gateway.platform_pending_warning_threshold", "platform_pending_warning_threshold", 10, "int", "gateway", "Pending message warning threshold.", minimum=1),
-        _yaml_field("gateway.platform_chat_locks_maxsize", "platform_chat_locks_maxsize", 64, "int", "gateway", "Gateway chat lock cache size.", minimum=1),
         _yaml_field("gateway.platform_message_dedupe_max_size", "platform_message_dedupe_max_size", 1024, "int", "gateway", "Gateway message dedupe cache size.", minimum=1),
-        _yaml_field("gateway.platform_send_max_retries", "platform_send_max_retries", 2, "int", "gateway", "Platform send retry limit.", minimum=0),
+        _yaml_field("gateway.delivery_max_attempts", "delivery_max_attempts", 3, "int", "gateway", "Maximum durable delivery attempts.", minimum=1),
     )
 
 
