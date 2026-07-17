@@ -56,4 +56,4 @@ Pull requests should describe the user-visible change, list tests run, mention c
 
 ## Security & Configuration Tips
 
-Secrets belong in `.env`, not in git. Runtime configuration is in `config.yaml`; generated data belongs under `data/`. Destructive tools require explicit authorization such as `/allow write`; preserve audit, sandbox, and path-safety checks when editing tool code.
+Secrets belong in `.env`, not in git. Runtime configuration is in `config.yaml`; generated data belongs under `data/`. Destructive tools require the current session's exact tool/resource approval; category-level `/allow write` no longer exists. Preserve audit, sandbox, blocked-path, and path-safety checks when editing tool code.

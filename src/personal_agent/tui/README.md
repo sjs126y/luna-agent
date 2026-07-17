@@ -1,6 +1,6 @@
 # Inline TUI (CC/Codex-style)
 
-CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `docs/archive/TUI_PLAN.md`。
+CC/Codex 风格的行内滚动渲染器。当前后端事件契约见根目录 `BACKEND_INTERFACE.md`，前端进度见 `FRONTEND_PROGRESS.md`。
 
 ## 当前状态
 
@@ -17,10 +17,9 @@ CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `doc
 - 不在 TUI 层改变 conversation event 字段、权限语义、slash 命令语义或工具执行策略。
 - 需要后端新增能力时，先在交接文档写清命令/API、事件字段、错误/取消边界。
 
-## Phase 0 结论 (已验证)
+## 技术边界
 
-技术路线 **prompt_toolkit 独占终端** 已在真实终端验证通过,spike 脚本见
-`scripts/spike_inline.py`。有效的 API 组合:
+技术路线使用 **prompt_toolkit 独占终端**。生产实现采用以下 API 组合：
 
 - `Application(full_screen=False, mouse_support=False)` —— 非 alternate-screen,
   让终端保留 scrollback、原生滚轮/选择可用。
@@ -32,7 +31,7 @@ CC/Codex 风格的行内滚动渲染器。历史设计与分阶段计划见 `doc
   打印到 Application **上方**,进入正常 scrollback。
 - `ConditionalContainer` 的 `filter` 必须是 `Condition(lambda: ...)`,不能直接传 lambda。
 
-验证过的 4 点(真实终端):
+当前稳定行为：
 1. 输入框始终钉底(满屏时因分隔线上偏一行,预期内)。
 2. 流式回复在活跃区原地重绘,不逐行下滚。
 3. 定稿回复进 scrollback,滚轮可上翻查看历史。

@@ -1,1 +1,1 @@
-"""Inline TUI package (CC/Codex-style renderer). See docs/archive/TUI_PLAN.md."""
+"""Inline TUI package for the event-driven conversation runtime."""

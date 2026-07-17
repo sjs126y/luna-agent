@@ -1,8 +1,8 @@
 # Backend Interface Contract
 
-更新时间：2026-07-17
+更新时间：2026-07-18
 
-本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；更详细的历史背景见 `CODEX_HANDOFF.md` 和 `BACKEND_REQUIREMENTS.md`。
+本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；阶段背景见 `CODEX_HANDOFF.md` 和 `PROJECT_EVOLUTION.md`。
 
 ## 0. 统一提交边界
 
@@ -403,7 +403,8 @@
 
 - `ConversationInput`
 - `AttachmentRef`
-- `ConversationService.run_turn_input(session_key, conversation_input)`
+- `SubmissionRequest`，携带 `session_key`、`ConversationInput` 和 `ResponseMode.RETURN_ONLY`
+- `ConversationCoordinator.submit(request)`
 - 事件返回仍然使用 `ConversationEvent.as_dict()`
 
 桌面端推荐请求结构：

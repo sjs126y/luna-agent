@@ -1,6 +1,6 @@
 """Bottom active region layout for the inline TUI.
 
-Structure (validated in scripts/spike_inline.py, Phase 0):
+Structure used by the production inline renderer:
     HSplit([
         ConditionalContainer(active_window),   # streaming reply + live tools
         meter_window,                          # model + context meter

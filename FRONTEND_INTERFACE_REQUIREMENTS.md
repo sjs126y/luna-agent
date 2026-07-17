@@ -1,518 +1,88 @@
 # Frontend Interface Requirements
 
-更新时间：2026-07-13 CST
+更新时间：2026-07-18 CST
 
-本文给后端线使用，只记录 inline TUI / future desktop-web 前端仍需要后端配合或需要继续固化的接口事项。已经完成并被前端消费的需求不再保留在待办区，避免重复实现或误判优先级。
+本文是前端向后端提出小型字段/接口需求的活动清单。已经实现的字段级契约不在这里重复，统一以 `BACKEND_INTERFACE.md` 为准。
 
 ## 当前状态
 
-截至 2026-07-14，前端已接入并消费以下后端能力：
+inline TUI 已消费：
 
-- `tool_decision` / `tool_end` 的确认展示字段：`display_name`, `execution_mode_label`, `risk_level`, `risk_summary`, `default_action`, `available_actions`, `input_summary`, `input_preview`, `affected_paths`, `command_preview`, `url_preview`, `host`, `cwd`, `timeout_seconds`, `method`, `process_label`。
-- `confirm(decision)` 的 allow / deny / always 语义，以及由 `available_actions` 限定可用确认动作。
-- `/stop` 打断 pending confirm 后的固定 `tool_end.status/category/error` 收口。
-- `retry` / `stop` / `error` 的增强状态字段：`max_attempts`, `recoverable`, `reason`, `stopped_tools`, `stopped_agents`, `category`, `detail_id`。
-- 协议 schema 入口：`frontend_protocol_schema()` 和 `personal-agent protocol schema --json`。
-- Slash command registry 和 `CommandResult v2`：inline TUI 补全使用 registry metadata，并能消费 `continue_text` 继续进入 inline event renderer。
-- Slash command argument metadata：registry 已提供 `arguments`，支持 `choice` 和 `dynamic`。
-- 静态参数候选：`/mode set <mode>` 和 `/deny all`。
-- 动态参数候选入口：`slash_argument_choices(...)`，当前 provider 为 `tools` 和 `sessions`。
-- Tool Runs 查询入口：`ConversationQueryService` 和 `/tool-runs [recent|summary|show <id>]`，返回 `CommandResult.kind="tool_runs"` 与结构化 payload。
-- Security v4：四档稳定 Mode、`/deny all`、结构化 `/permissions`、精确
-  `tool_grants` / `resource_grants`、`tool_approval_mode` 和 `requested_resources`。
+- `ConversationEvent`、协议 schema 与 delta opt-in。
+- `tool_start`、`tool_decision`、`tool_end` 的结构化展示和确认字段。
+- allow once / deny / timed allow 语义，以及 `temporary_grant_ttl_seconds`。
+- Security v4 四档 Mode、`/deny all`、`/permissions`、精确 tool/resource grants。
+- Slash command registry、children、choice/dynamic arguments 与 `CommandResult v2`。
+- `/tool-runs`、`/activity`、usage/context、cache diagnostics 和 turn report 摘要。
+- `/stop`、`/steer` 及 pending confirmation 的实时控制结果。
 
-## 已完成：Security v4 前端适配
+当前没有阻塞 inline TUI 的后端必做接口。
 
-后端安全兼容层清理已经完成，inline TUI 已按以下契约适配：
+## 已提供但尚未做专门 UI
 
-1. 从 slash 菜单、补全、帮助和本地命令处理移除 `/allow`；类别级预授权已经不存在。
-2. `/deny` 只接受 `/deny all`，用于清空当前 session 的精确工具与资源限时授权。
-3. Mode 只保留 `Read Only`、`Ask First`、`Local Auto`、`Full Auto`，稳定 ID 为 `read-only`、`ask-first`、`local-auto`、`full-auto`；不要再提交旧 Mode 名称或 UI 别名。
-4. `/mode` 的 `CommandResult.kind="mode"` payload 以 `current` / `modes[]` 为入口，每项字段为 `slug`、`label`、`profile`、`approval_policy`。
-5. `/permissions` payload 只依赖 `security`、`tool_grants`、`resource_grants`、`temporary_grant_ttl_seconds` 和 `pending_confirmation`；不要读取旧 `grants`、`turn_grants` 或类别级 `temporary_grants`。
-6. 确认动作仍为 allow / deny / always，但 always 的显示时长必须来自 `temporary_grant_ttl_seconds`，不能硬编码 24 小时。
-7. Doctor 的 execution 摘要字段为 `mode`、`label`、`profile`、`approval_policy`、`filesystem`、`network_enabled`、`tool_approval`、`grant_ttl_seconds`；旧 `policy_mode` 和 permission category 字段已删除。Doctor UI 仍不属于当前 TUI 必做范围。
+后端出站多模态新增以下稳定契约：
 
-当前没有因 Security v4 遗留的后端接口需求。
+- `artifact_available`
+- `response_artifact_selected`
+- `tool_end.artifacts[]`
+- `ConversationTurnResult.outbound_message`
+- `SubmissionOutcome.message`
+- Delivery part 的 `kind/success/error/ambiguous/attempts`
 
-## Future Desktop App 技术方向
+安全摘要字段包括 `artifact_id`、`kind`、`filename`、`mime_type`、`size_bytes`、`source` 和 `delivery_eligible`，不包含 base64、完整 URI 或本地路径。
 
-桌面端暂不作为当前 CLI/TUI 阻塞项，但后续如果启动 desktop app，前端建议长期固定为：
+当前 TUI 可以继续依赖通用 tool/event renderer，不要求立即增加附件缩略图或 multipart Delivery 面板。未来实现时只消费 `artifact_id` 和安全 metadata，不直接读取 ArtifactStore。
 
-- Shell / packaging：Tauri 2。
-- UI runtime：React + TypeScript。
-- Build：Vite。
-- Styling：Tailwind CSS。
-- UI primitives：Radix UI 或 shadcn/ui，按项目实际视觉风格取舍。
-- Icons：lucide-react。
-- Client state：Zustand，用于当前会话、composer、局部 UI 状态。
-- Server state：TanStack Query，用于 HTTP 查询、缓存和刷新。
-- Realtime：WebSocket 消费 agent event stream。
-- Backend boundary：本地 Python service，不在桌面前端直接 import Python runtime。
+## 可选后端增强
 
-桌面端目标边界：
+这些不是当前阻塞项，只在前端准备实现对应 UI 时推进：
+
+### 更专门的文件预览
+
+- `write` / `edit`：可选 `diff_summary`、`diff_preview`
+- network tool：可选 request body/header 的脱敏摘要
+- artifact：可选受控 thumbnail/preview endpoint，不能暴露本地路径
+
+所有字段必须允许为空；前端按存在性渐进展示。
+
+### Activity 历史
+
+当前 `/activity` 只需要活跃对象和近期详情。如果未来增加历史抽屉，再考虑 completed activity 分页、时间范围和稳定 cursor；现在不要求后端持久化新的 Activity 副本。
+
+## Future Desktop App
+
+Desktop 不作为当前 CLI/TUI 阻塞项。建议技术边界：
 
 ```text
-Tauri desktop shell
-  -> React/TypeScript UI
-  -> HTTP + WebSocket
-  -> local Python desktop service
-  -> AppRuntime / Agent Loop / Tools / Memory / Gateway
+Tauri 2
+  -> React + TypeScript + Vite
+  -> localhost HTTP + WebSocket
+  -> Python desktop facade
+  -> AppRuntime / ConversationCoordinator / Delivery
 ```
 
-后端需要提供的不是远程云服务，而是一个只绑定 localhost 的本地 API facade。建议命令形态：
-
-```bash
-personal-agent desktop-serve
-```
-
-启动后向桌面壳提供 host / port / token，例如：
-
-```json
-{
-  "host": "127.0.0.1",
-  "port": 18743,
-  "token": "<ephemeral-token>",
-  "ws": "ws://127.0.0.1:18743/ws"
-}
-```
-
-桌面端预期后端接口分工：
-
-- HTTP：会话创建、发送消息、历史查询、配置/doctor、activity、tool runs、turn reports、confirm 决策、附件上传。
-- WebSocket：复用当前 `ConversationEvent` 语义，推送 `assistant_delta`、`thinking_delta`、`tool_start`、`tool_decision`、`tool_end`、`llm_end`、`error`、`turn_end` 等实时事件。
-- Attachments：桌面端通过 multipart 上传文件，后端返回 `attachment_id`；发送多模态消息时只引用 attachment id 和 metadata。
-- Confirm：工具确认请求应通过 WebSocket 推给桌面端，用户选择后通过 HTTP 或 WebSocket 回传 `confirm_id` + action。
-- Security：只监听 `127.0.0.1`，启动生成临时 token；文件路径仍走后端 sandbox / permission / audit 逻辑，桌面端不绕过权限。
-
-当前 CLI/TUI 已经验证过的事件和结构化 payload 应作为 desktop service 的基础，而不是另起一套协议：
-
-- `ConversationEvent`
-- `CommandResult v2`
-- slash command registry / argument choices
-- `activity` payload
-- `tool_runs` payload
-- `turn_report.report.llm`
-- `llm_end.data.context_*`
-- confirmation payload fields
-
-桌面端多模态预期：
-
-- CLI 不直接做附件上传式多模态；CLI 可以继续通过工具、路径或文本抽取能力间接处理文件。
-- Desktop composer 需要原生附件区，支持图片/文件上传、预览、移除、发送前校验。
-- 后端多模态接口应尽量输出稳定 metadata：`attachment_id`, `filename`, `mime_type`, `size_bytes`, `preview_text`, `image_dimensions`, `processable`, `error`。
-
-## 已实现 / 归档需求
-
-Activity Runtime 已由后端实现，并已被 inline TUI 消费。当前权威接口以 `BACKEND_INTERFACE.md` 的 Activity Runtime 章节为准；本节保留为需求来源和字段背景，不再表示待实现事项。
-
-### P1：Activity 稳定结构化接口（已实现）
-
-目标：inline TUI / future desktop-web 需要一个长期稳定的 Activity 接口，覆盖宏观总览和具体对象详情。这个接口不应只是临时 doctor 字段，而应成为后续一段时间内前端展示“系统正在做什么”的稳定数据契约。
-
-Activity 覆盖三个层级不同的运行对象：
-
-- `sub_agent`：主 agent 内部委派出去的子任务。
-- `background_process`：工具层启动的后台进程。
-- `gateway_agent`：平台 gateway 收到消息后启动的一次主 agent 处理流程；它不是子 agent。
-
-前端长期展示模型：
-
-- 状态栏显示轻量 badge，例如 `activity 3` 或 `activity 3 !`。
-- `/activity` 打印 summary + 三类列表到 scrollback。
-- `/activity agents <id>`、`/activity processes <id>`、`/activity gateway <id>` 打印详情到 scrollback。
-- future desktop/web 可用同一 payload 做 activity drawer / detail panel。
-
-后端应提供：
-
-- slash command：`/activity [agents|processes|gateway] [id]`
-- `CommandResult.kind="activity"` 的结构化 payload
-- 等价 runtime/query API，供 future desktop/web 直接调用
-- slash registry metadata 和动态候选，供 inline TUI 连续选择
-
-#### `/activity` summary payload
-
-`/activity` 返回完整 overview。列表应轻量，但足够让前端直接渲染，不再额外调用详情接口。
-
-```json
-{
-  "summary": {
-    "has_active_work": true,
-    "active_total": 3,
-    "attention_required": false,
-    "longest_running_seconds": 34.6,
-    "counts": {
-      "sub_agents": {
-        "active": 1,
-        "recent": 12,
-        "failed_recent": 1,
-        "stop_requested": 0
-      },
-      "background_processes": {
-        "total": 2,
-        "running": 1,
-        "done": 1,
-        "killed": 0
-      },
-      "gateway_agents": {
-        "running": 1,
-        "stop_requested": 0
-      }
-    }
-  },
-  "sub_agents": {
-    "active_runs": [],
-    "recent_runs": []
-  },
-  "background_processes": {
-    "items": []
-  },
-  "gateway_agents": {
-    "running_agent_runs": []
-  }
-}
-```
-
-#### 列表 item 最小公共字段
-
-每个列表 item 必须尽量保持同一公共外形，方便前端做统一 activity list：
-
-- `id: string`
-- `kind: "sub_agent" | "background_process" | "gateway_agent"`
-- `status: string`
-- `duration_seconds: number`
-- `stop_requested: boolean`
-- `error: string`
-- `attention_required: boolean`
-
-`status` 应稳定在：
-
-- `running`
-- `completed`
-- `failed`
-- `stopped`
-- `stopping`
-
-时间字段应统一：
-
-- `started_at` / `finished_at`：ISO string 或 unix seconds 二选一，由后端统一。
-- `duration_seconds`：必须提供，前端主要显示它。
-
-#### sub agent 列表字段
-
-```json
-{
-  "id": "abc123",
-  "kind": "sub_agent",
-  "run_id": "abc123",
-  "status": "running",
-  "role": "reviewer",
-  "task": "检查 provider cache 实现",
-  "task_preview": "检查 provider cache 实现",
-  "started_at": "2026-07-06T22:10:00Z",
-  "finished_at": "",
-  "duration_seconds": 18.4,
-  "stop_requested": false,
-  "attention_required": false,
-  "usage": {
-    "input_tokens": 1000,
-    "output_tokens": 200
-  },
-  "quota": {
-    "used_tokens": 1200,
-    "max_tokens": 4096,
-    "over_token_quota": false
-  },
-  "tool_counts": {
-    "requested": 2,
-    "executed": 1,
-    "denied": 1
-  },
-  "result_preview": "",
-  "error": ""
-}
-```
-
-前端列表会优先展示：
-
-- role
-- status / duration
-- task_preview
-- usage / quota
-- tool_counts
-- result_preview / error
-
-#### background process 列表字段
-
-```json
-{
-  "id": "3",
-  "kind": "background_process",
-  "pid": 3,
-  "status": "running",
-  "command": "uv run pytest -q",
-  "command_preview": "uv run pytest -q",
-  "cwd": "<workspace>",
-  "started_at": "2026-07-06T22:10:00Z",
-  "finished_at": "",
-  "duration_seconds": 23.1,
-  "returncode": null,
-  "stop_requested": false,
-  "attention_required": false,
-  "has_stdout": true,
-  "has_stderr": false,
-  "stdout_truncated": false,
-  "stderr_truncated": false,
-  "stdout_bytes": 1200,
-  "stderr_bytes": 0,
-  "output_preview": "tests/test_runtime.py ...",
-  "error": ""
-}
-```
-
-列表里只需要 preview / bytes / truncated；完整 stdout/stderr 放详情 payload，避免 summary 太重。
-
-前端列表会优先展示：
-
-- command_preview
-- cwd
-- status / duration / returncode
-- output_preview
-- stdout/stderr bytes and truncated flags
-
-#### gateway agent 列表字段
-
-```json
-{
-  "id": "telegram:c1:u1",
-  "kind": "gateway_agent",
-  "session_key": "telegram:c1:u1",
-  "platform": "telegram",
-  "chat_id": "c1",
-  "user_id": "u1",
-  "status": "running",
-  "started_at": "2026-07-06T22:10:00Z",
-  "finished_at": "",
-  "duration_seconds": 34.6,
-  "stop_requested": false,
-  "attention_required": false,
-  "error": ""
-}
-```
-
-前端列表会优先展示：
-
-- platform
-- session_key
-- status / duration
-- stop_requested
-- error
-
-#### Detail payload
-
-详情接口是稳定能力，不是临时补充。列表用于 overview，详情用于完整内容、日志、工具明细或错误排查。
-
-```json
-{
-  "kind": "sub_agent",
-  "id": "abc123",
-  "run": {}
-}
-```
-
-Sub agent detail 的 `run` 建议包含：
-
-- `run_id`
-- `status`
-- `role`
-- `task`
-- `result`
-- `tool_calls`
-- `executed_tool_calls`
-- `denied_tool_calls`
-- `tool_results`
-- `usage`
-- `quota`
-- `error_type`
-- `error_message`
-
-```json
-{
-  "kind": "background_process",
-  "id": "3",
-  "process": {}
-}
-```
-
-Background process detail 的 `process` 建议包含：
-
-- `pid`
-- `status`
-- `command`
-- `cwd`
-- `stdout`
-- `stderr`
-- `stdout_truncated`
-- `stderr_truncated`
-- `returncode`
-- `error`
-
-```json
-{
-  "kind": "gateway_agent",
-  "id": "telegram:c1:u1",
-  "gateway_run": {}
-}
-```
-
-Gateway detail 可以和列表基本一致，但应保留稳定 detail 入口，方便后续扩展平台消息 metadata。
-
-#### Slash command / dynamic candidates
-
-建议 registry 暴露：
-
-```text
-/activity
-/activity agents
-/activity agents <id>
-/activity processes
-/activity processes <id>
-/activity gateway
-/activity gateway <id>
-```
-
-建议动态 provider：
-
-- `activity_agents`：返回 active + recent sub agent ids。
-- `activity_processes`：返回 running + recent process ids。
-- `activity_gateway`：返回 running gateway session ids。
-
-候选项仍使用现有 slash argument choice 外形：
-
-```json
-{
-  "value": "abc123",
-  "label": "abc123",
-  "description": "reviewer · running · 18s",
-  "append_space": false
-}
-```
-
-#### 前端展示假设
-
-- `summary.attention_required` 由后端计算，前端不自行猜测。
-- `summary.active_total` 是状态栏 badge 的主要数字。
-- `summary.has_active_work=false` 时，前端显示 `activity idle`。
-- `kind` 字段用于前端做统一 activity list 和 detail 路由。
-- `summary.counts` 用于 overview，具体列表数据以各类 lists 为准。
-- `attention_required=true` 时前端会显示 `!` 或更高亮的状态，但不自行推断原因。
-
-## 已提供：Slash command 参数候选 metadata
-
-当前 inline TUI 已能消费 slash command registry 的一级命令和 children。后端现在也把“参数阶段候选”放进 registry / runtime 接口，前端可以做连续选择：
-
-```text
-/mode
-→ /mode set
-→ Read Only / Ask First / Local Auto / Full Auto
-→ /mode set Ask First
-```
-
-任何 command / child spec 都可以声明可选的 `arguments` metadata：
-
-```python
-{
-    "name": "set",
-    "usage": "/mode set <mode>",
-    "summary": "切换执行模式",
-    "arguments": [
-        {
-            "name": "mode",
-            "kind": "choice",  # choice | dynamic
-            "choices": [
-                {"value": "Read Only", "label": "Read Only", "description": "只读"},
-                {"value": "Ask First", "label": "Ask First", "description": "执行前确认"},
-                {"value": "Local Auto", "label": "Local Auto", "description": "工作区自动"},
-                {"value": "Full Auto", "label": "Full Auto", "description": "全自动"},
-            ],
-        }
-    ],
-}
-```
-
-已提供静态候选：
-
-- `/mode set <mode>`: `Read Only`, `Ask First`, `Local Auto`, `Full Auto`
-- `/deny <scope>`: `all`
-
-已提供动态候选入口。registry 暴露 `kind="dynamic"` 和 `provider`，runtime 提供统一查询入口：
-
-```python
-async def slash_argument_choices(
-    runtime,
-    provider: str,
-    *,
-    command: str,
-    args: tuple[str, ...] = (),
-    query: str = "",
-    limit: int = 20,
-) -> list[dict]: ...
-```
-
-候选 dict 建议至少包含：
-
-```python
-{
-    "value": "run_abc123",          # 插入到命令行里的真实值
-    "label": "run_abc123",          # 菜单显示文本；可等于 value
-    "description": "python-expert · running",  # 可为空
-    "append_space": False,          # 选中后是否追加空格，默认 False
-}
-```
-
-当前动态 provider：
-
-- `/session switch <name>` / `/session delete [name]`: session names
-- `/tools show <name>`: tool names
-
-后续适合补充的动态 provider：
-
-- `/agents show <run_id>`: recent agent run ids
-- `/memory show <id>` / `/memory delete <id>`: memory ids
-
-前端消费语义：
-
-- 当输入已经完整匹配某个 command / child，且下一个参数有候选时，继续显示同一个 slash menu。
-- Enter 在菜单打开时只插入当前候选，不立即执行命令。
-- 当命令已经完整且没有后续候选时，菜单收起；下一次 Enter 执行命令。
-- `value` 是实际插入文本，`label` / `description` 只用于展示。
-
-## P2：更专门的预览字段
-
-当前前端已经消费通用预览字段，并能按 bash / network / path 做基础展示。后续如果要把写文件、补丁、网络请求做得更细，可以继续补以下可选字段：
-
-- `write` / `edit`: `diff_summary`, `diff_preview`
-- `bash`: future shell-specific safety summary if needed
-- `network`: request body/header preview if future tools expose it
-
-这些字段都应允许为空；前端会按存在字段渐进展示。
+后端 facade 应：
+
+- 只监听 `127.0.0.1`，启动时生成临时 token。
+- HTTP 提供 session、history、command、activity、tool runs、turn reports、confirm、附件上传和配置/doctor 查询。
+- WebSocket 复用当前 `ConversationEvent` 语义，不创建第二套事件协议。
+- 上传文件先进入后端 AttachmentStore，composer 只引用 `attachment_id`。
+- 出站结果只暴露 Artifact metadata，不暴露本地路径。
+- 所有文件、工具和网络操作继续经过后端 permission/sandbox/audit。
+
+建议前端栈仍为 React/TypeScript、Tailwind、Radix/shadcn、lucide-react、Zustand 与 TanStack Query；这只是前端技术方向，不要求后端现在实现 `desktop-serve`。
 
 ## 前端自行待办
 
-以下不需要后端接口先行：
-
-- 暂缓：在当前 turn 内做更完整的多工具结果列表和展开 UI。用户感兴趣，但之前尝试失败过，先不作为当前优先项。
-- 已有基础策略：长工具输出在摘要行提示 `Ctrl+O 展开`，完整输出作为新的展开块打印到当前 scrollback 位置。后续只调整阈值、样式和复制体验。
-- 继续调整确认面板的视觉密度、风险层级和键盘提示。
-- 保持工具 trace 简洁化，避免 raw JSON、过度拟人化描述和过多中文标签。
-- 已有基础策略：输入框增加低调背景和左侧强调；输入 `/` 时隐藏底部快捷键，并只在存在候选或二级命令时显示命令区域，候选来自后端 slash command registry。
-
-当前不推进：
-
-- 状态行中文化。
+- 继续观察 confirm 面板的视觉密度、风险层级和键盘提示。
+- 保持 tool trace 简洁，避免 raw JSON、过度拟人化和冗长中文标签。
+- 长输出继续使用 `Ctrl+O` 基础展开策略；多工具选择展开暂缓。
+- Artifact 缩略图、附件列表和 Delivery part 状态等真实需要出现后再设计。
+- 状态行中文化不推进。
 
 ## 维护规则
 
-- 需求被后端提供且前端已经消费后，从“当前活跃需求”移除。
-- 已完成项只在“当前状态”里做简短归档，不保留字段级实现清单。
-- 如果一个需求被明确暂缓，标注“暂缓”，避免被当作当前阻塞项。
+- 新需求应描述消费场景、最小字段、空值语义和安全边界。
+- 后端提供且前端消费后，从本文移除并写入 `BACKEND_INTERFACE.md` / `FRONTEND_PROGRESS.md`。
+- 被明确暂缓的需求必须标注，不能被当作当前阻塞项。
+- 不在本文复制完整已实现 schema；权威定义只保留一份。

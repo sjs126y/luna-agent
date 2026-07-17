@@ -1,6 +1,6 @@
 # Lumora 后续架构方向
 
-更新时间：2026-07-16
+更新时间：2026-07-18
 
 ## 1. Lumora：已有基础与真实缺口
 
@@ -98,7 +98,7 @@ Lumora 当前 Cron 已直接向 `ConversationCoordinator` 提交带 `origin=cron
 
 Hermes 用 `MEDIA:/actual/local/file.png` 这样的文本指令表达媒体，并从可见文本中拆出本地路径后原生发送。优点是任何返回文本的工具都能参与媒体投递；缺点是附件意图和自然语言混在同一字符串。
 
-Lumora 已保留结构化消息并完成出站基础：工具/MCP 的 `ToolArtifact` 经 ArtifactStore 生成稳定引用，LLM 使用 `response_attach` 选择本轮产物，`OutboundMessage -> DeliveryPlanner -> multipart Outbox -> Adapter` 负责平台能力降级、分片状态、重启恢复和原生发送。当前微信支持图片/视频/文件，Telegram 支持图片/文件/音频/视频，飞书支持图片/文件，QQ 支持图片/音频/视频；caption、格式转换和真实平台限制继续按需打磨。
+Lumora 已保留结构化消息并完成出站基础：工具/MCP 的 `ToolArtifact` 经 ArtifactStore 生成稳定引用，普通工作区文件通过 `artifact_from_file` 显式提升，LLM 使用 `response_attach` 选择本轮产物，`OutboundMessage -> DeliveryPlanner -> multipart Outbox -> Adapter` 负责平台能力降级、分片状态、重启恢复和原生发送。当前微信支持图片/视频/文件，Telegram 支持图片/文件/音频/视频，飞书支持图片/文件，QQ 支持图片/文件/音频/视频；caption、格式转换和真实平台限制继续按需打磨。
 
 ## 6. Memory 与 RAG 方向
 
@@ -117,6 +117,7 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 - SQLite archive 保存 review checkpoint、observation、外部记忆历史、内部 buffer 和 provider 状态。
 - AppRuntime-owned asyncio worker 取代 daemon thread review。
 - `memory/lumora` 使用两次 Memory LLM 调用、百炼 embedding、Qdrant、FTS5/BM25 和 RRF。
+- Lumora provider 内部通过 factory 装配 embedding、vector、keyword、fusion 与可选 reranker backend；Qdrant 支持远程和本地持久化配置，SQLite Archive 始终是可重建索引的权威数据源。
 - `memory/mem0` 直接适配官方依赖。
 - 核心 fallback 在主 provider 不可用时保存 observation，并在恢复后迁移。
 
@@ -128,9 +129,9 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 | --- | --- | --- | --- |
 | MCP runtime | stdio、Streamable HTTP、重连、动态工具、结构化结果、诊断 | OAuth、sampling、elicitation 仅按需补充 | 核心完成 |
 | 被动插件 | `register(ctx)`、作用域配置、Skill/MCP 文件注册、所有权、冲突检查和事务回滚 | Manager reconcile、异步资源关闭和版本代际 | 基础完成 |
-| 出站多模态 | ArtifactStore、`response_attach`、结构化 Outcome、能力规划、分片 Outbox 和四平台原生发送 | caption、格式转换和真实平台限制按使用反馈补充 | 基础完成 |
+| 出站多模态 | ArtifactStore、`artifact_from_file`、`response_attach`、结构化 Outcome、能力规划、分片 Outbox 和四平台原生发送 | caption、格式转换和真实平台限制按使用反馈补充 | 基础完成 |
 | 主动能力 | Cron、插件 submit、统一 Coordinator、Delivery/Outbox 已完成 | 候选生成、去重、冷却、静默时间和决策策略 | 基础完成 |
-| Memory / RAG | internal snapshot、buffer、Lumora/Mem0、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件 | 记忆重构完成 |
+| Memory / RAG | internal snapshot、buffer、Lumora/Mem0、backend factory、local/remote Qdrant、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件，reranker 按需实现 | 记忆重构完成 |
 
 方向之间的关系：
 

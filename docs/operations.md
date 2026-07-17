@@ -1,5 +1,7 @@
 # 运维与排错
 
+更新时间：2026-07-18
+
 这份文档只覆盖日常使用和排错入口。
 
 ## 新环境启动
@@ -91,7 +93,7 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 `Gateway`：
 
 - `running agents` 大于 0：有正在处理的会话。
-- `pending messages` 持续增长：消息进入了 adapter，但处理链路积压。
+- `pending messages` 持续增长：Coordinator 中的会话提交积压。
 - `stop requested` 大于 0：有 run 收到了停止请求。
 
 `平台配置`：
@@ -99,7 +101,7 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 - `runtime=skipped`：平台 env 不完整或插件未启用。
 - `runtime=reconnecting`：连接失败，Gateway 正在自动重试。
 - `attempts` 持续增加：平台一直连接不上。
-- `pending` 持续增加：平台收消息正常，但处理速度不足。
+- `pending` 持续增加：平台收消息正常，但 Coordinator/Agent 处理速度不足；发送重试积压另查 Delivery Outbox。
 
 `插件`：
 
@@ -117,6 +119,7 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 - `write`、`edit` 或 `bash` 生成的普通本地文件是否先经过 `artifact_from_file`；该工具成功后才会产生可选择的 `artifact_id`。
 - 平台 capability 是否支持对应类型；不支持时应收到文字降级，而不是本地路径。
 - 微信媒体需要 `WEIXIN_CDN_BASE_URL` 可访问，并经过 `getuploadurl`、加密 CDN 上传和 `sendmessage` 三步。
+- 微信与 QQ 的剩余实机用例见根目录 `PLATFORM_MEDIA_TEST_CHECKLIST.md`。
 
 提交前建议运行：
 

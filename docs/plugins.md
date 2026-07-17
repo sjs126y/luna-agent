@@ -1,5 +1,7 @@
 # 插件系统
 
+更新时间：2026-07-18
+
 Lumora 的被动插件系统是一个“装配层”：插件不需要继承基类，只通过同步 `register(ctx)` 把能力放入已有 registry。对应 manager 负责连接、运行、停止和后续热加载，插件层不接管子系统生命周期。
 
 已启用的普通插件在 Skill、MCP 等 manager 初始化前完成注册。平台插件是唯一允许 `deferred: true` 的类型，由 Gateway 启动时加载。
@@ -30,14 +32,21 @@ src/personal_agent/plugins/
         __init__.py
         adapter.py
         plugin.yaml
+      qq/
+        __init__.py
+        adapter.py
+        companion.py
+        config.py
+        plugin.yaml
     memory/
       plugin.yaml              # 只注册 memory 工具
       __init__.py
-      file/
+      lumora/
         __init__.py
         provider.py
+        backends/
         plugin.yaml
-      embedding/
+      mem0/
         __init__.py
         provider.py
         plugin.yaml
@@ -67,6 +76,8 @@ src/personal_agent/plugins/
 ```
 
 仓库根目录的 `plugins/` 只给用户插件或本地开发插件使用。内置插件不要放到根目录 `plugins/`。
+
+当前根目录通用插件包括 `github_assistant`、`developer_docs`、`browser_operator` 和 `codex_bridge`。前三者分别组合 Skill、MCP、Hook 和状态命令；它们用于验证插件装配边界，不会把 MCP 生命周期或安全策略搬进插件私有实现。
 
 仓库里也保留了一个最小示例插件：
 
@@ -157,6 +168,8 @@ plugins/hello/
 每个插件加载时会拿到自己的 `PluginContext`。它只做注册转发和来源记录：
 
 - `config`：只读的 `plugins.config.<plugin-key>`
+- `conversation`：按 manifest capability 约束的 `ConversationCoordinator` submit 端口
+- `notifications`：单独授权的直接 Delivery 通知端口
 - `parse_config(PydanticModel)`
 - `get_env(name)`：统一通过 Settings 边界解析
 - `register_skills(relative_path="skills")`
@@ -170,7 +183,7 @@ plugins/hello/
 - `register_hook(event, callback, priority=100, name="", matcher="*", timeout=None)`
 - `register_command(CommandEntry)`
 
-`middleware` 字段目前只是预留。普通插件也不要注册任意 agent role/team；多 Agent 仍然是 core runtime。
+`conversation` 和 `notifications` 不是通用核心对象引用：没有对应 capability 的插件无法使用，submit 仍经过 session、Coordinator、ConversationService 和 Delivery 语义。普通插件也不要注册任意 agent role/team；多 Agent 仍然是 core runtime。
 
 `register_skills()` 支持平铺 `.md` 和 `skills/<name>/SKILL.md`，启动时只注册 frontmatter 元数据，正文仍由 `skill_load` 按需读取。`register_mcp()` 支持 YAML/JSON 中的 `servers` 列表，只注册稳定配置，连接仍由 `MCPManager` 统一启动。
 
@@ -282,11 +295,13 @@ Memory provider 使用专用 registry 注册，不通过通用 hook 创建，避
 
 可替换的外部提供器位于插件包：
 
-- `memory/lumora`：百炼 embedding、Qdrant 语义检索、SQLite FTS5/BM25 和 RRF。
+- `memory/lumora`：Memory LLM、可替换 embedding/vector/keyword/fusion/可选 reranker backend；当前使用百炼 embedding、local/remote Qdrant、SQLite FTS5/BM25 和 RRF。
 - `memory/mem0`：官方 `mem0ai` 依赖的薄适配层。
 - `builtin/memory`：只注册 `memory` / `memory_buffer` 工具。
 
 核心 fallback 不属于插件，主 provider 缺依赖、配置错误或运行失败时自动接管 SQLite + BM25 存储。
+
+Lumora provider 的 SQLite Archive 是权威数据源，向量和关键词索引可以重建。Backend factory 位于 provider 内部，不提升为全局插件系统，也不让每个检索组件拥有独立生命周期。配置见 `docs/configuration.md` 的 Memory Backend 章节。
 
 ## 常用诊断命令
 

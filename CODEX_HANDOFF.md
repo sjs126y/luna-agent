@@ -1,103 +1,117 @@
 # Codex 交接记录
 
-更新时间：2026-07-13 13:31 CST
+更新时间：2026-07-18 CST
 
-## 2026-07-13 Settings 收口完成
+本文是当前主干的协作入口。阶段历史与代码规模见 `PROJECT_EVOLUTION.md`；后端详细实现记录见 `BACKEND_PROGRESS.md`；前端状态见 `FRONTEND_PROGRESS.md`。
 
-- 昨晚记录的 GitHub MCP 配置边界问题已解决：普通 `uv run personal-agent serve` / `doctor` 会通过 `ConfigLoader -> Settings -> runtime -> MCP connection` 注入动态 Authorization header。
-- Memory embedding、Qdrant、plugin requirements、LLM API mode 和 doctor 已同步收口，不再各自读取环境变量或 `.env`。
-- GitHub 官方 MCP 实测 `ready`，发现 44 个工具；doctor 不再把 Streamable HTTP 误判为缺少本地 command。
-- 所有 `.env` 诊断值现在统一脱敏，包括不在 registry 中的动态 MCP/plugin key。
-- 最近验证：聚焦 `139 passed`，全量 `868 passed`，compileall 和 diff check 通过。
-- `config.yaml` 仍是用户本机改动，不应纳入功能提交。
+## 当前主干
 
-## 2026-07-13 收工状态
+- 分支：`main`
+- 当前基准：`0bcb55e Merge outbound multimodal delivery`
+- 本地 `main` 尚未推送到 `origin/main`。
+- 最近完整验证：`python -m compileall -q src/personal_agent` 通过；`uv run pytest -q` 为 `1050 passed, 1 warning`。
+- 唯一 warning 来自飞书 SDK 内部弃用 API，不是当前 Runtime 回归。
+- 用户本地未跟踪的联调文件不属于项目提交，后续 Agent 不应擅自删除或纳入 commit。
 
-- 当前分支：`main`，本轮 Agent 工具循环与记忆恢复修复已通过 `daaadf3` 合并。
-- 最近一次完整验证：`python -m compileall -q src/personal_agent`、`git diff --check`、`uv run pytest -q`；结果为 `864 passed`。
-- 记忆重构和恢复链路已进入真实 Gateway 联调：Lumora embedding/Qdrant 查询成功，scope provider 保持 `lumora`，fallback observation 由后台 review worker 渐进迁移，不占用 Agent 主循环。
-- 工具循环已修复消息顺序、调用上限终止和重复调用问题；filesystem/fetch MCP 已产生真实成功审计记录。
-- GitHub 官方远程 MCP 使用当前 PAT 可成功连接并发现 44 个工具，但正常 Gateway 启动仍无法从 Settings 向 `headers_env` 注入该 secret。
-- 下一次后端工作的第一优先级：保持统一 `ConfigLoader -> Settings -> runtime -> MCP connection` 配置边界，修复 GitHub MCP 动态 header 注入；不要让 MCP connection 主动读取 `.env`。
-- 临时联调启动方式：`uv run --env-file .env personal-agent serve`。修复完成后应恢复普通 `uv run personal-agent serve` 即可工作。
-- 工作区存在用户本机 `config.yaml` 改动，必须保留；`.env` 是忽略的本机 secret 文件。
+基准提交的代码规模：
 
-## 当前状态
+| 范围 | 文件数 | 物理行数 |
+| --- | ---: | ---: |
+| Runtime：`src/personal_agent/**/*.py` | 228 | 47,458 |
+| Tests：`tests/**/*.py` | 88 | 27,549 |
+| 项目插件：`plugins/**/*.py` | 5 | 488 |
+| Scripts / Examples | 4 | 484 |
+| 其他 Python 包装文件 | 1 | 0 |
+| Python 合计 | 326 | 75,979 |
 
-- 当前工作分支：`feature/legacy-cleanup`
-- 后端分支 `feature/backend-provider-cache` 已合入主分支。
-- 前端分支 `feature/frontend-tui-polish` 已合入主分支。
-- 历史清理分支已完成入口收敛：inline TUI 是唯一正式交互终端 UI，classic/simple 已移除。
-- 最近主分支合并提交：
-  - `e6ccb98 Merge branch 'feature/backend-provider-cache'`
-  - `73d0f24 [codex] merge frontend tui polish`
-- 合并后验证：
+统计只包含 Git tracked Python 文件，包含注释与空行。
 
-```bash
-python -m compileall -q src/personal_agent
-uv run pytest -q
+## 当前架构
+
+Lumora 已从单一 CLI Agent 原型演进为多入口、可扩展的个人 Agent Runtime：
+
+```text
+CLI/TUI | Gateway Adapters | Cron | Plugin Submit
+                     |
+          ConversationCoordinator
+          | command/control lane
+          | ordered turn queue
+                     |
+           ConversationService
+          Agent -> LLM -> Tool Pipeline
+                     |
+          ConversationTurnResult
+                     |
+        DeliveryService + Outbox
+                     |
+          PlatformDirectory -> Adapter
 ```
 
-结果：前后端合并后 `746 passed`；历史清理后 `708 passed`。
+主要边界：
+
+- Coordinator 管 session 顺序、命令、`/stop`、`/steer` 和 turn snapshot；Adapter 不再维护会话队列。
+- ConversationService 管一轮 Agent 执行和持久化；平台、Cron、插件不绕开该主链路。
+- Delivery/Outbox 管目标解析、Hook、发送、分片状态、重试和重启恢复；Adapter 只做平台协议转换与单次发送。
+- Tool Pipeline 统一执行 Hook、hard precheck、工具审批、资源审批、sandbox、dispatch、audit 和安全收尾。
+- 插件通过 `register(ctx)` 注册 Tool、Skill、MCP、Hook、Command、Workflow 和受限 submit 端口；核心 contract 不因单个插件变化。
+
+## 最近完成
+
+### Conversation Runtime
+
+- CLI/TUI、Gateway、Cron 和主动插件入口统一提交 `SubmissionRequest`。
+- 删除 Adapter/Gateway 遗留的 queue、busy、控制旁路和发送重试。
+- `/stop` 会保留本轮已经完成且成对的 tool use/result；中止不会丢弃已完成事实。
+- MCP runtime 后台并发启动，单 server 慢启动不再阻塞 Gateway ready。
+
+### Security v4 与 Hook v2
+
+- Mode 为 `Read Only`、`Ask First`、`Local Auto`、`Full Auto`。
+- 工具身份和 filesystem/network 资源使用精确 session grant，共享可配置 TTL；Mode 切换或重启清空。
+- Bubblewrap、blocked paths、嵌套 `tool_call`、MCP 与 Hook 均走统一安全边界。
+- HookManager 提供 typed context/outcome、matcher、priority 和 failure policy；Gateway、Conversation、Tool 与 Delivery 都有稳定 Hook 点。
+
+### Memory 与评测修复
+
+- internal Markdown、review buffer/revision、SQLite Archive、Lumora/Mem0 provider 和 fallback 已完成重构。
+- Lumora 内部使用 backend factory 装配 embedding/vector/keyword/fusion/可选 reranker；Qdrant 支持本地或远程配置。
+- 独立评测发现并修复 protected path 搜索绕过、UUID 召回、嵌套工具统计、MCP timeout 和 cache usage 诊断问题。
+- SQLite Archive 是权威数据源，向量和关键词索引可重建。
+
+### 出站多模态与 QQ
+
+- Tool/MCP 产物进入 ArtifactStore，模型只看到 session/turn scoped `artifact_id`。
+- `response_attach` 明确选择本轮产物；未选择的文件不会自动发送。
+- `artifact_from_file` 可把 `write/edit/bash` 生成的普通文件安全复制进 ArtifactStore。
+- DeliveryPlanner + multipart Outbox 支持能力降级、部分成功、重试、恢复和审计。
+- 微信、Telegram、飞书、QQ 已实现各自声明的原生媒体发送；QQ Adapter 完成 NapCat OneBot WebSocket 双向通道和可选 companion 管理。
+
+## 前后端状态
+
+后端负责 Runtime、Agent Loop、Conversation、Tool/Security、Memory、MCP、Plugin、Gateway/Adapter、Delivery、配置和后端文档。
+
+前端负责 TUI/desktop-web 的布局、交互和视觉。Security v4 TUI 已合并主干；当前 TUI 已消费 slash registry、tool events、confirm、permissions、activity 和 usage/context。Artifact/Delivery 新契约已写入 `BACKEND_INTERFACE.md`，但附件缩略图、Artifact 列表和 multipart Delivery 专用 UI 尚未实现，也不是后端完成项。
+
+协作约定：
+
+- 后端新增或修改前端可消费事件、command、payload 或诊断字段时，同步更新 `BACKEND_INTERFACE.md`。
+- 前端需要后端字段或接口时，写入 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
+- 两条工作线只更新自己负责的源码和进度文件；合并时保留用户本地配置与未跟踪数据。
+
+## 当前待办
+
+1. 完成微信修正后媒体实机复测，以及 QQ/NapCat 登录、私聊/群聊和多媒体端到端联调。
+2. 继续用固定 Benchmark 观察本地 Qdrant、长会话、并发 Memory prefetch、MCP 冷启动和 provider cache。
+3. 插件安装、卸载和热加载需要 `RuntimeSnapshot + lease + drain`、Manager reconcile 和异步资源关闭。
+4. 主动决策系统需要候选生成、去重、冷却、静默时间、优先级、预算和用户反馈策略。
+5. 知识 RAG 保持为后续独立通用插件，不重新塞进个人记忆 provider。
 
 ## 文档入口
 
-- `BACKEND_INTERFACE.md`：前端消费后端事件、slash commands、tool metadata、tool runs、activity、usage/context 等接口的权威文档。
-- `BACKEND_PROGRESS.md`：后端线进度，记录 agent runtime、provider/transport、tool pipeline、activity、turn report 等工作。
-- `FRONTEND_PROGRESS.md`：前端线进度，记录 inline TUI、slash menu、confirm UI、activity UI、context meter 等工作。
-- `FRONTEND_INTERFACE_REQUIREMENTS.md`：前端向后端提出的小接口/字段需求入口。
-- `docs/frontend_decisions.md`：前端视觉和交互决策记录。
-- 历史计划/需求文档已归档到 `docs/archive/`。
-
-## 当前项目总进度
-
-项目已经从“CLI agent 原型”推进到一个可用的个人 Agent runtime：
-
-- 后端 runtime、工具执行、安全门控、插件加载、LLM transport、memory、MCP、workflow、Gateway 和会话存储已经形成稳定主链路。
-- inline TUI 已经能消费后端结构化事件和 slash command metadata，不再只是普通 CLI 输出。
-- 前后端通过 `ConversationEvent`、`CommandResult.kind/payload`、slash metadata、activity payload、tool runs、turn reports 和 context budget 建立了较清晰的接口边界。
-- Provider/transport 已具备 provider-aware cache capability 和 request diagnostics，可继续围绕真实 provider cache 命中率做验证。
-- 工具调用、权限确认、tool truth、tool runs 和 turn report 已经可观测、可持久化、可排查。
-
-## 后端完成项
-
-- **Execution Mode v3**：四档模式已稳定，对应权限、沙箱、工具类别和确认行为。
-- **Tool execution / permission pipeline**：工具执行统一经过 executor、execution guard、precheck、permission、sandbox、audit。
-- **Tool decision metadata**：`tool_decision` / `tool_end` 提供前端确认 UI 所需字段，包括风险、默认动作、可选动作、路径/命令/URL 预览等。
-- **Event protocol**：事件带 `protocol_version`，`retry` / `error` / `stop` / `tool_decision` / `tool_end` / `llm_end` 等字段结构化。
-- **Provider / transport cache**：`ProviderProfile`、`BaseTransport`、Anthropic、OpenAI-compatible/DeepSeek 已支持 cache capability、usage normalization、request hash diagnostics 和 `LLMRequestPlan`。
-- **Turn reports**：每轮 `AgentTurnReport` 已持久化到 SQLite，可和 `tool_runs` 通过 `turn_id/session_key` 关联。
-- **Tool truth**：能记录真实工具调用、模型请求工具调用、工具结果、模型声称调用但实际没有 tool call 等诊断。
-- **Activity runtime**：统一暴露子 agent、后台进程、gateway agent 的 summary/list/detail，并接入 `/activity`、slash metadata 和动态候选。
-- **Usage / context**：`llm_start` / `llm_end` 区分最近一次 API token 消耗与当前上下文占用估算；`/usage` 已修正工具计数语义。
-- **Tool protocol prompt**：系统提示已加入稳定工具调用规则，降低模型只用文字声称调用工具的概率。
-- **Doctor/runtime diagnostics**：runtime health 已能展示 commands、query、execution、activity、provider cache、turn reports、tool truth 等摘要。
-- **历史入口清理**：`python -m personal_agent` 统一转发 Typer CLI；`wechat-login` 和 `memory ingest` 已迁到正式命令；skill usage 状态写入 `data/skills/usage.json`。
-
-## 前端完成项
-
-- **Inline TUI 主体**：输入区、状态行、上下文 meter、流式回复预览、工具活跃区、用户消息强调和多行输入已成型。
-- **Context meter 语义修正**：顶部 meter 使用 `context_used_tokens/context_window/context_percent`；最近一轮模型消耗独立显示为 `↓input | ↑output`。
-- **Slash command UI**：消费后端 slash command registry，支持一级命令、children、静态候选、动态候选、键盘选择和层级进入。
-- **Confirm UI**：工具确认面板支持可选 action row、默认项、风险摘要、关键输入/路径/命令/URL 预览。
-- **Tool trace / tool runs**：实时 `tool_start/tool_decision/tool_end` 和历史 `/tool-runs` 已消费结构化字段，并支持 `Ctrl+O` 展开完整输出。
-- **Activity UI**：`/activity` 消费 `kind="activity"` payload，展示 gateway、sub agents、background processes 的总览、列表和详情。
-- **前端状态消费**：`UIState` 保留 context budget、cache usage、activity summary 等结构化状态，便于后续做面板或详情页。
-- **入口收敛**：`personal-agent chat` 默认启动 inline TUI；classic `TerminalRenderer` 和 `--simple` 旧 REPL 已移除。
-
-## 当前约定
-
-- 后端接口变更必须同步 `BACKEND_INTERFACE.md`。
-- 前端提出后端需求时，应写入 `FRONTEND_INTERFACE_REQUIREMENTS.md`，优先是字段/小接口级别。
-- inline TUI 是正式交互终端 UI；`--once` 保留为脚本/单轮入口。
-- 每次工作结束要更新自己负责的进度文件。
-- 提交信息继续使用 `[codex]` 前缀。
-- 运行数据写入 `data/`；源码目录不再跟踪 skill usage 状态。
-
-## 后续建议
-
-- 真实 provider cache API 验证：用实际 provider 响应确认 cache usage 字段和命中率。
-- 长对话压缩质量：优化压缩后的任务状态、路径、工具结果保留。
-- 工具失败恢复：继续改进工具错误、权限拒绝、格式错误后的恢复提示；暂不做正则触发 retry。
-- Activity 历史：如果前端需要历史分页或 gateway completed records，再扩展持久化层。
-- TUI 体验手测：重点验证 slash menu、confirm、context meter、activity、工具结果展开在真实终端中的行为。
+- `PROJECT_EVOLUTION.md`：项目阶段变化、代表提交和代码规模。
+- `BACKEND_PROGRESS.md`：后端详细完成记录和验证结果。
+- `FRONTEND_PROGRESS.md`：前端 TUI 状态、偏好和接口消费情况。
+- `BACKEND_INTERFACE.md`：前端消费后端事件、命令和 payload 的权威契约。
+- `FRONTEND_INTERFACE_REQUIREMENTS.md`：前端向后端提出的小接口需求。
+- `lumora-roadmap.zh-CN.md`：后续架构方向和完成状态。
+- `TODO.md`：当前剩余工作。

@@ -2,6 +2,14 @@
 
 更新时间：2026-07-18 CST
 
+## 2026-07-18：主干状态与项目规模
+
+- `feature/outbound-multimodal` 已通过 `0bcb55e` 合并回 `main`；出站 Artifact、Delivery/Outbox、微信媒体协议、QQ OneBot 双向链路、NapCat companion 和本地文件提升工具均已进入主干。
+- 当前完整验证：`python -m compileall -q src/personal_agent` 通过；`uv run pytest -q` 为 `1050 passed, 1 warning`，唯一警告来自飞书 SDK 的弃用 API。
+- 基准提交 `0bcb55e` 的 Git tracked Python 规模为 326 个文件、75,979 行：`src/personal_agent` 47,458 行，tests 27,549 行，项目插件 488 行，scripts/examples 484 行。
+- 原 `MIGRATION_CHANGELOG.md` 已更名为 `PROJECT_EVOLUTION.md`，并补齐 MCP、Memory v2、被动插件、Security v4、Typed Hook、Conversation Runtime、Memory Backend 和出站多模态阶段。
+- 当前工作树只保留用户本地未跟踪的联调文件，不属于后端提交内容。
+
 ## 2026-07-18：本地文件提升为出站 Artifact
 
 - 新增独立核心工具 `artifact_from_file`，把 `write`、`edit`、`bash` 等工具已经生成的普通文件显式复制进当前 turn 的 ArtifactStore，并返回可交给 `response_attach` 的稳定 `artifact_id`。
@@ -18,10 +26,10 @@
 - 新增 `response_attach` 与 turn 隔离的 `TurnResponseDraft`。LLM 通过工具选择当前 turn 的产物，最终回答仍为普通文本；未选择的产物不会自动发送，停止轮不会投递草稿附件。
 - `ConversationTurnResult`/`SubmissionOutcome` 新增结构化 `OutboundMessage`，同时保留 `final_response`/`response` 文本兼容；新增 `artifact_available` 和 `response_artifact_selected` 事件。
 - 新增 `DeliveryPlanner` 和 `delivery_outbox_parts`：按平台 capability 规划 text/image/file/audio/video operation，不支持类型确定性降级；已成功 part 在重试和重启后不重复发送，partial/ambiguous 状态进入 PostDelivery 审计。
-- 平台原生出站：微信按腾讯官方 iLink `getuploadurl -> AES-128-ECB CDN upload -> sendmessage` 支持图片/视频/文件；Telegram 支持图片/文件/音频/视频；飞书支持图片/文件；QQ 支持图片/音频/视频。
+- 平台原生出站：微信按腾讯官方 iLink `getuploadurl -> AES-128-ECB CDN upload -> sendmessage` 支持图片/视频/文件；Telegram 支持图片/文件/音频/视频；飞书支持图片/文件；QQ 支持图片/文件/音频/视频。
 - 阶段提交：`997665a`、`4489e70`、`1d95f61`、`9ce254e`、`07bef47`、`b0a3feb`、`222e335`。
 - Browser Operator 单独允许最多 10 MiB 的 MCP Artifact，避免正常截图先被通用 1 MiB 上限截断；进入 ArtifactStore 后仍受全局 20 MiB 默认上限约束。
-- 自动验证：`1016 passed`；真实 Runtime doctor 通过，17 个启动步骤全部正常、8 个启用 MCP server 全部 ready；新增检查清单 `OUTBOUND_MULTIMODAL_TEST_CHECKLIST.md`，等待微信端工具截图实测后合并。
+- 自动验证：`1016 passed`；真实 Runtime doctor 通过，17 个启动步骤全部正常、8 个启用 MCP server 全部 ready；当时的出站清单现已收敛为 `PLATFORM_MEDIA_TEST_CHECKLIST.md`，只保留微信/QQ 实机待验证项。
 
 ## 2026-07-17：独立评测问题收口
 
@@ -56,7 +64,7 @@
 - 10 个 Skill 均通过 `skill-creator quick_validate`；插件 validate 全部通过；配置、插件与 MCP 聚焦回归 `117 passed`。
 - 真实 Runtime doctor：GitHub `ready`/44 tools、Context7 `ready`/2 tools、Playwright `ready`/24 tools，三个插件均为 `LOADED`，无配置错误和重复 server。
 - 最终全量回归 `956 passed`；`compileall` 与 `git diff --check` 通过。
-- 新增根目录 `INTEGRATION_PLUGIN_TEST_CHECKLIST.md`，供真实 Gateway 验证状态命令、代表 Skill、GitHub 写保护、Browser 上传/脚本保护和无重复工具循环。
+- 当时新增 Integration Plugin 真实 Gateway 清单，验证完成并写入本节后已于 2026-07-18 清理，不再保留重复的根目录检查文件。
 - Skill 自动发现明细降为 DEBUG；INFO 改为每个插件一行 `skills/mcp/hooks/commands` 注册汇总。日志与插件聚焦回归 `74 passed`。
 
 ## 2026-07-16：Conversation Runtime 与 Delivery 架构重构
@@ -182,7 +190,7 @@
 - 真实长对话下的上下文压缩质量：路径、任务状态、工具结果是否被保留得足够好。
 - codex_responses 中转站真实使用下，文本化工具结果是否足够降低重复工具调用；如果仍重复，再考虑同轮只读工具去重或更强的 tool-result 提示。
 - Feishu / Telegram 真实附件下载器、OCR/ASR/vision 服务接入，可以等实际平台需求再做。
-- Desktop/Web 客户端如果启动，优先复用 `ConversationInput + attachments + ConversationService.run_turn_input()`，不要绕开后端主链路。
+- Desktop/Web 客户端如果启动，应构造带 attachments 的 `SubmissionRequest` 并提交 `ConversationCoordinator`，不要直连 ConversationService 或绕开主链路。
 
 ## 交接定位
 

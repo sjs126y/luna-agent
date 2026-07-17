@@ -1,5 +1,7 @@
 # 平台接入
 
+更新时间：2026-07-18
+
 平台能力由内置平台插件注册到 Gateway。平台插件是 deferred 插件：启动时发现，但直到 `personal-agent serve` 才加载并连接。
 
 ## 启动流程
@@ -12,7 +14,7 @@ Gateway.start()
   ├─ 创建 adapter
   ├─ adapter.connect()
   ├─ 启动平台消息循环
-  └─ 消息进入 ConversationService / Agent
+  └─ 消息提交 ConversationCoordinator
 ```
 
 ## Telegram
@@ -147,7 +149,7 @@ uv run personal-agent serve
 | `runtime` | `connected`、`reconnecting`、`skipped`、`stopped` 等运行状态 |
 | `connected` | adapter 当前是否认为自己已连接 |
 | `attempts` | 连接尝试次数 |
-| `pending` | adapter 内存队列里等待处理的消息数 |
+| `pending` | Coordinator 中等待处理的提交数量 |
 | `next_retry` | 自动重连的下一次尝试时间 |
 | `error` | 最近连接或发送错误 |
 
@@ -158,4 +160,4 @@ uv run personal-agent serve
 - `runtime=skipped`：平台 env 不完整，adapter check_fn 没通过。
 - `runtime=reconnecting`：连接失败，Gateway 正在按 backoff 重试。
 - `connected=否` 且没有 error：通常是平台未启用或 doctor 没启动 Gateway。
-- `pending` 持续增长：平台能收消息，但 agent 或发送链路处理不过来，需要看 Gateway 和 LLM 日志。
+- `pending` 持续增长：平台能收消息，但 Coordinator/Agent 处理不过来；发送积压应另看 Delivery Outbox。

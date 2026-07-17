@@ -1,16 +1,17 @@
 # Frontend Progress
 
-更新时间：2026-07-14 CST
+更新时间：2026-07-18 CST
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
-## 当前分支与范围
+## 当前主干同步与范围
 
-- 当前分支：`feature/frontend-security-v4`
+- Security v4 前端实现 `b87c524` 已通过 `7b1afd0` 合并进 `main`；独立前端 worktree 仍保留 `feature/frontend-security-v4` 作为历史工作线，不代表主干尚未合并。
+- 当前后端主干基准：`0bcb55e Merge outbound multimodal delivery`。
 - 前端主要范围：`src/personal_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`
-- 注意：当前分支从后端最新提交 `bef89e4` 新开，前端只处理 CLI/TUI/desktop-web 侧内容；后端接口权威仍是 `BACKEND_INTERFACE.md`。
+- 前端只处理 CLI/TUI/desktop-web 侧内容；后端接口权威仍是 `BACKEND_INTERFACE.md`。
 
 ## 已完成进度
 
@@ -132,6 +133,13 @@
 - 多工具结果列表 / Ctrl+O 选择展开：用户感兴趣，但之前尝试失败过，暂缓，不作为当前优先项。
 
 ## 最近完成
+
+### 2026-07-18 主干接口同步
+
+- Conversation Runtime 已在后端统一 CLI/TUI、Gateway、Cron 和插件 submit；TUI 仍通过既有 event/command 接口工作，不需要接触 Adapter、Coordinator 或 Delivery 内部对象。
+- 后端新增 `artifact_available`、`response_artifact_selected`、`ConversationTurnResult.outbound_message` 和 Delivery 状态契约。当前 TUI 可继续消费通用工具事件，但尚未实现附件缩略图、Artifact 列表或 multipart Delivery 专用面板。
+- 新增 `artifact_from_file` 与 `response_attach` 属于 Agent 工具链，不要求前端传递本地路径；前端只能展示安全的 `artifact_id`、kind、filename、MIME 和 size 摘要。
+- 主干全量回归为 `1050 passed, 1 warning`。本节只同步接口状态，没有宣称新增前端 UI 已完成。
 
 ### 2026-07-14 Security v4 前端适配
 

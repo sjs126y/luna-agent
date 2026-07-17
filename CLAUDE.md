@@ -1,110 +1,94 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides repository guidance to Claude Code. General contribution rules are in `AGENTS.md`; current architecture and history are in `docs/architecture.md` and `PROJECT_EVOLUTION.md`.
 
-## 概述
+## Project Overview
 
-插件化的多平台 AI Agent 运行时。CLI 多轮对话 / Telegram / 飞书 / 微信 都走同一条链路：
-消息 → ConversationService.run_turn → Agent while 循环调 LLM → 执行工具 → 返回。
-参考 Hermes 架构，不依赖 LangChain / CrewAI 等重框架。
+Lumora is a lightweight, plugin-oriented personal Agent Runtime. CLI/TUI, platform Gateway, Cron and capability-bound plugins all submit requests through the same application boundary:
 
-## 常用命令
-
-```bash
-uv sync                                    # 装依赖
-
-uv run personal-agent init --profile local --copy-env --fix-dirs
-uv run personal-agent doctor               # 校验配置/环境，--json 出机器可读
-uv run personal-agent chat                 # 本地多轮对话（主要开发入口）
-uv run personal-agent chat --once "..."    # 单轮
-uv run personal-agent serve                # 启动平台 Gateway
-
-uv run pytest -q                           # 全量测试（466 个）
-uv run pytest tests/test_cli_shell.py -q   # 单文件
-uv run pytest tests/test_tool_pipeline.py -q -k parallel   # 单测试
-python -m compileall -q src/personal_agent # 语法快速检查
+```text
+Input -> ConversationCoordinator -> ConversationService -> Agent/LLM/Tools
+      -> ConversationTurnResult -> DeliveryService/Outbox -> Platform Adapter
 ```
 
-诊断类子命令（排错优先用）：`plugins list --load`、`plugins doctor <key>`、`memory doctor`、
-`agents list`、`tokens session`。
+Do not add a second Agent loop, session queue, permission path or delivery retry path inside an entrypoint or plugin.
 
-**提交前必须**跑 `python -m compileall -q src/personal_agent` + `uv run pytest -q`。
-部分测试会写 `src/personal_agent/skills/builtin/.usage.json`，非故意改动请在提交前还原它。
+## Commands
 
-## 启动与装配（读这几个文件就懂大局）
+Use `uv` and Python 3.12+:
 
-- `runtime.py::create_app_runtime` — 唯一的启动装配点。顺序：
-  `PluginManager.discover()/load_enabled()` → `invoke_hook("configure")` → `init_sandbox` →
-  MCP → DB(state.db) → CompressionChain → SessionStore → MemoryManager → ConversationService。
-  所有子系统都挂在 `AppRuntime` 上，`close()` 负责反向拆解。
-- `conversation/service.py::ConversationService` — CLI 和 Gateway 共用的「跑一轮」逻辑。
-  负责 session 解析、history 加载、`get_or_create_agent`（带 LRU + tool_registry.generation 失效）、
-  调 `run_conversation`、按 status 决定落盘（正常 save_transcript / 压缩则 create_compressed_session）。
-- `agent/loop.py::run_conversation` — 核心 while 循环：build api_messages → hook `on_before_llm_call`
-  → 可中断 LLM 调用（每 5s 轮询 `_interrupt_requested`）→ 解析 tool_calls → 执行 → 继续。
-  含 6 种重试策略（见文件头 docstring）。
-- `agent/factory.py::create_agent_runtime` — 解析 provider/transport/compressor，装配 Agent，
-  接线 plugin hooks，`setup_engine` 初始化 workflow 引擎。
+```bash
+uv sync
+uv run personal-agent init --profile local --copy-env --fix-dirs
+uv run personal-agent doctor
+uv run personal-agent chat
+uv run personal-agent serve
 
-三层消息：持久化 `history` → 本轮 `ctx.messages` → 发给 API 的 `api_messages`（含记忆/skill 注入，不落盘）。
+python -m compileall -q src/personal_agent
+uv run pytest -q
+```
 
-## 插件系统（一切能力的来源）
+The baseline at `0bcb55e` is `1050 passed, 1 warning`; the warning comes from the Feishu SDK. Focused tests should be run before the full suite. Tests may update `src/personal_agent/skills/builtin/.usage.json`; restore it unless intentional.
 
-`plugins/core/manager.py::PluginManager` 是注册中枢。内置插件在 `plugins/builtin/`
-（tools / skills / workflows / platforms / llm / memory），用户插件放根目录 `plugins/` 或 `data/plugins/`。
+## Runtime Boundaries
 
-- 每个插件靠 `plugin.yaml` manifest 声明，`register(ctx)` 时向各 registry 自注册
-  （tool_registry / skill_registry / workflow_registry / platform_registry）。
-- **deferred 插件**（platform / mcp）发现时不 import，`serve` 或 MCP 启动时才加载 —— 改平台/MCP 插件时注意这点。
-- Hook 挂载点：`configure`、`on_agent_created`、`on_session_selected`、`on_message_received`、
-  `on_before_send`、`on_before_llm_call` / `on_after_llm_call`、`on_before_tool_exec` / `on_after_tool_exec`、
-  `create_builtin_memory_provider` / `create_external_memory_provider`、`wechat_qr_login`。
-- 核心 slash 命令（`stop`/`allow`/`new`/`session`/`usage`）保留，插件命令不能覆盖。
+- `runtime.py::create_app_runtime` is the application composition root. It owns Settings, PluginManager, HookManager, sandbox/audit, MCPManager, Database, ArtifactStore, SessionStore, Memory, ConversationCoordinator and Delivery.
+- `conversation/coordinator.py` owns ordered per-session turns, command/control lanes, `/stop`, `/steer`, policy snapshots and submission outcomes.
+- `conversation/service.py` owns one conversation turn: history, cached Agent, multimodal input, Agent loop, transcript/tool report persistence and memory review scheduling.
+- `agent/loop.py` owns model/tool iteration and tool-limit/empty-response finalization. Entrypoints must not duplicate it.
+- `delivery/` owns target resolution, Pre/PostDelivery Hook, multipart Outbox, retry/recovery and platform capability fallback.
+- Platform adapters own protocol parsing, connection/reconnect, attachment references, encoding/chunking and one send operation. They do not own session queues or retries.
 
-## 工具系统
+## Plugins and Hooks
 
-工具定义在 `plugins/builtin/tools/builtin/`，通过 `tools/toolsets.py` 分组，config.yaml `toolsets.enabled` 控制启用。
+Built-in plugins live under `src/personal_agent/plugins/builtin/`; user/local plugins live under `plugins/` or configured plugin directories.
 
-- 分组：`web` `terminal` `file` `utility` `memory` `info` `code` `interact` `mcp`，`["all"]` = 全部。
-- `_CORE_TOOLS`（toolsets.py）里的工具永远拿完整 schema；非核心工具可经 bridge 工具延迟暴露
-  （当前无 deferrable 工具，bridge 处于 dormant）。
-- 执行管道（`tools/executor.py`）：scope gate（权限/配额）→ checkpoint（写前备份到 data/checkpoints）
-  → pre-hook → dispatch → post-process（截断 8000）。
-- 并发：`is_parallel_safe` 的工具 `asyncio.to_thread` 并发，其余串行 await。
-- 安全（`tools/sandbox.py` + config.yaml `sandbox`）：roots 白名单 + blocked glob（.env/.git/config.yaml 等）
-  + bash 命令白名单 + 网络隔离（`bash_allow_network`）+ 文件大小/扩展名限制 + 审计日志。
-  destructive 工具需运行时 `/allow write` 授权（存于 `agent._destructive_allowed`）。
-- 子 Agent 委派：`delegate_task` / `sub_agent` / `sub_parallel` / `sub_pipeline`，受 config.yaml `agents.*` 限额。
+- A plugin synchronously calls `register(ctx)` to register Tool, Skill, MCP server, Hook, Command, Workflow, Platform or Memory Provider capabilities.
+- Registration is owned and transactional. Do not mutate registries outside PluginContext.
+- Only platform plugins may be deferred. Skill/MCP/Hook/Tool plugins register before their managers initialize.
+- MCP process/session lifecycle belongs to MCPManager, not the plugin.
+- Runtime Hook events use typed `HookEvent` contracts, matcher, priority, timeout and event-specific outcomes. Retired `on_before_llm_call`, `on_after_llm_call`, `on_before_tool_exec`, `on_after_tool_exec`, `on_message_received` and `on_before_send` names must not return.
+- `ctx.conversation` and `ctx.notifications` are capability-bound ports, not raw core object access.
 
-## 记忆
+## Tool Security
 
-`memory/manager.py::MemoryManager` = builtin + external 两路，都由插件 hook 创建。
+Every tool call, including MCP and nested `tool_call`, passes through the executor:
 
-- **内置**（file provider）：读 `data/system/*.md`（SOUL/AGENT/USER/MEMORY）注入 system prompt；
-  `memory` 工具写 MEMORY.md/USER.md 并同步外部。`runtime.ensure_system_files` 保证这些文件存在。
-- **外部**（embedding provider）：fastembed + bge-small-zh-v1.5（512 维）cosine 检索，prefetch 注入 api_messages；
-  支持 .txt/.md/.pdf/.docx 摄取。启用与否看 config.yaml `memory.external_provider`。
-- 每 N 轮（`memory.review_interval`）触发 MemoryReviewService 自动复盘。
+```text
+typed Hook -> hard precheck -> tool approval -> exact resource approval
+           -> sandbox -> dispatch -> audit -> safe model-visible result
+```
 
-## 多 Provider / Transport
+Modes are `read-only`, `ask-first`, `local-auto` and `full-auto`. Tool approval is `auto`, `cached`, `prompt` or `deny`; resources are exact filesystem read/write or network connect requirements. Grants are session-memory scoped and share one configured TTL. There is no category-level `/allow` compatibility path.
 
-`llm/` 下有 5 个 provider（deepseek/openai/anthropic/openrouter/xai）和 Anthropic Messages、
-Chat Completions、Responses、Codex Responses transport；`create_agent_runtime` 按 `detect_api_mode`
-自动选择。HTTP 层对 429/5xx/连接错误使用指数退避重试。压缩引擎见 `compression/`（config.yaml
-`compression`）；架构边界见 `docs/architecture.md`。
+Preserve blocked paths, sandbox roots/read roots, Bubblewrap behavior, network validation, path traversal checks and audit summaries. Hard safety limits cannot be bypassed by a Hook or confirmation.
 
-## 配置与数据
+## Memory
 
-- `.env` — secret 和 provider/platform env（`LLM_API_KEY`、`TELEGRAM_BOT_TOKEN`、`FEISHU_APP_ID/SECRET`…）。被 sandbox blocked。
-- `config.yaml` — 行为配置（agent/agents/storage/compression/toolsets/memory/sandbox/auth/mcp…）。被 sandbox blocked。
-- `data/` — 运行数据：`state.db`（会话）、`todos.db`、`system/`（提示素材）、`memory/`（embedding）、
-  `checkpoints/`、`audit.log`、`plugins/state.json`（插件启停状态）、`cron/`。
+Core memory orchestration lives in `src/personal_agent/memory/`: internal Markdown snapshots, observation buffer, SQLite Archive, review worker, router and fallback.
 
-## 工作流约定
+- `memory/lumora` and `memory/mem0` are external provider plugins.
+- Lumora uses provider-internal factories for embedding/vector/keyword/fusion/optional reranker backends.
+- SQLite Archive is authoritative; vector/keyword indexes are rebuildable.
+- Qdrant may use a remote URL or local persistent path, never both.
+- Knowledge RAG is intentionally separate from personal memory.
 
-- **改代码前先开分支**：`git checkout -b feature/<描述>`，不在 main 上直接改。
-- **小步 commit**：改动验证 OK 后就 `git commit`，别攒一堆；提交信息使用简短祈使句。
-- 改工具/安全代码时保留 audit / sandbox / 路径遍历检查。
-- 自注册模式：工具/平台/skill/workflow import 即注册，别手动维护列表。
-- 线程安全：per-chat asyncio.Lock + _active_sessions 排队。
-- 类型标注 + snake_case/PascalCase/UPPER_SNAKE_CASE，注释只写非显然逻辑，优先复用本地模式而非引入新抽象。
+## Artifacts and Multimodal Delivery
+
+Inbound attachments and outbound Artifacts are separate domains.
+
+- Tool/MCP output is copied into ArtifactStore and represented by session/turn-scoped `artifact_id`.
+- Existing local files use `artifact_from_file`; file writes do not automatically become attachments.
+- The model explicitly calls `response_attach` to select current-turn Artifacts.
+- DeliveryPlanner/Outbox handles text/image/file/audio/video operations and platform fallback.
+- Never expose base64, secret media keys, full local URI or ArtifactStore path in events, audit or model context.
+
+## Configuration and Documentation
+
+- `.env` contains secrets. Runtime code receives them only through `ConfigLoader -> Settings`; subsystems must not read `.env` directly.
+- `config.yaml` contains behavior configuration. Preserve user-local changes and never commit secrets.
+- Backend-facing frontend contract changes require the same-session update to `BACKEND_INTERFACE.md`.
+- Frontend backend requests belong in `FRONTEND_INTERFACE_REQUIREMENTS.md`.
+- Update `BACKEND_PROGRESS.md` or `FRONTEND_PROGRESS.md` for the workstream, and add structural milestones to `PROJECT_EVOLUTION.md`.
+
+Use short imperative commits, keep changes scoped, and preserve unrelated or untracked user files.
