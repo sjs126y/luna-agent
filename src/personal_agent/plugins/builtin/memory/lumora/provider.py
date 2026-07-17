@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 import json
 import logging
@@ -21,13 +22,30 @@ logger = logging.getLogger(__name__)
 class LumoraMemoryProvider(ExternalMemoryProvider):
     name = "lumora"
 
-    def __init__(self, *, archive, context, embedding, vector_index, llm=None) -> None:
+    def __init__(
+        self,
+        *,
+        archive,
+        context,
+        embedding,
+        vector_index,
+        keyword_index,
+        fusion,
+        reranker,
+        retrieval_config,
+        llm=None,
+    ) -> None:
         self.archive = archive
         self.context = context
         self.embedding = embedding
         self.vector_index = vector_index
+        self.keyword_index = keyword_index
+        self.fusion = fusion
+        self.reranker = reranker
+        self.retrieval_config = retrieval_config
         self.llm = llm or MemoryLLMFacade(context.llm)
         self.last_error = ""
+        self._component_errors: dict[str, str] = {}
 
     async def review(self, messages: list[dict[str, Any]], scope: MemoryScope) -> MemoryReviewResult:
         batch_id = await self.archive.create_review_batch(scope, requested=self.name, effective=self.name)
@@ -42,19 +60,62 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
         return MemoryReviewResult(observations, tuple(changes), self.name, batch_id)
 
     async def search(self, query: str, scope: MemoryScope, *, limit: int = 5) -> list[MemoryRecord]:
-        vector = (await self.embedding.embed([query]))[0]
-        semantic = await self.vector_index.search(
-            vector, user_id=scope.user_id, profile=scope.profile, limit=max(limit * 3, 10)
+        candidate_limit = max(limit * 3, 10)
+        semantic_result, keyword_result = await asyncio.gather(
+            asyncio.wait_for(
+                self._semantic_search(query, scope, candidate_limit),
+                timeout=self.retrieval_config.semantic_timeout_seconds,
+            ),
+            asyncio.wait_for(
+                self.keyword_index.search(query, scope, limit=candidate_limit),
+                timeout=self.retrieval_config.keyword_timeout_seconds,
+            ),
+            return_exceptions=True,
         )
-        keyword = await self.archive.search_bm25(scope, query, limit=max(limit * 3, 10))
-        semantic_ids = [item[0] for item in semantic]
-        keyword_ids = [item.id for item in keyword]
-        scores = reciprocal_rank_fusion(semantic_ids, keyword_ids)
-        records = await self.archive.get_memories(
-            sorted(scores, key=scores.get, reverse=True), scope
-        )
-        ranked = [replace(item, score=scores[item.id] * (0.9 + 0.1 * item.importance)) for item in records]
-        return sorted(ranked, key=lambda item: item.score, reverse=True)[:limit]
+        result_sets: dict[str, list] = {}
+        errors: dict[str, BaseException] = {}
+        for source, result in (("semantic", semantic_result), ("keyword", keyword_result)):
+            if isinstance(result, BaseException):
+                errors[source] = result
+                self._component_errors[source] = f"{type(result).__name__}: {result}"
+            else:
+                result_sets[source] = result
+                self._component_errors.pop(source, None)
+        if not result_sets:
+            detail = "; ".join(f"{name}: {type(exc).__name__}: {exc}" for name, exc in errors.items())
+            self.last_error = detail
+            raise RuntimeError(f"Lumora retrieval backends failed: {detail}")
+
+        memory_ids = list(dict.fromkeys(
+            hit.memory_id for hits in result_sets.values() for hit in hits
+        ))
+        records = await self.archive.get_memories(memory_ids, scope)
+        by_id = {item.id: item for item in records}
+        fused = await self.fusion.fuse(query, by_id, result_sets, limit=candidate_limit)
+        try:
+            ranked = await asyncio.wait_for(
+                self.reranker.rerank(query, fused, by_id, limit=limit),
+                timeout=self.retrieval_config.reranker_timeout_seconds,
+            )
+            self._component_errors.pop("reranker", None)
+        except Exception as exc:
+            self._component_errors["reranker"] = f"{type(exc).__name__}: {exc}"
+            logger.warning("Lumora reranker degraded to fusion results: %s", self._component_errors["reranker"])
+            ranked = fused[:limit]
+        self.last_error = ""
+        return [
+            replace(
+                by_id[item.memory_id],
+                score=item.score,
+                metadata={
+                    **by_id[item.memory_id].metadata,
+                    **item.metadata,
+                    "retrieval_sources": list(item.sources),
+                },
+            )
+            for item in ranked
+            if item.memory_id in by_id
+        ]
 
     async def list(self, scope: MemoryScope, *, limit: int = 100) -> list[MemoryRecord]:
         return await self.archive.list_memories(scope, limit=limit)
@@ -62,6 +123,7 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
     async def delete(self, memory_id: str, scope: MemoryScope) -> bool:
         deleted = await self.archive.delete_memory(memory_id, scope, provider=self.name)
         if deleted:
+            await self.keyword_index.delete(memory_id)
             await self.vector_index.delete(memory_id)
         return deleted
 
@@ -101,12 +163,7 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
         for record in records:
             result["attempted"] += 1
             try:
-                await self._write_index(
-                    record.id,
-                    record.content,
-                    record.kind.value,
-                    scope,
-                )
+                await self._write_indexes(record)
             except Exception as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 await self.archive.mark_memory_index_failed(record.id, self.last_error)
@@ -119,12 +176,35 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
         return result
 
     def health_snapshot(self) -> dict[str, Any]:
-        return {"provider": self.name, "available": not self.last_error, "last_error": self.last_error}
+        components = {
+            "embedding": self.embedding.health_snapshot().as_dict(),
+            "vector": self.vector_index.health_snapshot().as_dict(),
+            "keyword": self.keyword_index.health_snapshot().as_dict(),
+            "fusion": self.fusion.health_snapshot().as_dict(),
+            "reranker": self.reranker.health_snapshot().as_dict(),
+        }
+        for name, detail in self._component_errors.items():
+            component = components.setdefault(name, {"provider": name})
+            component.update({"status": "degraded", "detail": detail})
+        return {
+            "provider": self.name,
+            "available": not self.last_error,
+            "status": "degraded" if self._component_errors else ("failed" if self.last_error else "ready"),
+            "last_error": self.last_error,
+            "components": components,
+        }
 
     async def close(self) -> None:
         await self.embedding.close()
         await self.vector_index.close()
+        await self.keyword_index.close()
+        await self.fusion.close()
+        await self.reranker.close()
         await self.llm.close()
+
+    async def _semantic_search(self, query: str, scope: MemoryScope, limit: int):
+        vector = (await self.embedding.embed([query]))[0]
+        return await self.vector_index.search(vector, scope, limit=limit)
 
     async def _resolve(self, observation, related: list[MemoryRecord]) -> MemoryChange:
         prompt = (
@@ -171,7 +251,7 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             previous_content=existing.content if existing else "", reason=change.reason,
         )
         try:
-            await self._write_index(memory_id, content, observation.kind.value, scope)
+            await self._write_indexes(record)
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             await self.archive.mark_memory_index_failed(memory_id, self.last_error)
@@ -181,16 +261,12 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
         self.last_error = ""
         return applied
 
-    async def _write_index(self, memory_id: str, content: str, kind: str, scope: MemoryScope) -> None:
+    async def _write_indexes(self, record: MemoryRecord) -> None:
+        await self.keyword_index.upsert(record)
         embedded_at = monotonic()
-        vector = (await self.embedding.embed([content]))[0]
+        vector = (await self.embedding.embed([record.content]))[0]
         upserted_at = monotonic()
-        await self.vector_index.upsert(memory_id, vector, {
-            "user_id": scope.user_id,
-            "profile": scope.profile,
-            "kind": kind,
-            "content": content,
-        })
+        await self.vector_index.upsert(record, vector)
         finished_at = monotonic()
         logger.info(
             "Lumora index write: embedding=%.3fs qdrant=%.3fs",

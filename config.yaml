@@ -53,19 +53,36 @@ memory:
     model: ""
     api_mode: "auto"
     max_tokens: 2048
-  embedding:
-    api_mode: "openai_compatible"
-    base_url: "https://llm-emwc1qhbxb5bsk0u.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-    api_key_env: "DASHSCOPE_API_KEY"
-    model: "text-embedding-v4"
-    dimensions: 1024
-  qdrant:
-    url: "https://7f0404bc-2f2a-423c-9ae3-fd815997ae67.sa-east-1-0.aws.cloud.qdrant.io"
-    collection: "lumora_memories"
-    api_key_env: "QDRANT_API_KEY"
-    timeout_seconds: 30
   providers:
-    lumora: {}
+    lumora:
+      embedding:
+        provider: "openai_compatible"
+        base_url: "https://llm-emwc1qhbxb5bsk0u.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+        api_key_env: "DASHSCOPE_API_KEY"
+        model: "text-embedding-v4"
+        dimensions: 1024
+        timeout_seconds: 30
+      vector:
+        provider: "qdrant"
+        url: "https://7f0404bc-2f2a-423c-9ae3-fd815997ae67.sa-east-1-0.aws.cloud.qdrant.io"
+        collection: "lumora_memories"
+        api_key_env: "QDRANT_API_KEY"
+        timeout_seconds: 30
+      keyword:
+        provider: "sqlite_fts5"
+        tokenizer: "unicode61"
+      fusion:
+        provider: "weighted_rrf"
+        semantic_weight: 0.6
+        keyword_weight: 0.4
+        importance_weight: 0.1
+        rrf_k: 60
+      reranker:
+        provider: "none"
+      retrieval:
+        semantic_timeout_seconds: 35
+        keyword_timeout_seconds: 5
+        reranker_timeout_seconds: 30
     mem0:
       options: {}
 

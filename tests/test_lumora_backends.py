@@ -4,6 +4,7 @@ import pytest
 
 from personal_agent.memory.models import MemoryScope
 from personal_agent.plugins.builtin.memory.lumora.backends import BackendRegistry, SearchHit
+from personal_agent.plugins.builtin.memory.lumora.backends.config import LumoraBackendConfig
 
 
 def test_backend_registry_creates_provider_without_qdrant_specific_arguments() -> None:
@@ -32,3 +33,16 @@ def test_search_hit_uses_scope_neutral_backend_contract() -> None:
 
     assert scope.user_id == "user"
     assert hit == SearchHit("memory", "pgvector", 1, 0.9)
+
+
+def test_lumora_backend_config_uses_provider_specific_options() -> None:
+    config = LumoraBackendConfig.from_options({
+        "vector": {"provider": "pgvector", "dsn_env": "MEMORY_POSTGRES_DSN"},
+        "reranker": {"provider": "cross_encoder", "model": "bge-reranker"},
+    })
+
+    assert config.vector.provider == "pgvector"
+    assert config.vector.options == {"dsn_env": "MEMORY_POSTGRES_DSN"}
+    assert config.embedding.provider == "openai_compatible"
+    assert config.keyword.provider == "sqlite_fts5"
+    assert config.reranker.provider == "cross_encoder"

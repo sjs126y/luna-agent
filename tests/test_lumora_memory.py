@@ -4,8 +4,12 @@ import pytest
 
 from personal_agent.memory.archive import MemoryArchive
 from personal_agent.memory.models import MemoryRecord, MemoryScope, Observation, ObservationKind
+from personal_agent.plugins.builtin.memory.lumora.backends.base import BackendHealth
+from personal_agent.plugins.builtin.memory.lumora.backends.config import RetrievalConfig
+from personal_agent.plugins.builtin.memory.lumora.backends.keyword import SqliteFts5KeywordIndex
+from personal_agent.plugins.builtin.memory.lumora.backends.ranking import NoOpReranker, WeightedRrfFusion
 from personal_agent.plugins.builtin.memory.lumora.provider import LumoraMemoryProvider, reciprocal_rank_fusion
-from personal_agent.plugins.builtin.memory.lumora.qdrant_store import QdrantMemoryIndex
+from personal_agent.plugins.builtin.memory.lumora.qdrant_store import QdrantMemoryIndex, QdrantVectorConfig
 
 
 def test_reciprocal_rank_fusion_combines_semantic_and_bm25() -> None:
@@ -49,7 +53,7 @@ class _FakeQdrantClient:
 async def test_qdrant_index_creates_filter_indexes_for_existing_collection() -> None:
     client = _FakeQdrantClient(exists=True)
     index = QdrantMemoryIndex(
-        SimpleNamespace(collection="lumora_memories"), dimensions=1024, client=client
+        QdrantVectorConfig(collection="lumora_memories", url="http://qdrant"), dimensions=1024, client=client
     )
 
     await index.ensure_collection(1024)
@@ -69,7 +73,7 @@ async def test_qdrant_index_keeps_existing_keyword_indexes() -> None:
         payload_schema={"user_id": keyword, "profile": keyword},
     )
     index = QdrantMemoryIndex(
-        SimpleNamespace(collection="lumora_memories"), dimensions=1024, client=client
+        QdrantVectorConfig(collection="lumora_memories", url="http://qdrant"), dimensions=1024, client=client
     )
 
     await index.ensure_collection(1024)
@@ -84,7 +88,7 @@ async def test_qdrant_index_rejects_wrong_payload_index_type() -> None:
         payload_schema={"user_id": {"data_type": "integer"}},
     )
     index = QdrantMemoryIndex(
-        SimpleNamespace(collection="lumora_memories"), dimensions=1024, client=client
+        QdrantVectorConfig(collection="lumora_memories", url="http://qdrant"), dimensions=1024, client=client
     )
 
     with pytest.raises(RuntimeError, match="user_id: expected keyword, got integer"):
@@ -102,39 +106,85 @@ async def test_qdrant_search_normalizes_uuid_ids_to_archive_format() -> None:
         SimpleNamespace(id="legacy-id", score=0.5),
     ])
     index = QdrantMemoryIndex(
-        SimpleNamespace(collection="lumora_memories"), dimensions=1024, client=client
+        QdrantVectorConfig(collection="lumora_memories", url="http://qdrant"), dimensions=1024, client=client
     )
 
-    result = await index.search(
-        [0.1] * 1024,
-        user_id="u1",
-        profile="default",
-        limit=5,
-    )
+    result = await index.search([0.1] * 1024, MemoryScope(user_id="u1"), limit=5)
 
-    assert result == [
-        ("4b4915da452f440db750c127856e2ace", 0.9),
-        ("legacy-id", 0.5),
+    assert [(item.memory_id, item.score) for item in result] == [
+        ("4b4915da452f440db750c127856e2ace", 0.9), ("legacy-id", 0.5),
     ]
 
 
+@pytest.mark.asyncio
+async def test_qdrant_local_persists_and_filters_by_scope(tmp_path) -> None:
+    pytest.importorskip("qdrant_client")
+    config = QdrantVectorConfig(
+        collection="lumora_memories",
+        path=str(tmp_path / "qdrant"),
+    )
+    scope = MemoryScope(user_id="u1", profile="default")
+    other_scope = MemoryScope(user_id="u2", profile="default")
+    memory = MemoryRecord(
+        id="4b4915da452f440db750c127856e2ace",
+        content="local vector memory",
+        scope=scope,
+    )
+    index = QdrantMemoryIndex(config, dimensions=2)
+    await index.upsert(memory, [1.0, 0.0])
+    await index.close()
+
+    reopened = QdrantMemoryIndex(config, dimensions=2)
+    found = await reopened.search([1.0, 0.0], scope, limit=5)
+    hidden = await reopened.search([1.0, 0.0], other_scope, limit=5)
+
+    assert [item.memory_id for item in found] == [memory.id]
+    assert hidden == []
+    await reopened.close()
+
+
 class _Embedding:
+    name = "fake_embedding"
+    dimensions = 2
+
     async def embed(self, texts):
         return [[0.1, 0.2] for _ in texts]
 
     async def close(self):
         pass
 
+    def fingerprint(self):
+        return "fake:2"
+
+    def health_snapshot(self):
+        return BackendHealth(self.name)
+
 
 class _VectorIndex:
-    async def search(self, vector, *, user_id, profile, limit):
+    name = "fake_vector"
+
+    async def search(self, vector, scope, *, limit):
         return []
 
-    async def upsert(self, memory_id, vector, payload):
+    async def upsert(self, memory, vector):
         pass
+
+    async def delete(self, memory_id):
+        pass
+
+    def fingerprint(self):
+        return "fake"
+
+    def health_snapshot(self):
+        return BackendHealth(self.name)
 
     async def close(self):
         pass
+
+
+class _FailingVectorIndex(_VectorIndex):
+    async def search(self, vector, scope, *, limit):
+        raise TimeoutError("vector unavailable")
 
 
 class _ResolutionLLM:
@@ -145,17 +195,25 @@ class _ResolutionLLM:
         pass
 
 
+def _provider(archive, *, vector_index=None):
+    return LumoraMemoryProvider(
+        archive=archive,
+        context=SimpleNamespace(),
+        embedding=_Embedding(),
+        vector_index=vector_index or _VectorIndex(),
+        keyword_index=SqliteFts5KeywordIndex(archive),
+        fusion=WeightedRrfFusion(),
+        reranker=NoOpReranker(),
+        retrieval_config=RetrievalConfig(),
+        llm=_ResolutionLLM(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_lumora_migrate_returns_applied_memory_id(tmp_path) -> None:
     archive = MemoryArchive(tmp_path / "memory.db")
     await archive.initialize()
-    provider = LumoraMemoryProvider(
-        archive=archive,
-        context=SimpleNamespace(),
-        embedding=_Embedding(),
-        vector_index=_VectorIndex(),
-        llm=_ResolutionLLM(),
-    )
+    provider = _provider(archive)
     observation = Observation(kind=ObservationKind.EVENT, content="new observation")
     scope = MemoryScope(user_id="u1")
 
@@ -184,13 +242,7 @@ async def test_lumora_reindexes_pending_records(tmp_path) -> None:
         metadata={"index_status": "pending"},
     )
     await archive.upsert_memory(scope, record)
-    provider = LumoraMemoryProvider(
-        archive=archive,
-        context=SimpleNamespace(),
-        embedding=_Embedding(),
-        vector_index=_VectorIndex(),
-        llm=_ResolutionLLM(),
-    )
+    provider = _provider(archive)
 
     result = await provider.reindex([record], scope)
 
@@ -221,18 +273,35 @@ async def test_lumora_search_recalls_uuid_returned_by_qdrant(tmp_path) -> None:
     qdrant.query_result = SimpleNamespace(points=[
         SimpleNamespace(id="4b4915da-452f-440d-b750-c127856e2ace", score=0.9),
     ])
-    provider = LumoraMemoryProvider(
-        archive=archive,
-        context=SimpleNamespace(),
-        embedding=_Embedding(),
+    provider = _provider(
+        archive,
         vector_index=QdrantMemoryIndex(
-            SimpleNamespace(collection="lumora_memories"), dimensions=2, client=qdrant
+            QdrantVectorConfig(collection="lumora_memories", url="http://qdrant"),
+            dimensions=2,
+            client=qdrant,
         ),
-        llm=_ResolutionLLM(),
     )
 
     result = await provider.search("音乐偏好", scope)
 
     assert [item.id for item in result] == [memory_id]
     assert result[0].content == "用户喜欢爵士乐"
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_lumora_search_degrades_to_keyword_when_vector_fails(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    record = MemoryRecord(id="m1", content="prefers jazz music", scope=scope)
+    await archive.upsert_memory(scope, record)
+    provider = _provider(archive, vector_index=_FailingVectorIndex())
+
+    result = await provider.search("jazz", scope)
+
+    assert [item.id for item in result] == ["m1"]
+    assert provider.health_snapshot()["status"] == "degraded"
+    assert provider.health_snapshot()["components"]["semantic"]["status"] == "degraded"
+    await provider.close()
     await archive.close()

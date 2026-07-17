@@ -452,12 +452,25 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         VALID_EXTERNAL_MEMORY_PROVIDERS,
         errors,
     )
-    embedding = memory.get("embedding")
-    if embedding is not None:
-        if not isinstance(embedding, dict):
-            errors.append("memory.embedding 必须是对象。")
-        else:
-            _string_value(embedding, "model", "memory.embedding.model", errors)
+    providers = memory.get("providers")
+    if providers is not None and not isinstance(providers, dict):
+        errors.append("memory.providers 必须是对象。")
+    elif isinstance(providers, dict):
+        lumora = providers.get("lumora")
+        if lumora is not None and not isinstance(lumora, dict):
+            errors.append("memory.providers.lumora 必须是对象。")
+        elif isinstance(lumora, dict):
+            for name in ("embedding", "vector", "keyword", "fusion", "reranker"):
+                selection = lumora.get(name)
+                if selection is not None and not isinstance(selection, dict):
+                    errors.append(f"memory.providers.lumora.{name} 必须是对象。")
+                elif isinstance(selection, dict):
+                    _string_value(
+                        selection,
+                        "provider",
+                        f"memory.providers.lumora.{name}.provider",
+                        errors,
+                    )
 
     _bool_value(sections["cron"], "enabled", "cron.enabled", errors)
 

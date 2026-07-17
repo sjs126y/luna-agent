@@ -26,30 +26,15 @@ class MemoryLLMConfig:
 
 
 @dataclass(frozen=True)
-class EmbeddingConfig:
-    api_mode: str
-    base_url: str
-    api_key: str
-    model: str
-    dimensions: int
-
-
-@dataclass(frozen=True)
-class QdrantConfig:
-    url: str
-    collection: str
-    api_key: str
-    timeout_seconds: int
-
-
-@dataclass(frozen=True)
 class MemoryProviderContext:
     requested_provider: str
     review: MemoryReviewConfig
     llm: MemoryLLMConfig
-    embedding: EmbeddingConfig
-    qdrant: QdrantConfig
     provider_options: dict[str, Any] = field(default_factory=dict)
+    environment: dict[str, str] = field(default_factory=dict)
+
+    def get_env(self, name: str, default: str = "") -> str:
+        return str(self.environment.get(name, default) or default)
 
 
 def resolve_memory_context(settings) -> MemoryProviderContext:
@@ -59,20 +44,9 @@ def resolve_memory_context(settings) -> MemoryProviderContext:
     llm_key = str(getattr(settings, "memory_llm_api_key", "") or "")
     if not llm_key:
         llm_key = str(getattr(settings, "llm_api_key", "") or "")
-    embedding_key = str(getattr(settings, "memory_embedding_api_key", "") or "")
-    if not embedding_key:
-        embedding_key = _settings_env(
-            settings,
-            str(getattr(settings, "memory_embedding_api_key_env", "DASHSCOPE_API_KEY")),
-        )
-    qdrant_key = str(getattr(settings, "memory_qdrant_api_key", "") or "")
-    if not qdrant_key:
-        qdrant_key = _settings_env(
-            settings,
-            str(getattr(settings, "memory_qdrant_api_key_env", "QDRANT_API_KEY")),
-        )
     options = getattr(settings, "memory_provider_options", {})
     selected_options = options.get(requested, {}) if isinstance(options, dict) else {}
+    env_names = _environment_names(selected_options)
     return MemoryProviderContext(
         requested_provider=requested,
         review=MemoryReviewConfig(
@@ -90,20 +64,8 @@ def resolve_memory_context(settings) -> MemoryProviderContext:
             api_mode=str(getattr(settings, "llm_api_mode", "auto") if inherit else getattr(settings, "memory_llm_api_mode", "auto")),
             max_tokens=int(getattr(settings, "memory_llm_max_tokens", 2048)),
         ),
-        embedding=EmbeddingConfig(
-            api_mode=str(getattr(settings, "memory_embedding_api_mode", "openai_compatible")),
-            base_url=str(getattr(settings, "memory_embedding_base_url", "")),
-            api_key=embedding_key,
-            model=str(getattr(settings, "memory_embedding_model", "")),
-            dimensions=int(getattr(settings, "memory_embedding_dimensions", 0)),
-        ),
-        qdrant=QdrantConfig(
-            url=str(getattr(settings, "memory_qdrant_url", "")),
-            collection=str(getattr(settings, "memory_qdrant_collection", "lumora_memories")),
-            api_key=qdrant_key,
-            timeout_seconds=int(getattr(settings, "memory_qdrant_timeout_seconds", 10)),
-        ),
         provider_options=dict(selected_options) if isinstance(selected_options, dict) else {},
+        environment={name: _settings_env(settings, name) for name in env_names},
     )
 
 
@@ -112,3 +74,17 @@ def _settings_env(settings, name: str) -> str:
     if not callable(resolver):
         return ""
     return str(resolver(name, "") or "")
+
+
+def _environment_names(value: Any) -> set[str]:
+    names: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).endswith("_env") and isinstance(item, str) and item:
+                names.add(item)
+            else:
+                names.update(_environment_names(item))
+    elif isinstance(value, list):
+        for item in value:
+            names.update(_environment_names(item))
+    return names

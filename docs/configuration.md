@@ -101,16 +101,24 @@ memory:
   llm:
     provider: inherit
     max_tokens: 2048
-  embedding:
-    api_mode: openai_compatible
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key_env: DASHSCOPE_API_KEY
-    model: text-embedding-v4
-    dimensions: 0
-  qdrant:
-    url: http://localhost:6333
-    collection: lumora_memories
-    api_key_env: QDRANT_API_KEY
+  providers:
+    lumora:
+      embedding:
+        provider: openai_compatible
+        base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api_key_env: DASHSCOPE_API_KEY
+        model: text-embedding-v4
+        dimensions: 0
+      vector:
+        provider: qdrant
+        path: ./data/memory/qdrant
+        collection: lumora_memories
+      keyword:
+        provider: sqlite_fts5
+      fusion:
+        provider: weighted_rrf
+      reranker:
+        provider: none
 
 multimodal:
   enabled: true
