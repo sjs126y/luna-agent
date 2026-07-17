@@ -180,19 +180,67 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
             raise ValueError(f"Unsupported memory index kind: {index_kind}")
         records = await self.archive.all_memories(limit=limit)
         indexes = {"vector", "keyword"} if index_kind == "all" else {index_kind}
-        result = {"attempted": 0, "completed": 0, "failed": 0}
-        for record in records:
-            result["attempted"] += 1
-            try:
-                await self._write_indexes(record, indexes=indexes)
-            except Exception as exc:
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                result["failed"] += 1
-                continue
-            result["completed"] += 1
+        failed_ids: set[str] = set()
+        if "keyword" in indexes:
+            for record in records:
+                try:
+                    await self._write_indexes(record, indexes={"keyword"})
+                except Exception as exc:
+                    self.last_error = f"{type(exc).__name__}: {exc}"
+                    failed_ids.add(record.id)
+        if "vector" in indexes:
+            for offset in range(0, len(records), 32):
+                batch = records[offset:offset + 32]
+                try:
+                    await self._write_vector_batch(batch)
+                except Exception as exc:
+                    self.last_error = f"{type(exc).__name__}: {exc}"
+                    failed_ids.update(record.id for record in batch)
+        result = {
+            "attempted": len(records),
+            "completed": len(records) - len(failed_ids),
+            "failed": len(failed_ids),
+        }
         if not result["failed"]:
             self.last_error = ""
         return result
+
+    async def _write_vector_batch(self, records: list[MemoryRecord]) -> None:
+        if not records:
+            return
+        vector_fingerprint = self._vector_fingerprint()
+        try:
+            vectors = await self.embedding.embed([record.content for record in records])
+            vector_fingerprint = self._vector_fingerprint()
+            await self.archive.ensure_index_backend(
+                "vector", self.vector_index.name, vector_fingerprint
+            )
+            upsert_many = getattr(self.vector_index, "upsert_many", None)
+            if upsert_many is not None:
+                await upsert_many(records, vectors)
+            else:
+                for record, vector in zip(records, vectors, strict=True):
+                    await self.vector_index.upsert(record, vector)
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            for record in records:
+                await self.archive.set_backend_index_status(
+                    record.id,
+                    "vector",
+                    backend=self.vector_index.name,
+                    fingerprint=vector_fingerprint,
+                    status="pending",
+                    error=detail,
+                )
+            raise
+        for record in records:
+            await self.archive.set_backend_index_status(
+                record.id,
+                "vector",
+                backend=self.vector_index.name,
+                fingerprint=vector_fingerprint,
+                status="ready",
+            )
 
     async def pending_reindex_records(self, scope: MemoryScope, *, limit: int = 10) -> list[MemoryRecord]:
         return await self.archive.pending_backend_index_memories(scope, limit=limit)

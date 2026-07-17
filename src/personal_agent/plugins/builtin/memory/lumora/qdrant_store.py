@@ -93,19 +93,33 @@ class QdrantMemoryIndex:
             )
 
     async def upsert(self, memory: MemoryRecord, vector: list[float]) -> None:
+        await self.upsert_many([memory], [vector])
+
+    async def upsert_many(
+        self,
+        memories: list[MemoryRecord],
+        vectors: list[list[float]],
+    ) -> None:
         from qdrant_client.models import PointStruct
 
-        await self.ensure_collection(len(vector))
-        scope = memory.scope or MemoryScope(user_id="")
-        payload = {
-            "user_id": scope.user_id,
-            "profile": scope.profile,
-            "kind": memory.kind.value,
-            "content": memory.content,
-        }
+        if len(memories) != len(vectors):
+            raise ValueError("Qdrant memory/vector batch sizes do not match")
+        if not memories:
+            return
+        await self.ensure_collection(len(vectors[0]))
+        points = []
+        for memory, vector in zip(memories, vectors, strict=True):
+            scope = memory.scope or MemoryScope(user_id="")
+            payload = {
+                "user_id": scope.user_id,
+                "profile": scope.profile,
+                "kind": memory.kind.value,
+                "content": memory.content,
+            }
+            points.append(PointStruct(id=memory.id, vector=vector, payload=payload))
         await self.client.upsert(
             self.collection,
-            points=[PointStruct(id=memory.id, vector=vector, payload=payload)],
+            points=points,
             wait=True,
         )
 

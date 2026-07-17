@@ -64,10 +64,8 @@ memory:
         timeout_seconds: 30
       vector:
         provider: "qdrant"
-        url: "https://7f0404bc-2f2a-423c-9ae3-fd815997ae67.sa-east-1-0.aws.cloud.qdrant.io"
+        path: "./data/memory/qdrant"
         collection: "lumora_memories"
-        api_key_env: "QDRANT_API_KEY"
-        timeout_seconds: 30
       keyword:
         provider: "sqlite_fts5"
         tokenizer: "unicode61"

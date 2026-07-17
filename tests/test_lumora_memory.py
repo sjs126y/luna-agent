@@ -153,6 +153,15 @@ class _Embedding:
         return BackendHealth(self.name)
 
 
+class _BatchEmbedding(_Embedding):
+    def __init__(self):
+        self.batch_sizes = []
+
+    async def embed(self, texts):
+        self.batch_sizes.append(len(texts))
+        return await super().embed(texts)
+
+
 class _VectorIndex:
     name = "fake_vector"
 
@@ -175,6 +184,15 @@ class _VectorIndex:
         pass
 
 
+class _BatchVectorIndex(_VectorIndex):
+    def __init__(self):
+        self.batch_sizes = []
+
+    async def upsert_many(self, memories, vectors):
+        assert len(memories) == len(vectors)
+        self.batch_sizes.append(len(memories))
+
+
 class _FailingVectorIndex(_VectorIndex):
     async def search(self, vector, scope, *, limit):
         raise TimeoutError("vector unavailable")
@@ -188,11 +206,11 @@ class _ResolutionLLM:
         pass
 
 
-def _provider(archive, *, vector_index=None):
+def _provider(archive, *, embedding=None, vector_index=None):
     return LumoraMemoryProvider(
         archive=archive,
         context=SimpleNamespace(),
-        embedding=_Embedding(),
+        embedding=embedding or _Embedding(),
         vector_index=vector_index or _VectorIndex(),
         keyword_index=SqliteFts5KeywordIndex(archive),
         fusion=WeightedRrfFusion(),
@@ -242,6 +260,29 @@ async def test_lumora_reindexes_pending_records(tmp_path) -> None:
     assert result == {"attempted": 1, "completed": 1, "failed": 0}
     stored = await archive.get_memory("m1", scope)
     assert stored.metadata["index_status"] == "ready"
+    await archive.close()
+
+
+@pytest.mark.asyncio
+async def test_lumora_full_reindex_batches_embedding_and_vector_writes(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    for index in range(33):
+        await archive.upsert_memory(
+            scope,
+            MemoryRecord(id=f"m{index}", content=f"memory {index}", scope=scope),
+        )
+    embedding = _BatchEmbedding()
+    vector = _BatchVectorIndex()
+    provider = _provider(archive, embedding=embedding, vector_index=vector)
+
+    result = await provider.reindex_all(index_kind="vector")
+
+    assert result == {"attempted": 33, "completed": 33, "failed": 0}
+    assert embedding.batch_sizes == [32, 1]
+    assert vector.batch_sizes == [32, 1]
+    assert await archive.backend_index_status(scope) == {"vector": {"ready": 33}}
     await archive.close()
 
 
