@@ -76,6 +76,7 @@ def _create_openai_embedding(*, selection: BackendSelection, context, **kwargs):
         model=str(options.get("model") or ""),
         dimensions=int(options.get("dimensions") or 0),
         timeout_seconds=float(options.get("timeout_seconds") or 30),
+        batch_size=int(options.get("batch_size") or 10),
     ))
 
 
@@ -87,6 +88,8 @@ def _validate_openai_embedding(*, selection: BackendSelection, context) -> list[
         errors.append(f"embedding environment variable is empty: {env_name}")
     if int(options.get("dimensions") or 0) < 0:
         errors.append("embedding dimensions must not be negative")
+    if int(options.get("batch_size") or 10) <= 0:
+        errors.append("embedding batch_size must be positive")
     return errors
 
 

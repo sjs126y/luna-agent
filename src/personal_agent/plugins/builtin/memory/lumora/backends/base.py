@@ -44,6 +44,7 @@ class RankedMemory:
 class EmbeddingBackend(Protocol):
     name: str
     dimensions: int
+    max_batch_size: int
 
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 

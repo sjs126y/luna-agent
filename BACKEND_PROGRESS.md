@@ -870,3 +870,5 @@ uv run personal-agent memory doctor --json
 ```
 
 结果：全量回归 `989 passed`。真实 Memory doctor 使用现有百炼 Embedding 与远程 Qdrant 探测成功，Lumora 保持主提供器，embedding/vector/keyword/fusion 均为 ready、reranker 为 disabled；102 条现有记忆的 vector 与 keyword 索引均为 ready，全局索引 pending 为 0。
+
+后续已将当前 `config.yaml` 切换为 Qdrant Local `./data/memory/qdrant`。全量重建增加按 Embedding Backend 限制的批处理；百炼 `text-embedding-v4` 使用每批 10 条，避免超出接口批量上限。现有 Archive 的 102 条记忆已全部迁移到本地 Qdrant，真实 doctor 显示本地 fingerprint、102 条 vector ready、0 pending，Lumora 未 fallback。远程 Qdrant collection 未删除。

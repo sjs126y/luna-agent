@@ -70,6 +70,7 @@ memory:
         model: "text-embedding-v4"
         dimensions: 0
         timeout_seconds: 30
+        batch_size: 10
       vector:
         provider: "qdrant"
         path: "./data/memory/qdrant"  # 本地 Qdrant；远程部署改用 url 和 api_key_env

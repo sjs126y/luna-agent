@@ -16,6 +16,7 @@ class OpenAICompatibleEmbeddingConfig:
     model: str
     dimensions: int = 0
     timeout_seconds: float = 30.0
+    batch_size: int = 10
 
 
 class OpenAICompatibleEmbeddingBackend:
@@ -26,6 +27,7 @@ class OpenAICompatibleEmbeddingBackend:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
         self.dimensions = int(config.dimensions or 0)
+        self.max_batch_size = max(1, int(config.batch_size))
         self.last_error = ""
 
     async def embed(self, texts: list[str]) -> list[list[float]]:

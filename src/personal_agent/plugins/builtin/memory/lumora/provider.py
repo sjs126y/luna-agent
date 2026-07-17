@@ -189,8 +189,9 @@ class LumoraMemoryProvider(ExternalMemoryProvider):
                     self.last_error = f"{type(exc).__name__}: {exc}"
                     failed_ids.add(record.id)
         if "vector" in indexes:
-            for offset in range(0, len(records), 32):
-                batch = records[offset:offset + 32]
+            batch_size = max(1, int(getattr(self.embedding, "max_batch_size", 32)))
+            for offset in range(0, len(records), batch_size):
+                batch = records[offset:offset + batch_size]
                 try:
                     await self._write_vector_batch(batch)
                 except Exception as exc:

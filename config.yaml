@@ -62,6 +62,7 @@ memory:
         model: "text-embedding-v4"
         dimensions: 1024
         timeout_seconds: 30
+        batch_size: 10
       vector:
         provider: "qdrant"
         path: "./data/memory/qdrant"
