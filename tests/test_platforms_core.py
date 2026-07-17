@@ -101,7 +101,7 @@ async def test_base_adapter_send_message_falls_back_to_text():
 
 
 @pytest.mark.asyncio
-async def test_coordinator_managed_adapter_does_not_serialize_control_messages():
+async def test_adapter_forwards_messages_without_owning_session_order():
     from personal_agent.models.messages import MessageEvent, SessionSource
     from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
 
@@ -121,14 +121,12 @@ async def test_coordinator_managed_adapter_does_not_serialize_control_messages()
             await release.wait()
 
     adapter.set_message_handler(handler)
-    adapter.set_coordinator_managed(True)
     source = SessionSource(platform="test", user_id="u1", chat_id="c1")
     adapter.handle_message(MessageEvent(text="work", source=source))
     adapter.handle_message(MessageEvent(text="/stop", source=source))
     await asyncio.sleep(0)
 
     assert started == ["work", "/stop"]
-    assert adapter._pending_messages == {}
     release.set()
 
 

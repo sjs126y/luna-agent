@@ -15,7 +15,7 @@ def test_config_registry_paths_are_unique():
     assert "llm.context_window" in paths
     assert "sandbox.roots" in paths
     assert "attachments.resolve_inbound" in paths
-    assert "gateway.platform_send_max_retries" in paths
+    assert "gateway.delivery_max_attempts" in paths
     assert "profiles" in paths
     assert CONFIG_REGISTRY.get("execution.mode") is not None
     assert CONFIG_REGISTRY.get_by_attr("execution_mode") is CONFIG_REGISTRY.get("execution.mode")
@@ -36,7 +36,7 @@ def test_config_registry_keeps_field_order_and_metadata():
     assert fields["llm.context_window"].env_key == "LLM_CONTEXT_WINDOW"
     assert fields["llm.context_window"].minimum == 0
     assert fields["sandbox.roots"].allow_csv is True
-    assert fields["gateway.platform_send_max_retries"].minimum == 0
+    assert fields["gateway.delivery_max_attempts"].minimum == 1
     assert fields["profiles"].env_key == "PROFILES"
     assert fields["profiles"].yaml_path == "profiles"
 
@@ -103,7 +103,7 @@ def test_config_registry_exposes_known_yaml_sections_and_keys():
     assert "gateway" in sections
     assert "llm" in sections
     assert "profiles" in sections
-    assert "platform_send_max_retries" in keys["gateway"]
+    assert "delivery_max_attempts" in keys["gateway"]
     assert "context_window" in keys["llm"]
     assert "embedding" in keys["memory"]
     assert "review" in keys["memory"]
@@ -116,7 +116,7 @@ def test_config_registry_exposes_known_yaml_sections_and_keys():
 def test_config_registry_validates_basic_values():
     from personal_agent.config_registry import config_field_by_path, validate_registry_value
 
-    retries = config_field_by_path("gateway.platform_send_max_retries")
+    retries = config_field_by_path("gateway.delivery_max_attempts")
     mode = config_field_by_path("execution.mode")
     network = config_field_by_path("sandbox.bash_allow_network")
     delays = config_field_by_path("gateway.platform_reconnect_delays")
@@ -126,7 +126,7 @@ def test_config_registry_validates_basic_values():
     assert network is not None
     assert delays is not None
     assert validate_registry_value(retries, -1)["errors"] == [
-        "gateway.platform_send_max_retries 必须大于等于 0。"
+        "gateway.delivery_max_attempts 必须大于等于 1。"
     ]
     assert any("execution.mode 不支持" in error for error in validate_registry_value(mode, "bad")["errors"])
     assert validate_registry_value(network, "yes")["errors"] == [

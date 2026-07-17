@@ -103,13 +103,13 @@ class DeliveryService:
                 success=bool(getattr(raw, "success", False)),
                 message_id=str(getattr(raw, "message_id", "") or ""),
                 error=str(getattr(raw, "error", "") or ""),
-                ambiguous="timeout" in str(getattr(raw, "error", "") or "").lower(),
+                ambiguous=_is_ambiguous_error(str(getattr(raw, "error", "") or "")),
             )
         except Exception as exc:
             sent = PlatformSendResult(
                 success=False,
                 error=f"{type(exc).__name__}: {exc}",
-                ambiguous="timeout" in str(exc).lower(),
+                ambiguous=_is_ambiguous_error(str(exc)),
             )
 
         result = DeliveryResult(
@@ -190,3 +190,8 @@ class DeliveryService:
             chat_id=chat_id,
             error=error,
         )
+
+
+def _is_ambiguous_error(error: str) -> bool:
+    value = str(error or "").lower()
+    return "timeout" in value or "timed out" in value or "partial delivery" in value

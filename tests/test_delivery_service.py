@@ -104,3 +104,24 @@ async def test_unavailable_platform_is_deferred():
     ))
 
     assert result.status == DeliveryStatus.DEFERRED
+
+
+@pytest.mark.asyncio
+async def test_partial_platform_delivery_is_ambiguous():
+    service, adapter = _runtime()
+
+    async def partial_send(chat_id, message):
+        return SimpleNamespace(
+            success=False,
+            message_id="",
+            error="partial delivery: second chunk failed",
+        )
+
+    adapter.send_message = partial_send
+    result = await service.deliver(DeliveryRequest(
+        session_key="wechat:c1:u1",
+        message=OutboundMessage.text("long message"),
+    ))
+
+    assert result.status == DeliveryStatus.FAILED
+    assert result.ambiguous is True

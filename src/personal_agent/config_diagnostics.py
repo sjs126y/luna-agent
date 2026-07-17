@@ -49,10 +49,8 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     "compression": {"engine", "model", "max_tokens", "tail_token_budget", "threshold_ratio"},
     "gateway": {
         "platform_reconnect_delays",
-        "platform_pending_warning_threshold",
-        "platform_chat_locks_maxsize",
         "platform_message_dedupe_max_size",
-        "platform_send_max_retries",
+        "delivery_max_attempts",
     },
     "cron": {"enabled"},
     "execution": {"mode"},
@@ -435,26 +433,14 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     _int_list_or_csv(gateway, "platform_reconnect_delays", "gateway.platform_reconnect_delays", errors)
     _positive_int(
         gateway,
-        "platform_pending_warning_threshold",
-        "gateway.platform_pending_warning_threshold",
-        errors,
-    )
-    _positive_int(
-        gateway,
-        "platform_chat_locks_maxsize",
-        "gateway.platform_chat_locks_maxsize",
-        errors,
-    )
-    _positive_int(
-        gateway,
         "platform_message_dedupe_max_size",
         "gateway.platform_message_dedupe_max_size",
         errors,
     )
-    _non_negative_int(
+    _positive_int(
         gateway,
-        "platform_send_max_retries",
-        "gateway.platform_send_max_retries",
+        "delivery_max_attempts",
+        "gateway.delivery_max_attempts",
         errors,
     )
 

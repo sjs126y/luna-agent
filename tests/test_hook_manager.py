@@ -3,7 +3,6 @@ import asyncio
 import pytest
 
 from personal_agent.hooks import (
-    GatewayBeforeSendOutcome,
     GatewayMessageOutcome,
     HookEnvelope,
     HookEvent,
@@ -12,6 +11,7 @@ from personal_agent.hooks import (
     HookSourceContext,
     PermissionDecision,
     PermissionRequestOutcome,
+    PreDeliveryOutcome,
     PreToolUseOutcome,
 )
 
@@ -100,27 +100,27 @@ async def test_gateway_message_pipeline_preserves_changes_from_multiple_hooks():
 
 
 @pytest.mark.asyncio
-async def test_gateway_matcher_filters_platform():
+async def test_delivery_matcher_filters_platform():
     manager = HookManager()
     calls = 0
 
     async def callback(event):
         nonlocal calls
         calls += 1
-        return GatewayBeforeSendOutcome.replace_text("changed")
+        return PreDeliveryOutcome.replace_text("changed")
 
     manager.register(
         owner="wechat-only",
-        event=HookEvent.GATEWAY_BEFORE_SEND,
+        event=HookEvent.PRE_DELIVERY,
         callback=callback,
         matcher="^wechat$",
     )
 
     qq = await manager.dispatch(
-        _envelope(HookEvent.GATEWAY_BEFORE_SEND, payload={"text": "same"}, platform="qq")
+        _envelope(HookEvent.PRE_DELIVERY, payload={"text": "same"}, platform="qq")
     )
     wechat = await manager.dispatch(
-        _envelope(HookEvent.GATEWAY_BEFORE_SEND, payload={"text": "same"})
+        _envelope(HookEvent.PRE_DELIVERY, payload={"text": "same"})
     )
 
     assert qq.text is None

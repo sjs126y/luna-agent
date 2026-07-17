@@ -3,7 +3,6 @@
 from personal_agent.hooks.manager import HookManager
 from personal_agent.hooks.models import (
     ContextHookOutcome,
-    GatewayBeforeSendOutcome,
     GatewayMessageOutcome,
     HookEnvelope,
     HookEvent,
@@ -20,7 +19,6 @@ from personal_agent.hooks.models import (
 
 __all__ = [
     "ContextHookOutcome",
-    "GatewayBeforeSendOutcome",
     "GatewayMessageOutcome",
     "HookEnvelope",
     "HookEvent",

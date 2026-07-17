@@ -53,7 +53,7 @@ storage:
 llm:
   context_window: 131072
 gateway:
-  platform_send_max_retries: 5
+  delivery_max_attempts: 5
 attachments:
   resolve_inbound: false
   download_platform_files: false
@@ -84,7 +84,7 @@ plugins:
     )
 
     snapshot = ConfigLoader(base_dir=tmp_path).load(
-        overrides={"platform_send_max_retries": 7}
+        overrides={"delivery_max_attempts": 7}
     )
 
     assert snapshot.attr_values["llm_provider"] == "openai"
@@ -92,7 +92,7 @@ plugins:
     assert snapshot.attr_values["llm_context_window"] == 1_000_000
     assert snapshot.attr_values["llm_reasoning_effort"] == "high"
     assert snapshot.attr_values["agent_data_dir"] == Path("./runtime-data")
-    assert snapshot.attr_values["platform_send_max_retries"] == 7
+    assert snapshot.attr_values["delivery_max_attempts"] == 7
     assert snapshot.attr_values["attachments_resolve_inbound"] is False
     assert snapshot.attr_values["attachments_download_platform_files"] is False
     assert snapshot.attr_values["multimodal_text_extract_max_chars"] == 4096
@@ -121,7 +121,7 @@ plugins:
     assert snapshot.sources["llm.context_window"] == ".env"
     assert snapshot.sources["LLM_REASONING_EFFORT"] == ".env"
     assert snapshot.sources["storage.data_dir"] == "config.yaml"
-    assert snapshot.sources["gateway.platform_send_max_retries"] == "override"
+    assert snapshot.sources["gateway.delivery_max_attempts"] == "override"
 
 
 def test_config_loader_reads_context_window_from_yaml(tmp_path):

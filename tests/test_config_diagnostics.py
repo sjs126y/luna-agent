@@ -195,7 +195,7 @@ sandbox:
     assert "storage" in report["registry_coverage"]["present_config_sections"]
     assert "gateway" in registry["sections"]
     assert any(
-        item["path"] == "gateway.platform_send_max_retries"
+        item["path"] == "gateway.delivery_max_attempts"
         for item in registry["sections"]["gateway"]
     )
 
@@ -204,7 +204,7 @@ def test_config_report_includes_registry_validation_errors(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """
 gateway:
-  platform_send_max_retries: -1
+  delivery_max_attempts: 0
 sandbox:
   bash_allow_network: "yes"
   roots: [./data]
@@ -217,7 +217,7 @@ sandbox:
     report = build_config_report(tmp_path)
 
     assert any(
-        "gateway.platform_send_max_retries 必须大于等于 0" in error
+        "gateway.delivery_max_attempts 必须大于等于 1" in error
         for error in report["registry_validation_errors"]
     )
     assert any(
@@ -377,10 +377,8 @@ storage:
   data_dir: ./data
 gateway:
   platform_reconnect_delays: [2, 4, 8]
-  platform_pending_warning_threshold: 12
-  platform_chat_locks_maxsize: 32
   platform_message_dedupe_max_size: 2048
-  platform_send_max_retries: 0
+  delivery_max_attempts: 3
 memory:
   external_provider: lumora
   review:

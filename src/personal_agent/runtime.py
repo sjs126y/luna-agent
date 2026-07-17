@@ -371,7 +371,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             platform_directory = PlatformDirectory()
             delivery_outbox = DeliveryOutbox(
                 db,
-                max_attempts=max(1, int(getattr(settings, "platform_send_max_retries", 2)) + 1),
+                max_attempts=max(1, int(getattr(settings, "delivery_max_attempts", 3))),
             )
             delivery_service = DeliveryService(
                 sessions=session_directory,

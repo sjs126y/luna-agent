@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 from collections import OrderedDict
 from pathlib import Path
@@ -12,7 +11,6 @@ from personal_agent.platforms.core import platform_registry
 from personal_agent.commands.runtime import handle_slash_command
 from personal_agent.conversation.input import ConversationInput
 from personal_agent.conversation import (
-    EMPTY_FINAL_RESPONSE_MESSAGE,
     ConversationCommandRuntime,
     ConversationCoordinator,
     ConversationService,
@@ -24,7 +22,7 @@ from personal_agent.conversation import (
 from personal_agent.gateway.confirmations import PendingConfirmationManager
 from personal_agent.gateway.session_router import GatewaySessionRouter
 from personal_agent.gateway.session_store import SessionStore
-from personal_agent.gateway.state import GatewayRunState, PlatformRuntime
+from personal_agent.gateway.state import PlatformRuntime
 from personal_agent.memory.review import MemoryReviewService
 from personal_agent.delivery import DeliveryKind, DeliveryRequest
 from personal_agent.models.messages import OutboundMessage
@@ -82,7 +80,6 @@ class Gateway:
         self._adapters: list = []
         self._platforms: dict[str, PlatformRuntime] = {}
         self._platform_backoff_delays = tuple(getattr(config, "platform_reconnect_delays", (1, 2, 5, 10, 30, 60)))
-        self._run_state = GatewayRunState()
         self._agent_cache: OrderedDict[str, object] = conversation_service.agent_cache
         self._session_router = session_directory or GatewaySessionRouter()
         self._session_override = self._session_router.overrides
@@ -100,6 +97,10 @@ class Gateway:
     # ── lifecycle ─────────────────────────────────────
 
     async def start(self) -> None:
+        if self._conversation_coordinator is None:
+            raise RuntimeError("Gateway requires ConversationCoordinator")
+        if self._delivery_service is None or self._platform_directory is None:
+            raise RuntimeError("Gateway requires DeliveryService and PlatformDirectory")
         self._started = True
         self._shutdown_event = asyncio.Event()
         self._compression_chain.load()
@@ -118,10 +119,9 @@ class Gateway:
             from personal_agent.cron.scheduler import CronScheduler
             cron_store = CronStore(self.config.agent_data_dir / "cron" / "jobs.json")
             cron_store.seed_defaults()
-            submission_port = self._conversation_coordinator or self
             self._cron_scheduler = CronScheduler(
                 cron_store,
-                submission_port,
+                self._conversation_coordinator,
                 sessions=self._session_router,
             )
             self._cron_scheduler.start()
@@ -188,32 +188,54 @@ class Gateway:
         await self._shutdown_event.wait()
 
     def health_snapshot(self) -> dict:
-        steer_snapshot = self._conversation_service.steer_snapshot()
+        coordinator_snapshot = (
+            self._conversation_coordinator.snapshot()
+            if self._conversation_coordinator is not None
+            else {"active_count": 0, "queued_count": 0, "sessions": []}
+        )
+        steer_snapshot = (
+            self._conversation_coordinator.active_turns.snapshot()
+            if self._conversation_coordinator is not None
+            else self._conversation_service.steer_snapshot()
+        )
         platforms = [
             self._platforms[key].snapshot()
             for key in sorted(self._platforms)
         ]
-        run_health = self._run_state.snapshot()
-        for run in run_health.get("running_agent_runs", []):
-            if not isinstance(run, dict):
-                continue
-            session_key = str(run.get("session_key") or "")
-            session_steer = self._conversation_service.steer_snapshot(session_key)
-            run["active_turn_id"] = session_steer.get("active_turn_id", "")
-            run["pending_steers"] = int(session_steer.get("pending_count") or 0)
+        active_sessions = [
+            item for item in coordinator_snapshot.get("sessions", [])
+            if item.get("active_request_id")
+        ]
+        running_agent_runs = []
+        for item in active_sessions:
+            session_key = str(item.get("session_key") or "")
+            session_steer = self._conversation_coordinator.active_turns.snapshot(session_key)
+            running_agent_runs.append({
+                "session_key": session_key,
+                "status": "running",
+                "request_id": str(item.get("active_request_id") or ""),
+                "active_turn_id": str(session_steer.get("active_turn_id") or ""),
+                "pending_steers": int(session_steer.get("pending_count") or 0),
+            })
+        run_health = {
+            "running_agents": len(active_sessions),
+            "stop_requested_agents": 0,
+            "running_agent_sessions": [item["session_key"] for item in running_agent_runs],
+            "running_agent_runs": running_agent_runs,
+            "longest_running_seconds": 0.0,
+        }
         data = {
             "started": self._started,
             "adapter_count": len(self._adapters),
             "platforms": platforms,
             "cached_agents": len(self._agent_cache),
             "cron_enabled": self._cron_scheduler is not None,
-            "pending_messages": sum(int(item.get("pending_messages", 0)) for item in platforms),
-            "active_adapter_sessions": sum(int(item.get("active_sessions", 0)) for item in platforms),
+            "pending_messages": int(coordinator_snapshot.get("queued_count") or 0),
+            "active_adapter_sessions": int(coordinator_snapshot.get("active_count") or 0),
+            "conversation_coordinator": coordinator_snapshot,
             "platform_reconnect_delays": list(self._platform_backoff_delays),
-            "platform_pending_warning_threshold": getattr(self.config, "platform_pending_warning_threshold", 10),
-            "platform_chat_locks_maxsize": getattr(self.config, "platform_chat_locks_maxsize", 64),
             "platform_message_dedupe_max_size": getattr(self.config, "platform_message_dedupe_max_size", 1024),
-            "platform_send_max_retries": getattr(self.config, "platform_send_max_retries", 2),
+            "delivery_max_attempts": getattr(self.config, "delivery_max_attempts", 3),
             "steer": steer_snapshot,
             "pending_steer_count": int(steer_snapshot.get("pending_steer_count") or 0),
             "active_steer_sessions": list(steer_snapshot.get("active_steer_sessions") or []),
@@ -243,15 +265,6 @@ class Gateway:
         try:
             adapter = entry.factory(self.config, self.db)
             adapter.set_message_handler(self._handle_message)
-            if self._conversation_coordinator is not None and hasattr(adapter, "set_coordinator_managed"):
-                adapter.set_coordinator_managed(True)
-            if self._conversation_coordinator is None and hasattr(adapter, "set_outbound_handlers"):
-                adapter.set_outbound_handlers(
-                    before_send=self._before_platform_send,
-                    after_send=self._after_platform_send,
-                )
-            if hasattr(adapter, "set_message_bypass_predicate"):
-                adapter.set_message_bypass_predicate(self._should_bypass_adapter_queue)
             if hasattr(adapter, "set_attachment_store"):
                 adapter.set_attachment_store(self._conversation_service.attachment_store)
             await adapter.connect()
@@ -322,16 +335,9 @@ class Gateway:
         finally:
             trace_id.reset(token)
 
-    def _should_bypass_adapter_queue(self, event) -> bool:
-        session_key = self._session_router.active_key(event.source)
-        if self._confirmations.get(session_key) is not None:
-            return True
-        if not self._run_state.is_running(session_key):
-            return False
-        text = str(getattr(event, "text", "") or "").strip()
-        return text.startswith("/steer") or text.startswith("/stop")
-
     async def _handle_message_inner(self, event) -> str | None:
+        if self._conversation_coordinator is None or self._delivery_service is None:
+            raise RuntimeError("Gateway conversation runtime is not configured")
         if getattr(event, "envelope", None) is None and hasattr(event, "to_envelope"):
             event.to_envelope()
         session_key = self._session_router.active_key(event.source)
@@ -343,109 +349,50 @@ class Gateway:
             )
             if not allowed:
                 text = response or "抱歉，你没有权限使用此服务。"
-                if self._conversation_coordinator is not None:
-                    await self._deliver_gateway_text(session_key, text, DeliveryKind.AUTH)
-                    return None
-                return text
+                await self._deliver_gateway_text(session_key, text, DeliveryKind.AUTH)
+                return None
             # Auth passed with a message (e.g. pairing success greeting)
             if allowed and response is not None:
-                if self._conversation_coordinator is not None:
-                    await self._deliver_gateway_text(session_key, response, DeliveryKind.AUTH)
-                    return None
-                return response
+                await self._deliver_gateway_text(session_key, response, DeliveryKind.AUTH)
+                return None
 
         # 2. Formal inbound hooks run only after authorization.
         event, blocked_response = await self._dispatch_gateway_message(event, session_key)
         if blocked_response is not None:
-            if self._conversation_coordinator is not None:
-                await self._deliver_gateway_text(session_key, blocked_response, DeliveryKind.SYSTEM)
-                return None
-            return blocked_response
-
-        # 3. Command detection. /stop must be able to cancel pending confirms.
-        if self._conversation_coordinator is not None:
-            consumed, confirm_response = self._confirmations.resolve_message(session_key, event.text)
-            if consumed:
-                if confirm_response:
-                    await self._deliver_gateway_text(
-                        session_key,
-                        confirm_response,
-                        DeliveryKind.SYSTEM,
-                    )
-                    return None
-                return confirm_response
-            event = await self._prepare_inbound_attachments(event)
-            envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
-            user_input = (
-                ConversationInput.from_envelope(envelope)
-                if envelope is not None
-                else ConversationInput.text_only(event.text, source=event.source)
-            )
-            request = SubmissionRequest(
-                session_key=session_key,
-                input=user_input,
-                origin=SubmissionOrigin.GATEWAY,
-                response_mode=ResponseMode.DELIVER,
-                owner_id=str(event.source.user_id or ""),
-                metadata={"message_id": str(getattr(event, "message_id", "") or "")},
-                confirm=self._confirm_callback(event, session_key),
-                command_runtime=_GatewayCommandRuntime(self, event, session_key),
-            )
-            handle = await self._conversation_coordinator.submit(request)
-            await handle.outcome()
+            await self._deliver_gateway_text(session_key, blocked_response, DeliveryKind.SYSTEM)
             return None
 
-        if event.text.startswith("/"):
-            cmd_result = await self._handle_command(event, session_key)
-            if cmd_result is not None:
-                return cmd_result
-            # cmd_result is None → continue to agent (skill injection, etc.)
-
-        # 3.5. Pending async tool confirmation replies bypass busy handling.
+        # 3. Command detection. /stop must be able to cancel pending confirms.
         consumed, confirm_response = self._confirmations.resolve_message(session_key, event.text)
         if consumed:
-            return confirm_response
-
-        # 4. Busy check
-        if self._run_state.is_running(session_key):
-            return "我正在处理你上一条消息，请稍候..."
-
-        # 5. Mark running → process → cleanup
-        self._run_state.begin(session_key, event.source)
-        try:
-            response = await self._handle_message_with_agent(event, session_key)
-            self._run_state.complete(session_key)
-            return response
-        except Exception as exc:
-            self._run_state.fail(session_key, f"{type(exc).__name__}: {exc}")
-            raise
-        finally:
-            self._run_state.end(session_key)
-
-    # ── agent dispatch ────────────────────────────────
-
-    async def _handle_message_with_agent(self, event, session_key: str) -> str:
-        from personal_agent.conversation.input import ConversationInput
-
-        event = await self._prepare_inbound_attachments(event)
+            if confirm_response:
+                await self._deliver_gateway_text(
+                    session_key,
+                    confirm_response,
+                    DeliveryKind.SYSTEM,
+                )
+            return None
+        if not str(event.text or "").lstrip().startswith("/"):
+            event = await self._prepare_inbound_attachments(event)
         envelope = event.to_envelope() if hasattr(event, "to_envelope") else None
-        if envelope is not None:
-            turn = await _call_with_optional_confirm(
-                self._conversation_service.run_turn_input,
-                session_key,
-                ConversationInput.from_envelope(envelope),
-                confirm=self._confirm_callback(event, session_key),
-            )
-        else:
-            turn = await _call_with_optional_confirm(
-                self._conversation_service.run_turn,
-                session_key,
-                event.source,
-                event.text,
-                confirm=self._confirm_callback(event, session_key),
-            )
-
-        return turn.final_response or EMPTY_FINAL_RESPONSE_MESSAGE
+        user_input = (
+            ConversationInput.from_envelope(envelope)
+            if envelope is not None
+            else ConversationInput.text_only(event.text, source=event.source)
+        )
+        request = SubmissionRequest(
+            session_key=session_key,
+            input=user_input,
+            origin=SubmissionOrigin.GATEWAY,
+            response_mode=ResponseMode.DELIVER,
+            owner_id=str(event.source.user_id or ""),
+            metadata={"message_id": str(getattr(event, "message_id", "") or "")},
+            confirm=self._confirm_callback(event, session_key),
+            command_runtime=_GatewayCommandRuntime(self, event, session_key),
+        )
+        handle = await self._conversation_coordinator.submit(request)
+        await handle.outcome()
+        return None
 
     async def _dispatch_gateway_message(self, event, session_key: str):
         if self.hook_manager is None:
@@ -475,37 +422,6 @@ class Gateway:
             envelope.metadata = dict(outcome.metadata)
         event.envelope = envelope
         return event, None
-
-    async def _before_platform_send(self, source, text: str) -> str | None:
-        if self.hook_manager is None:
-            return text
-        from personal_agent.hooks import HookEvent
-
-        outcome = await self.hook_manager.dispatch(self._gateway_hook_envelope(
-            HookEvent.GATEWAY_BEFORE_SEND,
-            source=source,
-            session_key=self._session_router.active_key(source),
-            payload={"text": text},
-        ))
-        if outcome.suppressed:
-            return None
-        return outcome.text if outcome.text is not None else text
-
-    async def _after_platform_send(
-        self,
-        source,
-        text: str,
-        success: bool,
-        error: str,
-    ) -> None:
-        from personal_agent.hooks import HookEvent
-
-        await self._dispatch_gateway_observer(
-            HookEvent.GATEWAY_AFTER_SEND,
-            source=source,
-            session_key=self._session_router.active_key(source),
-            payload={"text": text, "success": success, "error": error},
-        )
 
     async def _dispatch_gateway_observer(
         self,
@@ -564,19 +480,12 @@ class Gateway:
                 return "deny"
 
             async def send(prompt: str) -> bool:
-                if self._delivery_service is not None:
-                    result = await self._delivery_service.deliver(DeliveryRequest(
-                        session_key=session_key,
-                        message=OutboundMessage.text(prompt),
-                        kind=DeliveryKind.APPROVAL,
-                    ))
-                    return result.delivered
-                try:
-                    result = await adapter.send(event.source.chat_id, prompt)
-                except Exception:
-                    logger.exception("Failed to send tool confirmation prompt")
-                    return False
-                return bool(getattr(result, "success", False))
+                result = await self._delivery_service.deliver(DeliveryRequest(
+                    session_key=session_key,
+                    message=OutboundMessage.text(prompt),
+                    kind=DeliveryKind.APPROVAL,
+                ))
+                return result.delivered
 
             return await self._confirmations.request(
                 session_key=session_key,
@@ -707,9 +616,7 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
         return self.gateway._confirmations.snapshot(self.session_key)
 
     async def is_session_running(self) -> bool:
-        if self.conversation_coordinator is not None:
-            return self.conversation_coordinator.active_turns.active_turn(self._session_key) is not None
-        return self.gateway._run_state.is_running(self._session_key)
+        return self.conversation_coordinator.active_turns.active_turn(self._session_key) is not None
 
     def plugin_command_kwargs(self, args: str) -> dict:
         return {
@@ -721,23 +628,7 @@ class _GatewayCommandRuntime(ConversationCommandRuntime):
 
     async def stop_agents(self) -> str:
         self.gateway._confirmations.cancel(None)
-        if self.conversation_coordinator is None:
-            self.gateway._run_state.request_stop(self._session_key)
         return await super().stop_agents()
 
     def session_list_current_key(self) -> str:
         return self.gateway._session_router.current_for_list(self.event.source)
-
-
-async def _call_with_optional_confirm(func, *args, confirm=None):
-    try:
-        signature = inspect.signature(func)
-        accepts_confirm = (
-            "confirm" in signature.parameters
-            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
-        )
-    except (TypeError, ValueError):
-        accepts_confirm = True
-    if accepts_confirm:
-        return await func(*args, confirm=confirm)
-    return await func(*args)

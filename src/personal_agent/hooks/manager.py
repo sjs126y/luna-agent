@@ -12,7 +12,6 @@ from typing import Any, Callable
 
 from personal_agent.hooks.models import (
     ContextHookOutcome,
-    GatewayBeforeSendOutcome,
     GatewayMessageOutcome,
     HookEnvelope,
     HookEvent,
@@ -291,19 +290,7 @@ class HookManager:
                     current = current.with_payload(text=outcome.text)
                     final_delivery = PreDeliveryOutcome(text=outcome.text)
             return final_delivery
-        final_send = GatewayBeforeSendOutcome()
-        for registration in registrations:
-            execution = await self._execute(registration, current)
-            outcome = execution.outcome if not execution.error else None
-            if not isinstance(outcome, GatewayBeforeSendOutcome):
-                continue
-            if outcome.suppressed:
-                self._mark_blocked(registration)
-                return outcome
-            if outcome.text is not None:
-                current = current.with_payload(text=outcome.text)
-                final_send = GatewayBeforeSendOutcome(text=outcome.text)
-        return final_send
+        raise RuntimeError(f"Unsupported pipeline hook: {envelope.event_name.value}")
 
     def _aggregate_context(self, executions: list[_Execution]) -> ContextHookOutcome:
         contexts: list[str] = []

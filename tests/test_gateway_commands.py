@@ -14,10 +14,17 @@ from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, Platfor
 from personal_agent.gateway.gateway import Gateway
 from personal_agent.gateway.state import PlatformRuntime
 from personal_agent.memory.manager import MemoryManager
-from personal_agent.models.messages import MessageEvent, MessagePart, PlatformCapabilities, SessionSource
+from personal_agent.models.messages import (
+    MessageEvent,
+    MessagePart,
+    OutboundMessage,
+    PlatformCapabilities,
+    SessionSource,
+)
 from personal_agent.plugins.models import CommandEntry
-from personal_agent.conversation import EMPTY_FINAL_RESPONSE_MESSAGE, ConversationTurnResult
-from personal_agent.conversation import SubmissionOutcome, SubmissionStatus
+from personal_agent.conversation import ConversationTurnResult
+from personal_agent.conversation import ConversationCoordinator, SubmissionOutcome, SubmissionStatus
+from personal_agent.delivery import DeliveryOutbox, DeliveryService, PlatformDirectory
 
 
 class Memory:
@@ -75,7 +82,32 @@ async def gateway(tmp_path):
     )
     gw._compression_chain.load()
     await gw._session_store.initialize()
+    platforms = PlatformDirectory()
+    delivery = DeliveryService(
+        sessions=gw._session_router,
+        platforms=platforms,
+        hook_manager=gw.hook_manager,
+        outbox=DeliveryOutbox(db),
+    )
+
+    async def dispatch_command(request):
+        from personal_agent.commands.runtime import CommandResult, handle_slash_command
+
+        if request.command_runtime is None:
+            return CommandResult.unhandled()
+        return await handle_slash_command(request.command_runtime, request.input.text)
+
+    coordinator = ConversationCoordinator(
+        gw._conversation_service,
+        command_dispatcher=dispatch_command,
+        delivery_service=delivery,
+    )
+    gw._conversation_coordinator = coordinator
+    gw._platform_directory = platforms
+    gw._delivery_service = delivery
     yield gw
+    coordinator.active_turns.cancel(None)
+    await coordinator.close(cancel_pending=True)
     await db.close()
 
 
@@ -108,6 +140,13 @@ async def _wait_until(predicate, *, timeout: float = 1.0) -> None:
     assert predicate()
 
 
+def _attach_adapter(gateway, adapter, *, platform: str = "telegram"):
+    adapter.mark_connected(name=platform)
+    gateway._adapters.append(adapter)
+    gateway._platform_directory.register(platform, adapter)
+    return adapter
+
+
 @pytest.mark.asyncio
 async def test_gateway_session_command_uses_shared_service(gateway):
     event = _event("/session work")
@@ -125,7 +164,7 @@ async def test_gateway_message_inner_backfills_envelope_before_commands(gateway)
 
     result = await gateway._handle_message_inner(event)
 
-    assert result is not None
+    assert result is None
     assert event.envelope is not None
     assert event.envelope.text == "/session list"
     assert event.envelope.source.chat_id == "c1"
@@ -136,7 +175,7 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
     await gateway._handle_command(_event("/session work"), "telegram:c1:u1")
     captured = []
 
-    async def run_turn_input(session_key, user_input):
+    async def run_turn_input_events(session_key, user_input, **kwargs):
         captured.append((session_key, user_input.text))
         return ConversationTurnResult(
             final_response="ok",
@@ -148,12 +187,12 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
             raw={},
         )
 
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     result = await gateway._handle_message_inner(_event("hello"))
 
-    assert result == "ok"
+    assert result is None
     assert captured == [("telegram:work:u1", "hello")]
 
 
@@ -223,7 +262,7 @@ async def test_gateway_message_hook_runs_after_auth_and_rewrites_input(gateway, 
             metadata={"hooked": True},
         )
 
-    async def run_turn_input(session_key, user_input):
+    async def run_turn_input_events(session_key, user_input, **kwargs):
         captured["text"] = user_input.text
         captured["metadata"] = user_input.metadata
         return ConversationTurnResult(
@@ -247,11 +286,11 @@ async def test_gateway_message_hook_runs_after_auth_and_rewrites_input(gateway, 
         "check",
         lambda user_id, text: auth_calls.append((user_id, text)) or (True, None),
     )
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     result = await gateway._handle_message_inner(_event("hello"))
 
-    assert result == "ok"
+    assert result is None
     assert captured == {"text": "rewritten", "metadata": {"hooked": True}}
 
 
@@ -266,7 +305,7 @@ async def test_gateway_message_hook_can_block_before_agent(gateway, monkeypatch)
     async def block(event):
         return GatewayMessageOutcome.block("message rejected")
 
-    async def run_turn_input(session_key, user_input):
+    async def run_turn_input_events(session_key, user_input, **kwargs):
         nonlocal called
         called = True
 
@@ -276,19 +315,17 @@ async def test_gateway_message_hook_can_block_before_agent(gateway, monkeypatch)
         callback=block,
     )
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     result = await gateway._handle_message_inner(_event("hello"))
 
-    assert result == "message rejected"
+    assert result is None
     assert called is False
 
 
 @pytest.mark.asyncio
 async def test_gateway_prepares_inbound_attachments_after_auth(gateway, monkeypatch):
-    adapter = FakeAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
-    gateway._adapters.append(adapter)
+    adapter = _attach_adapter(gateway, FakeAdapter(gateway.config, gateway.db))
     prepared = []
     captured = {}
 
@@ -297,7 +334,7 @@ async def test_gateway_prepares_inbound_attachments_after_auth(gateway, monkeypa
         event.envelope.metadata["prepared"] = True
         return event
 
-    async def run_turn_input(session_key, user_input):
+    async def run_turn_input_events(session_key, user_input, **kwargs):
         captured["metadata"] = user_input.metadata
         return ConversationTurnResult(
             final_response="ok",
@@ -311,22 +348,20 @@ async def test_gateway_prepares_inbound_attachments_after_auth(gateway, monkeypa
 
     monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     event = _event("hello")
     event.attachments = [MessagePart(type="image", file_id="file-1", name="photo.png")]
     result = await gateway._handle_message_inner(event)
 
-    assert result == "ok"
+    assert result is None
     assert prepared == ["hello"]
     assert captured["metadata"]["prepared"] is True
 
 
 @pytest.mark.asyncio
 async def test_gateway_does_not_prepare_attachments_when_auth_fails(gateway, monkeypatch):
-    adapter = FakeAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
-    gateway._adapters.append(adapter)
+    adapter = _attach_adapter(gateway, FakeAdapter(gateway.config, gateway.db))
     prepared = []
 
     async def prepare_inbound_attachments(event):
@@ -340,15 +375,13 @@ async def test_gateway_does_not_prepare_attachments_when_auth_fails(gateway, mon
     event.attachments = [MessagePart(type="image", file_id="file-1", name="photo.png")]
     result = await gateway._handle_message_inner(event)
 
-    assert result == "denied"
+    assert result is None
     assert prepared == []
 
 
 @pytest.mark.asyncio
 async def test_gateway_does_not_prepare_attachments_for_consumed_command(gateway, monkeypatch):
-    adapter = FakeAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
-    gateway._adapters.append(adapter)
+    adapter = _attach_adapter(gateway, FakeAdapter(gateway.config, gateway.db))
     prepared = []
 
     async def prepare_inbound_attachments(event):
@@ -360,7 +393,7 @@ async def test_gateway_does_not_prepare_attachments_for_consumed_command(gateway
 
     result = await gateway._handle_message_inner(_event("/session list"))
 
-    assert result is not None
+    assert result is None
     assert prepared == []
 
 
@@ -489,74 +522,6 @@ async def test_gateway_commands_lists_slash_plugin_commands_only(gateway):
 
 
 @pytest.mark.asyncio
-async def test_gateway_agent_response_does_not_spawn_separate_memory_review(gateway, monkeypatch):
-    messages = [
-        {"role": "user", "content": [{"type": "text", "text": "hello"}]},
-        {"role": "assistant", "content": [{"type": "text", "text": "base"}]},
-    ]
-    gateway._conversation_service.agent_cache["telegram:c1:u1"] = Agent()
-
-    async def run_turn_input(session_key, user_input):
-        assert session_key == "telegram:c1:u1"
-        assert user_input.text == "hello"
-        return ConversationTurnResult(
-            final_response="base",
-            messages=messages,
-            completed=True,
-            context_overflow=False,
-            was_compressed=False,
-            should_review_memory=True,
-            raw={},
-        )
-
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
-
-    result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
-
-    assert result == "base"
-
-
-@pytest.mark.asyncio
-async def test_gateway_outbound_hooks_wrap_actual_platform_send(gateway):
-    from personal_agent.hooks import GatewayBeforeSendOutcome, HookEvent, HookManager
-
-    hook_manager = HookManager()
-    gateway.hook_manager = hook_manager
-    adapter = RecordingAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
-    adapter.set_outbound_handlers(
-        before_send=gateway._before_platform_send,
-        after_send=gateway._after_platform_send,
-    )
-    after_payloads = []
-
-    async def rewrite(event):
-        return GatewayBeforeSendOutcome.replace_text(event.payload["text"] + "!")
-
-    async def observe(event):
-        after_payloads.append(dict(event.payload))
-
-    hook_manager.register(
-        owner="test",
-        event=HookEvent.GATEWAY_BEFORE_SEND,
-        callback=rewrite,
-        matcher="telegram",
-    )
-    hook_manager.register(
-        owner="test",
-        event=HookEvent.GATEWAY_AFTER_SEND,
-        callback=observe,
-        matcher="telegram",
-    )
-
-    sent = await adapter._send_gateway_response(_event("hello").source, "base")
-
-    assert sent is True
-    assert adapter.sent_contents == ["base!"]
-    assert after_payloads == [{"text": "base!", "success": True, "error": ""}]
-
-
-@pytest.mark.asyncio
 async def test_gateway_lifecycle_hooks_observe_start_connect_disconnect_stop(gateway, monkeypatch):
     from personal_agent.hooks import HookEvent, HookManager
 
@@ -595,42 +560,13 @@ async def test_gateway_lifecycle_hooks_observe_start_connect_disconnect_stop(gat
 
 
 @pytest.mark.asyncio
-async def test_gateway_passes_attachments_as_conversation_input(gateway, monkeypatch):
-    captured = {}
-
-    async def run_turn_input(session_key, user_input):
-        captured["input"] = user_input
-        return ConversationTurnResult(
-            final_response="ok",
-            messages=[],
-            completed=True,
-            context_overflow=False,
-            was_compressed=False,
-            should_review_memory=False,
-            raw={},
-        )
-
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
-    event = _event("look", message_id="m1")
-    event.attachments = [MessagePart(type="image", url="https://example.test/a.png", name="a.png")]
-
-    result = await gateway._handle_message_with_agent(event, "telegram:c1:u1")
-
-    assert result == "ok"
-    assert captured["input"].attachments[0].kind == "image"
-    assert captured["input"].attachments[0].url == "https://example.test/a.png"
-
-
-@pytest.mark.asyncio
 async def test_gateway_async_confirmation_allows_once(gateway, monkeypatch):
-    adapter = RecordingAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
-    gateway._adapters.append(adapter)
+    adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     answers = []
 
-    async def run_turn_input(session_key, user_input, *, confirm=None):
+    async def run_turn_input_events(session_key, user_input, *, confirm=None, **kwargs):
         answer = await confirm(SimpleNamespace(
             tool_name="web_search",
             display_name="Web search",
@@ -649,7 +585,7 @@ async def test_gateway_async_confirmation_allows_once(gateway, monkeypatch):
             raw={},
         )
 
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     task = asyncio.create_task(gateway._handle_message_inner(_event("search")))
     await _wait_until(lambda: adapter.sent_contents)
@@ -662,21 +598,22 @@ async def test_gateway_async_confirmation_allows_once(gateway, monkeypatch):
     ack = await gateway._handle_message_inner(_event("1"))
     final = await asyncio.wait_for(task, timeout=1)
 
-    assert invalid == "请回复 1、2 或 3；发送 /stop 可取消。"
-    assert ack == "已允许一次，继续执行。"
-    assert final == "answer:allow"
+    assert invalid is None
+    assert ack is None
+    assert final is None
     assert answers == ["allow"]
+    assert "请回复 1、2 或 3；发送 /stop 可取消。" in adapter.sent_contents
+    assert "已允许一次，继续执行。" in adapter.sent_contents
+    assert "answer:allow" in adapter.sent_contents
     assert gateway.health_snapshot()["pending_confirmation_count"] == 0
 
 
 @pytest.mark.asyncio
-async def test_gateway_async_confirmation_always_and_stop(gateway, monkeypatch):
-    adapter = RecordingAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
-    gateway._adapters.append(adapter)
+async def test_gateway_async_confirmation_accepts_cached_choice(gateway, monkeypatch):
+    adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
-    async def run_turn_input(session_key, user_input, *, confirm=None):
+    async def run_turn_input_events(session_key, user_input, *, confirm=None, **kwargs):
         answer = await confirm(SimpleNamespace(
             tool_name="bash",
             display_name="Shell command",
@@ -693,35 +630,25 @@ async def test_gateway_async_confirmation_always_and_stop(gateway, monkeypatch):
             raw={},
         )
 
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     task = asyncio.create_task(gateway._handle_message_inner(_event("run")))
     await _wait_until(lambda: adapter.sent_contents)
     ack = await gateway._handle_message_inner(_event("3"))
     final = await asyncio.wait_for(task, timeout=1)
 
-    assert ack == "已允许，1小时内同类工具不再询问。"
-    assert final == "answer:always"
-
-    task = asyncio.create_task(gateway._handle_message_inner(_event("run again")))
-    await _wait_until(lambda: len(adapter.sent_contents) == 2)
-    stopped = await gateway._handle_message_inner(_event("/stop"))
-    final = await asyncio.wait_for(task, timeout=1)
-
-    assert stopped == "已停止。"
-    assert final == "answer:interrupted"
-
+    assert ack is None
+    assert final is None
+    assert "已允许，1小时内同类工具不再询问。" in adapter.sent_contents
+    assert "answer:always" in adapter.sent_contents
 
 @pytest.mark.asyncio
-async def test_platform_confirmation_reply_bypasses_same_session_queue(gateway, monkeypatch):
-    adapter = RecordingAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
+async def test_platform_confirmation_reply_reaches_coordinator_control_lane(gateway, monkeypatch):
+    adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
     adapter.set_message_handler(gateway._handle_message)
-    adapter.set_message_bypass_predicate(gateway._should_bypass_adapter_queue)
-    gateway._adapters.append(adapter)
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
-    async def run_turn_input(session_key, user_input, *, confirm=None):
+    async def run_turn_input_events(session_key, user_input, *, confirm=None, **kwargs):
         answer = await confirm(SimpleNamespace(
             tool_name="web_search",
             display_name="Web search",
@@ -738,12 +665,11 @@ async def test_platform_confirmation_reply_bypasses_same_session_queue(gateway, 
             raw={},
         )
 
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
+    monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     adapter.handle_message(_event("search", message_id="m1"))
     await _wait_until(lambda: adapter.sent_contents and "需要授权工具调用" in adapter.sent_contents[0])
 
-    assert adapter.health_snapshot()["active_sessions"] == 1
     assert gateway.health_snapshot()["pending_confirmation_count"] == 1
 
     adapter.handle_message(_event("1", message_id="m2"))
@@ -753,75 +679,48 @@ async def test_platform_confirmation_reply_bypasses_same_session_queue(gateway, 
         and "answer:allow" in adapter.sent_contents,
     )
 
-    assert adapter.health_snapshot()["pending_messages"] == 0
     assert gateway.health_snapshot()["pending_confirmation_count"] == 0
 
 
 @pytest.mark.asyncio
 async def test_gateway_steer_command_queues_current_turn(gateway):
     session_key = "telegram:c1:u1"
-    source = _event("hello").source
-    gateway._run_state.begin(session_key, source)
-    gateway._conversation_service.steer_manager.begin_turn(session_key, "turn-1")
+    gateway._conversation_coordinator.active_turns.begin_turn(session_key, "turn-1")
 
     try:
         response = await gateway._handle_command(_event("/steer 回答短一点"), session_key)
 
         assert "已收到" in response
-        snapshot = gateway._conversation_service.steer_snapshot(session_key)
+        snapshot = gateway._conversation_coordinator.active_turns.snapshot(session_key)
         assert snapshot["active_turn_id"] == "turn-1"
         assert snapshot["pending_count"] == 1
         assert snapshot["pending_items"][0]["turn_id"] == "turn-1"
         assert snapshot["pending_items"][0]["text_preview"] == "回答短一点"
         health = gateway.health_snapshot()
         assert health["pending_steer_count"] == 1
-        assert health["running_agent_runs"][0]["active_turn_id"] == "turn-1"
-        assert health["running_agent_runs"][0]["pending_steers"] == 1
     finally:
-        gateway._conversation_service.steer_manager.end_turn(session_key, "turn-1")
-        gateway._run_state.end(session_key)
+        gateway._conversation_coordinator.active_turns.end_turn(session_key, "turn-1")
 
 
 @pytest.mark.asyncio
-async def test_platform_steer_reply_bypasses_same_session_queue(gateway, monkeypatch):
-    adapter = RecordingAdapter(gateway.config, gateway.db)
-    adapter.mark_connected(name="telegram")
+async def test_platform_steer_reply_reaches_coordinator_control_lane(gateway, monkeypatch):
+    adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
     adapter.set_message_handler(gateway._handle_message)
-    adapter.set_message_bypass_predicate(gateway._should_bypass_adapter_queue)
-    gateway._adapters.append(adapter)
     monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     session_key = "telegram:c1:u1"
-    gateway._run_state.begin(session_key, _event("hello").source)
-    gateway._conversation_service.steer_manager.begin_turn(session_key, "turn-1")
-    adapter._active_sessions[session_key] = True
+    gateway._conversation_coordinator.active_turns.begin_turn(session_key, "turn-1")
 
     try:
         adapter.handle_message(_event("/steer 回答短一点", message_id="steer-1"))
         await _wait_until(lambda: adapter.sent_contents)
 
         assert "已收到" in adapter.sent_contents[0]
-        assert adapter.health_snapshot()["pending_messages"] == 0
-        snapshot = gateway._conversation_service.steer_snapshot(session_key)
+        snapshot = gateway._conversation_coordinator.active_turns.snapshot(session_key)
         assert snapshot["pending_count"] == 1
         assert snapshot["pending_items"][0]["text_preview"] == "回答短一点"
     finally:
-        gateway._conversation_service.steer_manager.end_turn(session_key, "turn-1")
-        gateway._run_state.end(session_key)
-        adapter._active_sessions.pop(session_key, None)
-
-
-def test_gateway_health_snapshot_reports_runtime_state(gateway):
-    gateway._run_state.begin("telegram:c1:u1", _event("hello").source)
-    gateway._agent_cache["telegram:c1:u1"] = Agent()
-
-    health = gateway.health_snapshot()
-
-    assert health["running_agents"] == 1
-    assert health["cached_agents"] == 1
-    assert health["running_agent_sessions"] == ["telegram:c1:u1"]
-    assert health["running_agent_runs"][0]["status"] == "running"
-    assert health["longest_running_seconds"] >= 0
+        gateway._conversation_coordinator.active_turns.end_turn(session_key, "turn-1")
 
 
 @pytest.mark.asyncio
@@ -863,8 +762,9 @@ async def test_gateway_start_records_platform_health(gateway, monkeypatch):
 async def test_base_adapter_health_records_send_failure(gateway):
     adapter = FailingSendAdapter(gateway.config, gateway.db)
 
-    await adapter._send_with_retry("chat", "hello", max_retries=0)
+    result = await adapter.send_message("chat", OutboundMessage.text("hello"))
 
+    assert result.success is False
     health = adapter.health_snapshot()
     assert health["last_send_error"] == "send failed"
     assert health["send_stats"]["failed_count"] == 1
@@ -872,24 +772,26 @@ async def test_base_adapter_health_records_send_failure(gateway):
 
 
 @pytest.mark.asyncio
-async def test_base_adapter_health_records_pending_queue(gateway):
+async def test_base_adapter_health_has_no_conversation_queue_state(gateway):
     adapter = FakeAdapter(gateway.config, gateway.db)
-    event = _event("hello")
+    handled = []
 
-    adapter._active_sessions["telegram:c1:u1"] = True
-    adapter.handle_message(event)
+    async def handler(event):
+        handled.append(event.text)
+
+    adapter.set_message_handler(handler)
+    adapter.handle_message(_event("hello"))
+    await _wait_until(lambda: handled == ["hello"])
 
     health = adapter.health_snapshot()
 
-    assert health["active_session_keys"] == ["telegram:c1:u1"]
-    assert health["pending_messages"] == 1
-    assert health["pending_by_session"] == {"telegram:c1:u1": 1}
-    assert health["oldest_pending_age_seconds"] >= 0
+    assert "active_sessions" not in health
+    assert "pending_messages" not in health
     assert health["last_message_at"]
 
 
 @pytest.mark.asyncio
-async def test_base_adapter_handler_failure_drains_pending_queue(gateway):
+async def test_base_adapter_handler_failure_does_not_block_other_events(gateway):
     adapter = RecordingAdapter(gateway.config, gateway.db)
     calls = []
 
@@ -897,18 +799,14 @@ async def test_base_adapter_handler_failure_drains_pending_queue(gateway):
         calls.append(event.text)
         if event.text == "first":
             raise RuntimeError("handler boom")
-        return f"ok:{event.text}"
 
     adapter.set_message_handler(handler)
     adapter.handle_message(_event("first", message_id="m1"))
     adapter.handle_message(_event("second", message_id="m2"))
 
-    await _wait_until(lambda: adapter.sent_contents == ["ok:second"])
+    await _wait_until(lambda: calls == ["first", "second"])
 
-    health = adapter.health_snapshot()
     assert calls == ["first", "second"]
-    assert health["active_sessions"] == 0
-    assert health["pending_messages"] == 0
 
 
 @pytest.mark.asyncio
@@ -916,17 +814,17 @@ async def test_base_adapter_typing_failure_does_not_block_message(gateway):
     adapter = TypingFailAdapter(gateway.config, gateway.db)
 
     async def handler(event):
-        return f"ok:{event.text}"
+        handled.append(event.text)
 
+    handled = []
     adapter.set_message_handler(handler)
     adapter.handle_message(_event("hello", message_id="m1"))
 
-    await _wait_until(lambda: adapter.sent_contents == ["ok:hello"])
-    assert adapter.health_snapshot()["active_sessions"] == 0
+    await _wait_until(lambda: handled == ["hello"])
 
 
 @pytest.mark.asyncio
-async def test_base_adapter_send_failure_drains_pending_queue(gateway):
+async def test_base_adapter_does_not_send_handler_return_values(gateway):
     adapter = AlwaysFailSendAdapter(gateway.config, gateway.db)
     handled = []
 
@@ -938,46 +836,57 @@ async def test_base_adapter_send_failure_drains_pending_queue(gateway):
     adapter.handle_message(_event("first", message_id="m1"))
     adapter.handle_message(_event("second", message_id="m2"))
 
-    await _wait_until(lambda: handled == ["first", "second"] and adapter.send_attempts == 6)
+    await _wait_until(lambda: handled == ["first", "second"])
 
-    health = adapter.health_snapshot()
-    assert health["active_sessions"] == 0
-    assert health["pending_messages"] == 0
-    assert health["last_send_error"] == "send failed"
-    assert health["send_stats"]["failed_count"] == 2
-    assert health["send_stats"]["retry_count"] == 4
+    assert adapter.send_attempts == 0
 
 
 @pytest.mark.asyncio
-async def test_base_adapter_format_send_error_strips_formatting_and_retries(gateway):
+async def test_base_adapter_does_not_retry_format_errors(gateway):
     adapter = SequenceSendAdapter(gateway.config, gateway.db, [
         SendResult(success=False, error="markdown parse error"),
         SendResult(success=True, message_id="ok"),
     ])
 
-    await adapter._send_with_retry("chat", "**hello** `code` [link](https://example.test)")
+    result = await adapter.send_message(
+        "chat",
+        OutboundMessage.text("**hello** `code` [link](https://example.test)"),
+    )
 
-    assert adapter.sent_contents == [
-        "**hello** `code` [link](https://example.test)",
-        "hello code link",
-    ]
-    assert adapter.sleep_delays == [0.5]
+    assert result.success is False
+    assert adapter.sent_contents == ["**hello** `code` [link](https://example.test)"]
+    assert adapter.sleep_delays == []
     health = adapter.health_snapshot()
-    assert health["send_stats"]["sent_count"] == 1
-    assert health["send_stats"]["retry_count"] == 1
-    assert health["send_stats"]["failed_count"] == 0
+    assert health["send_stats"]["retry_count"] == 0
+    assert health["send_stats"]["failed_count"] == 1
 
 
 @pytest.mark.asyncio
 async def test_base_adapter_splits_outbound_text_by_platform_limit(gateway):
     adapter = TinyLimitAdapter(gateway.config, gateway.db)
 
-    await adapter._send_with_retry("chat", "abcdefghijklmnop", max_retries=0)
+    result = await adapter.send_message("chat", OutboundMessage.text("abcdefghijklmnop"))
 
+    assert result.success is True
     assert adapter.sent_contents == ["abcde", "fghij", "klmno", "p"]
     health = adapter.health_snapshot()
     assert health["send_stats"]["sent_count"] == 4
     assert health["send_stats"]["failed_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_base_adapter_marks_failed_later_chunk_as_partial_delivery(gateway):
+    adapter = SequenceSendAdapter(gateway.config, gateway.db, [
+        SendResult(success=True, message_id="first"),
+        SendResult(success=False, error="second failed"),
+    ])
+    adapter.capabilities = PlatformCapabilities(max_text_length=5)
+
+    result = await adapter.send_message("chat", OutboundMessage.text("abcdefghij"))
+
+    assert result.success is False
+    assert result.error == "partial delivery: second failed"
+    assert adapter.sent_contents == ["abcde", "fghij"]
 
 
 @pytest.mark.asyncio
@@ -986,8 +895,9 @@ async def test_base_adapter_timeout_send_error_does_not_retry(gateway):
         SendResult(success=False, error="request timeout"),
     ])
 
-    await adapter._send_with_retry("chat", "hello")
+    result = await adapter.send_message("chat", OutboundMessage.text("hello"))
 
+    assert result.success is False
     assert adapter.sent_contents == ["hello"]
     health = adapter.health_snapshot()
     assert health["send_stats"]["retry_count"] == 0
@@ -996,19 +906,20 @@ async def test_base_adapter_timeout_send_error_does_not_retry(gateway):
 
 
 @pytest.mark.asyncio
-async def test_base_adapter_send_exception_retries_to_limit(gateway):
+async def test_base_adapter_send_exception_is_not_retried(gateway):
     adapter = SequenceSendAdapter(gateway.config, gateway.db, [
         RuntimeError("temporary"),
         RuntimeError("temporary"),
         RuntimeError("temporary"),
     ])
 
-    await adapter._send_with_retry("chat", "hello", max_retries=2)
+    with pytest.raises(RuntimeError, match="temporary"):
+        await adapter.send_message("chat", OutboundMessage.text("hello"))
 
-    assert adapter.sent_contents == ["hello", "hello", "hello"]
-    assert len(adapter.sleep_delays) == 2
+    assert adapter.sent_contents == ["hello"]
+    assert adapter.sleep_delays == []
     health = adapter.health_snapshot()
-    assert health["send_stats"]["retry_count"] == 2
+    assert health["send_stats"]["retry_count"] == 0
     assert health["send_stats"]["failed_count"] == 1
     assert "RuntimeError: temporary" in health["last_send_error"]
 
@@ -1026,13 +937,11 @@ async def test_base_adapter_deduplicates_same_message_id(gateway):
     adapter.handle_message(_event("hello", message_id="same"))
     adapter.handle_message(_event("hello duplicate", message_id="same"))
 
-    await _wait_until(lambda: adapter.sent_contents == ["ok:same"])
+    await _wait_until(lambda: handled == ["same"])
 
     health = adapter.health_snapshot()
     assert handled == ["same"]
     assert health["dedupe_size"] == 1
-    assert health["active_sessions"] == 0
-    assert health["pending_messages"] == 0
 
 
 @pytest.mark.asyncio
@@ -1048,7 +957,7 @@ async def test_base_adapter_dedupes_only_when_message_id_is_present(gateway):
     adapter.handle_message(_event("first"))
     adapter.handle_message(_event("second"))
 
-    await _wait_until(lambda: adapter.sent_contents == ["ok:first", "ok:second"])
+    await _wait_until(lambda: handled == ["first", "second"])
 
     assert handled == ["first", "second"]
     assert adapter.health_snapshot()["dedupe_size"] == 0
@@ -1074,7 +983,7 @@ async def test_base_adapter_dedupe_key_includes_platform_chat_and_user(gateway):
     adapter.handle_message(_event("c", platform="telegram", chat_id="c1", user_id="u2", message_id="same"))
     adapter.handle_message(_event("d", platform="feishu", chat_id="c1", user_id="u1", message_id="same"))
 
-    await _wait_until(lambda: len(adapter.sent_contents) == 4)
+    await _wait_until(lambda: len(handled) == 4)
 
     assert len(handled) == 4
     assert adapter.health_snapshot()["dedupe_size"] == 4
@@ -1096,7 +1005,7 @@ async def test_base_adapter_dedupe_lru_evicts_old_keys(gateway):
     adapter.handle_message(_event("three", message_id="m3"))
     adapter.handle_message(_event("one again", message_id="m1"))
 
-    await _wait_until(lambda: len(adapter.sent_contents) == 4)
+    await _wait_until(lambda: len(handled) == 4)
 
     assert handled == ["m1", "m2", "m3", "m1"]
     health = adapter.health_snapshot()
@@ -1109,10 +1018,7 @@ def test_base_adapter_uses_gateway_settings(tmp_path, monkeypatch):
         """
 gateway:
   platform_reconnect_delays: [3, 7, 11]
-  platform_pending_warning_threshold: 4
-  platform_chat_locks_maxsize: 5
   platform_message_dedupe_max_size: 6
-  platform_send_max_retries: 0
 storage:
   data_dir: ./data
 sandbox:
@@ -1126,10 +1032,7 @@ sandbox:
     settings = Settings()
     adapter = RecordingAdapter(settings, object())
 
-    assert adapter._chat_locks_maxsize == 5
-    assert adapter._pending_warning_threshold == 4
     assert adapter._dedupe_max_size == 6
-    assert adapter._send_max_retries == 0
 
     runtime = PlatformRuntime(name="demo", backoff_delays_seconds=tuple(settings.platform_reconnect_delays))
     runtime.attempts = 1
@@ -1139,7 +1042,7 @@ sandbox:
 
 
 @pytest.mark.asyncio
-async def test_base_adapter_same_session_messages_are_serialized(gateway):
+async def test_base_adapter_does_not_serialize_same_session_messages(gateway):
     adapter = RecordingAdapter(gateway.config, gateway.db)
     handled = []
 
@@ -1147,23 +1050,16 @@ async def test_base_adapter_same_session_messages_are_serialized(gateway):
         handled.append(f"start:{event.text}")
         await asyncio.sleep(0.02)
         handled.append(f"end:{event.text}")
-        return f"reply:{event.text}"
 
     adapter.set_message_handler(handler)
     adapter.handle_message(_event("one", message_id="m1"))
     adapter.handle_message(_event("two", message_id="m2"))
     adapter.handle_message(_event("three", message_id="m3"))
 
-    await _wait_until(lambda: adapter.sent_contents == ["reply:one", "reply:two", "reply:three"])
+    await _wait_until(lambda: len(handled) == 6)
 
-    assert handled == [
-        "start:one", "end:one",
-        "start:two", "end:two",
-        "start:three", "end:three",
-    ]
-    health = adapter.health_snapshot()
-    assert health["active_sessions"] == 0
-    assert health["pending_messages"] == 0
+    assert handled[:3] == ["start:one", "start:two", "start:three"]
+    assert sorted(handled[3:]) == ["end:one", "end:three", "end:two"]
 
 
 @pytest.mark.asyncio
@@ -1178,7 +1074,6 @@ async def test_base_adapter_different_sessions_can_run_concurrently(gateway):
         if len(started) == 2:
             both_started.set()
         await release.wait()
-        return f"reply:{event.source.chat_id}"
 
     adapter.set_message_handler(handler)
     adapter.handle_message(_event("one", chat_id="c1", message_id="m1"))
@@ -1186,23 +1081,20 @@ async def test_base_adapter_different_sessions_can_run_concurrently(gateway):
 
     await asyncio.wait_for(both_started.wait(), timeout=1)
     assert sorted(started) == ["c1", "c2"]
-    assert adapter.health_snapshot()["active_sessions"] == 2
 
     release.set()
-    await _wait_until(lambda: sorted(adapter.sent_contents) == ["reply:c1", "reply:c2"])
-    assert adapter.health_snapshot()["active_sessions"] == 0
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
-async def test_gateway_stop_marks_active_run(gateway):
-    gateway._run_state.begin("telegram:c1:u1", _event("hello").source)
-
-    stopped = await gateway._handle_command(_event("/stop"), "telegram:c1:u1")
+async def test_gateway_health_uses_coordinator_state(gateway):
+    gateway._conversation_coordinator.active_turns.begin_turn("telegram:c1:u1", "turn-1")
     health = gateway.health_snapshot()
 
-    assert stopped == "已停止。"
-    assert health["stop_requested_agents"] == 1
-    assert health["running_agent_runs"][0]["status"] == "stopping"
+    assert health["active_adapter_sessions"] == 0
+    assert health["conversation_coordinator"]["active_count"] == 0
+    assert health["steer"]["active_turn_count"] == 1
+    gateway._conversation_coordinator.active_turns.end_turn("telegram:c1:u1", "turn-1")
 
 
 class Agent:
@@ -1314,26 +1206,6 @@ async def test_gateway_removed_allow_is_unhandled_and_stop_applies_to_cached_age
     assert allowed is None
     assert stopped == "已停止。"
     assert all(agent._interrupt_requested for agent in gateway._agent_cache.values())
-
-
-@pytest.mark.asyncio
-async def test_gateway_empty_final_response_uses_clear_message(gateway, monkeypatch):
-    async def run_turn_input(session_key, user_input, *, confirm=None):
-        return ConversationTurnResult(
-            final_response="",
-            messages=[],
-            completed=True,
-            context_overflow=False,
-            was_compressed=False,
-            should_review_memory=False,
-            raw={},
-        )
-
-    monkeypatch.setattr(gateway._conversation_service, "run_turn_input", run_turn_input)
-
-    result = await gateway._handle_message_with_agent(_event("hello"), "telegram:c1:u1")
-
-    assert result == EMPTY_FINAL_RESPONSE_MESSAGE
 
 
 @pytest.mark.asyncio
