@@ -45,6 +45,8 @@ class MCPServerConfig:
     max_schema_bytes: int = 65536
     max_result_chars: int = 100000
     max_artifact_bytes: int = 1048576
+    artifact_roots: list[str] = field(default_factory=list)
+    artifact_extensions: list[str] = field(default_factory=list)
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "MCPServerConfig":
@@ -85,6 +87,8 @@ class MCPServerConfig:
             max_schema_bytes=_positive_int(value.get("max_schema_bytes"), 65536),
             max_result_chars=_positive_int(value.get("max_result_chars"), 100000),
             max_artifact_bytes=_positive_int(value.get("max_artifact_bytes"), 1048576),
+            artifact_roots=_string_list(value.get("artifact_roots")),
+            artifact_extensions=_normalized_extensions(value.get("artifact_extensions")),
         )
 
 
@@ -135,6 +139,14 @@ def _string_dict(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         raise ValueError("MCP environment and header mappings must be objects")
     return {str(key): str(item) for key, item in value.items()}
+
+
+def _normalized_extensions(value: Any) -> list[str]:
+    return [
+        item if item.startswith(".") else f".{item}"
+        for item in (entry.strip().lower() for entry in _string_list(value))
+        if item
+    ]
 
 
 def _positive_float(value: Any, default: float) -> float:

@@ -96,3 +96,61 @@ async def test_executor_marks_invalid_artifact_unavailable_without_failing_tool(
     assert result.status == "success", result.error
     assert result.artifacts == []
     assert "artifact_data_invalid" in result.content
+
+
+@pytest.mark.asyncio
+async def test_mcp_file_resource_becomes_model_visible_artifact_id(
+    artifact_runtime,
+    tmp_path,
+    monkeypatch,
+):
+    from personal_agent.mcp.models import MCPCallResult, MCPContentBlock, MCPToolSpec
+    from personal_agent.mcp.registrar import MCPToolRegistrar
+    from personal_agent.tools import sandbox as sandbox_module
+
+    monkeypatch.setattr(
+        sandbox_module,
+        "_sandbox",
+        sandbox_module.Sandbox([tmp_path], []),
+    )
+
+    screenshot = tmp_path / "outbound-multimodal-example.png"
+    screenshot.write_bytes(b"playwright-png")
+
+    async def call_tool(_name, _arguments):
+        return MCPCallResult(
+            text="### Result\n- [Screenshot](./outbound-multimodal-example.png)",
+            content=[MCPContentBlock(
+                type="resource",
+                mime_type="image/png",
+                uri=screenshot.resolve().as_uri(),
+                metadata={"filename": screenshot.name, "truncated": False},
+            )],
+        )
+
+    registrar = MCPToolRegistrar("playwright", call_tool)
+    registrar.sync([MCPToolSpec(name="browser_take_screenshot")])
+    registrar.set_available(True)
+    entry = tool_registry.get("mcp__playwright__browser_take_screenshot")
+    entry.approval_mode = "auto"
+    agent = Agent(_memory_session_key="wechat:user", _hook_turn_id="turn-playwright")
+    agent._artifact_store = artifact_runtime
+    try:
+        result = await execute_tool_call_result(
+            {
+                "id": "call-playwright",
+                "name": "mcp__playwright__browser_take_screenshot",
+                "input": {},
+            },
+            agent=agent,
+        )
+    finally:
+        registrar.unregister_all()
+
+    assert result.status == "success", result.error
+    assert len(result.artifacts) == 1
+    artifact = result.artifacts[0]
+    assert artifact.filename == screenshot.name
+    assert artifact.mime_type == "image/png"
+    assert artifact.artifact_id in format_tool_result(result)
+    assert (await artifact_runtime.resolve_path(artifact)).read_bytes() == b"playwright-png"

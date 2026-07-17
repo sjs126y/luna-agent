@@ -149,6 +149,8 @@ MCP_SERVER_KEYS = {
     "max_schema_bytes",
     "max_result_chars",
     "max_artifact_bytes",
+    "artifact_roots",
+    "artifact_extensions",
 }
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -627,6 +629,12 @@ def _mcp_server_report(config: dict[str, Any]) -> dict[str, Any]:
                 or raw[key] <= 0
             ):
                 errors.append(f"{label}.{key} 必须是正整数。")
+        for key in ("artifact_roots", "artifact_extensions"):
+            if key in raw and (
+                not isinstance(raw[key], list)
+                or any(not isinstance(value, str) for value in raw[key])
+            ):
+                errors.append(f"{label}.{key} 必须是字符串列表。")
         if transport not in {"stdio", "streamable_http"}:
             errors.append(f"MCP 服务器 {name} 使用不支持的 transport: {transport}")
         elif mcp_enabled and enabled and transport == "stdio" and not command:

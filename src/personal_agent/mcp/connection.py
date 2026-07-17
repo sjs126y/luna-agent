@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import mimetypes
 from pathlib import Path
+import re
 import shlex
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Any, Protocol
+from urllib.parse import unquote, urlsplit
 
 import httpx
 import mcp.types as mcp_types
@@ -156,11 +159,13 @@ class SDKMCPConnection:
                 command=launch.argv[0],
                 args=list(launch.argv[1:]),
                 env=env,
+                cwd=launch.cwd,
             )
         return StdioServerParameters(
             command=self.config.command,
             args=list(self.config.args),
             env=env,
+            cwd=launch.cwd,
         )
 
     async def list_tools(self) -> list[MCPToolSpec]:
@@ -206,7 +211,7 @@ class SDKMCPConnection:
             arguments,
             read_timeout_seconds=timedelta(seconds=self.config.call_timeout_seconds),
         )
-        return _normalize_call_result(result, self.config)
+        return _normalize_call_result(result, self.config, work_dir=self._work_dir)
 
     async def ping(self) -> None:
         await self._require_session().send_ping()
@@ -303,7 +308,12 @@ def _validate_http_target(config: MCPServerConfig) -> None:
         raise ValueError(f"Unsafe MCP HTTP endpoint: {error.removeprefix('Error: ')}")
 
 
-def _normalize_call_result(result, config: MCPServerConfig) -> MCPCallResult:
+def _normalize_call_result(
+    result,
+    config: MCPServerConfig,
+    *,
+    work_dir: Path | None = None,
+) -> MCPCallResult:
     blocks: list[MCPContentBlock] = []
     text_parts: list[str] = []
     remaining_text = config.max_result_chars
@@ -315,6 +325,7 @@ def _normalize_call_result(result, config: MCPServerConfig) -> MCPCallResult:
             remaining_text = max(0, remaining_text - len(text))
             text_parts.append(text)
             blocks.append(MCPContentBlock(type=block_type, text=text))
+            blocks.extend(_linked_artifact_blocks(text, config, work_dir=work_dir))
         elif block_type in {"image", "audio"}:
             mime_type = str(raw.get("mimeType") or "")
             data = str(raw.get("data") or "")
@@ -373,6 +384,65 @@ def _normalize_call_result(result, config: MCPServerConfig) -> MCPCallResult:
             else {}
         ),
     )
+
+
+_MARKDOWN_LINK_RE = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
+
+
+def _linked_artifact_blocks(
+    text: str,
+    config: MCPServerConfig,
+    *,
+    work_dir: Path | None,
+) -> list[MCPContentBlock]:
+    """Promote files linked by an explicitly trusted local-output MCP server."""
+    if not config.artifact_roots or work_dir is None:
+        return []
+
+    base = Path(work_dir).resolve()
+    roots = [
+        (Path(value).expanduser() if Path(value).expanduser().is_absolute() else base / value).resolve()
+        for value in config.artifact_roots
+        if str(value).strip()
+    ]
+    allowed_extensions = {value.lower() for value in config.artifact_extensions}
+    blocks: list[MCPContentBlock] = []
+    seen: set[Path] = set()
+    for match in _MARKDOWN_LINK_RE.finditer(text):
+        target = match.group(1).strip().strip("<>")
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or not parsed.path:
+            continue
+        relative = Path(unquote(parsed.path))
+        if relative.is_absolute():
+            continue
+        for root in roots:
+            unresolved = root / relative
+            if unresolved.is_symlink():
+                continue
+            candidate = unresolved.resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                continue
+            if candidate in seen or not candidate.is_file() or candidate.is_symlink():
+                continue
+            if allowed_extensions and candidate.suffix.lower() not in allowed_extensions:
+                continue
+            seen.add(candidate)
+            size = candidate.stat().st_size
+            mime_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+            blocks.append(MCPContentBlock(
+                type="resource",
+                mime_type=mime_type,
+                uri=candidate.as_uri(),
+                metadata={
+                    "filename": candidate.name,
+                    "truncated": size > config.max_artifact_bytes,
+                },
+            ))
+            break
+    return blocks
 
 
 def _truncate_text(value: str, limit: int) -> str:

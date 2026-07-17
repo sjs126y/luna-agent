@@ -199,6 +199,8 @@ mcp:
 
 stdio server 在应用 Runtime 中会进入 `sandbox.process_backend` 指定的进程沙箱，默认工作目录为 `data/mcp`。需要联网的 stdio server 必须显式设置 `allow_network: true`。远程 transport 默认要求 HTTPS；连接明文 HTTP 或私网地址时，分别需要显式设置 `allow_insecure_http: true`、`allow_private_network: true`。MCP 还会限制工具数量/分页、schema、文本结果、结构化结果和 artifact 大小；对应 server 字段为 `max_tools`、`max_tool_pages`、`max_schema_bytes`、`max_result_chars`、`max_artifact_bytes`。
 
+本地 MCP 如果只在文本结果中返回 Markdown 文件链接，默认不会被读取。需要由受信 server 显式配置 `artifact_roots`（相对 `data/mcp`）与可选的 `artifact_extensions`，连接层才会把根目录内、非符号链接且大小合规的文件提升为 Artifact。路径穿越、绝对路径、未允许扩展名和超限文件均不会进入发送链路。Browser Operator 已固定使用隔离的 `data/mcp/playwright/` 输出目录并启用图片、PDF 与 WebM 产物。
+
 正常 Runtime 启动不会等待 MCP 完成首次连接。插件和安全 Hook 注册完成后，MCP server 在主 asyncio 事件循环中作为独立后台任务并发连接；Gateway、CLI 和 TUI 可以先进入可用状态。连接成功的 MCP 会动态注册工具，缓存 Agent 在下一轮根据 Tool Registry generation 刷新工具快照。`doctor` 和 `serve --dry-run` 会显式等待首次连接尝试，以输出稳定诊断。使用 `npx`、`uvx` 且需要下载或检查包索引的 stdio server 必须允许网络，生产环境建议预安装并固定依赖版本。
 
 GitHub 官方远程 MCP 可以使用 PAT 认证：
@@ -299,7 +301,7 @@ permissions:
 
 Artifact 与入站 `attachments` 是两套方向相反的存储：`attachments` 缓存用户发来的内容，`artifacts` 保存工具准备发给用户的产物。已被 pending/retry/ambiguous Outbox 引用的 Artifact 不会被过期清理。
 
-Browser Operator 的 `max_artifact_bytes` 默认 10 MiB，避免 Playwright 截图先被 MCP 的通用 1 MiB 上限截断；它仍受全局 `artifacts.max_file_bytes` 二次限制。
+Browser Operator 的 `max_artifact_bytes` 默认 10 MiB，避免 Playwright 截图先被 MCP 的通用 1 MiB 上限截断；它仍受全局 `artifacts.max_file_bytes` 二次限制。Playwright 返回的相对截图链接会在受控输出目录中物化，并向当前 turn 返回可供 `response_attach` 使用的 `artifact_id`。
 
 `multimodal` 控制 gateway/平台附件进入 agent 前的处理方式：
 

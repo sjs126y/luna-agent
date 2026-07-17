@@ -74,6 +74,7 @@ class MCPToolRegistrar:
             artifacts = [
                 ToolArtifact(
                     kind=block.type,
+                    name=str(block.metadata.get("filename") or ""),
                     mime_type=block.mime_type,
                     data=block.data,
                     uri=block.uri,

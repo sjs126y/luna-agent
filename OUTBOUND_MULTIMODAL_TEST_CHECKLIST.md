@@ -10,6 +10,8 @@
 
 ## 1. 微信图片端到端
 
+首轮实测记录：Playwright 成功生成 `data/mcp/outbound-multimodal-example.png`，但 MCP 只返回 `./outbound-multimodal-example.png`，未产生 `artifact_id`，因此链路在 `response_attach` 前停止。当前分支已修复该物化边界；需重启 Gateway 后按本节重新验证，未复测前不标记通过。
+
 发送：
 
 ```text
@@ -68,3 +70,10 @@
 - `PostDelivery` 能看到每个 part 的 success/error/ambiguous/attempts。
 - 没有 base64、AES key、完整 URI 或本地路径泄漏。
 - 没有重复工具循环和重复平台发送。
+
+## Playwright Artifact 断点排查
+
+- 截图成功但只有 `./xxx.png`：确认 Gateway 已重启，Playwright 启动参数包含 `--output-dir playwright`。
+- 正常工具结果应同时保留截图说明，并追加 `Available response artifacts` 及 `artifact_id`。
+- `data/mcp/playwright/` 是 MCP 临时输出目录；真正发送使用的是 `data/artifacts/<artifact_id>/` 中的受控副本。
+- 不要把任意 MCP 的文本路径直接提升为附件；未配置 `artifact_roots` 的 server 必须保持文本行为。

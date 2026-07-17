@@ -32,6 +32,7 @@ class BrowserOperatorConfig(BaseModel):
 
 def register(ctx) -> None:
     config = ctx.parse_config(BrowserOperatorConfig)
+    output_dir = "playwright"
     args = ["-y", config.package]
     if config.browser.strip().lower() == "chromium":
         executable = _configured_browser_executable(config)
@@ -43,6 +44,7 @@ def register(ctx) -> None:
         args.append("--headless")
     if config.isolated:
         args.append("--isolated")
+    args.extend(["--output-dir", output_dir])
     ctx.register_mcp_server({
         "name": "playwright",
         "transport": "stdio",
@@ -53,6 +55,8 @@ def register(ctx) -> None:
         "allow_network": True,
         "max_tools": 40,
         "max_artifact_bytes": config.max_artifact_bytes,
+        "artifact_roots": [output_dir],
+        "artifact_extensions": [".png", ".jpg", ".jpeg", ".pdf", ".webm"],
     })
     ctx.register_skills("skills")
 
