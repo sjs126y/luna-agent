@@ -7,7 +7,7 @@
 ## 当前主干同步与范围
 
 - Security v4 前端实现 `b87c524` 已通过 `7b1afd0` 合并进 `main`；独立前端 worktree 仍保留 `feature/frontend-security-v4` 作为历史工作线，不代表主干尚未合并。
-- 当前后端主干基准：`0bcb55e Merge outbound multimodal delivery`。
+- 当前主干文档/清理基准：`f3da3d7`；最近后端功能基准：`0bcb55e Merge outbound multimodal delivery`。
 - 前端主要范围：`src/personal_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`

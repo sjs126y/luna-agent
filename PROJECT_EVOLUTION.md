@@ -7,8 +7,8 @@
 当前主分支状态：
 
 - 分支：`main`
-- 本次统计基准：`0bcb55e Merge outbound multimodal delivery`
-- 基准提交数：`549`
+- 本次统计基准：`f3da3d7 Refresh project docs and remove obsolete plans`
+- 基准提交数：`551`
 - 最近全量验证：`uv run pytest -q`，结果 `1050 passed, 1 warning`
 
 ## v0.1 Runtime 原型落地
@@ -354,21 +354,28 @@
 
 ## 当前代码规模
 
-统计口径：基准提交 `0bcb55e`，只统计 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。
+统计口径：基准提交 `f3da3d7`，只统计 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
 | `src/personal_agent/**/*.py` | 228 | 47,458 |
 | `tests/**/*.py` | 88 | 27,549 |
 | `plugins/**/*.py` | 5 | 488 |
-| `scripts/**/*.py` | 3 | 455 |
+| `scripts/**/*.py` | 2 | 287 |
 | `examples/**/*.py` | 1 | 29 |
 | 其他 Python 包装文件 | 1 | 0 |
-| Python 合计 | 326 | 75,979 |
-| Markdown 文档 | 44 | 7,782 |
-| Git 已跟踪文件总数 | 413 | - |
+| Python 合计 | 325 | 75,811 |
+| Markdown 文档 | 39 | 6,468 |
+| Git 已跟踪文件总数 | 407 | - |
 
 项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1050 passed`。
+
+### 2026-07-18 文档收敛
+
+- `MIGRATION_CHANGELOG.md` 更名为本文，职责从“环境迁移”扩展为完整项目演进记录。
+- 删除三份已完成的 `docs/archive` 计划、已验证的 Security/Integration Plugin 清单和 168 行 TUI Phase 0 spike。
+- 出站清单收敛为 `PLATFORM_MEDIA_TEST_CHECKLIST.md`，只保留微信/QQ 真实平台待验证项。
+- `BACKEND_INTERFACE.md` 继续作为前端契约唯一权威；`FRONTEND_INTERFACE_REQUIREMENTS.md` 只保留活动需求，不再复制已完成 schema。
 
 ## 当前能力快照
 

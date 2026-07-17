@@ -390,7 +390,7 @@ uv run pytest -q
 
 当前主干最近一次全量验证结果：`1050 passed, 1 warning`。
 
-基准提交 `0bcb55e` 的 Git tracked Python 规模为 326 个文件、75,979 个物理行，其中 Runtime 47,458 行、测试 27,549 行。清理后的最新统计和分阶段变化见 `PROJECT_EVOLUTION.md`。
+清理后基准 `f3da3d7` 的 Git tracked Python 规模为 325 个文件、75,811 个物理行，其中 Runtime 47,458 行、测试 27,549 行。详细口径和分阶段变化见 `PROJECT_EVOLUTION.md`。
 
 ## 文档索引
 

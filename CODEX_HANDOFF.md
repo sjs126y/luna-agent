@@ -7,7 +7,7 @@
 ## 当前主干
 
 - 分支：`main`
-- 当前基准：`0bcb55e Merge outbound multimodal delivery`
+- 当前基准：`f3da3d7 Refresh project docs and remove obsolete plans`；最近功能合并为 `0bcb55e Merge outbound multimodal delivery`。
 - 本地 `main` 尚未推送到 `origin/main`。
 - 最近完整验证：`python -m compileall -q src/personal_agent` 通过；`uv run pytest -q` 为 `1050 passed, 1 warning`。
 - 唯一 warning 来自飞书 SDK 内部弃用 API，不是当前 Runtime 回归。
@@ -20,9 +20,9 @@
 | Runtime：`src/personal_agent/**/*.py` | 228 | 47,458 |
 | Tests：`tests/**/*.py` | 88 | 27,549 |
 | 项目插件：`plugins/**/*.py` | 5 | 488 |
-| Scripts / Examples | 4 | 484 |
+| Scripts / Examples | 3 | 316 |
 | 其他 Python 包装文件 | 1 | 0 |
-| Python 合计 | 326 | 75,979 |
+| Python 合计 | 325 | 75,811 |
 
 统计只包含 Git tracked Python 文件，包含注释与空行。
 

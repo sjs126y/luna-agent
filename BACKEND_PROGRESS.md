@@ -6,9 +6,10 @@
 
 - `feature/outbound-multimodal` 已通过 `0bcb55e` 合并回 `main`；出站 Artifact、Delivery/Outbox、微信媒体协议、QQ OneBot 双向链路、NapCat companion 和本地文件提升工具均已进入主干。
 - 当前完整验证：`python -m compileall -q src/personal_agent` 通过；`uv run pytest -q` 为 `1050 passed, 1 warning`，唯一警告来自飞书 SDK 的弃用 API。
-- 基准提交 `0bcb55e` 的 Git tracked Python 规模为 326 个文件、75,979 行：`src/personal_agent` 47,458 行，tests 27,549 行，项目插件 488 行，scripts/examples 484 行。
+- 文档清理提交 `f3da3d7` 后的 Git tracked Python 规模为 325 个文件、75,811 行：`src/personal_agent` 47,458 行，tests 27,549 行，项目插件 488 行，scripts/examples 316 行。
 - 原 `MIGRATION_CHANGELOG.md` 已更名为 `PROJECT_EVOLUTION.md`，并补齐 MCP、Memory v2、被动插件、Security v4、Typed Hook、Conversation Runtime、Memory Backend 和出站多模态阶段。
 - 当前工作树只保留用户本地未跟踪的联调文件，不属于后端提交内容。
+- 清理三份已完成的归档计划、两份已验证清单和 TUI Phase 0 spike；活动平台联调清单统一为 `PLATFORM_MEDIA_TEST_CHECKLIST.md`。
 
 ## 2026-07-18：本地文件提升为出站 Artifact
 
