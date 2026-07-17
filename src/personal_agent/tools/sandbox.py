@@ -166,8 +166,8 @@ class Sandbox:
             if _glob_match(normalized_path, pattern):
                 return (
                     f"Error: path blocked by sandbox — '{pattern}' matches "
-                    f"protected files. Use a more specific tool if you need to "
-                    f"access this location."
+                    "protected files. This is a hard security boundary and cannot "
+                    "be bypassed with another file or shell tool."
                 )
         return None
 

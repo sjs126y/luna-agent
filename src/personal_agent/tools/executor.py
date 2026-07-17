@@ -234,8 +234,10 @@ async def execute_tool_call_result(
     async def _finish(result: ToolExecutionResult) -> ToolExecutionResult:
         nonlocal one_time_security_grants
         if tool_decision is not None and not preserve_nested_guard:
-            result.guard_stage = tool_decision.stage
-            result.reason_code = tool_decision.reason_code
+            if not result.guard_stage:
+                result.guard_stage = tool_decision.stage
+            if not result.reason_code:
+                result.reason_code = tool_decision.reason_code
             result.permission_category = tool_decision.permission_category
             result.permission_decision = tool_decision.permission_decision
             result.required_allow = tool_decision.required_allow
@@ -523,6 +525,7 @@ async def execute_tool_call_result(
     status: ToolExecutionStatus = "success"
     category = ""
     error = ""
+    handler_reason_code = ""
     if nested_result is not None:
         status = nested_result.status
         category = nested_result.category
@@ -531,8 +534,9 @@ async def execute_tool_call_result(
             error = error or result or f"nested tool '{nested_result.tool_name}' failed"
             result = ""
     elif handler_output.is_error:
-        status = "error"
-        category = "handler"
+        handler_reason_code = str(handler_output.metadata.get("reason_code") or "")
+        status = "denied" if handler_reason_code in {"sandbox_blocked", "hard_blacklist"} else "error"
+        category = "precheck" if status == "denied" else "handler"
         error = result or "MCP tool call failed"
         result = ""
     logger.debug("Tool '%s' done: %d chars", name, len(result))
@@ -548,6 +552,9 @@ async def execute_tool_call_result(
         started=started,
         output_truncated=output_truncated,
     )
+    if handler_reason_code:
+        final_result.guard_stage = "runtime_guard"
+        final_result.reason_code = handler_reason_code
     if nested_result is not None:
         preserve_nested_guard = True
         final_result.guard_stage = nested_result.guard_stage

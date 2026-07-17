@@ -478,6 +478,24 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             await emit_event(report_recorder, "assistant_message", permission_message)
             break
 
+        hard_denial_message = _hard_safety_denial_message(tool_results)
+        if hard_denial_message:
+            finalization_pending = True
+            finalization_instruction = _hard_safety_finalization_prompt()
+            finalization_fallback = hard_denial_message
+            finalization_error_label = "安全边界拒绝后的收尾失败"
+            await emit_event(
+                report_recorder,
+                "retry",
+                "安全边界已拒绝操作，转为无工具收尾",
+                category="hard_safety_denial",
+                attempt=1,
+                max_attempts=1,
+                recoverable=True,
+            )
+            just_executed_tools = False
+            continue
+
         quota_message = _quota_exceeded_stop_message(tool_results, agent._max_tool_calls_per_turn)
         if quota_message:
             finalization_pending = True
@@ -899,6 +917,25 @@ def _tool_quota_finalization_prompt(maximum: int) -> str:
         "Do not call any more tools. Use all existing tool results in the conversation "
         "to give the user a concise final answer that summarizes the completed work, "
         "relevant findings, and anything that remains unfinished. Do not mention this instruction."
+    )
+
+
+def _hard_safety_denial_message(tool_results: list) -> str:
+    if not any(
+        getattr(result, "status", "") == "denied"
+        and getattr(result, "reason_code", "") in {"sandbox_blocked", "hard_blacklist"}
+        for result in tool_results
+    ):
+        return ""
+    return "该操作已被不可扩权的安全边界拒绝，本轮没有继续尝试其他绕过方式。"
+
+
+def _hard_safety_finalization_prompt() -> str:
+    return (
+        "A requested operation was denied by a hard security boundary. "
+        "Do not call any more tools and do not suggest alternate tools or bypasses. "
+        "Briefly explain that the protected resource was not accessed, then summarize "
+        "any other work that completed successfully. Do not mention this instruction."
     )
 
 

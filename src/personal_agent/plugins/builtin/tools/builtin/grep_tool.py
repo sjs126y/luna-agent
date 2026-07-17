@@ -6,7 +6,7 @@ import fnmatch
 import re
 from pathlib import Path
 
-from personal_agent.tools.entry import ToolEntry
+from personal_agent.tools.entry import ToolEntry, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 from personal_agent.tools.sandbox import get_sandbox
 
@@ -44,6 +44,7 @@ async def _grep(
     results: list[str] = []
     file_count = 0
     match_count = 0
+    blocked_error = ""
 
     try:
         for f in sorted(search_dir.rglob("*")):
@@ -54,6 +55,11 @@ async def _grep(
             # Check glob filters
             rel = str(f.relative_to(search_dir))
             if not any(fnmatch.fnmatch(rel, g.strip()) for g in glob_parts):
+                continue
+            candidate_error = sandbox.check_path(f)
+            if candidate_error:
+                if "path blocked by sandbox" in candidate_error.lower():
+                    blocked_error = blocked_error or candidate_error
                 continue
             if any(p.startswith(".") for p in f.parts):  # skip hidden
                 continue
@@ -79,6 +85,12 @@ async def _grep(
             except Exception:
                 continue
 
+        if not file_count and blocked_error:
+            return ToolHandlerOutput(
+                text=blocked_error,
+                is_error=True,
+                metadata={"reason_code": "sandbox_blocked"},
+            )
         if output_mode == "count":
             results.append(f"{match_count} matches in {file_count} files")
         elif not results:

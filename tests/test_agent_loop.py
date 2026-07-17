@@ -803,6 +803,61 @@ async def test_permission_required_network_tool_stops_without_looping(provider):
 
 
 @pytest.mark.asyncio
+async def test_hard_safety_denial_forces_tool_free_finalization(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="我先读取受保护文件。",
+            finish_reason="tool_use",
+            tool_calls=[{"id": "g1", "name": "guarded_search", "input": {"query": "secret"}}],
+            usage={"input_tokens": 4, "output_tokens": 2},
+        ),
+        NormalizedResponse(
+            text="受保护资源未被访问。",
+            finish_reason="end_turn",
+            usage={"input_tokens": 5, "output_tokens": 3},
+        ),
+    ])
+
+    from personal_agent.tools.entry import ToolEntry, ToolHandlerOutput
+    from personal_agent.tools.registry import tool_registry
+
+    async def _guarded_search(query: str = ""):
+        return ToolHandlerOutput(
+            text="Error: path blocked by sandbox",
+            is_error=True,
+            metadata={"reason_code": "sandbox_blocked"},
+        )
+
+    tool_registry.register(ToolEntry(
+        name="guarded_search",
+        description="Guarded search",
+        schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        handler=_guarded_search,
+        permission_category="read",
+    ))
+    agent = init_agent(transport, provider)
+    ctx = await build_turn_context(agent, "读取受保护文件")
+
+    result = await run_conversation(agent, ctx)
+
+    assert result["completed"] is True
+    assert result["final_response"] == "受保护资源未被访问。"
+    assert transport.calls == 2
+    assert transport.call_tools[1] == []
+    item = result["turn_report"]["tools"]["items"][0]
+    assert item["status"] == "denied"
+    assert item["reason_code"] == "sandbox_blocked"
+    assert any(
+        event["category"] == "hard_safety_denial"
+        for event in result["turn_report"]["retries"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_temporary_network_grant_survives_turn_reset(provider):
     transport = MockTransport([
         NormalizedResponse(
