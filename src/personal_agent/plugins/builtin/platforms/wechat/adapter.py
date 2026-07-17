@@ -295,7 +295,7 @@ class WeChatAdapter(BasePlatformAdapter):
                     if msgs:
                         logger.info("WeChat poll: %d message(s) received", len(msgs))
                     for msg in msgs:
-                        asyncio.create_task(self._process_message(msg))
+                        asyncio.create_task(self._process_update(msg))
                 else:
                     failures += 1
                     logger.warning("WeChat poll error: ret=%s errcode=%s errmsg=%s",
@@ -320,7 +320,7 @@ class WeChatAdapter(BasePlatformAdapter):
 
     # ── message processing ────────────────────────────
 
-    async def _process_message(self, msg: dict) -> None:
+    async def _process_update(self, msg: dict) -> None:
         try:
             sender = str(msg.get("from_user_id") or "")
             if sender == self._account_id:

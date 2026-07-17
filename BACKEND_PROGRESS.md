@@ -872,3 +872,9 @@ uv run personal-agent memory doctor --json
 结果：全量回归 `989 passed`。真实 Memory doctor 使用现有百炼 Embedding 与远程 Qdrant 探测成功，Lumora 保持主提供器，embedding/vector/keyword/fusion 均为 ready、reranker 为 disabled；102 条现有记忆的 vector 与 keyword 索引均为 ready，全局索引 pending 为 0。
 
 后续已将当前 `config.yaml` 切换为 Qdrant Local `./data/memory/qdrant`。全量重建增加按 Embedding Backend 限制的批处理；百炼 `text-embedding-v4` 使用每批 10 条，避免超出接口批量上限。现有 Archive 的 102 条记忆已全部迁移到本地 Qdrant，真实 doctor 显示本地 fingerprint、102 条 vector ready、0 pending，Lumora 未 fallback。远程 Qdrant collection 未删除。
+
+### 微信统一消息管线修复
+
+Conversation Runtime 重构后，微信 Adapter 的原始更新解析器仍命名为 `_process_message`，覆盖了 `BasePlatformAdapter._process_message(MessageEvent)`。微信解析完成调用 `handle_message()` 后会通过多态递归回旧解析器，导致 `MessageEvent.get` 异常。现已将微信侧入口改为 `_process_update(dict)`，结构化事件统一交回 Base 消息管线，并新增单次进入回归测试。
+
+验证：平台/网关聚焦回归 `83 passed`，全量回归 `991 passed`。

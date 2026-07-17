@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -356,7 +357,7 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
     captured = []
     monkeypatch.setattr(adapter, "handle_message", lambda event: captured.append(event))
 
-    await adapter._process_message({
+    await adapter._process_update({
         "from_user_id": "wx-user",
         "from_user_name": "User",
         "message_id": "m1",
@@ -383,6 +384,37 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
     assert captured[0].envelope.attachments[0].platform_file_id == "img-1"
     assert captured[0].attachments[1].metadata["wechat_media"]["file_name"] == "voice.amr"
     assert adapter._context_tokens["wx-user"] == "ctx-token"
+
+
+@pytest.mark.asyncio
+async def test_wechat_update_enters_base_message_pipeline_once(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+
+    adapter = WeChatAdapter(_settings(tmp_path), db=None)
+    handled = []
+    finished = asyncio.Event()
+
+    async def handler(event):
+        handled.append(event)
+        finished.set()
+        return None
+
+    async def no_typing(chat_id):
+        return None
+
+    adapter.set_message_handler(handler)
+    monkeypatch.setattr(adapter, "_send_typing", no_typing)
+
+    await adapter._process_update({
+        "from_user_id": "wx-user",
+        "message_id": "m1",
+        "item_list": [{"type": 1, "text_item": {"text": "hello"}}],
+    })
+    await asyncio.wait_for(finished.wait(), timeout=1)
+
+    assert len(handled) == 1
+    assert handled[0].text == "hello"
+    assert handled[0].source.user_id == "wx-user"
 
 
 @pytest.mark.asyncio
