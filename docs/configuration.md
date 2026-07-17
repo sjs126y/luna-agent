@@ -56,7 +56,12 @@ WEIXIN_ACCOUNT_ID=
 WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
 WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
+QQ_BOT_BASE_URL=http://127.0.0.1:3000
+QQ_BOT_TOKEN=
+QQ_BOT_WEBHOOK_SECRET=
 ```
+
+QQ 使用 OneBot-compatible HTTP（推荐 NapCat）。出站图片、语音、视频和文件统一通过 `base64://` message segment 传输，因此 Lumora 运行在 WSL、NapCat 运行在 Windows 时不需要共享本地路径。当前单附件上限为 20 MiB；更大的文件应后续接入 NapCat Stream API，避免超大 JSON 请求。
 
 ## config.yaml
 

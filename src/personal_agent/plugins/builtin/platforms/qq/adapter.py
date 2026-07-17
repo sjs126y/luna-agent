@@ -42,12 +42,15 @@ class QQAdapter(BasePlatformAdapter):
         text=True,
         rich_text=True,
         image_send=True,
+        file_send=True,
         audio_send=True,
         video_send=True,
         mention=True,
         reply=True,
         attachments_in=True,
         max_text_length=4000,
+        max_file_bytes=20 * 1024 * 1024,
+        max_attachments=10,
     )
     MAX_MESSAGE_LENGTH = 4000
 
@@ -104,15 +107,34 @@ class QQAdapter(BasePlatformAdapter):
     ) -> SendResult:
         if not self._session:
             return SendResult(success=False, error="Not connected")
-        segment_type = {"image": "image", "audio": "record", "video": "video"}.get(kind)
+        segment_type = {
+            "image": "image",
+            "audio": "record",
+            "video": "video",
+            "file": "file",
+        }.get(kind)
         if segment_type is None:
             return SendResult(success=False, error=f"QQ does not support outbound {kind}")
+        try:
+            content = await asyncio.to_thread(path.read_bytes)
+        except OSError as exc:
+            return SendResult(success=False, error=f"QQ artifact read failed: {exc}")
+        if len(content) > self.capabilities.max_file_bytes:
+            return SendResult(
+                success=False,
+                error=f"QQ artifact exceeds {self.capabilities.max_file_bytes} bytes",
+            )
+        segment_data = {
+            "file": f"base64://{base64.b64encode(content).decode('ascii')}",
+        }
+        if kind == "file" and filename:
+            segment_data["name"] = filename
         chat_type, raw_id = _split_chat_id(chat_id)
         payload = {
             "group_id" if chat_type == "group" else "user_id": raw_id,
             "message": [{
                 "type": segment_type,
-                "data": {"file": path.resolve().as_uri()},
+                "data": segment_data,
             }],
         }
         endpoint = "send_group_msg" if chat_type == "group" else "send_private_msg"

@@ -100,7 +100,50 @@ async def test_qq_sends_onebot_media_segment(tmp_path, monkeypatch):
     assert captured["endpoint"] == "send_group_msg"
     segment = captured["payload"]["message"][0]
     assert segment["type"] == "image"
-    assert segment["data"]["file"].startswith("file://")
+    assert segment["data"]["file"].startswith("base64://")
+    assert base64.b64decode(segment["data"]["file"].removeprefix("base64://")) == b"png"
+
+
+@pytest.mark.parametrize(
+    ("kind", "segment_type"),
+    [("audio", "record"), ("video", "video"), ("file", "file")],
+)
+@pytest.mark.asyncio
+async def test_qq_sends_cross_platform_base64_artifacts(
+    tmp_path,
+    monkeypatch,
+    kind,
+    segment_type,
+):
+    from personal_agent.config import Settings
+    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"artifact-content")
+    adapter = QQAdapter(Settings(qq_bot_base_url="http://localhost"), db=None)
+    adapter._session = object()
+    captured = {}
+
+    async def post(endpoint, payload):
+        captured.update({"endpoint": endpoint, "payload": payload})
+        return {"status": "ok", "retcode": 0, "data": {"message_id": "qq-media"}}
+
+    monkeypatch.setattr(adapter, "_post_json", post)
+    result = await adapter.send_artifact(
+        "private:10001",
+        kind=kind,
+        path=path,
+        filename="report.bin",
+        mime_type="application/octet-stream",
+    )
+
+    assert result.success
+    assert captured["endpoint"] == "send_private_msg"
+    segment = captured["payload"]["message"][0]
+    assert segment["type"] == segment_type
+    encoded = segment["data"]["file"].removeprefix("base64://")
+    assert base64.b64decode(encoded) == b"artifact-content"
+    assert segment["data"].get("name") == ("report.bin" if kind == "file" else None)
 
 
 @pytest.mark.asyncio

@@ -574,7 +574,7 @@ Delivery 根据 `PlatformCapabilities` 生成 text/image/file/audio/video operat
 
 `PreDeliveryOutcome.remove_artifacts(*artifact_ids)` 可以按稳定 ID 移除附件；后续 PreDelivery Hook 只会看到过滤后的 Artifact 摘要。Hook 不能注入文件路径或绕过 ArtifactStore。
 
-平台当前出站能力：微信图片/视频/文件，Telegram 图片/文件/音频/视频，飞书图片/文件，QQ 图片/音频/视频。最终仍以 Adapter 的 `PlatformCapabilities` 为准。
+平台当前出站能力：微信图片/视频/文件，Telegram 图片/文件/音频/视频，飞书图片/文件，QQ 图片/文件/音频/视频。QQ 出站媒体使用 `base64://` OneBot segment，不暴露宿主路径，也不要求 Windows NapCat 访问 WSL 文件系统。最终仍以 Adapter 的 `PlatformCapabilities` 为准。
 
 ## 4. Inline Tool Confirmation
 
