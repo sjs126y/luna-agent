@@ -2,6 +2,19 @@
 
 更新时间：2026-07-17 CST
 
+## 2026-07-17：独立评测问题收口
+
+- 受保护路径检查扩展到 `grep` / `glob` 的每个枚举结果；显式访问受保护文件返回结构化 `sandbox_blocked`，宽泛搜索只返回允许结果。硬安全拒绝后 Agent 强制进入无工具收尾，不再换工具尝试绕过。
+- 修复 Lumora/Qdrant UUID 表示差异导致的写入后无法召回：Qdrant 返回 ID 在适配边界统一为 SQLite 使用的 UUID hex；已有记忆无需清空或重建。默认 Lumora 所需 `qdrant-client` 改为基础依赖。
+- 同一模型响应内多个无匹配安全 Hook 的审批请求会合并展示；一次确认仍为每个工具和资源分别写入精确 grant，`allow once` 在整个批次结束后撤销，执行顺序和 Hook 边界不变。
+- `tool_call` 作为透明路由包装器保留 trace/audit，但不再重复计入 Turn Report 和持久化 tool runs；工具声称检测收紧为明确的进行中/已完成表达，避免把建议性文字误报为真实调用。
+- MCP 工具继承各 server 的 `call_timeout_seconds`，经 `tool_call` 路由时也保持同一超时；取消中的 MCP 调用会触发 transport 重连，避免复用可能损坏的会话。
+- Browser Operator 修复无效的 `--browser chromium` 参数，支持显式或自动发现 Playwright Chromium executable；本机已安装浏览器并真实验证 MCP ready、24 tools、`example.com` 导航成功。`.playwright-mcp/` 运行产物已忽略。
+- Prompt cache 诊断新增 `usage_reported` / `usage_interpretation`，区分 provider 明确报告零命中与完全未返回缓存字段；稳定 system/tools/message-prefix 哈希继续保留。
+- 补充延迟注册 MCP 工具的 executor 级 Hook 测试，确认 GitHub 写工具即使晚于插件加载出现，仍在 handler 前被宿主策略拦截。
+- 阶段提交：`c078ac2`、`c250ed6`、`361a0a4`、`266d8b0`、`80dfd7b`、`7661748`、`1833a98`。
+- 最终验证：`982 passed`；`python -m compileall -q src/personal_agent`、`git diff --check` 和真实 `personal-agent doctor --json --section runtime` 通过，8 个启用 MCP server 全部 ready。
+
 ## 2026-07-17：Conversation Runtime 收尾
 
 - `/stop` 不再丢弃本轮已经完成的事实：ConversationService 在统一持久化边界保留完整助手文本和成对的 tool use/result，移除孤立工具块，并在 Turn Report 记录 partial persistence 摘要。
