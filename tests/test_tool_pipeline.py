@@ -689,7 +689,7 @@ async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_parallel_safe_tools_requiring_confirm_are_serialized():
+async def test_parallel_safe_tools_share_one_batch_confirmation():
     from personal_agent.tools.entry import ToolEntry
     from personal_agent.tools.executor import execute_tool_calls
     from personal_agent.tools.registry import tool_registry
@@ -708,7 +708,7 @@ async def test_parallel_safe_tools_requiring_confirm_are_serialized():
 
     async def confirm(decision):
         nonlocal running_confirms, max_running_confirms
-        decisions.append(decision.tool_name)
+        decisions.append(decision)
         running_confirms += 1
         max_running_confirms = max(max_running_confirms, running_confirms)
         await asyncio.sleep(0)
@@ -758,10 +758,80 @@ async def test_parallel_safe_tools_requiring_confirm_are_serialized():
 
     assert [result.status for result in results] == ["success", "success"]
     assert [result.content for result in results] == ["first", "second"]
-    assert decisions == ["confirm_parallel_first", "confirm_parallel_second"]
+    assert len(decisions) == 1
+    assert decisions[0].tool_name == "batch"
+    assert [item["tool_name"] for item in decisions[0].batch_items] == [
+        "confirm_parallel_first",
+        "confirm_parallel_second",
+    ]
     assert max_running_confirms == 1
     assert messages[-1]["content"][0]["content"] == "first"
     assert messages[-1]["content"][1]["content"] == "second"
+
+
+@pytest.mark.asyncio
+async def test_batch_allow_once_grants_exact_resources_then_revokes(tmp_path: Path):
+    from personal_agent.security.models import ResourceRequirement
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_calls
+    from personal_agent.tools.registry import tool_registry
+
+    names = ("batch_resource_first", "batch_resource_second")
+    targets = (tmp_path / "first.txt", tmp_path / "second.txt")
+    confirmations = []
+    executions = []
+
+    async def handler(path: str):
+        executions.append(path)
+        return path
+
+    async def confirm(decision):
+        confirmations.append(decision)
+        return "allow"
+
+    for name in names:
+        tool_registry.register(ToolEntry(
+            name=name,
+            description="batch resource",
+            schema={"type": "object", "properties": {"path": {"type": "string"}}},
+            handler=handler,
+            permission_category="write",
+            is_parallel_safe=True,
+            resource_resolver=lambda inp: [
+                ResourceRequirement("filesystem", str(Path(inp["path"]).resolve()), "write")
+            ],
+        ))
+    agent = MockAgent()
+    messages = []
+    try:
+        results = await execute_tool_calls(
+            [
+                {"id": "r1", "name": names[0], "input": {"path": str(targets[0])}},
+                {"id": "r2", "name": names[1], "input": {"path": str(targets[1])}},
+            ],
+            messages,
+            agent=agent,
+            confirm=confirm,
+        )
+    finally:
+        for name in names:
+            tool_registry.unregister(name)
+
+    assert [item.status for item in results] == ["success", "success"]
+    assert executions == [str(targets[0]), str(targets[1])]
+    assert len(confirmations) == 1
+    requested = confirmations[0].requested_resources
+    assert {item["resource"] for item in requested} == {str(path.resolve()) for path in targets}
+    from personal_agent.gateway.confirmations import _format_confirmation_prompt
+
+    prompt = _format_confirmation_prompt(
+        confirmations[0], ttl_seconds=3600, timeout_seconds=120
+    )
+    assert "本批次共 2 项" in prompt
+    assert "Batch Resource First" in prompt
+    assert "Batch Resource Second" in prompt
+    assert agent._security_context.state.tool_grants == {}
+    assert agent._security_context.state.resource_grants == {}
 
 
 @pytest.mark.asyncio

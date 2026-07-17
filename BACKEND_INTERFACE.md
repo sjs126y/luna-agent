@@ -257,6 +257,7 @@
 - `temporary_grant_ttl_seconds: integer`
 - `tool_approval_mode: string`，`auto` / `cached` / `prompt` / `deny`
 - `requested_resources: list[object]`，需要本次确认的最小资源集合；元素包含 `kind`、`resource`、`access`、`reason`
+- `batch_items: list[object]`，同一模型响应中合并为一次确认的调用明细；普通单项决策为空列表
 - `display_name: string`，给 UI 直接展示的工具名
 - `execution_mode_label: string`，给 UI 直接展示的模式名，如 `Ask First`
 - `risk_level: string`，`low` / `medium` / `high`
