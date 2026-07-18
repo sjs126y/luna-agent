@@ -203,6 +203,18 @@ plugins:
         enabled: false
         sessions: []                 # 允许创建和接收提醒的精确 session_key
         restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/feed-watch:
+      feeds:
+        # - name: "Python Releases"
+        #   url: "https://blog.python.org/feeds/posts/default"
+        #   keywords: []
+        #   sessions: []
+      poll_interval_seconds: 900
+      max_items_per_feed: 30
+      active:
+        enabled: false
+        sessions: []
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "~/.codex"
