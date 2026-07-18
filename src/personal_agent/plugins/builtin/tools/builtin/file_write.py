@@ -6,8 +6,10 @@ Safety:
   - Max file size
 """
 
+import asyncio
 from pathlib import Path
 
+from personal_agent.plugins.builtin.tools.builtin.file_io import atomic_write_text, utf8_size
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
 from personal_agent.tools.sandbox import get_sandbox
@@ -42,8 +44,9 @@ async def _file_write(path: str, content: str) -> str:
     if ext_error:
         return ext_error
 
-    if len(content) > _MAX_WRITE_BYTES:
-        return f"Error: content too large ({len(content)} bytes, max {_MAX_WRITE_BYTES})"
+    content_bytes = utf8_size(content)
+    if content_bytes > _MAX_WRITE_BYTES:
+        return f"Error: content too large ({content_bytes} bytes, max {_MAX_WRITE_BYTES})"
 
     try:
         sandbox = get_sandbox()
@@ -52,8 +55,7 @@ async def _file_write(path: str, content: str) -> str:
         if error:
             return error
 
-        full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(atomic_write_text, full, content)
         msg = f"Written {len(content)} chars to {path} (overwrite)"
         return msg
     except Exception as e:
@@ -72,8 +74,9 @@ def _precheck(input_: dict) -> str | None:
             return sandbox_error
 
     content = input_.get("content", "")
-    if len(content) > _MAX_WRITE_BYTES:
-        return f"Error: content too large ({len(content)} bytes, max {_MAX_WRITE_BYTES})"
+    content_bytes = utf8_size(content)
+    if content_bytes > _MAX_WRITE_BYTES:
+        return f"Error: content too large ({content_bytes} bytes, max {_MAX_WRITE_BYTES})"
     return None
 
 

@@ -1,7 +1,9 @@
 """Tests for unified sandbox — READ-ONLY, verify behavior, report bugs."""
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -405,6 +407,37 @@ class TestFileReadIntegration:
         r = await _file_read(str(o))
         assert "outside" in r.lower()
 
+    @pytest.mark.asyncio
+    async def test_read_supports_bounded_line_windows(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        path = tmp_path / "long.txt"
+        path.write_text("".join(f"line-{index}\n" for index in range(1, 11)), encoding="utf-8")
+        init_sandbox([tmp_path], [])
+
+        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+
+        first = await _file_read(str(path), offset=1, limit=3)
+        second = await _file_read(str(path), offset=4, limit=3)
+
+        assert first.startswith("line-1\nline-2\nline-3\n")
+        assert "continue with offset=4" in first
+        assert second.startswith("line-4\nline-5\nline-6\n")
+
+    @pytest.mark.asyncio
+    async def test_read_rejects_binary_files(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        path = tmp_path / "binary.dat"
+        path.write_bytes(b"hello\x00world")
+        init_sandbox([tmp_path], [])
+
+        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+
+        result = await _file_read(str(path))
+
+        assert "binary files are not supported" in result
+
 
 class TestFileWriteIntegration:
     @pytest.mark.asyncio
@@ -477,6 +510,58 @@ class TestGlobIntegration:
 
         assert "allowed.toml" in result
         assert "pyproject.toml" not in result
+
+    @pytest.mark.asyncio
+    async def test_glob_scan_runs_off_event_loop(self, tmp_path: Path, monkeypatch):
+        from personal_agent.plugins.builtin.tools.builtin.file_scan import FileScanResult
+        from personal_agent.plugins.builtin.tools.builtin import glob_tool
+        from personal_agent.tools.sandbox import init_sandbox
+
+        init_sandbox([tmp_path], [])
+
+        def slow_scan(*args, **kwargs):
+            time.sleep(0.1)
+            return FileScanResult(files=[])
+
+        monkeypatch.setattr(glob_tool, "scan_files", slow_scan)
+        task = asyncio.create_task(glob_tool._glob("*", str(tmp_path)))
+
+        await asyncio.sleep(0.02)
+
+        assert task.done() is False
+        assert await task == f"No files matching '*' in {tmp_path}"
+
+    @pytest.mark.asyncio
+    async def test_glob_stops_at_requested_result_limit(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        init_sandbox([tmp_path], [])
+        for index in range(20):
+            (tmp_path / f"file-{index:02d}.txt").write_text("x", encoding="utf-8")
+
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+
+        result = await _glob("*.txt", str(tmp_path), max_results=5)
+
+        assert len([line for line in result.splitlines() if line.endswith(".txt")]) == 5
+        assert "result limit (5) reached" in result
+
+    @pytest.mark.asyncio
+    async def test_glob_prunes_hidden_directories_before_descent(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        hidden = tmp_path / ".cache" / "nested"
+        hidden.mkdir(parents=True)
+        (hidden / "hidden.txt").write_text("secret", encoding="utf-8")
+        (tmp_path / "visible.txt").write_text("visible", encoding="utf-8")
+        init_sandbox([tmp_path], [])
+
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+
+        result = await _glob("*.txt", str(tmp_path))
+
+        assert "visible.txt" in result
+        assert "hidden.txt" not in result
 
 
 class TestGrepIntegration:

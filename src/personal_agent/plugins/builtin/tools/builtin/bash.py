@@ -33,6 +33,7 @@ _allow_network: bool = False
 _restrict_paths: bool = True
 _process_backend: str = "auto"
 _MAX_OUTPUT = 4000
+_MAX_CAPTURE_BYTES = 64_000
 
 
 def set_work_dir(path: Path) -> None:
@@ -346,6 +347,9 @@ async def _bash(command: str, timeout: int = 30) -> str:
 
     started = time.monotonic()
     proc = None
+    stdout_task = None
+    stderr_task = None
+    wait_task = None
     try:
         proc = await spawn_command(
             command,
@@ -355,25 +359,32 @@ async def _bash(command: str, timeout: int = 30) -> str:
         )
 
         timeout = min(max(int(timeout or 30), 1), 60)
-        communicate_task = asyncio.create_task(proc.communicate())
+        stdout_task = asyncio.create_task(_drain_output(proc.stdout))
+        stderr_task = asyncio.create_task(_drain_output(proc.stderr))
+        wait_task = asyncio.create_task(proc.wait())
         deadline = time.monotonic() + timeout
-        stdout, stderr = b"", b""
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 await _kill_process_tree(proc)
-                stdout, stderr = await communicate_task
+                await wait_task
+                (stdout, stdout_total), (stderr, stderr_total) = await asyncio.gather(
+                    stdout_task,
+                    stderr_task,
+                )
                 result = _format_command_result(
                     exit_code=proc.returncode,
                     duration=time.monotonic() - started,
                     stdout=stdout,
                     stderr=stderr,
+                    stdout_total_bytes=stdout_total,
+                    stderr_total_bytes=stderr_total,
                     timed_out=True,
                 )
                 return result
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    asyncio.shield(communicate_task),
+                await asyncio.wait_for(
+                    asyncio.shield(wait_task),
                     timeout=min(1.0, remaining),
                 )
                 break
@@ -381,26 +392,57 @@ async def _bash(command: str, timeout: int = 30) -> str:
                 from personal_agent.tools.executor import is_interrupted
                 if is_interrupted():
                     await _kill_process_tree(proc)
-                    stdout, stderr = await communicate_task
+                    await wait_task
+                    (stdout, stdout_total), (stderr, stderr_total) = await asyncio.gather(
+                        stdout_task,
+                        stderr_task,
+                    )
                     result = _format_command_result(
                         exit_code=proc.returncode,
                         duration=time.monotonic() - started,
                         stdout=stdout,
                         stderr=stderr,
+                        stdout_total_bytes=stdout_total,
+                        stderr_total_bytes=stderr_total,
                         interrupted=True,
                     )
                     return result
+        (stdout, stdout_total), (stderr, stderr_total) = await asyncio.gather(
+            stdout_task,
+            stderr_task,
+        )
         result = _format_command_result(
             exit_code=proc.returncode,
             duration=time.monotonic() - started,
             stdout=stdout,
             stderr=stderr,
+            stdout_total_bytes=stdout_total,
+            stderr_total_bytes=stderr_total,
         )
         return result
     except Exception as e:
         if proc is not None and proc.returncode is None:
             await _kill_process_tree(proc)
+        pending = [task for task in (stdout_task, stderr_task, wait_task) if task is not None]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         return f"Error: {e}"
+
+
+async def _drain_output(reader) -> tuple[bytes, int]:
+    if reader is None:
+        return b"", 0
+    captured = bytearray()
+    total_bytes = 0
+    while True:
+        chunk = await reader.read(8192)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        remaining = _MAX_CAPTURE_BYTES - len(captured)
+        if remaining > 0:
+            captured.extend(chunk[:remaining])
+    return bytes(captured), total_bytes
 
 
 def _format_command_result(
@@ -409,11 +451,13 @@ def _format_command_result(
     duration: float,
     stdout: bytes,
     stderr: bytes,
+    stdout_total_bytes: int | None = None,
+    stderr_total_bytes: int | None = None,
     timed_out: bool = False,
     interrupted: bool = False,
 ) -> str:
-    out, out_truncated = _decode_and_truncate(stdout)
-    err, err_truncated = _decode_and_truncate(stderr)
+    out, out_truncated = _decode_and_truncate(stdout, total_bytes=stdout_total_bytes)
+    err, err_truncated = _decode_and_truncate(stderr, total_bytes=stderr_total_bytes)
     status = "timed out" if timed_out else "interrupted" if interrupted else "finished"
     lines = [
         f"Command {status}",
@@ -431,11 +475,14 @@ def _format_command_result(
     return "\n".join(lines)
 
 
-def _decode_and_truncate(data: bytes) -> tuple[str, bool]:
+def _decode_and_truncate(data: bytes, *, total_bytes: int | None = None) -> tuple[str, bool]:
     text = data.decode("utf-8", errors="replace").strip()
-    if len(text) <= _MAX_OUTPUT:
+    total = max(len(data), int(total_bytes or 0))
+    if len(text) <= _MAX_OUTPUT and total <= len(data):
         return text, False
-    return text[:_MAX_OUTPUT] + f"\n...({len(text) - _MAX_OUTPUT} more chars)", True
+    visible = text[:_MAX_OUTPUT]
+    omitted = max(0, total - len(visible.encode("utf-8")))
+    return visible + f"\n...({omitted} more bytes)", True
 
 
 def _precheck(input_: dict) -> str | None:

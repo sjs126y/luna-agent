@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import re
 from pathlib import Path
 
+from personal_agent.plugins.builtin.tools.builtin.file_scan import scan_files
 from personal_agent.tools.entry import ToolEntry, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 from personal_agent.tools.sandbox import get_sandbox
@@ -37,70 +39,103 @@ async def _grep(
 
     if not search_dir.exists():
         return f"Error: path not found: {path}"
+    if not search_dir.is_dir():
+        return f"Error: '{path}' is not a directory"
 
     # Build glob filter
     glob_parts = glob.split(",") if glob else ["*"]
 
-    results: list[str] = []
-    file_count = 0
-    match_count = 0
-    blocked_error = ""
-
     try:
-        for f in sorted(search_dir.rglob("*")):
-            if not f.is_file():
-                continue
-            if f.stat().st_size > _MAX_FILE_SIZE:
-                continue
-            # Check glob filters
-            rel = str(f.relative_to(search_dir))
-            if not any(fnmatch.fnmatch(rel, g.strip()) for g in glob_parts):
-                continue
-            candidate_error = sandbox.check_path(f)
-            if candidate_error:
-                if "path blocked by sandbox" in candidate_error.lower():
-                    blocked_error = blocked_error or candidate_error
-                continue
-            if any(p.startswith(".") for p in f.parts):  # skip hidden
-                continue
-            if any(p in ("node_modules", "__pycache__", ".venv", ".git")
-                   for p in f.parts):
-                continue
-
-            file_count += 1
-            try:
-                for lineno, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                    if regex.search(line):
-                        match_count += 1
-                        if match_count > _MAX_MATCHES:
-                            results.append(f"...({match_count - _MAX_MATCHES} more matches truncated)")
-                            return "\n".join(results)
-                        if output_mode == "content":
-                            results.append(f"{rel}:{lineno}: {line[:200]}")
-                        elif output_mode == "files_with_matches":
-                            if rel not in results:
-                                results.append(rel)
-                        elif output_mode == "count":
-                            pass  # handled below
-            except Exception:
-                continue
-
-        if not file_count and blocked_error:
-            return ToolHandlerOutput(
-                text=blocked_error,
-                is_error=True,
-                metadata={"reason_code": "sandbox_blocked"},
-            )
-        if output_mode == "count":
-            results.append(f"{match_count} matches in {file_count} files")
-        elif not results:
-            results.append(f"No matches for '{pattern}' in {path}")
+        return await asyncio.to_thread(
+            _grep_sync,
+            regex,
+            search_dir,
+            sandbox,
+            glob_parts,
+            output_mode,
+            head_limit,
+            pattern,
+            path,
+        )
     except Exception as e:
         return f"Error: {e}"
 
-    if head_limit and len(results) > head_limit:
-        results = results[:head_limit]
-        results.append(f"...(truncated, {match_count - head_limit} more)")
+
+def _grep_sync(
+    regex: re.Pattern[str],
+    search_dir: Path,
+    sandbox,
+    glob_parts: list[str],
+    output_mode: str,
+    head_limit: int,
+    original_pattern: str,
+    original_path: str,
+) -> str | ToolHandlerOutput:
+    results: list[str] = []
+    matched_files: set[str] = set()
+    match_count = 0
+    file_count = 0
+    output_limit = max(1, min(int(head_limit or 40), _MAX_MATCHES))
+    match_limit_reached = False
+
+    def inspect_file(candidate: Path, relative: str) -> bool:
+        nonlocal file_count, match_count, match_limit_reached
+        try:
+            if candidate.stat().st_size > _MAX_FILE_SIZE:
+                return False
+            if not any(fnmatch.fnmatch(relative, item.strip()) for item in glob_parts):
+                return False
+            with candidate.open("r", encoding="utf-8", errors="replace") as handle:
+                sample = handle.read(8192)
+                if "\x00" in sample:
+                    return False
+                handle.seek(0)
+                file_count += 1
+                for lineno, line in enumerate(handle, 1):
+                    if not regex.search(line):
+                        continue
+                    match_count += 1
+                    matched_files.add(relative)
+                    if output_mode == "content" and len(results) < output_limit:
+                        results.append(f"{relative}:{lineno}: {line.rstrip()[:200]}")
+                    elif (
+                        output_mode == "files_with_matches"
+                        and relative not in results
+                        and len(results) < output_limit
+                    ):
+                        results.append(relative)
+                    if match_count >= _MAX_MATCHES:
+                        match_limit_reached = True
+                        return True
+        except (OSError, UnicodeError):
+            return False
+        return False
+
+    scan = scan_files(
+        search_dir,
+        sandbox,
+        accept=inspect_file,
+        max_files=1,
+    )
+    truncated_reason = scan.truncated_reason
+    if match_limit_reached:
+        truncated_reason = f"match limit ({_MAX_MATCHES}) reached"
+
+    if not file_count and scan.blocked_error:
+        return ToolHandlerOutput(
+            text=scan.blocked_error,
+            is_error=True,
+            metadata={"reason_code": "sandbox_blocked"},
+        )
+    if output_mode == "count":
+        results = [f"{match_count} matches in {len(matched_files)} files ({file_count} searched)"]
+    elif not results:
+        results = [f"No matches for '{original_pattern}' in {original_path}"]
+    if truncated_reason:
+        results.append(
+            f"...(partial results: {truncated_reason}; "
+            f"scanned {scan.scanned_entries} entries)"
+        )
     return "\n".join(results)
 
 
@@ -126,4 +161,5 @@ tool_registry.register(ToolEntry(
     tags=["file", "search", "read"],
     risk_level="low",
     usage_hint="Use to search file contents by regex before opening or editing matching files.",
+    timeout_seconds=12,
 ))

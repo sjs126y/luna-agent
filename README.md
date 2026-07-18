@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1050%20passed-2EA44F?logo=pytest&logoColor=white" alt="1050 tests passed">
+  <img src="https://img.shields.io/badge/tests-1065%20passed-2EA44F?logo=pytest&logoColor=white" alt="1065 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -114,7 +114,7 @@ flowchart LR
 | 能力 | 状态 | 说明 |
 | --- | :---: | --- |
 | 多轮会话与流式输出 | Ready | 会话切换、上下文统计、运行中停止与修正 |
-| 文件、Shell、网络与进程工具 | Ready | 统一确认、安全检查和结果记录 |
+| 文件、Shell、网络与进程工具 | Ready | 核心工具直接可用，低频能力按需发现，扫描和输出有界 |
 | MCP Client Runtime | Ready | stdio / Streamable HTTP、后台启动、断线恢复 |
 | 长期个人记忆 | Ready | Lumora、Mem0、混合检索和本地 Qdrant |
 | 插件与 Skill | Ready | Tool、Skill、MCP、Hook、Command、Workflow |
@@ -186,6 +186,7 @@ uv run pytest -q  # 1050 passed, 1 warning
 | --- | --- |
 | Lumora 到底有哪些能力 | [功能、边界与配置化](docs/capabilities-and-boundaries.md) |
 | 输入如何变成工具调用和回复 | [架构说明](docs/architecture.md) |
+| 哪些工具常驻、哪些能力按需发现 | [核心工具](docs/core-tools.md) |
 | 如何配置模型、记忆、MCP 和安全模式 | [配置说明](docs/configuration.md) |
 | 如何连接微信、QQ、Telegram、飞书 | [平台接入](docs/platforms.md) |
 | 如何编写和组合插件 | [插件系统](docs/plugins.md) |
