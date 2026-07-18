@@ -179,6 +179,9 @@ async def test_plugins_command_controls_live_runtime():
         def runtime_health(self):
             return {"current_revision": 4, "active_leases": 0}
 
+        def operations(self, *, key="", limit=50):
+            return [{"operation_id": "pop_test", "plugin_key": key, "status": "completed"}]
+
     runtime.plugin_manager = Plugins()
 
     listed = await handle_slash_command(runtime, "/plugins list")
@@ -187,4 +190,5 @@ async def test_plugins_command_controls_live_runtime():
 
     assert listed.handled and "user/demo" in listed.response
     assert reloaded.handled and reloaded.payload["generation_id"] == "user/demo@g2"
+    assert reloaded.payload["operation_id"] == "pop_test"
     assert active.handled and active.payload["active_enabled"] is True

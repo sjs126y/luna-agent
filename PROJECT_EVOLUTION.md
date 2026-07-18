@@ -408,6 +408,19 @@
 - 根任务异常支持退避重启和熔断，运行中通过 `/plugins active <key> on|off|restart` 控制。
 - 主动 runtime 只解决生命周期与资源边界，不内置 Job/Cron/Candidate 或主动决策策略；插件内部行为保持自由。
 
+## v0.16 主动插件套件与管理查询
+
+时间：2026-07-18
+
+主要变化：
+
+- 删除无实际调用方的 `PluginRuntimeManager`；`PluginManager` 保持唯一写入和生命周期所有权，只读状态通过附属 `PluginQueryService` 组织。
+- 新增同插件串行的 `PluginOperationTracker`、持久化 `PluginEventJournal`、历史版本、操作阶段和运行事件查询；CLI 与 `/plugins` 共享同一查询对象。
+- GitHub Assistant 增加 PR、Issue、Commit 和 Actions 主动监视；首次建立基线，变化按仓库合并后进入主 Conversation。
+- 新增 Reminder、Feed Watch 和 Inbox Watch：分别覆盖时间、网络订阅和文件 Artifact 三类主动来源，均使用隔离 Storage、session allowlist 和正式提交链路。
+- Plugin Storage 增加原子 JSON；Conversation Port 支持稳定 request id 和插件自有 Artifact 输入，owner/session 不匹配会直接拒绝。
+- 主动插件默认不获得写入、Shell 或进程控制能力；GitHub Watch 只申请只读 MCP，Feed 通过 URL 安全检查的专用工具，Inbox 只使用三个明确文件工具。
+
 ## 当前代码规模
 
 统计口径：基准提交 `f3da3d7`，只统计 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。

@@ -157,11 +157,14 @@ uv run personal-agent serve
 
 | 插件 | 提供能力 |
 | --- | --- |
-| **GitHub Assistant** | 仓库概览、PR Review、Issue 分类、Release Notes |
+| **GitHub Assistant** | 仓库概览、PR Review、Issue 分类、Release Notes，以及 PR/Issue/Commit/CI 主动监视 |
 | **Developer Docs** | 查询库文档、比较 API、辅助版本升级 |
 | **Browser Operator** | 网页检查、网页测试、受控页面操作 |
 | **Codex Bridge** | 通过受限 MCP/Hook 连接外部 Codex 能力 |
 | **Workspace Watch** | 主动观察工作区文件变化，稳定后请求主 Agent 分析并投递结果 |
+| **Reminder** | 持久提醒、重启恢复、取消和到期后通过正式会话链路提醒 |
+| **Feed Watch** | RSS/Atom 条件抓取、关键词过滤、更新去重和批量摘要 |
+| **Inbox Watch** | 监视受控收件箱目录，将稳定文件物化为 Artifact 后交给主 Agent |
 
 [查看插件格式与注册能力](docs/plugins.md)
 

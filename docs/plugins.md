@@ -326,6 +326,35 @@ plugins:
 
 `session_key` 必须同时出现在 `active.sessions` 精确 allowlist 中。启动 Gateway 后可用 `/workspace-watch-status` 查看配置与 runner 状态；也可以用 `/plugins active integrations/workspace-watch off|on|restart` 临时控制。没有配置 session 时插件仍可观察并更新基线，但不会向任何会话投递。
 
+### 正式主动插件
+
+仓库根目录目前提供四个可实际运行的主动插件：
+
+| 插件 | 触发来源 | 使用的宿主资源 |
+| --- | --- | --- |
+| `integrations/github-assistant` | PR、Issue、Commit、GitHub Actions 变化 | GitHub 只读 MCP、Storage、Conversation |
+| `automation/reminder` | 持久化截止时间 | Storage、Conversation |
+| `automation/feed-watch` | RSS/Atom 新条目 | `feed_fetch`、Storage、Conversation |
+| `automation/inbox-watch` | `data/inbox/` 稳定文件 | `list_directory`、`file_info`、`artifact_from_file`、Conversation |
+
+这些插件第一次观察外部状态时只建立基线；没有变化时不会调用 LLM。Reminder 和 Inbox 使用稳定 request id，Feed 与 GitHub 使用事件集合摘要生成 request id。主动功能默认关闭，并要求目标 session 同时出现在 `active.sessions`。
+
+Inbox 不删除或移动原文件。每个目标 session 会得到独立 scope 的 Artifact；Conversation Port 会再次校验 Artifact owner 和 session，插件不能把其他 runtime 的产物注入会话。
+
+## 插件管理查询
+
+`PluginManager` 仍是唯一的生命周期所有者。读取能力挂在 `plugin_manager.queries`：
+
+```python
+plugin_manager.queries.list_plugins()
+plugin_manager.queries.plugin_info(key)
+plugin_manager.queries.versions(key)
+plugin_manager.queries.events(key)
+plugin_manager.queries.operations(key=key)
+```
+
+`PluginQueryService` 只映射状态，不执行 install/reload/uninstall；操作锁由 `PluginOperationTracker` 持有，真实生命周期位置向 `PluginEventJournal` 写入事件。不存在包装 `PluginManager` 的第二个控制 Manager。
+
 ## 插件配置
 
 ```yaml
@@ -466,6 +495,9 @@ Lumora provider 的 SQLite Archive 是权威数据源，向量和关键词索引
 ```bash
 uv run python -m personal_agent plugins list --load
 uv run python -m personal_agent plugins info memory/lumora --load
+uv run python -m personal_agent plugins logs integrations/github-assistant
+uv run python -m personal_agent plugins versions integrations/github-assistant
+uv run python -m personal_agent plugins operations
 uv run python -m personal_agent plugins doctor memory/mem0 --json
 uv run python -m personal_agent plugins validate examples/plugins/hello
 uv run python -m personal_agent plugins install ./plugins/my_plugin
@@ -481,6 +513,9 @@ Gateway/TUI 运行中使用同一控制面：
 ```text
 /plugins list
 /plugins info integrations/github-assistant
+/plugins logs integrations/github-assistant
+/plugins versions integrations/github-assistant
+/plugins operations integrations/github-assistant
 /plugins install /absolute/path/to/plugin
 /plugins reload integrations/github-assistant
 /plugins disable integrations/github-assistant

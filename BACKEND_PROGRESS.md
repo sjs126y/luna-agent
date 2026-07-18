@@ -21,6 +21,15 @@
 
 ---
 
+## 2026-07-18：主动插件套件与管理查询
+
+- 删除仅做转发且没有调用方的 `PluginRuntimeManager`；插件写操作仍由 `PluginManager` 唯一负责，只读列表、详情、版本、事件和操作记录收敛到 `plugin_manager.queries`。
+- 新增每个 plugin key 独立的管理操作锁、operation id、阶段状态和有界持久事件；`/plugins logs|versions|operations|operation` 与 CLI 使用相同数据源。
+- GitHub Assistant v0.2 增加 PR、Issue、Commit、Actions 主动监视，并兼容 GitHub MCP `actions_list` 与旧式 workflow 工具。
+- 新增 `automation/reminder`、`automation/feed-watch`、`automation/inbox-watch`，覆盖持久时间调度、RSS/Atom 条件抓取与受控目录 Artifact 输入。
+- Plugin Storage 新增原子 JSON；Conversation Port 新增稳定 request id 和插件自有 Artifact 输入校验；主动工具产物可以按目标 session 建立正确 scope。
+- 插件、配置、命令、Artifact 与热更新宽回归：`149 passed`；全量结果见本节最终验证记录。
+
 ## 2026-07-18：主动插件 Runtime
 
 - 通用插件可用 `ctx.register.active(run=..., resources=...)` 注册一个 Gateway-owned 根运行器；普通加载、CLI chat、doctor 与 validate 只注册不启动，active 默认独立关闭。

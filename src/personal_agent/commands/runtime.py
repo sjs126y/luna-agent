@@ -391,6 +391,12 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
         ),
         "capabilities": manager.queries.runtime_health(),
     }
+    recent_operations = manager.queries.operations(key=plugin.key, limit=1)
+    payload["operation_id"] = (
+        str(recent_operations[0].get("operation_id") or "")
+        if recent_operations
+        else ""
+    )
     return (
         f"插件操作完成: {action} {plugin.key}\n"
         f"generation={plugin.generation_id or '-'}\n"

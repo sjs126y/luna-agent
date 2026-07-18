@@ -52,8 +52,12 @@
 新增插件命令会通过现有 slash command metadata 自动暴露给前端：
 
 - `/github-status`：GitHub MCP、仓库白名单与写操作策略。
+- `/github-watch-status`：GitHub 主动监视状态、仓库、待处理事件和错误数。
 - `/developer-docs-status`：Context7 插件配置摘要。
 - `/browser-status`：Playwright 浏览器、域名和上传/脚本策略。
+- `/reminders`、`/remind-cancel`：当前会话提醒查询与取消。
+- `/feeds`：当前会话 Feed 订阅。
+- `/inbox-status`：Inbox 文件处理、等待和失败状态。
 
 新增 Skill 命令名为 `/repo-summary`、`/review-pr`、`/triage-issues`、`/release-notes`、`/library-docs`、`/upgrade-library`、`/compare-library-api`、`/inspect-web-page`、`/test-web-page`、`/operate-web-page`。Skill 执行仍表现为普通 conversation turn，不新增前端事件类型。
 
@@ -1066,6 +1070,7 @@ Review worker payload 提供：
 
 `plugins list/info/doctor/validate --json` 的单插件诊断对象现在稳定提供：
 
+- `management_schema_version: integer`，当前为 `1`
 - `schema_version: integer`，当前为 `1`
 - `source: "builtin" | "local" | "installed"`
 - `kind: string`
@@ -1076,11 +1081,16 @@ Review worker payload 提供：
 - `runtime_state: "discovered" | "preparing" | "ready" | "active" | "draining" | "stopped" | "failed"`
 - `generation_id: string`
 - `runtime_instance_id: string`
+- `snapshot_revision: integer`
 - `package_digest: string`
 - `active_enabled: boolean`
 - `active: object`，包含 `state`、`ready`、`started_at`、`ready_at`、`last_heartbeat`、`restart_count`、`quiescing`、`stop_requested`
 - `active_error: string`
 - `active_circuit_open: boolean`
+- `active_resources: object`，主动 generation 声明的 Tool、MCP 和应用端口安全摘要
+- `mcp: list[object]`，该插件注册的 MCP server 运行状态
+- `installed_versions: list[object]`，字段为 `digest`、`version`、`source`、`path`、`active`、`status`
+- `latest_operation: object`、`latest_event: object`
 
 插件配置位于 `plugins.config.<plugin-key>`。配置诊断会递归遮蔽键名中的 token、secret、password、authorization 和 api key；前端不应尝试从诊断 payload 恢复真实密钥。
 
@@ -1108,7 +1118,14 @@ Review worker payload 提供：
 - `active_owner_running: boolean`
 - `active_plugins: list[object]`，稳定字段为 `key`、`enabled`、`state`、`ready`、`restart_count`、`circuit_open`、`error`
 
-核心 slash command registry 提供 `/plugins` 及 `list/info/install/reload/enable/disable/active/rollback/uninstall` 子命令。`active` 用法为 `/plugins active <key> <on|off|restart>`。修改操作的回执 `kind="plugins"`，失败为 `kind="plugins_error"`；payload 包含 `action`、`plugin_key`、`status`、`generation_id`、`runtime_instance_id`、`active_enabled`、`active` 和最新 `capabilities`。
+核心 slash command registry 提供 `/plugins` 及 `list/info/logs/versions/operations/operation/install/reload/enable/disable/active/rollback/uninstall` 子命令。`active` 用法为 `/plugins active <key> <on|off|restart>`。
+
+- `logs <key>` payload：`management_schema_version`、`plugin_key`、`events[]`
+- `versions <key>` payload：`management_schema_version`、`plugin_key`、`versions[]`
+- `operations [key]` payload：`management_schema_version`、`plugin_key`、`operations[]`
+- `operation <id>` payload：`management_schema_version`、`operation`
+
+管理操作包含 `operation_id`、`action`、`stage`、`status`、`started_at`、`finished_at` 和安全错误摘要；同一个 plugin key 的修改操作串行执行。修改操作的回执 `kind="plugins"`，失败为 `kind="plugins_error"`；payload 包含 `operation_id`、`action`、`plugin_key`、`status`、`generation_id`、`runtime_instance_id`、`active_enabled`、`active` 和最新 `capabilities`。
 
 ## 14. MCP Runtime Diagnostics
 

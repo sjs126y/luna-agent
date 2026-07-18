@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/platform%20E2E-pending-F59E0B" alt="Platform E2E pending">
   <img src="https://img.shields.io/badge/plugin%20hot%20reload-ready-2EA44F" alt="Plugin hot reload ready">
   <img src="https://img.shields.io/badge/active%20plugin-runtime%20ready-2EA44F" alt="Active plugin runtime ready">
+  <img src="https://img.shields.io/badge/active%20plugins-4%20ready-2EA44F" alt="Four active plugins ready">
 </p>
 
 <p>
