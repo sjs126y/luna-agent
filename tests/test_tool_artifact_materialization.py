@@ -223,6 +223,7 @@ async def test_artifact_from_file_materializes_and_can_be_attached(
 ):
     from personal_agent.artifacts import TurnResponseDraft
     from personal_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
+    from personal_agent.plugins.builtin.tools.builtin import response_attach as _response_attach  # noqa: F401
     from personal_agent.tools import sandbox as sandbox_module
 
     monkeypatch.setattr(

@@ -179,6 +179,7 @@ plugins:
     - "integrations/workspace-watch"
     - "automation/reminder"
     - "automation/feed-watch"
+    - "automation/inbox-watch"
   disabled: []
   config:
     integrations/workspace-watch:
@@ -205,6 +206,19 @@ plugins:
       feeds: []
       poll_interval_seconds: 900
       max_items_per_feed: 30
+      active:
+        enabled: true
+        sessions:
+          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/inbox-watch:
+      root: "data/inbox"
+      poll_interval_seconds: 15
+      settle_seconds: 5
+      max_files_per_poll: 20
+      max_file_bytes: 20971520
+      extensions: []
+      process_existing: true
       active:
         enabled: true
         sessions:

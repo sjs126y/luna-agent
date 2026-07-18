@@ -215,6 +215,18 @@ plugins:
         enabled: false
         sessions: []
         restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/inbox-watch:
+      root: "data/inbox"
+      poll_interval_seconds: 15
+      settle_seconds: 5
+      max_files_per_poll: 20
+      max_file_bytes: 20971520
+      extensions: []                 # 例如 [pdf, md, txt, png, jpg]
+      process_existing: true
+      active:
+        enabled: false
+        sessions: []
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "~/.codex"

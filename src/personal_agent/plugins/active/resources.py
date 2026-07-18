@@ -124,7 +124,13 @@ class ActiveToolPort:
     def allowed(self) -> tuple[str, ...]:
         return tuple(sorted(self._allowed))
 
-    async def call(self, name: str, arguments: dict[str, Any] | None = None):
+    async def call(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        session_key: str = "",
+    ):
         self._validate_generation()
         tool_name = str(name or "").strip()
         if tool_name not in self._allowed:
@@ -153,7 +159,7 @@ class ActiveToolPort:
         if str(entry.approval_mode or "").strip().lower() == "deny":
             raise PermissionError(f"active plugin tool is disabled by policy: {tool_name}")
 
-        agent = self._execution_context()
+        agent = self._execution_context(session_key=session_key)
         return await execute_tool_call_result(
             {
                 "id": f"active:{self._plugin.runtime_instance_id}:{uuid4().hex}",
@@ -164,11 +170,13 @@ class ActiveToolPort:
             confirm=None,
         )
 
-    def _execution_context(self):
+    def _execution_context(self, *, session_key: str = ""):
         from personal_agent.security.evaluator import isolated_security_context
 
+        security = isolated_security_context("full-auto")
+        security.session_key = str(session_key or "")
         return SimpleNamespace(
-            _security_context=isolated_security_context("full-auto"),
+            _security_context=security,
             _hook_manager=self._manager.hook_manager,
             _hook_turn_id=f"active:{self._plugin.runtime_instance_id}",
             _hook_source=None,
@@ -180,7 +188,7 @@ class ActiveToolPort:
             _destructive_calls_this_turn=0,
             _max_destructive_per_turn=0,
             _artifact_store=getattr(self._manager, "_artifact_store", None),
-            _memory_session_key=f"plugin:{self._plugin.key}",
+            _memory_session_key=str(session_key or f"plugin:{self._plugin.key}"),
         )
 
     def _validate_generation(self) -> None:
