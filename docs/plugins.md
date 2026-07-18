@@ -337,6 +337,9 @@ plugins:
 | `automation/feed-watch` | RSS/Atom 新条目 | `feed_fetch`、Storage、Conversation |
 | `automation/inbox-watch` | `data/inbox/` 稳定文件 | `list_directory`、`file_info`、`artifact_from_file`、Conversation |
 
+`automation/inbox-watch` 对同一文件版本默认最多提交 3 次；达到
+`max_submission_attempts` 后保持失败记录，只有文件签名变化才会重新尝试。
+
 这些插件第一次观察外部状态时只建立基线；没有变化时不会调用 LLM。Reminder 和 Inbox 使用稳定 request id，Feed 与 GitHub 使用事件集合摘要生成 request id。主动功能默认关闭，并要求目标 session 同时出现在 `active.sessions`。
 
 Feed Watch 默认拒绝解析到私网或回环地址的订阅源。若 Watt Toolkit 等本地加速器有意将公网域名映射到本地，可通过 `trusted_private_hosts` 精确声明主机名。该配置不会放行其他域名，云元数据地址仍始终禁止：

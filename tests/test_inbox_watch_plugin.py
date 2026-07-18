@@ -104,6 +104,44 @@ async def test_inbox_watch_ignores_symlink_entries_and_rejects_oversized_file(tm
     assert all(item[0] != "artifact_from_file" for item in tool.calls)
 
 
+@pytest.mark.asyncio
+async def test_inbox_watch_stops_retrying_unchanged_file_after_limit(tmp_path):
+    manager = _manager(tmp_path)
+    module = manager.list_plugins()[0].module
+    root = tmp_path / "inbox"
+    path = root / "failed.txt"
+    storage = _Storage()
+    tool = _Tool(root, path)
+
+    class FailedConversation:
+        async def submit(self, **kwargs):
+            raise RuntimeError("delivery unavailable")
+
+    ctx = SimpleNamespace(
+        resources=SimpleNamespace(
+            storage=storage,
+            tool=tool,
+            conversation=FailedConversation(),
+        )
+    )
+    config = module.InboxWatchConfig.model_validate({
+        "root": str(root),
+        "settle_seconds": 0,
+        "max_submission_attempts": 2,
+        "active": {"sessions": ["wechat:c1:u1"]},
+    })
+    watcher = module.InboxWatcher(ctx, config)
+
+    assert await watcher.poll_once(now=0) == []
+    assert await watcher.poll_once(now=1) == []
+    assert await watcher.poll_once(now=2) == []
+
+    artifact_calls = [item for item in tool.calls if item[0] == "artifact_from_file"]
+    assert len(artifact_calls) == 2
+    assert storage.values["inbox-state.json"]["failures"][str(path)]["attempts"] == 2
+    manager.unload_plugin(PLUGIN_KEY)
+
+
 class _Storage:
     def __init__(self):
         self.values = {}

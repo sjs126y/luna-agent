@@ -76,7 +76,11 @@ class DeliveryService:
     async def deliver_once(self, request: DeliveryRequest) -> DeliveryResult:
         binding = self.sessions.resolve(request.session_key)
         if binding is None:
-            return self._failed(request, "session has no delivery binding")
+            return self._failed(
+                request,
+                "session has no delivery binding",
+                status=DeliveryStatus.DEFERRED,
+            )
         source = binding.source
         adapter = self.platforms.get(source.platform)
         if adapter is None:

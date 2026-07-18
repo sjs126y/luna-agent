@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,10 @@ class SessionStore:
 
     def get(self, session_key: str) -> SessionEntry | None:
         return self._index.get(session_key)
+
+    def entries(self) -> tuple[SessionEntry, ...]:
+        """Return detached session metadata for routing restoration."""
+        return tuple(replace(entry) for entry in self._index.values())
 
     def get_current_session_id(self, session_key: str) -> str | None:
         """Return the latest (uncompressed) session_id for this key."""

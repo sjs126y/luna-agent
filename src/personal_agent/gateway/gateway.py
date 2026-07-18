@@ -107,6 +107,8 @@ class Gateway:
         self._session_router.overrides.update(self.config.session_override)
         await self._session_store.initialize()
         await self._session_store.expire_sessions(self.config.session_expire_days)
+        restored_bindings = self._session_router.restore(self._session_store.entries())
+        logger.info("Restored %d delivery binding(s) from session store", restored_bindings)
 
         if self.plugin_manager is not None:
             for plugin in self.plugin_manager.list_plugins():

@@ -30,6 +30,7 @@ class InboxWatchConfig(BaseModel):
     settle_seconds: float = Field(default=5.0, ge=0.0)
     max_files_per_poll: int = Field(default=20, ge=1, le=100)
     max_file_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
+    max_submission_attempts: int = Field(default=3, ge=1, le=20)
     extensions: list[str] = Field(default_factory=list)
     process_existing: bool = True
     prompt: str = (
@@ -87,6 +88,13 @@ class InboxWatcher:
                 self._record_failure(path, f"file size {size} is outside configured limits")
                 continue
             signature = _signature(info)
+            failure = dict(self.state["failures"].get(path) or {})
+            if (
+                failure.get("signature") == signature
+                and int(failure.get("attempts") or 0) >= self.config.max_submission_attempts
+            ):
+                self.pending.pop(path, None)
+                continue
             previous = dict(self.state["processed"].get(path) or {})
             if previous.get("signature") == signature:
                 self.pending.pop(path, None)
@@ -157,11 +165,15 @@ class InboxWatcher:
                 session_key=session_key,
             )
             if str(getattr(result, "status", "")) != "success" or not getattr(result, "artifacts", None):
-                self._record_failure(path, str(getattr(result, "error", "") or getattr(result, "content", "")))
+                self._record_failure(
+                    path,
+                    str(getattr(result, "error", "") or getattr(result, "content", "")),
+                    signature=signature,
+                )
                 return False
             artifact_id = str(getattr(result.artifacts[0], "artifact_id", ""))
             if not artifact_id:
-                self._record_failure(path, "artifact tool returned no artifact_id")
+                self._record_failure(path, "artifact tool returned no artifact_id", signature=signature)
                 return False
             request_hash = hashlib.sha256(f"{path}:{signature}:{session_key}".encode()).hexdigest()[:24]
             try:
@@ -178,14 +190,20 @@ class InboxWatcher:
                     if not bool(getattr(outcome, "succeeded", False)):
                         raise RuntimeError(str(getattr(outcome, "error", "submission failed")))
             except Exception as exc:
-                self._record_failure(path, f"{type(exc).__name__}: {exc}")
+                self._record_failure(path, f"{type(exc).__name__}: {exc}", signature=signature)
                 return False
         return bool(self.config.active.sessions)
 
-    def _record_failure(self, path: str, error: str) -> None:
+    def _record_failure(self, path: str, error: str, *, signature: str = "") -> None:
         current = dict(self.state["failures"].get(path) or {})
+        attempts = (
+            int(current.get("attempts") or 0) + 1
+            if not signature or current.get("signature") in {None, "", signature}
+            else 1
+        )
         self.state["failures"][path] = {
-            "attempts": int(current.get("attempts") or 0) + 1,
+            "attempts": attempts,
+            "signature": signature,
             "error": str(error)[:1000],
             "updated_at": datetime.now(UTC).isoformat(),
         }
