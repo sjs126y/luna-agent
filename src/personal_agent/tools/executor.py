@@ -128,6 +128,12 @@ async def execute_tool_calls(
     Adjacent parallel-safe tools run concurrently; sequential tools act as
     barriers that preserve LLM ordering. Destructive tools are always barriers.
     """
+    tool_calls, suppressed = deduplicate_tool_calls(tool_calls)
+    if suppressed:
+        logger.warning(
+            "Suppressed %d duplicate tool call(s) at executor boundary",
+            len(suppressed),
+        )
     results: dict[int, ToolExecutionResult] = {}
     batch_confirmation = await _prepare_batch_confirmation(
         tool_calls,
@@ -217,6 +223,47 @@ async def execute_tool_calls(
         except Exception:
             pass
     return ordered_results
+
+
+def deduplicate_tool_calls(tool_calls: list[dict]) -> tuple[list[dict], list[dict[str, Any]]]:
+    """Normalize one model batch and suppress repeated protocol call IDs."""
+    unique: list[dict] = []
+    suppressed: list[dict[str, Any]] = []
+    seen_ids: dict[str, int] = {}
+
+    for index, raw_call in enumerate(tool_calls or []):
+        raw_id = str(raw_call.get("id") or raw_call.get("tool_use_id") or "").strip()
+        normalized = _normalize_tool_call({
+            **raw_call,
+            "id": raw_id or f"tool-{index + 1}",
+        })
+        signature = _tool_call_signature(normalized)
+        duplicate_index: int | None = None
+        reason = ""
+
+        if normalized["id"] in seen_ids:
+            duplicate_index = seen_ids[normalized["id"]]
+            previous = unique[duplicate_index]
+            reason = (
+                "duplicate_id"
+                if _tool_call_signature(previous) == signature
+                else "duplicate_id_conflict"
+            )
+        if duplicate_index is not None:
+            kept = unique[duplicate_index]
+            suppressed.append({
+                "index": index,
+                "tool_name": normalized["name"],
+                "tool_use_id": normalized["id"],
+                "reason": reason,
+                "kept_tool_use_id": kept["id"],
+            })
+            continue
+
+        seen_ids[normalized["id"]] = len(unique)
+        unique.append(normalized)
+
+    return unique, suppressed
 
 
 async def _prepare_batch_confirmation(
@@ -940,6 +987,19 @@ def _normalize_tool_call(tc: dict) -> dict:
         "name": name,
         "input": raw_input,
     }
+
+
+def _tool_call_signature(tc: dict) -> str:
+    return json.dumps(
+        {
+            "name": str(tc.get("name") or ""),
+            "input": tc.get("input") or {},
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
 
 
 def _result(

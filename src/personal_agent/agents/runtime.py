@@ -232,6 +232,14 @@ class AgentRuntime:
                 timeout=spec.timeout,
             )
             self._accumulate_usage(run.usage, response.usage)
+            from personal_agent.tools.executor import deduplicate_tool_calls
+
+            response.tool_calls, suppressed_tool_calls = deduplicate_tool_calls(response.tool_calls)
+            if suppressed_tool_calls:
+                run.diagnostics["duplicate_tool_calls"] = {
+                    "suppressed_count": len(suppressed_tool_calls),
+                    "suppressed_calls": suppressed_tool_calls[:10],
+                }
             if response.tool_calls:
                 run.tool_calls.extend(response.tool_calls)
             if self._mark_token_quota_if_exceeded(run):

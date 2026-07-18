@@ -1365,6 +1365,51 @@ async def test_execute_tool_calls_preserves_order_and_records_agent_summary():
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_calls_suppresses_duplicate_ids_only():
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_calls
+    from personal_agent.tools.registry import tool_registry
+
+    calls: list[str] = []
+    original = tool_registry.get("dedupe_demo")
+
+    async def handler(value: str):
+        calls.append(value)
+        return f"handled:{value}"
+
+    tool_registry.register(ToolEntry(
+        name="dedupe_demo",
+        description="dedupe demo",
+        schema={},
+        handler=handler,
+        is_parallel_safe=True,
+    ))
+    messages: list[dict] = []
+    try:
+        results = await execute_tool_calls(
+            [
+                {"id": "same", "name": "dedupe_demo", "input": {"value": "one"}},
+                {"id": "same", "name": "dedupe_demo", "input": {"value": "one"}},
+                {"id": "other", "name": "dedupe_demo", "input": {"value": "one"}},
+                {"id": "same", "name": "dedupe_demo", "input": {"value": "two"}},
+            ],
+            messages,
+        )
+    finally:
+        if original is None:
+            tool_registry.unregister("dedupe_demo")
+        else:
+            tool_registry.register(original)
+
+    assert calls == ["one", "one"]
+    assert [result.tool_use_id for result in results] == ["same", "other"]
+    assert messages[-1]["content"] == [
+        {"type": "tool_result", "tool_use_id": "same", "content": "handled:one"},
+        {"type": "tool_result", "tool_use_id": "other", "content": "handled:one"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bridge_tool_call_uses_executor_precheck_for_web_fetch():
     import personal_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
     from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
