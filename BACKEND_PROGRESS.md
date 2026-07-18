@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1113%20passed-2EA44F" alt="1113 tests passed">
+  <img src="https://img.shields.io/badge/tests-1116%20passed-2EA44F" alt="1116 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
 </p>
 
@@ -28,7 +28,8 @@
 - active candidate 采用 `quiesce v1 -> start/ready v2 -> commit data revision + Capability Snapshot -> release v2 -> stop v1`；失败会丢弃候选 module/data 并 resume v1。
 - 根任务支持 `never/on_failure/always`、可配置退避和 5 分钟 5 次失败熔断；`/plugins active <key> on|off|restart` 控制独立启用状态。
 - 新增 `examples/plugins/active_heartbeat` 与 active runtime、资源安全、Gateway owner、热更新回滚、数据 revision、重启和命令测试。
-- 完整回归：`1113 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
+- Responses API 对流内 `rate_limit_exceeded` / concurrency limit 增加保守退避重试；仅在尚未产生文本或工具调用时重试，避免主动提交遇到临时并发限制后直接失败或重放部分输出。
+- 完整回归：`1116 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
 - 新增首个实际主动插件 `integrations/workspace-watch`：安装源位于 `examples/plugins/workspace_watch`，通过受限 `file_info` 建立工作区文件基线，等待变化稳定后合并提交给主 Agent；签名存入 revision storage，默认关闭且不预填真实 session。
 
 ## 2026-07-18：Plugin Runtime 热重载
