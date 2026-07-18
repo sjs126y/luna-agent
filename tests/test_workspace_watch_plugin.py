@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from personal_agent.config import Settings
 from personal_agent.plugins import PluginManager, PluginStatus
 
 
-PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins"
+PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "examples" / "plugins" / "workspace_watch"
 PLUGIN_KEY = "integrations/workspace-watch"
 
 
@@ -51,6 +52,40 @@ def test_workspace_watch_registers_active_runner_and_status_command(tmp_path):
     assert plugin.active_registration.resources.conversation is True
     assert manager.get_command("workspace-watch-status", scope="cli") is not None
     assert not (tmp_path / "data" / "plugins" / "data" / "integrations__workspace-watch").exists()
+
+
+@pytest.mark.asyncio
+async def test_workspace_watch_can_be_uninstalled_and_reinstalled(tmp_path):
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[],
+        plugins_config={PLUGIN_KEY: {"active": {"enabled": False}}},
+        mcp_enabled=False,
+        memory_external_provider="none",
+    )
+    manager = PluginManager(
+        settings,
+        plugin_dirs=[],
+        state_path=tmp_path / "plugin-state.json",
+        include_builtin=False,
+    )
+
+    first = await manager.install_plugin_runtime(PLUGIN_ROOT)
+    first_path = Path(first.manifest.path)
+    assert first.status is PluginStatus.LOADED
+    assert first.manifest.source == "installed"
+    assert first_path.is_dir()
+
+    removed = await manager.uninstall_plugin_runtime(PLUGIN_KEY)
+    await asyncio.sleep(0)
+    assert removed.runtime_state.value != "active"
+    assert PLUGIN_KEY not in manager.install_store.packages()
+    assert not first_path.exists()
+
+    second = await manager.install_plugin_runtime(PLUGIN_ROOT)
+    assert second.status is PluginStatus.LOADED
+    assert second.runtime_instance_id != first.runtime_instance_id
+    assert Path(second.manifest.path).is_dir()
 
 
 @pytest.mark.asyncio

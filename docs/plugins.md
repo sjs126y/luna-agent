@@ -302,7 +302,7 @@ def register(ctx):
 
 ### Workspace Watch 示例
 
-仓库内的 `plugins/proactive_workspace` 是一个可运行的主动插件，不是单纯心跳：
+仓库内的 `examples/plugins/workspace_watch` 是一个可安装的主动插件，不是单纯心跳：
 
 1. 周期性通过受限 `file_info` 工具读取指定文件的大小和修改时间。
 2. 第一次扫描只建立基线；变化持续超过 `settle_seconds` 才算稳定。

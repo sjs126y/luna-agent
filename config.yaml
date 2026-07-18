@@ -176,8 +176,20 @@ plugins:
     - "integrations/github-assistant"
     - "integrations/developer-docs"
     - "integrations/browser-operator"
+    - "integrations/workspace-watch"
   disabled: []
   config:
+    integrations/workspace-watch:
+      paths:
+        - "data/workspace-watch-test.txt"
+      session_key: "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+      poll_interval_seconds: 2
+      settle_seconds: 2
+      active:
+        enabled: true
+        sessions:
+          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+        restart_backoff_seconds: [1, 2, 5]
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "/home/sujinsheng/.codex"
