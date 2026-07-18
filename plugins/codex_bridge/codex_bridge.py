@@ -45,7 +45,7 @@ def register(ctx) -> None:
         raise ValueError("Codex Bridge runtime_codex_home must be within sandbox.roots")
     _prepare_runtime_home(source_codex_home, runtime_codex_home)
 
-    ctx.register_mcp_server({
+    ctx.register.mcp_server({
         "name": "codex",
         "transport": "stdio",
         "command": sys.executable,
@@ -85,7 +85,7 @@ def register(ctx) -> None:
         })
         return PreToolUseOutcome(updated_input=updated)
 
-    ctx.register_hook(
+    ctx.register.hook(
         HookEvent.PRE_TOOL_USE,
         enforce_codex_policy,
         name="enforce-codex-session-policy",

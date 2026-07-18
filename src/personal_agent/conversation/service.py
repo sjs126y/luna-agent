@@ -140,6 +140,7 @@ class ConversationService:
         turn_id: str = "",
         steer=None,
         policy_snapshot=None,
+        capability_view=None,
     ) -> ConversationTurnResult:
         recorder = EventRecorder(event_sink)
         if self.plugin_manager is not None:
@@ -170,7 +171,10 @@ class ConversationService:
                 user_input=user_input,
                 previous_session_id=previous_session_id,
             )
-            agent = await self.get_or_create_agent(session_key)
+            agent = await self.get_or_create_agent(
+                session_key,
+                capability_view=capability_view,
+            )
             if policy_snapshot is not None:
                 agent._security_context = policy_snapshot.security
             agent._hook_source = source
@@ -558,10 +562,31 @@ class ConversationService:
         self._persisted_turn_report_count = int(summary.get("stored") or 0)
         self._last_persisted_turn_report_error = ""
 
-    async def get_or_create_agent(self, session_key: str):
+    async def get_or_create_agent(self, session_key: str, *, capability_view=None):
+        if capability_view is not None:
+            from personal_agent.plugins.runtime import CapabilityKind
+
+            capability_view = capability_view.project({
+                CapabilityKind.TOOL,
+                CapabilityKind.SKILL,
+                CapabilityKind.WORKFLOW,
+            })
         agent = self.agent_cache.get(session_key)
         if agent is not None:
             from personal_agent.tools.registry import tool_registry
+
+            if capability_view is not None:
+                from personal_agent.agent.agent import _build_system_prompt, _refresh_tools
+
+                agent._capability_view = capability_view
+                previous = agent._capability_fingerprint
+                _refresh_tools(agent)
+                if previous != agent._capability_fingerprint:
+                    _build_system_prompt(agent, agent._system_prompt_template)
+                self.agent_cache.move_to_end(session_key)
+                self._apply_security_context(agent, session_key)
+                agent._artifact_store = self.artifact_store
+                return agent
 
             if agent._tools_generation == tool_registry.generation:
                 self.agent_cache.move_to_end(session_key)
@@ -572,13 +597,18 @@ class ConversationService:
 
         from personal_agent.agent.factory import create_agent_runtime
 
-        runtime = await create_agent_runtime(
-            self.settings,
-            memory_manager=self.memory_manager,
-            plugin_manager=self.plugin_manager,
-            system_prompt_template=self.system_prompt_template,
-            session_key=session_key,
-        )
+        runtime_kwargs = {
+            "memory_manager": self.memory_manager,
+            "plugin_manager": self.plugin_manager,
+            "system_prompt_template": self.system_prompt_template,
+            "session_key": session_key,
+        }
+        if capability_view is not None and _accepts_parameter(
+            create_agent_runtime,
+            "capability_view",
+        ):
+            runtime_kwargs["capability_view"] = capability_view
+        runtime = await create_agent_runtime(self.settings, **runtime_kwargs)
         agent = runtime.agent
         agent._artifact_store = self.artifact_store
         self._apply_security_context(agent, session_key)
@@ -1207,6 +1237,17 @@ def _accepts_turn_id(func: Any) -> bool:
     except (TypeError, ValueError):
         return True
     return "turn_id" in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in params.values()
+    )
+
+
+def _accepts_parameter(func: Any, name: str) -> bool:
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return True
+    return name in params or any(
         param.kind is inspect.Parameter.VAR_KEYWORD
         for param in params.values()
     )

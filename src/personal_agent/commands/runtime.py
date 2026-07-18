@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import inspect
 import json
+import shlex
 from typing import Any, Protocol
 
 from personal_agent.commands.registry import (
@@ -237,6 +238,12 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         text, payload = _protocol(args)
         return CommandResult.reply(text, payload=payload, kind="protocol")
 
+    if command_name == "plugins":
+        text, payload = await _plugins(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, kind="plugins_error")
+        return CommandResult.reply(text, payload=payload, kind="plugins")
+
     if command_name == "commands":
         text, payload = _commands(runtime, args)
         if payload.get("error"):
@@ -281,6 +288,71 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
         )
 
     return CommandResult.unhandled()
+
+
+async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, Any]]:
+    manager = runtime.plugin_manager
+    if manager is None:
+        return "插件运行时不可用。", {"error": "plugin runtime unavailable"}
+    try:
+        parts = shlex.split(args)
+    except ValueError as exc:
+        return f"插件命令参数无效: {exc}", {"error": str(exc)}
+    action = parts[0].lower() if parts else "list"
+    values = parts[1:]
+    try:
+        if action == "list":
+            reports = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
+            lines = [
+                f"- {item['key']}: {item['status']} generation={item.get('generation_id') or '-'}"
+                for item in reports
+            ]
+            return "当前插件:\n" + ("\n".join(lines) if lines else "- 无"), {"plugins": reports}
+        if action == "info" and len(values) == 1:
+            report = manager.doctor_plugin(values[0])
+            return json.dumps(report, ensure_ascii=False, indent=2), report
+        if action == "install" and len(values) == 1:
+            plugin = await manager.install_plugin_runtime(values[0])
+        elif action == "reload" and len(values) == 1:
+            plugin = await manager.reload_plugin_runtime(values[0])
+        elif action == "enable" and len(values) == 1:
+            plugin = await manager.enable_plugin_runtime(values[0])
+        elif action == "disable" and len(values) == 1:
+            plugin = await manager.disable_plugin_runtime(values[0])
+        elif action == "rollback" and len(values) == 2:
+            plugin = await manager.rollback_plugin_runtime(values[0], values[1])
+        elif action == "uninstall" and values:
+            key = values[0]
+            unknown = [value for value in values[1:] if value != "--purge-data"]
+            if unknown:
+                raise ValueError(f"unknown uninstall option: {unknown[0]}")
+            plugin = await manager.uninstall_plugin_runtime(
+                key,
+                purge_data="--purge-data" in values[1:],
+            )
+        else:
+            return (
+                "用法: /plugins [list|info <key>|install <path>|reload <key>|"
+                "enable <key>|disable <key>|rollback <key> <digest>|"
+                "uninstall <key> [--purge-data]]",
+                {"error": "invalid plugin command"},
+            )
+    except Exception as exc:
+        return f"插件操作失败: {exc}", {"error": f"{type(exc).__name__}: {exc}"}
+    payload = {
+        "action": action,
+        "plugin_key": plugin.key,
+        "status": plugin.status.value,
+        "generation_id": plugin.generation_id,
+        "runtime_instance_id": plugin.runtime_instance_id,
+        "capabilities": manager.capability_health(),
+    }
+    return (
+        f"插件操作完成: {action} {plugin.key}\n"
+        f"generation={plugin.generation_id or '-'}\n"
+        f"runtime={plugin.runtime_instance_id or '-'}",
+        payload,
+    )
 
 
 def slash_command_metadata(runtime: CommandRuntime | None = None) -> list[dict[str, Any]]:

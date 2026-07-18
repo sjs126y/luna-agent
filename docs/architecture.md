@@ -206,15 +206,16 @@ Gateway 负责：
 
 `ConversationService` 会按 `session_key` 缓存 agent，避免每一轮都重新创建。
 
-### PluginManager
+### Plugin Runtime
 
-PluginManager 负责插件生命周期：
+`PluginManager` 是发现、诊断与控制 facade；generation 生命周期由插件 runtime、`CandidateCatalog`、`CapabilitySnapshot` 和版本化 installer 协作完成：
 
-- discover。
-- load enabled。
-- configure。
-- list plugins。
-- 转发正式 Hook 注册并清理 owner；调用少量宿主生命周期回调。
+- `PluginRuntimeContext` 通过 `ctx.register.*` 收集当前 generation 的能力。
+- `CapabilityMapper` 将既有 manager 注册项映射为稳定 binding。
+- `SnapshotBuilder` 校验冲突并生成不可变路由；`CapabilityStore` 原子发布 revision。
+- Coordinator 为 Turn 获取 lease，Tool/Skill/Workflow/Command/Hook 使用同一能力视图。
+- 新 generation 发布后旧实例进入 DRAINING，最后一个 lease 释放后才停止 Hook、MCP 与后台任务。
+- installer 使用 staging 与不可变 package digest 支持安装、更新、回滚和延迟卸载。
 
 插件可以提供：
 
@@ -227,6 +228,7 @@ PluginManager 负责插件生命周期：
 - commands。
 - LLM transport 与正式生命周期 Hook。
 - 受 capability 限制的 conversation submit / notification 端口。
+- 隔离 storage 与绑定 runtime instance 的 task 端口。
 
 </details>
 

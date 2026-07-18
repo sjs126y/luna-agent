@@ -28,6 +28,7 @@ async def create_agent_runtime(
     plugin_manager=None,
     system_prompt_template: str = "",
     session_key: str = "",
+    capability_view=None,
 ) -> AgentRuntime:
     """Resolve provider/transport/compressor and assemble an Agent."""
     provider_name = settings.llm_provider
@@ -49,6 +50,8 @@ async def create_agent_runtime(
         system_prompt_template=system_prompt_template,
         enabled_toolsets=settings.enabled_toolsets,
         hook_manager=getattr(plugin_manager, "hook_manager", None),
+        plugin_manager=plugin_manager,
+        capability_view=capability_view,
     )
 
     if plugin_manager is not None:

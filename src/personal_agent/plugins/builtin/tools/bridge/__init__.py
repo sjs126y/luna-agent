@@ -15,4 +15,4 @@ def register(ctx) -> None:
         entry = tool_registry.get(name)
         if entry is None:
             raise RuntimeError(f"Bridge tool did not register: {name}")
-        ctx.register_tool(entry)
+        ctx.register.tool(entry)

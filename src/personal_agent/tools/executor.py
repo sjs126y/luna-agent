@@ -146,13 +146,13 @@ async def execute_tool_calls(
         i = 0
         while i < len(tool_calls):
             current = tool_calls[i]
-            entry = tool_registry.get(str(current.get("name", "")))
+            entry = _resolve_tool_entry(agent, str(current.get("name", "")))
 
             if _can_run_in_parallel(current, entry, agent, confirm=effective_confirm):
                 # Collect adjacent safe parallel tools into a batch.
                 batch: list[tuple[int, dict]] = []
                 while i < len(tool_calls):
-                    e = tool_registry.get(str(tool_calls[i].get("name", "")))
+                    e = _resolve_tool_entry(agent, str(tool_calls[i].get("name", "")))
                     if _can_run_in_parallel(tool_calls[i], e, agent, confirm=effective_confirm):
                         batch.append((i, tool_calls[i]))
                         i += 1
@@ -283,7 +283,7 @@ async def _prepare_batch_confirmation(
     candidates: list[tuple[dict, Any, ToolDecision]] = []
     for raw_call in tool_calls:
         tc = _normalize_tool_call(raw_call)
-        entry = tool_registry.get(tc["name"])
+        entry = _resolve_tool_entry(agent, tc["name"])
         if entry is None or _has_matching_tool_policy_hook(agent, tc, entry):
             continue
         try:
@@ -367,6 +367,18 @@ async def _exec_one(tc: dict, *, agent: Any = None) -> str:
     return format_tool_result(await execute_tool_call_result(tc, agent=agent))
 
 
+def _resolve_tool_entry(agent: Any, name: str):
+    if agent is not None:
+        route = getattr(agent, "_tool_bindings", {}).get(name)
+        manager = getattr(agent, "_plugin_manager", None)
+        if route is not None and manager is not None:
+            entry = manager.capability_payload(route.binding_id)
+            if entry is not None:
+                return entry
+            return None
+    return tool_registry.get(name)
+
+
 async def execute_tool_call_result(
     tc: dict,
     *,
@@ -386,7 +398,7 @@ async def execute_tool_call_result(
     started = _time_module.monotonic()
     tc = _normalize_tool_call(tc)
     name = tc["name"]
-    entry = tool_registry.get(name)
+    entry = _resolve_tool_entry(agent, name)
     execution_timeout = _resolve_tool_timeout(entry, tc["input"], timeout)
     guard_decision: GuardDecision | None = None
     tool_decision: ToolDecision | None = None

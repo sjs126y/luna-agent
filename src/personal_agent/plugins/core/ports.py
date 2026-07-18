@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 from personal_agent.conversation import ResponseMode, SubmissionOrigin, SubmissionRequest
 from personal_agent.delivery import DeliveryKind, DeliveryRequest
 from personal_agent.models.messages import OutboundMessage, SessionSource
+from personal_agent.plugins.runtime import PluginRuntimeState
 
 
 class PluginConversationPort:
@@ -40,8 +44,7 @@ class PluginConversationPort:
         return await self._coordinator.submit(request)
 
     def _authorize(self, session_key: str, *, capability: str) -> None:
-        status = str(getattr(self._plugin.status, "value", self._plugin.status) or "")
-        if not self._plugin.enabled or status != "loaded":
+        if not self._plugin.enabled or self._plugin.runtime_state is not PluginRuntimeState.ACTIVE:
             raise RuntimeError(f"plugin is not active: {self._plugin.key}")
         if capability not in set(self._plugin.manifest.provides or []):
             raise PermissionError(f"plugin does not declare '{capability}' capability")
@@ -66,3 +69,54 @@ class PluginNotificationPort(PluginConversationPort):
             kind=DeliveryKind.NOTIFICATION,
             metadata={"plugin_id": self._plugin.key, **dict(metadata or {})},
         ))
+
+
+class PluginStoragePort:
+    def __init__(self, *, plugin, root: Path) -> None:
+        self._plugin = plugin
+        self.root = Path(root) / plugin.key.replace("/", "__")
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def resolve(self, relative_path: str | Path) -> Path:
+        candidate = Path(relative_path)
+        if candidate.is_absolute():
+            raise ValueError("plugin storage path must be relative")
+        resolved_root = self.root.resolve()
+        resolved = (resolved_root / candidate).resolve()
+        if resolved != resolved_root and resolved_root not in resolved.parents:
+            raise ValueError("plugin storage path escapes isolated root")
+        return resolved
+
+    def read_text(self, relative_path: str | Path, *, default: str = "") -> str:
+        path = self.resolve(relative_path)
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return default
+
+    def write_text(self, relative_path: str | Path, text: str) -> Path:
+        path = self.resolve(relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(text), encoding="utf-8")
+        return path
+
+
+class PluginTaskPort:
+    def __init__(self, *, plugin, tasks: dict[str, set[asyncio.Task]]) -> None:
+        self._plugin = plugin
+        self._tasks = tasks
+
+    def create(self, awaitable, *, name: str = "") -> asyncio.Task:
+        if self._plugin.runtime_state is not PluginRuntimeState.ACTIVE:
+            if asyncio.iscoroutine(awaitable):
+                awaitable.close()
+            raise RuntimeError(f"plugin is not active: {self._plugin.key}")
+        runtime_id = self._plugin.runtime_instance_id
+        task = asyncio.create_task(
+            awaitable,
+            name=name or f"plugin:{self._plugin.key}:{runtime_id}",
+        )
+        bucket = self._tasks.setdefault(runtime_id, set())
+        bucket.add(task)
+        task.add_done_callback(bucket.discard)
+        return task

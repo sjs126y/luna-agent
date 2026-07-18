@@ -649,6 +649,59 @@ def plugins_disable(key: str) -> None:
     typer.echo(f"已禁用插件: {plugin.key}")
 
 
+@plugins_app.command("install")
+def plugins_install(
+    source: Path,
+    enable: bool = typer.Option(True, "--enable/--no-enable", help="安装后立即启用。"),
+) -> None:
+    """Install or update an immutable local plugin package."""
+    manager = _plugin_manager()
+    try:
+        plugin = asyncio.run(manager.install_plugin_runtime(source, enable=enable))
+    except Exception as exc:
+        _exit_error(f"插件安装失败: {exc}")
+    typer.echo(
+        f"已安装插件: {plugin.key} generation={plugin.generation_id} "
+        f"runtime={plugin.runtime_instance_id}"
+    )
+
+
+@plugins_app.command("reload")
+def plugins_reload(key: str) -> None:
+    manager = _plugin_manager()
+    manager.load_plugin(key)
+    try:
+        plugin = asyncio.run(manager.reload_plugin_runtime(key))
+    except Exception as exc:
+        _exit_error(f"插件重载失败: {exc}")
+    typer.echo(f"已重载插件: {plugin.key} generation={plugin.generation_id}")
+
+
+@plugins_app.command("rollback")
+def plugins_rollback(key: str, digest: str) -> None:
+    manager = _plugin_manager()
+    manager.load_plugin(key)
+    try:
+        plugin = asyncio.run(manager.rollback_plugin_runtime(key, digest))
+    except Exception as exc:
+        _exit_error(f"插件回滚失败: {exc}")
+    typer.echo(f"已回滚插件: {plugin.key} package={digest}")
+
+
+@plugins_app.command("uninstall")
+def plugins_uninstall(
+    key: str,
+    purge_data: bool = typer.Option(False, "--purge-data", help="同时删除插件运行数据。"),
+) -> None:
+    manager = _plugin_manager()
+    manager.load_plugin(key)
+    try:
+        plugin = asyncio.run(manager.uninstall_plugin_runtime(key, purge_data=purge_data))
+    except Exception as exc:
+        _exit_error(f"插件卸载失败: {exc}")
+    typer.echo(f"已卸载插件: {plugin.key}")
+
+
 @plugins_app.command("doctor")
 def plugins_doctor(
     key: str,

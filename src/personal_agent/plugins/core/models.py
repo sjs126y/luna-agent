@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from personal_agent.plugins.runtime.models import PluginRuntimeState
+
 
 class PluginStatus(str, Enum):
     DISCOVERED = "DISCOVERED"
@@ -216,6 +218,10 @@ class LoadedPlugin:
     error_traceback: str | None = None
     deferred: bool = False
     enabled: bool = False
+    generation_id: str = ""
+    runtime_instance_id: str = ""
+    package_digest: str = ""
+    runtime_state: PluginRuntimeState = PluginRuntimeState.DISCOVERED
     tools_registered: list[str] = field(default_factory=list)
     skills_registered: list[str] = field(default_factory=list)
     workflows_registered: list[str] = field(default_factory=list)

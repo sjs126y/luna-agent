@@ -8,8 +8,11 @@ import inspect
 import json
 import logging
 import re
+import shutil
 import sys
 import traceback
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from collections.abc import Iterable
 from pathlib import Path
 from types import ModuleType
@@ -20,7 +23,7 @@ import yaml
 from personal_agent.persistence.json_store import read_json_object, write_json_atomic
 from personal_agent.commands.registry import CORE_COMMAND_NAMES
 from personal_agent.mcp.server_registry import MCPServerRegistry
-from personal_agent.plugins.core.context import PluginContext
+from personal_agent.plugins.core.context import PluginRuntimeContext
 from personal_agent.plugins.core.models import (
     CommandEntry,
     HookRegistration,
@@ -29,6 +32,21 @@ from personal_agent.plugins.core.models import (
     PluginStatus,
 )
 from personal_agent.hooks import HookEvent, HookManager, HookSource
+from personal_agent.plugins.runtime import (
+    CandidateCatalog,
+    CapabilityKind,
+    CapabilityMapper,
+    CapabilitySnapshotBuilder,
+    CapabilityStore,
+    PluginRuntimeState,
+    PluginRuntimeManager,
+)
+from personal_agent.plugins.runtime.identity import (
+    generation_id,
+    package_digest,
+    runtime_instance_id,
+)
+from personal_agent.plugins.install import PluginInstaller, PluginInstallStore
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +73,26 @@ class PluginManager:
         self.mcp_server_registry = MCPServerRegistry()
         self._conversation_coordinator = None
         self._delivery_service = None
+        self._capability_mapper = CapabilityMapper()
+        self._capability_builder = CapabilitySnapshotBuilder()
+        self._active_bindings: dict[str, tuple[Any, ...]] = {}
+        self._dynamic_bindings: dict[str, tuple[Any, ...]] = {}
+        self._binding_payloads: dict[str, Any] = {}
+        self._runtime_records: dict[str, LoadedPlugin] = {}
+        self._runtime_bindings: dict[str, tuple[Any, ...]] = {}
+        self._active_runtime_by_plugin: dict[str, str] = {}
+        self._mcp_manager = None
+        install_root = Path(getattr(settings, "agent_data_dir", "data")) / "plugins"
+        self.install_store = PluginInstallStore(install_root / "install-state.json")
+        self.installer = PluginInstaller(install_root)
+        self._pending_package_removals: dict[str, dict[str, Any]] = {}
+        self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
+        self._capability_view: ContextVar[Any | None] = ContextVar(
+            f"plugin-capability-view:{id(self)}",
+            default=None,
+        )
+        self.capability_store = CapabilityStore(on_retire=self._retire_snapshot)
+        self.runtime_manager = PluginRuntimeManager(self)
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -77,36 +115,62 @@ class PluginManager:
         self._conversation_coordinator = conversation_coordinator
         self._delivery_service = delivery_service
 
-    def plugin_conversation_port(self, plugin_key: str):
+    def bind_mcp_manager(self, manager) -> None:
+        self._mcp_manager = manager
+
+    def plugin_conversation_port(self, plugin):
         if self._conversation_coordinator is None:
             raise RuntimeError("active plugin runtime is unavailable")
         from personal_agent.plugins.core.ports import PluginConversationPort
 
         return PluginConversationPort(
-            plugin=self._plugins[plugin_key],
+            plugin=plugin,
             coordinator=self._conversation_coordinator,
         )
 
-    def plugin_notification_port(self, plugin_key: str):
+    def plugin_notification_port(self, plugin):
         if self._conversation_coordinator is None or self._delivery_service is None:
             raise RuntimeError("active plugin runtime is unavailable")
         from personal_agent.plugins.core.ports import PluginNotificationPort
 
         return PluginNotificationPort(
-            plugin=self._plugins[plugin_key],
+            plugin=plugin,
             coordinator=self._conversation_coordinator,
             delivery_service=self._delivery_service,
         )
 
+    def plugin_storage_port(self, plugin):
+        from personal_agent.plugins.core.ports import PluginStoragePort
+
+        return PluginStoragePort(plugin=plugin, root=self.installer.data_root)
+
+    def plugin_task_port(self, plugin):
+        from personal_agent.plugins.core.ports import PluginTaskPort
+
+        return PluginTaskPort(plugin=plugin, tasks=self._plugin_tasks)
+
     def discover(self) -> list[LoadedPlugin]:
+        self.installer.cleanup_staging()
         for directory in self._plugin_dirs:
             source = self._source_for_directory(Path(directory))
             self._discover_dir(Path(directory), source=source, recursive=True)
+        for package_path in self.install_store.active_paths():
+            self._discover_dir(
+                package_path,
+                source="installed",
+                recursive=False,
+                allow_managed=True,
+            )
 
         for plugin in self._plugins.values():
             if plugin.status == PluginStatus.ERROR:
                 continue
-            plugin.enabled = self._resolve_enabled(plugin.manifest)
+            installed_enabled = self.install_store.enabled_for(plugin.key)
+            plugin.enabled = (
+                installed_enabled
+                if plugin.manifest.source == "installed" and installed_enabled is not None
+                else self._resolve_enabled(plugin.manifest)
+            )
             if not plugin.enabled and plugin.status != PluginStatus.ERROR:
                 plugin.status = PluginStatus.DISABLED
             elif plugin.manifest.deferred and plugin.status == PluginStatus.DISCOVERED:
@@ -145,11 +209,21 @@ class PluginManager:
             return plugin
 
         plugin.status = PluginStatus.LOADING
+        plugin.runtime_state = PluginRuntimeState.PREPARING
         plugin.error = None
         plugin.error_traceback = None
         before = self._registration_snapshot()
         try:
-            plugin.ctx = PluginContext(self, plugin)
+            all_config = getattr(self.settings, "plugins_config", {}) or {}
+            plugin_config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
+            plugin.package_digest = package_digest(plugin.manifest.path)
+            plugin.generation_id = generation_id(
+                plugin.key,
+                plugin.package_digest,
+                plugin_config if isinstance(plugin_config, dict) else {},
+            )
+            plugin.runtime_instance_id = runtime_instance_id(plugin.key)
+            plugin.ctx = PluginRuntimeContext(self, plugin)
             module, register_fn = self._import_entrypoint(plugin.manifest)
             plugin.module = module
             if register_fn is not None:
@@ -164,7 +238,11 @@ class PluginManager:
             self._assert_no_registry_replacements(before, after, plugin.key)
             if plugin.manifest.record_import_delta:
                 self._record_registry_delta(plugin, before["names"], after["names"])
+            self._publish_plugin_capabilities(plugin, after)
             plugin.status = PluginStatus.LOADED
+            plugin.runtime_state = PluginRuntimeState.ACTIVE
+            self._runtime_records[plugin.runtime_instance_id] = plugin
+            self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
             counts = plugin.registration_counts()
             logger.info(
                 "Plugin loaded: %s skills=%d mcp=%d hooks=%d commands=%d",
@@ -175,12 +253,13 @@ class PluginManager:
                 counts["commands"],
             )
         except Exception as exc:
-            self.hook_manager.unregister_owner(plugin.key)
+            self.hook_manager.unregister_owner(plugin.runtime_instance_id)
             self._restore_registration_snapshot(before)
             self._clear_plugin_registrations(plugin)
             plugin.module = None
             plugin.ctx = None
             plugin.status = PluginStatus.ERROR
+            plugin.runtime_state = PluginRuntimeState.FAILED
             plugin.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             plugin.error_traceback = traceback.format_exc()
             logger.exception("Plugin '%s' failed to load", key)
@@ -211,10 +290,9 @@ class PluginManager:
 
     def unload_plugin(self, key: str) -> LoadedPlugin:
         plugin = self._plugins[key]
+        plugin.runtime_state = PluginRuntimeState.DRAINING
         self._remove_plugin_commands(key)
         self._remove_plugin_hooks(key)
-        self.hook_manager.unregister_owner(key)
-
         from personal_agent.platforms.core import platform_registry
         from personal_agent.skills.registry import skill_registry
         from personal_agent.tools.registry import tool_registry
@@ -238,7 +316,280 @@ class PluginManager:
         plugin.error = None
         plugin.error_traceback = None
         plugin.status = PluginStatus.DISABLED if not plugin.enabled else PluginStatus.DISCOVERED
+        self._publish_without_owner(plugin.key)
+        self._active_runtime_by_plugin.pop(plugin.key, None)
         return plugin
+
+    def reload_plugin(self, key: str) -> LoadedPlugin:
+        """Load a fresh generation and atomically replace the active route set."""
+        if not self._plugins:
+            self.discover()
+        previous = self._plugins[key]
+        if previous.status != PluginStatus.LOADED:
+            return self.load_plugin(key)
+        return self._activate_manifest(previous.manifest, previous=previous, evict=True)
+
+    def _activate_manifest(
+        self,
+        manifest: PluginManifest,
+        *,
+        previous: LoadedPlugin | None = None,
+        evict: bool = False,
+        force_enabled: bool | None = None,
+    ) -> LoadedPlugin:
+        if evict:
+            self._evict_entrypoint_module(manifest)
+        candidate = LoadedPlugin(
+            key=manifest.key,
+            manifest=manifest,
+            status=PluginStatus.DISCOVERED,
+            deferred=manifest.deferred,
+            enabled=(
+                bool(force_enabled)
+                if force_enabled is not None
+                else previous.enabled
+                if previous is not None
+                else self._resolve_enabled(manifest)
+            ),
+        )
+        self._plugins[manifest.key] = candidate
+        loaded = self.load_plugin(manifest.key)
+        if loaded.status != PluginStatus.LOADED:
+            if previous is not None:
+                self._plugins[manifest.key] = previous
+                previous.runtime_state = PluginRuntimeState.ACTIVE
+            return loaded
+        if previous is not None:
+            previous.runtime_state = PluginRuntimeState.DRAINING
+        return loaded
+
+    async def reload_plugin_runtime(self, key: str) -> LoadedPlugin:
+        previous = self._plugins.get(key)
+        previous_runtime_id = previous.runtime_instance_id if previous is not None else ""
+        loaded = self.reload_plugin(key)
+        if loaded.status != PluginStatus.LOADED or self._mcp_manager is None:
+            return loaded
+        try:
+            await self._mcp_manager.reconcile(self._desired_mcp_configs())
+        except Exception:
+            if previous_runtime_id:
+                self._rollback_to_runtime(key, previous_runtime_id)
+            raise
+        return loaded
+
+    async def unload_plugin_runtime(self, key: str) -> LoadedPlugin:
+        plugin = self.unload_plugin(key)
+        if self._mcp_manager is not None:
+            await self._mcp_manager.reconcile(self._desired_mcp_configs())
+        return plugin
+
+    async def enable_plugin_runtime(self, key: str) -> LoadedPlugin:
+        plugin = self.enable_plugin(key)
+        self.install_store.set_enabled(key, True)
+        loaded = self.load_plugin(plugin.key)
+        if self._mcp_manager is not None:
+            await self._mcp_manager.reconcile(self._desired_mcp_configs())
+        return loaded
+
+    async def disable_plugin_runtime(self, key: str) -> LoadedPlugin:
+        plugin = self._plugins[key]
+        plugin.enabled = False
+        self._state.setdefault("disabled", [])
+        if key not in self._state["disabled"]:
+            self._state["disabled"].append(key)
+        self._state["enabled"] = [item for item in self._state.get("enabled", []) if item != key]
+        self._save_state()
+        self.install_store.set_enabled(key, False)
+        return await self.unload_plugin_runtime(key)
+
+    async def install_plugin_runtime(
+        self,
+        source: Path | str,
+        *,
+        enable: bool = True,
+    ) -> LoadedPlugin:
+        package = self.installer.prepare(source)
+        previous = self._plugins.get(package.manifest.key)
+        if not enable and previous is None:
+            self._add_manifest(package.manifest)
+            plugin = self._plugins[package.manifest.key]
+            plugin.enabled = False
+            plugin.status = PluginStatus.DISABLED
+            self.install_store.record_install(
+                plugin_key=plugin.key,
+                digest=package.digest,
+                path=package.path,
+                version=package.manifest.version,
+                source=package.source,
+                enabled=False,
+            )
+            return plugin
+        try:
+            loaded = self._activate_manifest(
+                package.manifest,
+                previous=previous,
+                evict=previous is not None,
+                force_enabled=enable,
+            )
+            if loaded.status != PluginStatus.LOADED:
+                raise RuntimeError(loaded.error or f"Plugin failed to load: {loaded.key}")
+            if self._mcp_manager is not None:
+                await self._mcp_manager.reconcile(self._desired_mcp_configs())
+        except Exception:
+            if previous is not None and previous.runtime_instance_id:
+                self._rollback_to_runtime(previous.key, previous.runtime_instance_id)
+            self.installer.discard(package)
+            raise
+        self.install_store.record_install(
+            plugin_key=loaded.key,
+            digest=package.digest,
+            path=package.path,
+            version=package.manifest.version,
+            source=package.source,
+            enabled=enable,
+        )
+        return loaded
+
+    async def rollback_plugin_runtime(self, key: str, digest: str) -> LoadedPlugin:
+        path = self.install_store.package_path(key, digest)
+        manifest_path = self._resolve_plugin_manifest_path(path)
+        manifest = PluginManifest.from_mapping(
+            self._read_manifest_file(manifest_path),
+            source="installed",
+            path=path,
+        )
+        previous = self._plugins.get(key)
+        loaded = self._activate_manifest(manifest, previous=previous, evict=True)
+        if loaded.status != PluginStatus.LOADED:
+            if previous is not None:
+                self._rollback_to_runtime(key, previous.runtime_instance_id)
+            raise RuntimeError(loaded.error or f"Plugin rollback failed: {key}")
+        if self._mcp_manager is not None:
+            try:
+                await self._mcp_manager.reconcile(self._desired_mcp_configs())
+            except Exception:
+                if previous is not None:
+                    self._rollback_to_runtime(key, previous.runtime_instance_id)
+                raise
+        self.install_store.activate(key, digest)
+        return loaded
+
+    async def uninstall_plugin_runtime(
+        self,
+        key: str,
+        *,
+        purge_data: bool = False,
+    ) -> LoadedPlugin:
+        record = self.install_store.packages().get(key)
+        if not isinstance(record, dict):
+            raise KeyError(f"Installed plugin not found: {key}")
+        self.install_store.mark_pending_removal(key)
+        self._pending_package_removals[key] = {
+            "paths": [
+                Path(item["path"])
+                for item in record.get("versions", {}).values()
+                if isinstance(item, dict) and item.get("path")
+            ],
+            "purge_data": bool(purge_data),
+        }
+        plugin = await self.unload_plugin_runtime(key)
+        self._finalize_pending_removals()
+        return plugin
+
+    def capability_payload(self, binding_id: str) -> Any | None:
+        return self._binding_payloads.get(binding_id)
+
+    def capability_health(self) -> dict[str, Any]:
+        data = self.capability_store.health_snapshot()
+        runtime_counts: dict[str, int] = {}
+        for plugin in self._runtime_records.values():
+            state = plugin.runtime_state.value
+            runtime_counts[state] = runtime_counts.get(state, 0) + 1
+        data.update({
+            "active_plugin_owners": sorted(
+                owner for owner in self._active_bindings if owner != "core"
+            ),
+            "payload_count": len(self._binding_payloads),
+            "runtime_counts": runtime_counts,
+            "install_revision": self.install_store.revision,
+            "installed_packages": len(self.install_store.packages()),
+            "pending_removals": sorted(self._pending_package_removals),
+        })
+        return data
+
+    def refresh_mcp_tools(
+        self,
+        server_name: str,
+        runtime_instance_id: str,
+        tool_names: set[str],
+    ) -> None:
+        from personal_agent.tools.registry import tool_registry
+
+        owner = self.mcp_server_registry.owner_for(server_name) or "configured-mcp"
+        active_runtime_id = self._active_runtime_by_plugin.get(owner, "")
+        plugin = self._runtime_records.get(active_runtime_id)
+        generation = (
+            plugin.generation_id
+            if plugin is not None
+            else f"configured-mcp@{server_name}"
+        )
+        bindings = []
+        payloads = {}
+        for name in sorted(tool_names):
+            entry = tool_registry.get(name)
+            if entry is None:
+                continue
+            binding = self._capability_mapper.binding(
+                kind=CapabilityKind.TOOL,
+                public_name=name,
+                owner=owner,
+                generation_id=generation,
+                runtime_instance_id=runtime_instance_id,
+                manager_key=name,
+                contract=_tool_contract(entry),
+            )
+            bindings.append(binding)
+            payloads[binding.binding_id] = entry
+        source_key = f"mcp:{server_name}"
+        previous = self._dynamic_bindings.get(source_key, ())
+        if tuple(bindings) == previous:
+            return
+        if bindings:
+            self._dynamic_bindings[source_key] = tuple(bindings)
+        else:
+            self._dynamic_bindings.pop(source_key, None)
+        self._binding_payloads.update(payloads)
+        self._publish_current_bindings()
+
+    @contextmanager
+    def bind_capability_view(self, view):
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        hook_ids = {
+            route.manager_key
+            for routes in view.routes.get(CapabilityKind.HOOK, {}).values()
+            for route in routes
+        }
+        skills = {
+            name: self.capability_payload(routes[0].binding_id)
+            for name, routes in view.routes.get(CapabilityKind.SKILL, {}).items()
+            if routes and self.capability_payload(routes[0].binding_id) is not None
+        }
+        workflows = {
+            name: self.capability_payload(routes[0].binding_id)
+            for name, routes in view.routes.get(CapabilityKind.WORKFLOW, {}).items()
+            if routes and self.capability_payload(routes[0].binding_id) is not None
+        }
+        token = self._capability_view.set(view)
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(self.hook_manager.bind_routes(hook_ids))
+                stack.enter_context(skill_registry.bind_entries(skills))
+                stack.enter_context(workflow_registry.bind_entries(workflows))
+                yield
+        finally:
+            self._capability_view.reset(token)
 
     def enable_plugin(self, key: str) -> LoadedPlugin:
         if not self._plugins:
@@ -283,8 +634,10 @@ class PluginManager:
         priority: int = 100,
         timeout_seconds: float | None = None,
     ):
+        plugin = self._plugins.get(plugin_key)
+        owner = plugin.runtime_instance_id if plugin is not None else plugin_key
         return self.hook_manager.register(
-            owner=plugin_key,
+            owner=owner,
             source=HookSource.PLUGIN,
             event=event,
             callback=callback,
@@ -292,6 +645,8 @@ class PluginManager:
             matcher=matcher,
             priority=priority,
             timeout_seconds=timeout_seconds,
+            active=plugin is None,
+            managed=plugin is not None,
         )
 
     async def invoke_hook(self, name: str, *args, **kwargs) -> Any:
@@ -321,7 +676,15 @@ class PluginManager:
         self._commands[entry.name] = entry
 
     def get_command(self, name: str, *, scope: str = "slash") -> CommandEntry | None:
-        entry = self._commands.get(name.lstrip("/"))
+        normalized = name.lstrip("/")
+        entry = None
+        view = self._capability_view.get()
+        if view is not None:
+            route = view.resolve(CapabilityKind.COMMAND, normalized)
+            if route is not None:
+                entry = self.capability_payload(route.binding_id)
+        if entry is None:
+            entry = self._commands.get(normalized)
         if entry is None:
             return None
         if entry.scope not in {scope, "both"}:
@@ -338,7 +701,13 @@ class PluginManager:
         return None if value is None else str(value)
 
     def register_mcp_server(self, plugin_key: str, config: Any):
-        return self.mcp_server_registry.register(plugin_key, config)
+        plugin = self._plugins.get(plugin_key)
+        runtime_id = plugin.runtime_instance_id if plugin is not None else ""
+        return self.mcp_server_registry.register(
+            plugin_key,
+            config,
+            runtime_instance_id=runtime_id,
+        )
 
     def get_mcp_servers(self) -> list[Any]:
         return self.mcp_server_registry.configs()
@@ -375,6 +744,10 @@ class PluginManager:
             "enabled_by_default": plugin.manifest.enabled_by_default,
             "enabled": plugin.enabled,
             "status": plugin.status.value,
+            "runtime_state": plugin.runtime_state.value,
+            "generation_id": plugin.generation_id,
+            "runtime_instance_id": plugin.runtime_instance_id,
+            "package_digest": plugin.package_digest,
             "deferred": plugin.deferred,
             "source": plugin.manifest.source,
             "declared_source": plugin.manifest.declared_source or plugin.manifest.source,
@@ -469,6 +842,7 @@ class PluginManager:
         *,
         source: str | None = None,
         recursive: bool = False,
+        allow_managed: bool = False,
     ) -> None:
         if not directory.exists():
             return
@@ -478,6 +852,7 @@ class PluginManager:
                 path
                 for path in directory.rglob("*")
                 if path.is_file() and path.name in {"plugin.yaml", "plugin.yml", "plugin.json"}
+                and (allow_managed or not self._is_managed_internal_path(path))
             )
         else:
             for child in sorted(directory.iterdir()):
@@ -516,6 +891,24 @@ class PluginManager:
                     error=str(exc),
                     enabled=False,
                 )
+
+    def _is_managed_internal_path(self, path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path.absolute()
+        for root in (
+            self.installer.packages_root,
+            self.installer.staging_root,
+            self.installer.data_root,
+        ):
+            try:
+                managed = root.resolve()
+            except OSError:
+                managed = root.absolute()
+            if resolved == managed or managed in resolved.parents:
+                return True
+        return False
 
     def _read_manifest_file(self, path: Path) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8")
@@ -714,11 +1107,34 @@ class PluginManager:
         entrypoint = manifest.entrypoint
         module_name, _, func_name = entrypoint.partition(":")
         for path in self._import_paths_for_manifest(manifest):
-            if str(path) not in sys.path:
-                sys.path.insert(0, str(path))
+            path_text = str(path)
+            # Installed generations live in separate immutable directories. A rollback
+            # must make the selected generation win over paths retained from newer ones.
+            while path_text in sys.path:
+                sys.path.remove(path_text)
+            sys.path.insert(0, path_text)
         module = importlib.import_module(module_name)
         fn = getattr(module, func_name) if func_name else None
         return module, fn
+
+    @staticmethod
+    def _evict_entrypoint_module(manifest: PluginManifest) -> None:
+        module_name = manifest.entrypoint.partition(":")[0]
+        root_name = module_name.split(".", 1)[0]
+        for loaded_name in list(sys.modules):
+            if loaded_name == module_name or loaded_name.startswith(f"{module_name}."):
+                sys.modules.pop(loaded_name, None)
+            elif manifest.source != "builtin" and (
+                loaded_name == root_name or loaded_name.startswith(f"{root_name}.")
+            ):
+                sys.modules.pop(loaded_name, None)
+        if manifest.path is not None:
+            for cached in manifest.path.rglob("__pycache__/*.pyc"):
+                try:
+                    cached.unlink()
+                except OSError:
+                    pass
+        importlib.invalidate_caches()
 
     def _import_paths_for_manifest(self, manifest: PluginManifest) -> list[Path]:
         paths: list[Path] = []
@@ -820,6 +1236,358 @@ class PluginManager:
             "hooks": {name: list(items) for name, items in self._hooks.items()},
             "mcp_servers": self.mcp_server_registry.snapshot(),
         }
+
+    def _publish_plugin_capabilities(self, plugin: LoadedPlugin, snapshot: dict[str, Any]) -> None:
+        bindings: list[Any] = []
+        payloads: dict[str, Any] = {}
+
+        def add(kind, name, payload, *, manager_key=None, contract=None, metadata=None, ordinal=0):
+            binding = self._capability_mapper.binding(
+                kind=kind,
+                public_name=name,
+                owner=plugin.key,
+                generation_id=plugin.generation_id,
+                runtime_instance_id=plugin.runtime_instance_id,
+                manager_key=manager_key or name,
+                contract=contract if contract is not None else payload,
+                metadata=metadata,
+                ordinal=ordinal,
+            )
+            bindings.append(binding)
+            payloads[binding.binding_id] = payload
+
+        entries = snapshot["entries"]
+        for name in plugin.tools_registered:
+            entry = entries["tools"].get(name)
+            if entry is not None:
+                add(CapabilityKind.TOOL, name, entry, contract=_tool_contract(entry))
+        for name in plugin.skills_registered:
+            entry = entries["skills"].get(name)
+            if entry is not None:
+                add(CapabilityKind.SKILL, name, entry, contract=_skill_contract(entry))
+        for name in plugin.workflows_registered:
+            entry = entries["workflows"].get(name)
+            if entry is not None:
+                add(CapabilityKind.WORKFLOW, name, entry, contract=_workflow_contract(entry))
+        for name in plugin.platforms_registered:
+            entry = entries["platforms"].get(name)
+            if entry is not None:
+                add(CapabilityKind.PLATFORM, name, entry, contract=_platform_contract(entry))
+        for name in plugin.memory_providers_registered:
+            entry = entries["memory_providers"].get(name)
+            if entry is not None:
+                add(CapabilityKind.MEMORY_PROVIDER, name, entry, contract=name)
+        for name in plugin.commands_registered:
+            entry = self._commands.get(name)
+            if entry is not None:
+                add(
+                    CapabilityKind.COMMAND,
+                    name,
+                    entry,
+                    contract={"description": entry.description, "scope": entry.scope},
+                )
+
+        typed_hooks = [
+            item for item in self.hook_manager.registrations(include_inactive=True)
+            if item.owner == plugin.runtime_instance_id
+        ]
+        for ordinal, registration in enumerate(typed_hooks):
+            add(
+                CapabilityKind.HOOK,
+                registration.event.value,
+                registration,
+                manager_key=registration.hook_id,
+                contract={
+                    "event": registration.event.value,
+                    "matcher": registration.matcher,
+                    "name": registration.name,
+                    "priority": registration.priority,
+                },
+                metadata={
+                    "priority": registration.priority,
+                    "order": registration.order,
+                    "matcher": registration.matcher,
+                },
+                ordinal=ordinal,
+            )
+        mcp_entries, _revision = self.mcp_server_registry.snapshot()
+        for name in plugin.mcp_servers_registered:
+            registration = mcp_entries.get(name)
+            if registration is not None:
+                add(
+                    CapabilityKind.MCP_SERVER,
+                    name,
+                    registration,
+                    contract=registration.config,
+                )
+
+        core_bindings, core_payloads = self._capture_core_bindings(snapshot, plugin)
+        active = {
+            owner: values
+            for owner, values in self._active_bindings.items()
+            if owner not in {plugin.key, "core"}
+        }
+        active["core"] = tuple(core_bindings)
+        active[plugin.key] = tuple(bindings)
+        catalog = CandidateCatalog([
+            binding
+            for owner_bindings in active.values()
+            for binding in owner_bindings
+        ] + [
+            binding
+            for dynamic_bindings in self._dynamic_bindings.values()
+            for binding in dynamic_bindings
+        ])
+        next_snapshot = self._capability_builder.build(
+            catalog,
+            revision=self.capability_store.current.revision + 1,
+        )
+        self._binding_payloads.update(core_payloads)
+        self._binding_payloads.update(payloads)
+        self._active_bindings = active
+        self._runtime_bindings[plugin.runtime_instance_id] = tuple(bindings)
+        self.capability_store.publish_nowait(next_snapshot)
+        active_hook_ids = {
+            route.manager_key
+            for routes in next_snapshot.routes.get(CapabilityKind.HOOK, {}).values()
+            for route in routes
+        }
+        self.hook_manager.activate_managed_routes(active_hook_ids)
+
+    def _capture_core_bindings(
+        self,
+        snapshot: dict[str, Any],
+        current_plugin: LoadedPlugin,
+    ) -> tuple[list[Any], dict[str, Any]]:
+        bindings: list[Any] = []
+        payloads: dict[str, Any] = {}
+        plugin_names = {
+            "tools": set(current_plugin.tools_registered),
+            "skills": set(current_plugin.skills_registered),
+            "workflows": set(current_plugin.workflows_registered),
+            "platforms": set(current_plugin.platforms_registered),
+            "memory_providers": set(current_plugin.memory_providers_registered),
+        }
+        kind_map = {
+            "tools": CapabilityKind.TOOL,
+            "skills": CapabilityKind.SKILL,
+            "workflows": CapabilityKind.WORKFLOW,
+            "platforms": CapabilityKind.PLATFORM,
+            "memory_providers": CapabilityKind.MEMORY_PROVIDER,
+        }
+        known_plugin_names: dict[str, set[str]] = {name: set() for name in kind_map}
+        attributes = {
+            "tools": "tools_registered",
+            "skills": "skills_registered",
+            "workflows": "workflows_registered",
+            "platforms": "platforms_registered",
+            "memory_providers": "memory_providers_registered",
+        }
+        for loaded in self._plugins.values():
+            if loaded.key == current_plugin.key:
+                continue
+            for group, attribute in attributes.items():
+                known_plugin_names[group].update(getattr(loaded, attribute))
+
+        for group, entries in snapshot["entries"].items():
+            if group not in kind_map:
+                continue
+            for name, payload in entries.items():
+                if name in plugin_names[group] or name in known_plugin_names[group]:
+                    continue
+                if group == "tools" and name.startswith("mcp__"):
+                    continue
+                contract_fn = {
+                    "tools": _tool_contract,
+                    "skills": _skill_contract,
+                    "workflows": _workflow_contract,
+                    "platforms": _platform_contract,
+                }.get(group, lambda item: name)
+                binding = self._capability_mapper.binding(
+                    kind=kind_map[group],
+                    public_name=name,
+                    owner="core",
+                    generation_id="core@host-v1",
+                    runtime_instance_id="host",
+                    manager_key=name,
+                    contract=contract_fn(payload),
+                )
+                bindings.append(binding)
+                payloads[binding.binding_id] = payload
+        return bindings, payloads
+
+    def _publish_without_owner(self, owner: str) -> None:
+        if owner not in self._active_bindings:
+            return
+        active = {
+            key: bindings for key, bindings in self._active_bindings.items() if key != owner
+        }
+        catalog = CandidateCatalog([
+            binding for owner_bindings in active.values() for binding in owner_bindings
+        ] + [
+            binding
+            for dynamic_bindings in self._dynamic_bindings.values()
+            for binding in dynamic_bindings
+        ])
+        snapshot = self._capability_builder.build(
+            catalog,
+            revision=self.capability_store.current.revision + 1,
+        )
+        self._active_bindings = active
+        self.capability_store.publish_nowait(snapshot)
+        active_hook_ids = {
+            route.manager_key
+            for routes in snapshot.routes.get(CapabilityKind.HOOK, {}).values()
+            for route in routes
+        }
+        self.hook_manager.activate_managed_routes(active_hook_ids)
+
+    def _publish_current_bindings(self) -> None:
+        catalog = CandidateCatalog([
+            binding
+            for owner_bindings in self._active_bindings.values()
+            for binding in owner_bindings
+        ] + [
+            binding
+            for dynamic_bindings in self._dynamic_bindings.values()
+            for binding in dynamic_bindings
+        ])
+        snapshot = self._capability_builder.build(
+            catalog,
+            revision=self.capability_store.current.revision + 1,
+        )
+        self.capability_store.publish_nowait(snapshot)
+        active_hook_ids = {
+            route.manager_key
+            for routes in snapshot.routes.get(CapabilityKind.HOOK, {}).values()
+            for route in routes
+        }
+        self.hook_manager.activate_managed_routes(active_hook_ids)
+
+    def _retire_snapshot(self, snapshot) -> None:
+        retained_ids = self.capability_store.retained_binding_ids()
+        for binding_id in snapshot.binding_ids - retained_ids:
+            self._binding_payloads.pop(binding_id, None)
+        retained_runtimes = self.capability_store.retained_runtime_ids()
+        runtime_ids = {
+            route.runtime_instance_id
+            for by_name in snapshot.routes.values()
+            for routes in by_name.values()
+            for route in routes
+        }
+        for runtime_id in runtime_ids - retained_runtimes - {"host"}:
+            plugin = self._runtime_records.pop(runtime_id, None)
+            if plugin is None or plugin.runtime_state is PluginRuntimeState.ACTIVE:
+                continue
+            self.hook_manager.unregister_owner(runtime_id)
+            tasks = self._plugin_tasks.pop(runtime_id, set())
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            plugin.ctx = None
+            plugin.module = None
+            plugin.runtime_state = PluginRuntimeState.STOPPED
+            self._runtime_bindings.pop(runtime_id, None)
+        if self._mcp_manager is not None:
+            for runtime_id in runtime_ids - retained_runtimes:
+                if not runtime_id.startswith("mcp:"):
+                    continue
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    asyncio.run(self._mcp_manager.retire_runtime(runtime_id))
+                else:
+                    loop.create_task(
+                        self._mcp_manager.retire_runtime(runtime_id),
+                        name=f"mcp-retire:{runtime_id}",
+                    )
+        self._finalize_pending_removals()
+
+    def _finalize_pending_removals(self) -> None:
+        retained_runtimes = self.capability_store.retained_runtime_ids()
+        for plugin_key, pending in list(self._pending_package_removals.items()):
+            runtime_ids = {
+                runtime_id
+                for runtime_id, plugin in self._runtime_records.items()
+                if plugin.key == plugin_key
+            }
+            if runtime_ids & retained_runtimes:
+                continue
+            for path in pending.get("paths", []):
+                target = Path(path)
+                try:
+                    resolved = target.resolve()
+                    root = self.installer.packages_root.resolve()
+                except OSError:
+                    continue
+                if root in resolved.parents:
+                    shutil.rmtree(resolved, ignore_errors=True)
+            if pending.get("purge_data"):
+                data_path = self.installer.data_root / plugin_key.replace("/", "__")
+                shutil.rmtree(data_path, ignore_errors=True)
+            self.install_store.remove(plugin_key)
+            current = self._plugins.get(plugin_key)
+            if current is not None and current.runtime_state is not PluginRuntimeState.ACTIVE:
+                self._plugins.pop(plugin_key, None)
+            self._pending_package_removals.pop(plugin_key, None)
+
+    def _desired_mcp_configs(self) -> list[Any]:
+        return [
+            *list(getattr(self.settings, "mcp_servers", []) or []),
+            *self.get_mcp_servers(),
+        ]
+
+    def _rollback_to_runtime(self, plugin_key: str, runtime_id: str) -> None:
+        previous = self._runtime_records.get(runtime_id)
+        bindings = self._runtime_bindings.get(runtime_id)
+        if previous is None or bindings is None:
+            return
+        current_id = self._active_runtime_by_plugin.get(plugin_key, "")
+        current = self._runtime_records.get(current_id)
+        if current is not None:
+            current.runtime_state = PluginRuntimeState.DRAINING
+        self._plugins[plugin_key] = previous
+        previous.runtime_state = PluginRuntimeState.ACTIVE
+        previous.status = PluginStatus.LOADED
+        self._active_runtime_by_plugin[plugin_key] = runtime_id
+        self._active_bindings[plugin_key] = bindings
+        self._activate_binding_payloads(bindings)
+        self._publish_current_bindings()
+
+    def _activate_binding_payloads(self, bindings) -> None:
+        from personal_agent.memory.provider_registry import memory_provider_registry
+        from personal_agent.platforms.core import platform_registry
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.tools.registry import tool_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        for binding in bindings:
+            payload = self.capability_payload(binding.binding_id)
+            if payload is None:
+                continue
+            if binding.kind is CapabilityKind.TOOL:
+                tool_registry.register(payload)
+            elif binding.kind is CapabilityKind.SKILL:
+                skill_registry.register(payload)
+            elif binding.kind is CapabilityKind.WORKFLOW:
+                workflow_registry.register(payload)
+            elif binding.kind is CapabilityKind.PLATFORM:
+                platform_registry.register(payload)
+            elif binding.kind is CapabilityKind.COMMAND:
+                self._commands[binding.public_name] = payload
+            elif binding.kind is CapabilityKind.MCP_SERVER:
+                self.mcp_server_registry.register(
+                    payload.plugin_key,
+                    payload.config,
+                    runtime_instance_id=payload.runtime_instance_id,
+                )
+            elif binding.kind is CapabilityKind.MEMORY_PROVIDER:
+                memory_provider_registry.register(
+                    name=payload.name,
+                    plugin_key=payload.plugin_key,
+                    factory=payload.factory,
+                    validator=payload.validator,
+                )
 
     def _restore_registration_snapshot(self, snapshot: dict[str, Any]) -> None:
         from personal_agent.memory.provider_registry import memory_provider_registry
@@ -938,7 +1706,6 @@ class PluginManager:
         plugin.commands_registered.clear()
         plugin.middleware_registered.clear()
         plugin.memory_providers_registered.clear()
-
     def _extend_unique(self, target: list[str], values: list[str]) -> None:
         for value in values:
             if value not in target:
@@ -961,6 +1728,42 @@ class PluginManager:
             return left.resolve() == right.resolve()
         except OSError:
             return left.absolute() == right.absolute()
+
+
+def _tool_contract(entry: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(entry, "name", ""),
+        "description": getattr(entry, "description", ""),
+        "schema": getattr(entry, "schema", {}),
+        "permission_category": getattr(entry, "permission_category", ""),
+        "risk_level": getattr(entry, "risk_level", ""),
+    }
+
+
+def _skill_contract(entry: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(entry, "name", ""),
+        "description": getattr(entry, "description", ""),
+        "path": getattr(entry, "path", ""),
+        "triggers": list(getattr(entry, "triggers", []) or []),
+    }
+
+
+def _workflow_contract(entry: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(entry, "name", ""),
+        "description": getattr(entry, "description", ""),
+        "phases": list(getattr(entry, "phases", []) or []),
+        "when_to_use": getattr(entry, "when_to_use", ""),
+    }
+
+
+def _platform_contract(entry: Any) -> dict[str, Any]:
+    capabilities = getattr(entry, "capabilities", None)
+    return {
+        "name": getattr(entry, "name", ""),
+        "capabilities": repr(capabilities),
+    }
 
 
 def run_async(coro):

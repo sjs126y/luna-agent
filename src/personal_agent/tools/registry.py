@@ -97,25 +97,11 @@ class ToolRegistry:
         if quiet_mode and cache_key in self._defs_cache:
             return list(self._defs_cache[cache_key])
 
-        # Resolve which tools to include
-        resolved = resolve_toolsets(enabled_toolsets, self.all_names)
-
-        # Check dependencies
-        active: list[ToolEntry] = []
-        for name in sorted(resolved):
-            entry = self._entries.get(name)
-            if entry is None:
-                continue
-            if entry.check_fn and not entry.check_fn():
-                logger.debug("Tool '%s' skipped: check_fn returned False", name)
-                continue
-            active.append(entry)
-
-        # Build schemas
-        if skip_bridge:
-            result = [_entry_to_schema(e) for e in active]
-        else:
-            result = _assemble_with_bridge(active, is_core_tool)
+        result = self.get_definitions_for_entries(
+            self._entries.values(),
+            enabled_toolsets=enabled_toolsets,
+            skip_bridge=skip_bridge,
+        )
 
         # Cache if quiet
         if quiet_mode:
@@ -125,6 +111,31 @@ class ToolRegistry:
             self._defs_cache[cache_key] = result
 
         return result
+
+    def get_definitions_for_entries(
+        self,
+        entries,
+        *,
+        enabled_toolsets: list[str] | None = None,
+        skip_bridge: bool = False,
+    ) -> list[dict]:
+        """Build schemas from a pinned capability view instead of the live registry."""
+        from personal_agent.tools.toolsets import resolve_toolsets, is_core_tool
+
+        by_name = {entry.name: entry for entry in entries if entry is not None}
+        resolved = resolve_toolsets(enabled_toolsets, set(by_name))
+        active: list[ToolEntry] = []
+        for name in sorted(resolved):
+            entry = by_name.get(name)
+            if entry is None:
+                continue
+            if entry.check_fn and not entry.check_fn():
+                logger.debug("Tool '%s' skipped: check_fn returned False", name)
+                continue
+            active.append(entry)
+        if skip_bridge:
+            return [_entry_to_schema(entry) for entry in active]
+        return _assemble_with_bridge(active, is_core_tool)
 
     # ── dispatch ───────────────────────────────────────
 

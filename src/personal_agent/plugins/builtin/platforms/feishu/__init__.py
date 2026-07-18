@@ -11,7 +11,7 @@ def register(ctx) -> None:
     def _check(config):
         return bool(getattr(config, "feishu_app_id", "") and getattr(config, "feishu_app_secret", ""))
 
-    ctx.register_platform(PlatformEntry(
+    ctx.register.platform(PlatformEntry(
         name="feishu",
         factory=_factory,
         check_fn=_check,

@@ -11,6 +11,7 @@ from personal_agent.mcp.models import MCPServerConfig
 class RegisteredMCPServer:
     plugin_key: str
     config: MCPServerConfig
+    runtime_instance_id: str = ""
 
 
 class MCPServerRegistry:
@@ -26,6 +27,7 @@ class MCPServerRegistry:
         self,
         plugin_key: str,
         config: MCPServerConfig | dict,
+        runtime_instance_id: str = "",
     ) -> MCPServerConfig:
         normalized = config if isinstance(config, MCPServerConfig) else MCPServerConfig.from_mapping(config)
         existing = self._entries.get(normalized.name)
@@ -37,8 +39,20 @@ class MCPServerRegistry:
                 )
             if existing.config == normalized:
                 return normalized
-            raise ValueError(f"MCP server '{normalized.name}' is already registered by this plugin")
-        self._entries[normalized.name] = RegisteredMCPServer(plugin_key, normalized)
+            if existing.runtime_instance_id == runtime_instance_id:
+                raise ValueError(f"MCP server '{normalized.name}' is already registered by this plugin generation")
+            self._entries[normalized.name] = RegisteredMCPServer(
+                plugin_key,
+                normalized,
+                runtime_instance_id,
+            )
+            self._revision += 1
+            return normalized
+        self._entries[normalized.name] = RegisteredMCPServer(
+            plugin_key,
+            normalized,
+            runtime_instance_id,
+        )
         self._revision += 1
         return normalized
 
@@ -52,6 +66,10 @@ class MCPServerRegistry:
 
     def configs(self) -> list[MCPServerConfig]:
         return [item.config for item in self._entries.values()]
+
+    def owner_for(self, name: str) -> str:
+        entry = self._entries.get(name)
+        return entry.plugin_key if entry is not None else ""
 
     def snapshot(self) -> tuple[dict[str, RegisteredMCPServer], int]:
         return dict(self._entries), self._revision

@@ -54,6 +54,7 @@ def test_qq_plugin_registers_shared_managed_companion(tmp_path: Path):
         def __init__(self):
             self.settings = settings
             self.entry = None
+            self.register = SimpleNamespace(platform=self._register_platform)
 
         def parse_config(self, model_type):
             return model_type.model_validate({
@@ -63,7 +64,7 @@ def test_qq_plugin_registers_shared_managed_companion(tmp_path: Path):
                 },
             })
 
-        def register_platform(self, entry):
+        def _register_platform(self, entry):
             self.entry = entry
 
     context = FakeContext()

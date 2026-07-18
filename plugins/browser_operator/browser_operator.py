@@ -45,7 +45,7 @@ def register(ctx) -> None:
     if config.isolated:
         args.append("--isolated")
     args.extend(["--output-dir", "."])
-    ctx.register_mcp_server({
+    ctx.register.mcp_server({
         "name": "playwright",
         "transport": "stdio",
         "command": config.command,
@@ -59,7 +59,7 @@ def register(ctx) -> None:
         "artifact_roots": ["."],
         "artifact_extensions": [".png", ".jpg", ".jpeg", ".pdf", ".webm"],
     })
-    ctx.register_skills("skills")
+    ctx.register.skills("skills")
 
     allowed_domains = {_normalize_domain(value) for value in config.allowed_domains if value}
 
@@ -80,14 +80,14 @@ def register(ctx) -> None:
                 )
         return None
 
-    ctx.register_hook(
+    ctx.register.hook(
         HookEvent.PRE_TOOL_USE,
         enforce_browser_policy,
         name="enforce-browser-policy",
         matcher=r"^mcp__playwright__.+$",
         priority=10,
     )
-    ctx.register_command(CommandEntry(
+    ctx.register.command(CommandEntry(
         name="browser-status",
         description="Show Browser Operator safety configuration.",
         handler=lambda args="", **kwargs: _status(config, allowed_domains),

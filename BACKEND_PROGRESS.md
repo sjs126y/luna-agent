@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1078%20passed-2EA44F" alt="1078 tests passed">
+  <img src="https://img.shields.io/badge/tests-1093%20passed-2EA44F" alt="1093 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
 </p>
 
@@ -21,6 +21,18 @@
 
 ---
 
+## 2026-07-18：Plugin Runtime 热重载
+
+- `PluginContext` 替换为 generation-bound `PluginRuntimeContext`，注册 API 统一为 `ctx.register.*`；运行时 Port 固定到创建它的具体 instance，DRAINING generation 不能借用新实例继续提交任务。
+- 新增 `CandidateCatalog -> CapabilityMapper -> SnapshotBuilder -> CapabilityStore`，核心能力、插件能力和动态 MCP 工具进入同一不可变路由；Turn lease 固定 Tool、Skill、Workflow、Command 与 Hook，避免更新中途串代。
+- Agent 缓存按工具/Skill/Workflow 投影 fingerprint 刷新，无关 Hook 或 Delivery 变化不破坏 Prompt Cache。
+- MCP candidate 可以在不污染全局 Registry 的情况下先连接并获取工具；切换后新旧 server runtime 共存，普通断线不更新 revision，权威工具列表变化才发布新快照。
+- 新增本地目录、ZIP、TAR 的版本化安装，经过 staging、路径/链接/大小安全检查后进入不可变 package digest 目录；支持更新、回滚、延迟卸载和显式数据清除。
+- 核心 `personal-agent plugins` CLI 与运行中 `/plugins` 命令共享控制面；Runtime health 新增 snapshot revision、lease、generation、安装状态和 pending removal 诊断。
+- 新增隔离 `ctx.storage` 与 runtime-owned `ctx.tasks` 作为主动插件生命周期预留，本阶段不开放主动决策调度。
+- 新增 v1/v2 手工探针与实机清单；隔离生命周期验证同时发现并修复不可变包回滚时 `sys.path` 仍优先命中新版 handler 的问题。
+- 完整回归：`1093 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
+
 ## 2026-07-18：核心工具质量收口
 
 - 真实定位 Codex Responses 中转站差异：非流式响应只有 encrypted reasoning，流式 SSE 才包含 `response.output_text.delta`；`codex_responses` 现在强制使用 SSE，真实最小请求恢复返回“测试成功”。
@@ -31,7 +43,7 @@
 - `/home/sujinsheng` 的 `glob('*')` 实测由约 379 秒降至约 0.02 秒，100 个结果后立即停止。
 - `read` 新增 `offset/limit` 行窗口并拒绝二进制；`write/edit` 使用 UTF-8 字节限制和原子替换；Bash 输出改为有界持续排空；Web Fetch 增加逐跳 SSRF、重定向、内容类型和响应大小边界。
 - 常驻工具面从几乎全部内置能力收敛为 19 个高频核心工具加 3 个工具桥接入口；其余能力不删除，通过 `tool_search` 按需发现。
-- 完整回归：`1078 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
+- 当时完整回归：`1078 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
 
 ## 2026-07-18：主干状态与项目规模
 

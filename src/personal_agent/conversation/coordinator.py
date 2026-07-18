@@ -37,6 +37,7 @@ class ConversationTurnRunner(Protocol):
         turn_id: str = "",
         steer=None,
         policy_snapshot=None,
+        capability_view=None,
     ): ...
 
 
@@ -60,11 +61,17 @@ class ConversationCoordinator:
         active_turns: ActiveTurnRegistry | None = None,
         command_dispatcher: CoordinatorCommandDispatcher | None = None,
         delivery_service=None,
+        capability_store=None,
+        hook_manager=None,
+        capability_binder=None,
     ) -> None:
         self.conversation_service = conversation_service
         self.active_turns = active_turns or ActiveTurnRegistry()
         self.command_dispatcher = command_dispatcher
         self.delivery_service = delivery_service
+        self.capability_store = capability_store
+        self.hook_manager = hook_manager
+        self.capability_binder = capability_binder
         self._queues: dict[str, asyncio.Queue[_QueuedSubmission]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._immediate_tasks: set[asyncio.Task[None]] = set()
@@ -186,6 +193,30 @@ class ConversationCoordinator:
                     return
 
     async def _execute(self, request: SubmissionRequest) -> SubmissionOutcome:
+        if self.capability_store is not None:
+            async with await self.capability_store.acquire() as lease:
+                view = lease.view()
+                if self.capability_binder is not None:
+                    with self.capability_binder(view):
+                        return await self._execute_with_capabilities(request, view)
+                if self.hook_manager is not None:
+                    from personal_agent.plugins.runtime import CapabilityKind
+
+                    hook_ids = {
+                        route.manager_key
+                        for routes in view.routes.get(CapabilityKind.HOOK, {}).values()
+                        for route in routes
+                    }
+                    with self.hook_manager.bind_routes(hook_ids):
+                        return await self._execute_with_capabilities(request, view)
+                return await self._execute_with_capabilities(request, view)
+        return await self._execute_with_capabilities(request, None)
+
+    async def _execute_with_capabilities(
+        self,
+        request: SubmissionRequest,
+        capability_view,
+    ) -> SubmissionOutcome:
         started_at = datetime.now(UTC)
         command_result = await self._dispatch_command(request)
         if command_result is not None and command_result.continue_text is None:
@@ -202,14 +233,19 @@ class ConversationCoordinator:
             task=asyncio.current_task(),
         )
         try:
+            kwargs = {
+                "event_sink": request.event_sink,
+                "confirm": request.confirm,
+                "turn_id": turn_id,
+                "steer": self.active_turns,
+                "policy_snapshot": policy_snapshot,
+            }
+            if capability_view is not None:
+                kwargs["capability_view"] = capability_view
             result = await self.conversation_service.run_turn_input_events(
                 request.session_key,
                 request.input,
-                event_sink=request.event_sink,
-                confirm=request.confirm,
-                turn_id=turn_id,
-                steer=self.active_turns,
-                policy_snapshot=policy_snapshot,
+                **kwargs,
             )
         except asyncio.CancelledError:
             return SubmissionOutcome(
@@ -253,6 +289,23 @@ class ConversationCoordinator:
         )
 
     async def _complete_immediate(
+        self,
+        request: SubmissionRequest,
+        future: asyncio.Future[SubmissionOutcome],
+        policy: CommandExecutionPolicy,
+    ) -> None:
+        if self.capability_store is not None:
+            async with await self.capability_store.acquire() as lease:
+                view = lease.view()
+                if self.capability_binder is not None:
+                    with self.capability_binder(view):
+                        await self._complete_immediate_bound(request, future, policy)
+                        return
+                await self._complete_immediate_bound(request, future, policy)
+                return
+        await self._complete_immediate_bound(request, future, policy)
+
+    async def _complete_immediate_bound(
         self,
         request: SubmissionRequest,
         future: asyncio.Future[SubmissionOutcome],

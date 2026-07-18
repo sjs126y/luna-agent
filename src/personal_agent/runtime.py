@@ -288,6 +288,7 @@ class AppRuntime:
             "query": query_health,
             "execution": _execution_health_snapshot(self.settings),
             "plugins": len(self.plugin_manager.list_plugins()),
+            "plugin_runtime": self.plugin_manager.capability_health(),
             "hooks": self.hook_manager.health_snapshot(),
             "cached_agents": len(self.conversation_service.agent_cache),
             "closed": self.closed,
@@ -415,6 +416,9 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 conversation_service,
                 command_dispatcher=dispatch_command,
                 delivery_service=delivery_service,
+                capability_store=plugin_manager.capability_store,
+                hook_manager=hook_manager,
+                capability_binder=plugin_manager.bind_capability_view,
             )
             plugin_manager.bind_application_ports(
                 conversation_coordinator=conversation_coordinator,
@@ -627,7 +631,9 @@ async def start_mcp_manager(settings: Settings, plugin_manager: PluginManager):
         process_backend=settings.process_sandbox_backend,
         sandbox_roots=list(settings.sandbox_roots),
         work_dir=mcp_work_dir,
+        on_tools_changed=plugin_manager.refresh_mcp_tools,
     )
+    plugin_manager.bind_mcp_manager(manager)
     await manager.start()
     return manager
 

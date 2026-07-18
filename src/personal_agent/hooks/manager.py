@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 import inspect
 import logging
 import re
@@ -67,6 +69,12 @@ class HookManager:
     def __init__(self) -> None:
         self._registrations: dict[HookEvent, tuple[HookRegistration, ...]] = {}
         self._stats: dict[str, HookStats] = {}
+        self._active_ids: set[str] = set()
+        self._managed_owners: set[str] = set()
+        self._route_ids: ContextVar[frozenset[str] | None] = ContextVar(
+            f"hook-route-ids:{id(self)}",
+            default=None,
+        )
         self._next_order = 0
 
     def register(
@@ -80,6 +88,8 @@ class HookManager:
         priority: int = 100,
         timeout_seconds: float | None = None,
         source: HookSource | str = HookSource.PLUGIN,
+        active: bool = True,
+        managed: bool = False,
     ) -> HookRegistration:
         normalized_event = event if isinstance(event, HookEvent) else HookEvent(str(event))
         normalized_source = source if isinstance(source, HookSource) else HookSource(str(source))
@@ -122,6 +132,10 @@ class HookManager:
         items.sort(key=lambda item: (item.priority, item.order))
         self._registrations[normalized_event] = tuple(items)
         self._stats[hook_id] = HookStats()
+        if active:
+            self._active_ids.add(hook_id)
+        if managed:
+            self._managed_owners.add(normalized_owner)
         return registration
 
     def unregister_owner(self, owner: str) -> list[str]:
@@ -132,36 +146,76 @@ class HookManager:
                 if registration.owner == owner:
                     removed.append(registration.hook_id)
                     self._stats.pop(registration.hook_id, None)
+                    self._active_ids.discard(registration.hook_id)
                 else:
                     kept.append(registration)
             if kept:
                 self._registrations[event] = tuple(kept)
             else:
                 self._registrations.pop(event, None)
+        self._managed_owners.discard(owner)
         return removed
 
-    def registrations(self, event: HookEvent | None = None) -> list[HookRegistration]:
+    def registrations(
+        self,
+        event: HookEvent | None = None,
+        *,
+        include_inactive: bool = False,
+    ) -> list[HookRegistration]:
         if event is not None:
-            return list(self._registrations.get(event, ()))
-        return [
+            items = list(self._registrations.get(event, ()))
+            return items if include_inactive else [item for item in items if item.hook_id in self._active_ids]
+        items = [
             registration
             for hook_event in HookEvent
             for registration in self._registrations.get(hook_event, ())
         ]
+        return items if include_inactive else [item for item in items if item.hook_id in self._active_ids]
+
+    def activate_managed_routes(self, hook_ids: set[str]) -> None:
+        unmanaged = {
+            registration.hook_id
+            for registration in self.registrations(include_inactive=True)
+            if registration.owner not in self._managed_owners
+            and registration.hook_id in self._active_ids
+        }
+        self._active_ids = unmanaged | set(hook_ids)
+
+    @contextmanager
+    def bind_routes(self, hook_ids: set[str] | frozenset[str]):
+        unmanaged = {
+            registration.hook_id
+            for registration in self.registrations(include_inactive=True)
+            if registration.owner not in self._managed_owners
+            and registration.hook_id in self._active_ids
+        }
+        token = self._route_ids.set(frozenset(hook_ids) | frozenset(unmanaged))
+        try:
+            yield
+        finally:
+            self._route_ids.reset(token)
+
+    def _effective_ids(self) -> set[str] | frozenset[str]:
+        pinned = self._route_ids.get()
+        return pinned if pinned is not None else self._active_ids
 
     def has_matching_registration(self, envelope: HookEnvelope) -> bool:
         """Return whether dispatch would invoke at least one registered hook."""
+        effective_ids = self._effective_ids()
         return any(
-            self._matches(registration, envelope)
+            registration.hook_id in effective_ids
+            and self._matches(registration, envelope)
             for registration in self._registrations.get(envelope.event_name, ())
         )
 
     async def dispatch(self, envelope: HookEnvelope) -> Any:
         event = envelope.event_name
+        effective_ids = self._effective_ids()
         registrations = tuple(
             registration
             for registration in self._registrations.get(event, ())
-            if self._matches(registration, envelope)
+            if registration.hook_id in effective_ids
+            and self._matches(registration, envelope)
         )
         if not registrations:
             return self._empty_outcome(event)

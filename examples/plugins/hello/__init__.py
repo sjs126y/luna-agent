@@ -19,11 +19,11 @@ def hello_hook(value=None, **kwargs):
 def register(ctx) -> None:
     global _GREETING
     _GREETING = str(ctx.config.get("greeting", "hello"))
-    ctx.register_skills("skills")
-    ctx.register_command(CommandEntry(
+    ctx.register.skills("skills")
+    ctx.register.command(CommandEntry(
         name="hello",
         description="Return a small greeting.",
         handler=hello_command,
         scope="both",
     ))
-    ctx.register_hook("example_hello", hello_hook, priority=100)
+    ctx.register.hook("example_hello", hello_hook, priority=100)
