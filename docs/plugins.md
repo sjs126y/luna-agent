@@ -339,6 +339,15 @@ plugins:
 
 这些插件第一次观察外部状态时只建立基线；没有变化时不会调用 LLM。Reminder 和 Inbox 使用稳定 request id，Feed 与 GitHub 使用事件集合摘要生成 request id。主动功能默认关闭，并要求目标 session 同时出现在 `active.sessions`。
 
+Feed Watch 默认拒绝解析到私网或回环地址的订阅源。若 Watt Toolkit 等本地加速器有意将公网域名映射到本地，可通过 `trusted_private_hosts` 精确声明主机名。该配置不会放行其他域名，云元数据地址仍始终禁止：
+
+```yaml
+plugins:
+  config:
+    automation/feed-watch:
+      trusted_private_hosts: ["github.com"]
+```
+
 Inbox 不删除或移动原文件。每个目标 session 会得到独立 scope 的 Artifact；Conversation Port 会再次校验 Artifact owner 和 session，插件不能把其他 runtime 的产物注入会话。
 
 ## 插件管理查询

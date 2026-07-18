@@ -45,6 +45,7 @@ class FeedWatchConfig(BaseModel):
     feeds: list[FeedSource] = Field(default_factory=list)
     poll_interval_seconds: float = Field(default=900.0, ge=60.0)
     max_items_per_feed: int = Field(default=30, ge=1, le=100)
+    trusted_private_hosts: list[str] = Field(default_factory=list)
     active: ActiveConfig = Field(default_factory=ActiveConfig)
 
 
@@ -232,7 +233,13 @@ class FeedWatcher:
             await self.repository.clear_pending(delivered_ids)
 
 
-async def _feed_fetch(url: str, if_none_match: str = "", if_modified_since: str = "") -> str:
+async def _feed_fetch(
+    url: str,
+    if_none_match: str = "",
+    if_modified_since: str = "",
+    *,
+    trusted_private_hosts: frozenset[str] = frozenset(),
+) -> str:
     current = str(url or "").strip()
     if not current:
         raise ValueError("feed URL must not be empty")
@@ -243,7 +250,11 @@ async def _feed_fetch(url: str, if_none_match: str = "", if_modified_since: str 
         headers["If-Modified-Since"] = str(if_modified_since)
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         for redirect_count in range(_MAX_REDIRECTS + 1):
-            error = await asyncio.to_thread(check_url, current)
+            error = await asyncio.to_thread(
+                _check_feed_url,
+                current,
+                trusted_private_hosts,
+            )
             if error:
                 raise PermissionError(error)
             async with client.stream("GET", current, headers=headers) as response:
@@ -276,6 +287,11 @@ async def _feed_fetch(url: str, if_none_match: str = "", if_modified_since: str 
 
 def register(ctx) -> None:
     config = ctx.parse_config(FeedWatchConfig)
+    trusted_private_hosts = frozenset(
+        str(host).strip().lower().rstrip(".")
+        for host in config.trusted_private_hosts
+        if str(host).strip()
+    )
     repository_ref: dict[str, FeedRepository] = {}
 
     def repository() -> FeedRepository:
@@ -287,7 +303,7 @@ def register(ctx) -> None:
         session_key = _current_session_key()
         if not _session_allowed(session_key, config.active.sessions):
             raise PermissionError("feed session is not allowed by plugin configuration")
-        error = await asyncio.to_thread(check_url, url)
+        error = await asyncio.to_thread(_check_feed_url, url, trusted_private_hosts)
         if error:
             raise PermissionError(error)
         item = await repository().add(name=name, url=url, keywords=list(keywords or []), session_key=session_key)
@@ -302,6 +318,18 @@ def register(ctx) -> None:
     async def list_feeds() -> str:
         return json.dumps(await repository().subscriptions(session_key=_current_session_key()), ensure_ascii=False)
 
+    async def fetch_feed(
+        url: str,
+        if_none_match: str = "",
+        if_modified_since: str = "",
+    ) -> str:
+        return await _feed_fetch(
+            url,
+            if_none_match,
+            if_modified_since,
+            trusted_private_hosts=trusted_private_hosts,
+        )
+
     ctx.register.tool(ToolEntry(
         name="feed_fetch",
         description="Fetch raw RSS or Atom content with optional conditional request headers.",
@@ -314,7 +342,7 @@ def register(ctx) -> None:
             },
             "required": ["url"],
         },
-        handler=_feed_fetch,
+        handler=fetch_feed,
         toolset="web",
         permission_category="network",
         tags=["network", "feed", "fetch"],
@@ -359,6 +387,11 @@ def register(ctx) -> None:
         startup_timeout=15,
         shutdown_timeout=15,
     )
+
+
+def _check_feed_url(url: str, trusted_private_hosts: frozenset[str]) -> str | None:
+    hostname = str(urlparse(str(url or "")).hostname or "").lower().rstrip(".")
+    return check_url(url, allow_private=bool(hostname and hostname in trusted_private_hosts))
 
 
 def _subscription(name: str, url: str, keywords: list[str], sessions: list[str], source: str) -> dict[str, Any]:

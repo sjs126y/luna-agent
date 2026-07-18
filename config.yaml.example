@@ -211,6 +211,8 @@ plugins:
         #   sessions: []
       poll_interval_seconds: 900
       max_items_per_feed: 30
+      # 仅用于 Watt Toolkit 等将指定公网域名映射到本地的可信加速器。
+      trusted_private_hosts: []
       active:
         enabled: false
         sessions: []

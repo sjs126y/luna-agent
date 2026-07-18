@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,6 +64,29 @@ def test_feed_parser_supports_rss_and_atom(tmp_path):
     assert rss[0]["title"] == "First"
     assert atom[0]["title"] == "Atom"
     assert atom[0]["url"] == "https://example.com/a1"
+
+
+def test_feed_private_dns_requires_exact_trusted_host(tmp_path, monkeypatch):
+    manager = _manager(tmp_path)
+    module = manager.list_plugins()[0].module
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0)),
+        ],
+    )
+
+    assert module._check_feed_url(
+        "https://github.com/openai/codex/releases.atom",
+        frozenset({"github.com"}),
+    ) is None
+    assert module._check_feed_url(
+        "https://untrusted.example/feed.xml",
+        frozenset({"github.com"}),
+    ) is not None
+
+    manager.unload_plugin(PLUGIN_KEY)
 
 
 @pytest.mark.asyncio

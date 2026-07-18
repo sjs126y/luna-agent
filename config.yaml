@@ -203,9 +203,15 @@ plugins:
           - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
         restart_backoff_seconds: [1, 2, 5, 10, 30]
     automation/feed-watch:
-      feeds: []
+      feeds:
+        - name: "Codex Releases"
+          url: "https://github.com/openai/codex/releases.atom"
+          sessions:
+            - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
       poll_interval_seconds: 900
       max_items_per_feed: 30
+      # Watt Toolkit resolves this trusted public hostname to its local accelerator.
+      trusted_private_hosts: ["github.com"]
       active:
         enabled: true
         sessions:
@@ -233,24 +239,20 @@ plugins:
       connect_timeout_seconds: 60
       call_timeout_seconds: 1800
     integrations/github-assistant:
-      url: "https://api.githubcopilot.com/mcp/"
-      auth_header_env: "GITHUB_MCP_AUTH"
-      repositories: []
+      repositories:
+        - "openai/codex"
       write_enabled: false
-      connect_timeout_seconds: 60
-      call_timeout_seconds: 120
       active:
-        enabled: false
-        sessions: []
-        restart_backoff_seconds: [1, 2, 5, 10, 30]
+        enabled: true
+        sessions:
+          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
       watch:
         pull_requests: true
         issues: true
         commits: true
         workflows: true
-        poll_interval_seconds: 300
+        poll_interval_seconds: 30
         per_page: 20
-        notify_on_start: false
     integrations/developer-docs:
       command: "npx"
       package: "@upstash/context7-mcp"
