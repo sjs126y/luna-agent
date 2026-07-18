@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/first%20step-doctor-0A84FF" alt="Run doctor first">
   <img src="https://img.shields.io/badge/logs-data%2Flogs-555555" alt="Logs directory">
-  <img src="https://img.shields.io/badge/tests-1093%20passed-2EA44F" alt="1093 tests passed">
+  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F" alt="1145 tests passed">
 </p>
 
 <p>
@@ -102,7 +102,7 @@ uv run personal-agent doctor
 
 ## 插件热重载
 
-包安装状态可以用 `personal-agent plugins install|rollback|uninstall` 离线管理；Gateway/TUI 已运行时使用核心 `/plugins` 命令，操作会直接进入当前 `PluginRuntimeManager`，不需要重启进程。独立 CLI 进程中的 `reload` 只用于加载验证，真正的进程内热重载应使用 `/plugins reload`。
+包安装状态可以用 `personal-agent plugins install|rollback|uninstall` 离线管理；Gateway/TUI 已运行时使用核心 `/plugins` 命令，操作会直接进入当前 `PluginManager`，不需要重启进程。独立 CLI 进程中的 `reload` 只用于加载验证，真正的进程内热重载应使用 `/plugins reload`。
 
 更新会发布新 Capability Snapshot。新 Turn 立即使用新 generation，执行中的 Turn 保持旧 lease；`plugin_runtime.active_leases` 与 `retired_revisions` 可以判断旧实例是否仍在排空。普通卸载保留 `data/plugins/data/<plugin-key>`，只有显式 `--purge-data` 才删除数据。
 
@@ -146,6 +146,13 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 
 - `ERROR`：manifest、env 或 entrypoint 有问题。
 - `DEFERRED`：延迟加载，平台/MCP 触发时才 import，通常不是错误。
+
+`Delivery`：
+
+- `session has no delivery binding`：旧版本常见于 Gateway 重启后、用户尚未再次发消息时的主动提交；当前版本会从 SessionStore 恢复绑定并把暂时缺失视为 `DEFERRED`。
+- `DEFERRED`：Conversation 已完成，消息已进入 Outbox 等待平台或目标恢复，不应重新提交同一 Agent turn。
+- Outbox 持续 `retry`：检查平台 adapter 是否 connected，以及 session 记录中的 `platform/chat_id` 是否仍有效。
+- 主动插件同一事件反复出现：确认插件使用稳定 `request_id`；Inbox Watch 同一文件签名达到 `max_submission_attempts` 后会停止提交，文件变化后才重新尝试。
 
 ## 验证命令
 

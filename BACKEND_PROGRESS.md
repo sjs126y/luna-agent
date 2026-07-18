@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1133%20passed-2EA44F" alt="1133 tests passed">
+  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F" alt="1145 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
@@ -20,6 +20,15 @@
 </div>
 
 ---
+
+## 2026-07-19：主动投递、提交幂等与上下文识别修复
+
+- Gateway 启动时从持久化 SessionStore 恢复 `session_key -> platform/chat_id` Delivery Binding，主动插件无需等待用户先发送一条平台消息即可投递。
+- Delivery Binding 或平台暂不可用统一进入 Outbox `DEFERRED`；Conversation 已完成时不再因为发送延迟而整轮重跑模型。
+- ConversationCoordinator 新增有界 `request_id` 幂等缓存，同一提交复用进行中或已完成结果，冲突载荷直接拒绝；Inbox Watch 对同一文件签名默认最多提交 3 次。
+- 修复热重载旧 Turn 的工具桥接穿透：`tool_search`、`tool_describe` 与嵌套 `tool_call` 现在只读取该 Turn lease 固定的 capability generation。
+- 上下文窗口识别补充 GPT-5、GPT-4.1、Claude、Gemini、DeepSeek、Qwen 与显式容量标记；未知模型默认从 64K 提升为 256K，显式 `llm.context_window` 继续优先。
+- 完整回归：`1145 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
 
 ## 2026-07-19：主动插件实机测试修复
 

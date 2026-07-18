@@ -44,6 +44,7 @@
 
 - 首 Token 和完整响应 P50/P95。
 - 长会话上下文与 provider cache。
+- 自动识别与显式配置的 context window 是否和中转站真实限制一致。
 - 并发 Memory prefetch。
 - MCP cold start / ready time。
 - Tool task success rate 与重复调用。

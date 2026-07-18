@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1113%20passed-2EA44F?logo=pytest&logoColor=white" alt="1113 tests passed">
+  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F?logo=pytest&logoColor=white" alt="1145 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -117,7 +117,7 @@ flowchart LR
 | 文件、Shell、网络与进程工具 | Ready | 核心工具直接可用，低频能力按需发现，扫描和输出有界 |
 | MCP Client Runtime | Ready | stdio / Streamable HTTP、后台启动、断线恢复 |
 | 长期个人记忆 | Ready | Lumora、Mem0、混合检索和本地 Qdrant |
-| 插件与 Skill | Ready | 被动能力、Gateway 主动 runner、资源端口与保守热重载 |
+| 插件与 Skill | Ready | 安装、升级、回滚、卸载、热重载、主动 runner 与资源端口 |
 | 多平台 Gateway | Ready | 微信、QQ、Telegram、飞书 |
 | 入站与出站多模态 | Ready | 图片、文件、音频、视频按平台能力处理 |
 | Workflow 与 Sub-agent | Ready | 并行、流水线、配额、活动状态 |
@@ -172,14 +172,14 @@ uv run personal-agent serve
 
 <p>
   <img src="https://img.shields.io/badge/Python%20files-365-3776AB" alt="365 Python files">
-  <img src="https://img.shields.io/badge/Python%20LOC-85%2C714-555555" alt="85714 Python lines">
-  <img src="https://img.shields.io/badge/runtime%20LOC-52%2C956-0A84FF" alt="52956 runtime lines">
-  <img src="https://img.shields.io/badge/test%20LOC-30%2C157-2EA44F" alt="30157 test lines">
+  <img src="https://img.shields.io/badge/Python%20LOC-86%2C280-555555" alt="86280 Python lines">
+  <img src="https://img.shields.io/badge/runtime%20LOC-53%2C154-0A84FF" alt="53154 runtime lines">
+  <img src="https://img.shields.io/badge/test%20LOC-30%2C474-2EA44F" alt="30474 test lines">
 </p>
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest -q  # 1113 passed, 1 warning
+uv run pytest -q  # 1145 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。

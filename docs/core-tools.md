@@ -6,7 +6,7 @@
 
 ![Core](https://img.shields.io/badge/core-19%20tools-2EA44F)
 ![Bridge](https://img.shields.io/badge/tool%20bridge-3%20entries-2563EB)
-![Tests](https://img.shields.io/badge/tests-1093%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-1145%20passed-2EA44F)
 
 [项目首页](../README.md) · [文档中心](README.md) · [架构说明](architecture.md) · [安全边界](capabilities-and-boundaries.md)
 
@@ -39,7 +39,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | Agent | `sub_agent` | 单一、通用的委派原语 |
 | Process | `process_start`、`process_read`、`process_wait`、`process_kill` | 长任务最常用生命周期 |
 
-当存在延迟工具时，Registry 额外暴露 `tool_search`、`tool_describe` 和 `tool_call` 三个桥接入口。
+当存在延迟工具时，Registry 额外暴露 `tool_search`、`tool_describe` 和 `tool_call` 三个桥接入口。三者读取当前 Turn 的 Capability lease，而不是实时全局 Registry；插件热更新后，旧 Turn 不会提前看到或调用新 generation 工具。
 
 ## 按需能力
 
