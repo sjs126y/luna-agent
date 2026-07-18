@@ -157,6 +157,7 @@ class PluginManager:
         return PluginConversationPort(
             plugin=plugin,
             coordinator=self._conversation_coordinator,
+            artifact_store=self._artifact_store,
         )
 
     def plugin_notification_port(self, plugin, *, capability: str = "notification"):
