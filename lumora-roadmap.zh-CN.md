@@ -7,6 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/MCP-core%20complete-2EA44F" alt="MCP complete">
   <img src="https://img.shields.io/badge/memory-refactor%20complete-2EA44F" alt="Memory complete">
+  <img src="https://img.shields.io/badge/plugin%20runtime-hot%20reload%20ready-2EA44F" alt="Plugin runtime ready">
   <img src="https://img.shields.io/badge/multimodal-foundation%20complete-2EA44F" alt="Multimodal complete">
   <img src="https://img.shields.io/badge/active%20decision-planned-7C3AED" alt="Active decision planned">
 </p>
@@ -28,7 +29,7 @@
 | --- | :---: | --- |
 | MCP Runtime | Core complete | OAuth / sampling / elicitation 按需求补充 |
 | Memory | Refactor complete | 知识 RAG 独立成插件，reranker 按需实现 |
-| 被动插件 | Foundation complete | 安装、卸载、快照和热加载 |
+| 被动插件 | Runtime complete | 插件生态、依赖策略与主动生命周期按需推进 |
 | 出站多模态 | Foundation complete | 微信/QQ 实机反馈与格式体验 |
 | Conversation Runtime | Complete | 继续真实使用与性能观测 |
 | 主动决策 | Planned | 候选、冷却、静默时间、预算与反馈 |
@@ -39,7 +40,7 @@ Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工
 
 下一阶段不该重写这些系统，而是改善生命周期边界：
 
-1. **已完成基础**：被动插件的作用域配置、Registry 归属、冲突检查和失败回滚；运行期热替换留待 Manager reconcile。
+1. **已完成**：被动插件具备版本化安装、不可变 package、generation、能力快照、Turn lease、旧实例排空、热更新、回滚、禁用与卸载；主动插件决策生命周期后续单独设计。
 2. **已完成**：MCP transport、单 server runtime、连接恢复、动态工具快照和结构化结果。
 3. **已完成基础**：完整的“入站媒体 -> 模型/工具 -> Artifact -> 出站媒体”路径；后续按真实平台反馈补格式与 caption 体验。
 4. **已完成基础**：统一 turn 分发、Delivery/Outbox、Cron 正式提交和主动插件端口；主动决策策略仍待推进。
@@ -62,7 +63,7 @@ Hermes 将工具分成三层：
 
 插件工具应进入统一 ToolRegistry，因此继续受 toolset 过滤、权限、审计、分发和 hook 约束。好的宿主边界包括：延迟导入重型平台插件、明确内建工具覆盖策略、默认不向插件暴露原始模型凭据的 LLM facade，以及核心定义的 hook 点。
 
-注册 hook 只是订阅已有核心事件。只有核心代码实际调用 `plugin_manager.invoke_hook("...")`，hook 才会运行；新增 hook 点仍需修改核心代码。普通插件加载不是可靠的进程内热重载模型；真正热替换需要版本代际、快照、租约和排空旧资源的设计。
+注册 hook 只是订阅已有核心事件。只有核心代码实际触发对应 HookEvent，hook 才会运行；新增 hook 点仍需修改核心代码。Lumora 已在普通 Registry 与各领域 manager 之上加入能力路由层，通过版本代际、不可变快照、Turn lease 和旧资源排空完成可靠的进程内热替换，而不以单个大对象取代原有 manager。
 
 ## 3. MCP
 
@@ -164,7 +165,7 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 | 方向 | 当前基础 | 主要缺口 | 状态 |
 | --- | --- | --- | --- |
 | MCP runtime | stdio、Streamable HTTP、重连、动态工具、结构化结果、诊断 | OAuth、sampling、elicitation 仅按需补充 | 核心完成 |
-| 被动插件 | `register(ctx)`、作用域配置、Skill/MCP 文件注册、所有权、冲突检查和事务回滚 | Manager reconcile、异步资源关闭和版本代际 | 基础完成 |
+| 被动插件 | `PluginRuntimeContext`、`ctx.register.*`、版本安装、快照路由、Turn lease、MCP reconcile、资源排空、回滚和卸载 | 插件索引、第三方依赖策略和主动生命周期按需求推进 | Runtime 完成 |
 | 出站多模态 | ArtifactStore、`artifact_from_file`、`response_attach`、结构化 Outcome、能力规划、分片 Outbox 和四平台原生发送 | caption、格式转换和真实平台限制按使用反馈补充 | 基础完成 |
 | 主动能力 | Cron、插件 submit、统一 Coordinator、Delivery/Outbox 已完成 | 候选生成、去重、冷却、静默时间和决策策略 | 基础完成 |
 | Memory / RAG | internal snapshot、buffer、Lumora/Mem0、backend factory、local/remote Qdrant、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件，reranker 按需实现 | 记忆重构完成 |
@@ -177,12 +178,13 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
      -> Outbox
         -> 主动提醒和后台结果投递
 
-插件 ownership 与事务注册（已完成基础）
-  -> Manager reconcile 与运行期可靠 disable/unload
+插件 Runtime 与热重载（已完成）
+  -> 插件发现、版本安装、快照切换、回滚与卸载
+     -> 后续主动插件生命周期和插件生态
 
 Memory / RAG 拆分（独立领域）
   -> 长期记忆更新审计
   -> 外部知识证据检索
 ```
 
-出站多模态基础链路已经完成，下一步更自然的产品方向是主动决策，或先继续处理真实长对话、插件安装卸载和平台联调反馈。主动能力可直接复用现有 Artifact、Coordinator、Delivery 和 Outbox；插件热替换仍需 Manager reconcile、RuntimeSnapshot 和版本代际。
+出站多模态与插件热重载基础链路都已经完成。下一步更自然的产品方向是主动决策，或继续依据真实长对话、第三方插件和平台联调反馈做稳定化。主动能力可直接复用现有 `PluginRuntimeContext`、runtime-owned tasks、CapabilitySnapshot、Coordinator、Artifact、Delivery 和 Outbox。
