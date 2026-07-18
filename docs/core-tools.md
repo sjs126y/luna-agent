@@ -4,9 +4,9 @@
 
 **让高频工具直接可用，让低频能力按需出现**
 
-![Core](https://img.shields.io/badge/core-17%20tools-2EA44F)
+![Core](https://img.shields.io/badge/core-19%20tools-2EA44F)
 ![Bridge](https://img.shields.io/badge/tool%20bridge-3%20entries-2563EB)
-![Tests](https://img.shields.io/badge/tests-1065%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-1078%20passed-2EA44F)
 
 [项目首页](../README.md) · [文档中心](README.md) · [架构说明](architecture.md) · [安全边界](capabilities-and-boundaries.md)
 
@@ -18,7 +18,7 @@
 
 ```mermaid
 flowchart LR
-    A[Agent turn] --> B[17 个高频核心工具]
+    A[Agent turn] --> B[19 个高频核心工具]
     A --> C[tool_search / describe / call]
     C --> D[便利工具]
     C --> E[高级执行与 Workflow]
@@ -31,7 +31,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 
 | 领域 | 直接暴露工具 | 原因 |
 | --- | --- | --- |
-| 文件 | `read`、`write`、`edit`、`grep`、`glob` | 绝大多数本地任务的基础动作 |
+| 文件 | `read`、`write`、`edit`、`list_directory`、`file_info`、`grep`、`glob` | 浏览、检查、搜索和修改文件的基础动作 |
 | Shell | `bash` | 短时、受限命令入口 |
 | Web | `web_search`、`web_fetch` | 外部信息的基础入口 |
 | Memory | `memory`、`memory_buffer` | 长期信息和内部缓冲 |
@@ -59,7 +59,9 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 
 | 工具 | 当前保证 |
 | --- | --- |
-| `glob` | 线程扫描、目录剪枝、100 默认结果上限、10 秒和 50k 条目预算 |
+| `list_directory` | 单层浏览、稳定排序、`offset/limit` 分页、5 秒和 10k 条目预算 |
+| `file_info` | 文件类型、大小、时间、MIME、文本/二进制判断和读写范围诊断 |
+| `glob` | 线程扫描、目录剪枝、`max_depth`、隐藏项开关、100 默认结果上限、10 秒和 50k 条目预算 |
 | `grep` | 共用有界扫描、逐行读取、跳过二进制和大文件、50 匹配上限 |
 | `read` | `offset/limit` 分页、50k 字节窗口、二进制拒绝、线程 I/O |
 | `write/edit` | UTF-8 实际字节限制、同目录原子替换、超大文件编辑拒绝 |
@@ -69,9 +71,14 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 
 实际事故中的 `/home/sujinsheng` 全目录 `glob('*')` 从约 379 秒降至约 0.02 秒，并在找到 100 个结果后立即停止。
 
+目录浏览不需要再借助 Bash：`list_directory(path)` 默认只返回当前层；需要按文件名递归查找时再使用 `glob`。`glob(max_depth=1)` 只匹配搜索根目录下的文件，`max_depth=2` 才进入一层子目录。
+
+扫描器会静默跳过与查询无关的受保护项。宽泛的 `*.jpg`、`*.jdg` 或 `*.toml` 搜索不会因为路过 `pyproject.toml` 而终止回合；明确请求受保护文件名时仍返回不可扩权的硬拒绝。
+
 ## 已知边界
 
 - `web_search` 当前依赖 Bing 页面解析并使用 DDGS fallback，不需要付费 API，但结果质量和站点结构有关。
 - 延迟工具依赖 `tool_search` 的检索质量；工具描述、标签和中文别名需要持续维护。
 - 工具线程超时后不能强制杀死 Python 线程，因此扫描内核自身也必须检查时间和条目预算。
+- 单次模型响应中的重复 `tool_use_id` 会在写入对话前被合并；相同 ID 只执行第一项，冲突参数不会执行。不同 ID 的相同调用保持原有语义。
 - 受保护路径、精确资源授权和审计规则在核心与按需工具之间完全一致。

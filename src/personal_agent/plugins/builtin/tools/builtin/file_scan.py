@@ -35,20 +35,23 @@ def scan_files(
     sandbox: Sandbox,
     *,
     accept: Callable[[Path, str], bool] | None = None,
+    blocked_accept: Callable[[Path, str], bool] | None = None,
     max_files: int | None = None,
+    max_depth: int | None = None,
+    include_hidden: bool = False,
     timeout_seconds: float = DEFAULT_SCAN_TIMEOUT_SECONDS,
     max_scanned_entries: int = DEFAULT_MAX_SCANNED_ENTRIES,
 ) -> FileScanResult:
     """Walk files without following symlinks, with pruning and hard budgets."""
     result = FileScanResult(files=[])
     deadline = time.monotonic() + max(0.1, float(timeout_seconds))
-    stack = [root]
+    stack = [(root, 0)]
 
     while stack:
         if time.monotonic() >= deadline:
             result.truncated_reason = f"time budget ({timeout_seconds:g}s) reached"
             break
-        current = stack.pop()
+        current, current_depth = stack.pop()
         try:
             entries = sorted(os.scandir(current), key=lambda item: item.name.lower())
         except (OSError, PermissionError):
@@ -75,26 +78,40 @@ def scan_files(
                 continue
 
             if is_directory:
-                if name.startswith(".") or name in SKIPPED_DIRECTORY_NAMES:
+                if name in SKIPPED_DIRECTORY_NAMES or (
+                    name.startswith(".") and not include_hidden
+                ):
                     result.skipped_directories += 1
                     continue
                 error = sandbox.check_path(path)
                 if error:
-                    if "path blocked by sandbox" in error.lower() and not result.blocked_error:
+                    relative = path.relative_to(root).as_posix()
+                    if (
+                        "path blocked by sandbox" in error.lower()
+                        and not result.blocked_error
+                        and blocked_accept is not None
+                        and blocked_accept(path, relative)
+                    ):
                         result.blocked_error = error
                     result.skipped_directories += 1
                     continue
-                child_directories.append(path)
+                if max_depth is None or current_depth + 1 < max_depth:
+                    child_directories.append(path)
                 continue
 
-            if not is_file or name.startswith("."):
-                continue
-            error = sandbox.check_path(path)
-            if error:
-                if "path blocked by sandbox" in error.lower() and not result.blocked_error:
-                    result.blocked_error = error
+            if not is_file or (name.startswith(".") and not include_hidden):
                 continue
             relative = path.relative_to(root).as_posix()
+            error = sandbox.check_path(path)
+            if error:
+                if (
+                    "path blocked by sandbox" in error.lower()
+                    and not result.blocked_error
+                    and blocked_accept is not None
+                    and blocked_accept(path, relative)
+                ):
+                    result.blocked_error = error
+                continue
             if accept is not None and not accept(path, relative):
                 continue
             result.files.append(path)
@@ -102,6 +119,6 @@ def scan_files(
                 result.truncated_reason = f"result limit ({max_files}) reached"
                 return result
 
-        stack.extend(reversed(child_directories))
+        stack.extend((path, current_depth + 1) for path in reversed(child_directories))
 
     return result

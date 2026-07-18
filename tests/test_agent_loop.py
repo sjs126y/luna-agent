@@ -640,6 +640,70 @@ async def test_duplicate_tool_finalization_empty_response_uses_safe_fallback(pro
 
 
 @pytest.mark.asyncio
+async def test_duplicate_ids_in_one_response_execute_each_unique_id_once(provider):
+    transport = MockTransport([
+        NormalizedResponse(
+            text="",
+            finish_reason="tool_use",
+            tool_calls=[
+                {"id": "same", "name": "same_batch_echo", "input": {"msg": "one"}},
+                {"id": "same", "name": "same_batch_echo", "input": {"msg": "one"}},
+                {"id": "other", "name": "same_batch_echo", "input": {"msg": "one"}},
+                {"id": "same", "name": "same_batch_echo", "input": {"msg": "two"}},
+            ],
+        ),
+        NormalizedResponse(text="只执行了一次。", finish_reason="end_turn"),
+    ])
+
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.registry import tool_registry
+
+    executions: list[str] = []
+
+    async def _echo(msg: str = ""):
+        executions.append(msg)
+        return f"Echo: {msg}"
+
+    tool_registry.register(ToolEntry(
+        name="same_batch_echo",
+        description="Echo duplicate batch",
+        schema={"type": "object", "properties": {"msg": {"type": "string"}}},
+        handler=_echo,
+    ))
+    try:
+        agent = init_agent(transport, provider)
+        ctx = await build_turn_context(agent, "Test")
+        result = await run_conversation(agent, ctx)
+    finally:
+        tool_registry.unregister("same_batch_echo")
+
+    assert executions == ["one", "one"]
+    assert result["final_response"] == "只执行了一次。"
+    assistant_tool_blocks = [
+        block
+        for message in result["messages"]
+        if message.get("role") == "assistant"
+        for block in message.get("content", [])
+        if block.get("type") == "tool_use"
+    ]
+    result_blocks = [
+        block
+        for message in result["messages"]
+        if message.get("role") == "user"
+        for block in message.get("content", [])
+        if block.get("type") == "tool_result"
+    ]
+    assert [block["id"] for block in assistant_tool_blocks] == ["same", "other"]
+    assert [block["tool_use_id"] for block in result_blocks] == ["same", "other"]
+    duplicate_retry = next(
+        retry for retry in result["turn_report"]["retries"]
+        if retry["category"] == "duplicate_tool_call_suppressed"
+    )
+    assert "2 个重复工具调用" in duplicate_retry["message"]
+    assert result["turn_report"]["tools"]["total"] == 2
+
+
+@pytest.mark.asyncio
 async def test_stop_hook_can_continue_once_without_persisting_instruction(provider):
     from personal_agent.hooks import HookEvent, HookManager, StopOutcome
 

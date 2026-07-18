@@ -903,6 +903,7 @@ def test_all_new_tools_registered():
 def test_tool_descriptions_guide_model_usage():
     import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
     from personal_agent.tools.registry import tool_registry
@@ -929,6 +930,8 @@ def test_builtin_tools_declare_permission_categories():
 
     expected = {
         "read": "read",
+        "list_directory": "read",
+        "file_info": "read",
         "grep": "read",
         "glob": "read",
         "write": "write",
@@ -952,6 +955,7 @@ def test_key_builtin_tools_declare_usage_metadata():
     import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import personal_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
     import personal_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
@@ -963,6 +967,8 @@ def test_key_builtin_tools_declare_usage_metadata():
 
     expected = {
         "read": ("low", "file"),
+        "list_directory": ("low", "directory"),
+        "file_info": ("low", "metadata"),
         "grep": ("low", "search"),
         "glob": ("low", "search"),
         "write": ("high", "write"),
@@ -1002,7 +1008,7 @@ def test_convenience_tools_are_deferred_behind_tool_search():
     core = get_core_tools()
 
     assert len(core) <= 20
-    assert {"read", "write", "edit", "grep", "glob", "bash"} <= core
+    assert {"read", "write", "edit", "list_directory", "file_info", "grep", "glob", "bash"} <= core
     assert {"calculator", "datetime", "random", "timer", "json", "weather"}.isdisjoint(core)
     assert {"todo", "task", "workflow_run", "worktree_create", "run_review"}.isdisjoint(core)
 

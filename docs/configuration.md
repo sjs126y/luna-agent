@@ -298,7 +298,7 @@ Codex 需要可写的状态目录。插件首次加载时只将 `source_codex_ho
 
 旧 Mode 名称和 `execution.policy` 已删除。配置必须使用上表稳定 ID；未知值会在配置检查阶段报错。
 
-`sandbox.read_roots` 只扩展原生文件读取工具（read/grep/glob 等）的范围，不扩展 file_write/file_edit、Bash 或 MCP 的可写边界。`sandbox.blocked` 始终优先；路径同时位于只读根目录和更具体的可写根目录时，更具体的可写规则生效。
+`sandbox.read_roots` 只扩展原生文件读取工具（read/list_directory/file_info/grep/glob 等）的范围，不扩展 file_write/file_edit、Bash 或 MCP 的可写边界。`sandbox.blocked` 始终优先；路径同时位于只读根目录和更具体的可写根目录时，更具体的可写规则生效。
 
 工具审批使用 `permissions.tool_approval` 覆盖：
 

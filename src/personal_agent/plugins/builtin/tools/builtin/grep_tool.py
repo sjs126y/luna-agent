@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import glob as glob_module
 import re
 from pathlib import Path
 
@@ -115,6 +116,11 @@ def _grep_sync(
         search_dir,
         sandbox,
         accept=inspect_file,
+        blocked_accept=lambda candidate, relative: any(
+            not glob_module.has_magic(Path(item.strip()).name)
+            and fnmatch.fnmatch(relative, item.strip())
+            for item in glob_parts
+        ),
         max_files=1,
     )
     truncated_reason = scan.truncated_reason

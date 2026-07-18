@@ -20,7 +20,7 @@ from personal_agent.agent.report import TurnReportRecorder
 from personal_agent.context_budget import compose_context_text, estimate_context_budget
 from personal_agent.conversation.events import ConversationEvent, emit_delta, emit_event
 from personal_agent.llm.base import LLMRequestPlan
-from personal_agent.tools.executor import execute_tool_calls
+from personal_agent.tools.executor import deduplicate_tool_calls, execute_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +248,8 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                 "error": f"{type(exc).__name__}: {exc}",
             })
 
+        response.tool_calls, suppressed_tool_calls = deduplicate_tool_calls(response.tool_calls)
+
         agent.session_prompt_tokens += response.usage.get("input_tokens", 0)
         agent.session_completion_tokens += response.usage.get("output_tokens", 0)
         agent.session_api_calls += 1
@@ -293,6 +295,21 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
             response.usage.get("input_tokens", 0),
             response.usage.get("output_tokens", 0),
         )
+
+        if suppressed_tool_calls:
+            await emit_event(
+                report_recorder,
+                "retry",
+                f"模型返回 {len(suppressed_tool_calls)} 个重复工具调用，已安全合并",
+                category="duplicate_tool_call_suppressed",
+                attempt=1,
+                max_attempts=1,
+                recoverable=True,
+            )
+            logger.warning(
+                "Suppressed %d duplicate tool call(s) from one model response",
+                len(suppressed_tool_calls),
+            )
 
         if is_forced_finalization:
             finalization_pending = False

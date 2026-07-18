@@ -512,6 +512,61 @@ class TestGlobIntegration:
         assert "pyproject.toml" not in result
 
     @pytest.mark.asyncio
+    async def test_glob_unmatched_broad_search_ignores_unrelated_blocked_file(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
+        init_sandbox([tmp_path], ["**/pyproject.toml"])
+
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+
+        result = await _glob("*.jpg", str(tmp_path))
+
+        assert result == f"No files matching '*.jpg' in {tmp_path}"
+
+    @pytest.mark.asyncio
+    async def test_glob_max_depth_prunes_nested_directories(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        (tmp_path / "root.txt").write_text("root", encoding="utf-8")
+        nested = tmp_path / "one" / "two"
+        nested.mkdir(parents=True)
+        (tmp_path / "one" / "child.txt").write_text("child", encoding="utf-8")
+        (nested / "deep.txt").write_text("deep", encoding="utf-8")
+        init_sandbox([tmp_path], [])
+
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+
+        first_level = await _glob("*.txt", str(tmp_path), max_depth=1)
+        second_level = await _glob("*.txt", str(tmp_path), max_depth=2)
+        recursive = await _glob("*.txt", str(tmp_path))
+
+        assert "root.txt" in first_level
+        assert "child.txt" not in first_level
+        assert "one/child.txt" in second_level
+        assert "deep.txt" not in second_level
+        assert "one/two/deep.txt" in recursive
+
+    @pytest.mark.asyncio
+    async def test_glob_include_hidden_is_explicit(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        (tmp_path / ".visible-on-request.txt").write_text("hidden", encoding="utf-8")
+        hidden_dir = tmp_path / ".notes"
+        hidden_dir.mkdir()
+        (hidden_dir / "inside.txt").write_text("hidden", encoding="utf-8")
+        init_sandbox([tmp_path], [])
+
+        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+
+        default = await _glob("*.txt", str(tmp_path))
+        included = await _glob("*.txt", str(tmp_path), include_hidden=True)
+
+        assert "visible-on-request" not in default
+        assert ".visible-on-request.txt" in included
+        assert ".notes/inside.txt" in included
+
+    @pytest.mark.asyncio
     async def test_glob_scan_runs_off_event_loop(self, tmp_path: Path, monkeypatch):
         from personal_agent.plugins.builtin.tools.builtin.file_scan import FileScanResult
         from personal_agent.plugins.builtin.tools.builtin import glob_tool
@@ -616,6 +671,19 @@ class TestGrepIntegration:
         assert "visible-marker" in result
         assert "secret-marker" not in result
         assert "pyproject.toml" not in result
+
+    @pytest.mark.asyncio
+    async def test_grep_unmatched_broad_search_ignores_unrelated_blocked_file(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
+        init_sandbox([tmp_path], ["**/pyproject.toml"])
+
+        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+
+        result = await _grep("missing", str(tmp_path), glob="*.jpg")
+
+        assert result == f"No matches for 'missing' in {tmp_path}"
 
 
 class TestFileEditIntegration:
