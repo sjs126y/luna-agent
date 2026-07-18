@@ -635,6 +635,84 @@ def plugins_info(
         typer.echo(format_plugin_report(report, include_traceback=False))
 
 
+@plugins_app.command("logs")
+def plugins_logs(
+    key: str,
+    limit: int = typer.Option(50, min=1, max=100, help="显示最近事件数量。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    items = manager.queries.events(key, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+    typer.echo(f"插件事件: {key}")
+    for item in items:
+        typer.echo(f"  - {item.get('created_at')} {item.get('event')} [{item.get('level')}]")
+    if not items:
+        typer.echo("  - 无")
+
+
+@plugins_app.command("versions")
+def plugins_versions(
+    key: str,
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    items = manager.queries.versions(key)
+    if json_output:
+        typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+    typer.echo(f"插件版本: {key}")
+    for item in items:
+        marker = "current" if item.get("active") else "available"
+        typer.echo(f"  - {item.get('version')} {str(item.get('digest') or '')[:12]} {marker}")
+    if not items:
+        typer.echo("  - 无已安装版本")
+
+
+@plugins_app.command("operations")
+def plugins_operations(
+    key: str = typer.Option("", help="只显示指定插件。"),
+    limit: int = typer.Option(50, min=1, max=200, help="显示最近操作数量。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    items = manager.queries.operations(key=key, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+    typer.echo("最近插件操作:")
+    for item in items:
+        typer.echo(
+            f"  - {item.get('operation_id')} {item.get('action')} "
+            f"{item.get('plugin_key')} {item.get('status')}:{item.get('stage')}"
+        )
+    if not items:
+        typer.echo("  - 无")
+
+
+@plugins_app.command("operation")
+def plugins_operation(
+    operation_id: str,
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    item = manager.queries.operation(operation_id)
+    if item is None:
+        _exit_error(f"插件操作不存在: {operation_id}")
+    if json_output:
+        typer.echo(json.dumps(item, indent=2, ensure_ascii=False))
+        return
+    typer.echo(
+        f"插件操作: {item.get('operation_id')}\n"
+        f"  - plugin: {item.get('plugin_key')}\n"
+        f"  - action: {item.get('action')}\n"
+        f"  - status: {item.get('status')} / stage={item.get('stage')}\n"
+        f"  - error: {item.get('error') or '-'}"
+    )
+
+
 @plugins_app.command("enable")
 def plugins_enable(key: str) -> None:
     manager = _plugin_manager()

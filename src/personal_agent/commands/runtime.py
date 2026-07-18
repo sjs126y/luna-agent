@@ -310,7 +310,37 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
             return "当前插件:\n" + ("\n".join(lines) if lines else "- 无"), {"plugins": reports}
         if action == "info" and len(values) == 1:
             report = manager.queries.plugin_info(values[0])
-            return json.dumps(report, ensure_ascii=False, indent=2), report
+            return _format_plugin_info(report), report
+        if action == "logs" and len(values) == 1:
+            items = manager.queries.events(values[0])
+            return _format_plugin_events(values[0], items), {
+                "management_schema_version": 1,
+                "plugin_key": values[0],
+                "events": items,
+            }
+        if action == "versions" and len(values) == 1:
+            items = manager.queries.versions(values[0])
+            return _format_plugin_versions(values[0], items), {
+                "management_schema_version": 1,
+                "plugin_key": values[0],
+                "versions": items,
+            }
+        if action == "operations" and len(values) <= 1:
+            key = values[0] if values else ""
+            items = manager.queries.operations(key=key)
+            return _format_plugin_operations(items), {
+                "management_schema_version": 1,
+                "plugin_key": key,
+                "operations": items,
+            }
+        if action == "operation" and len(values) == 1:
+            item = manager.queries.operation(values[0])
+            if item is None:
+                return "未找到插件操作。", {"error": "operation not found"}
+            return _format_plugin_operation(item), {
+                "management_schema_version": 1,
+                "operation": item,
+            }
         if action == "install" and len(values) == 1:
             plugin = await manager.install_plugin_runtime(values[0])
         elif action == "reload" and len(values) == 1:
@@ -340,6 +370,7 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
             return (
                 "用法: /plugins [list|info <key>|install <path>|reload <key>|"
                 "enable <key>|disable <key>|rollback <key> <digest>|"
+                "logs <key>|versions <key>|operations [key]|operation <id>|"
                 "active <key> <on|off|restart>|"
                 "uninstall <key> [--purge-data]]",
                 {"error": "invalid plugin command"},
@@ -366,6 +397,72 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
         f"runtime={plugin.runtime_instance_id or '-'}",
         payload,
     )
+
+
+def _format_plugin_info(report: dict[str, Any]) -> str:
+    active = report.get("active") or {}
+    active_state = str(active.get("state") or "passive")
+    versions = report.get("installed_versions") or []
+    lines = [
+        str(report.get("name") or report.get("key") or "Plugin"),
+        f"- key: {report.get('key')}",
+        f"- status: {report.get('status')} / runtime={report.get('runtime_state')}",
+        f"- version: {report.get('version')} / source={report.get('source')}",
+        f"- generation: {report.get('generation_id') or '-'}",
+        f"- snapshot: {report.get('snapshot_revision')}",
+        f"- active: {active_state}",
+        f"- registered: {report.get('registered') or {}}",
+        f"- installed versions: {len(versions)}",
+    ]
+    if report.get("error") or report.get("active_error"):
+        lines.append(f"- error: {report.get('active_error') or report.get('error')}")
+    return "\n".join(lines)
+
+
+def _format_plugin_events(key: str, items: list[dict[str, Any]]) -> str:
+    if not items:
+        return f"插件 {key} 暂无运行事件。"
+    lines = [f"插件 {key} 最近事件:"]
+    for item in items:
+        lines.append(
+            f"- {item.get('created_at')} {item.get('event')}"
+            + (f" [{item.get('level')}]" if item.get("level") != "info" else "")
+        )
+    return "\n".join(lines)
+
+
+def _format_plugin_versions(key: str, items: list[dict[str, Any]]) -> str:
+    if not items:
+        return f"插件 {key} 没有已安装的版本。"
+    lines = [f"插件 {key} 已安装版本:"]
+    for item in items:
+        marker = "current" if item.get("active") else "available"
+        lines.append(f"- {item.get('version')} {str(item.get('digest') or '')[:12]} {marker}")
+    return "\n".join(lines)
+
+
+def _format_plugin_operations(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "暂无插件操作记录。"
+    lines = ["最近插件操作:"]
+    for item in items:
+        lines.append(
+            f"- {item.get('operation_id')} {item.get('action')} "
+            f"{item.get('plugin_key')} {item.get('status')}:{item.get('stage')}"
+        )
+    return "\n".join(lines)
+
+
+def _format_plugin_operation(item: dict[str, Any]) -> str:
+    return "\n".join((
+        f"插件操作 {item.get('operation_id')}",
+        f"- plugin: {item.get('plugin_key')}",
+        f"- action: {item.get('action')}",
+        f"- status: {item.get('status')} / stage={item.get('stage')}",
+        f"- started: {item.get('started_at')}",
+        f"- finished: {item.get('finished_at') or '-'}",
+        f"- error: {item.get('error') or '-'}",
+    ))
 
 
 def slash_command_metadata(runtime: CommandRuntime | None = None) -> list[dict[str, Any]]:

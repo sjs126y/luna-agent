@@ -310,7 +310,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "plugins",
         "管理运行中的插件",
-        "/plugins [list|info|install|reload|enable|disable|active|rollback|uninstall]",
+        "/plugins [list|info|logs|versions|operations|install|reload|enable|disable|active|rollback|uninstall]",
         category="runtime",
         mutates_state=True,
         children=(
