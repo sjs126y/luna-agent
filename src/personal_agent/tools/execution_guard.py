@@ -212,7 +212,7 @@ def fallback_tool_category(name: str) -> str:
         "web_fetch": "network",
         "web_search": "network",
     }
-    if name in {"read", "grep", "glob"}:
+    if name in {"read", "list_directory", "file_info", "grep", "glob"}:
         return "read"
     return category_map.get(name, "write" if _looks_destructive(name) else "default")
 

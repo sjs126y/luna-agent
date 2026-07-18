@@ -21,6 +21,7 @@ _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
     )),
     ("personal_agent.plugins.builtin.tools.builtin.execute_code", ("execute_code",)),
     ("personal_agent.plugins.builtin.tools.builtin.file_edit", ("edit",)),
+    ("personal_agent.plugins.builtin.tools.builtin.file_navigation", ("list_directory", "file_info")),
     ("personal_agent.plugins.builtin.tools.builtin.file_read", ("read",)),
     ("personal_agent.plugins.builtin.tools.builtin.file_write", ("write",)),
     ("personal_agent.plugins.builtin.tools.builtin.glob_tool", ("glob",)),

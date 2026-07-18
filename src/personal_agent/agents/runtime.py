@@ -17,6 +17,8 @@ AGENT_RUN_SCHEMA_VERSION = 3
 
 READONLY_TOOLS = {
     "read",
+    "list_directory",
+    "file_info",
     "grep",
     "glob",
     "web_search",

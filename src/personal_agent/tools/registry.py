@@ -26,6 +26,8 @@ _QUERY_ALIASES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("读后台输出", "日志", "poll", "进度"), "process_read since_last output log"),
     (("停止进程", "kill", "终止后台"), "process_kill stop process"),
     (("找文件", "文件名", "路径匹配"), "glob file pattern"),
+    (("列目录", "目录内容", "浏览目录"), "list_directory directory browse entries"),
+    (("文件信息", "文件大小", "文件类型"), "file_info file metadata size mime"),
     (("搜内容", "全文搜索", "grep", "包含文本"), "grep file content regex"),
     (("读文件", "打开文件"), "read file"),
     (("写文件", "覆盖文件"), "write file"),

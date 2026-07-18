@@ -7,7 +7,7 @@ list decides which tools get full schemas vs get deferred via bridge tools.
 # Tools that define the agent's everyday execution surface. Less common
 # capabilities remain registered and are discovered through tool_search.
 _CORE_TOOLS: set[str] = {
-    "read", "write", "edit", "grep", "glob", "bash",
+    "read", "write", "edit", "list_directory", "file_info", "grep", "glob", "bash",
     "web_search", "web_fetch",
     "memory", "memory_buffer",
     "skill_search", "skill_load",
@@ -20,7 +20,7 @@ _CORE_TOOLS: set[str] = {
 TOOLSETS: dict[str, set[str]] = {
     "web":      {"web_search", "web_fetch"},
     "terminal": {"bash"},
-    "file":     {"read", "write", "edit", "grep", "glob"},
+    "file":     {"read", "write", "edit", "list_directory", "file_info", "grep", "glob"},
     "utility":  {"calculator", "datetime", "random", "timer", "json"},
     "memory":   {"memory", "memory_buffer", "todo"},
     "info":     {"weather"},
