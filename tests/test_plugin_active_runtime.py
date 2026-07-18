@@ -12,6 +12,7 @@ from personal_agent.plugins.active import (
 )
 from personal_agent.tools.entry import ToolEntry
 from personal_agent.tools.registry import tool_registry
+from personal_agent.plugins.runtime import CapabilityKind
 
 
 def _write_active_plugin(root: Path, *, provides: str = "[active]", duplicate: bool = False) -> None:
@@ -65,6 +66,64 @@ def _manager(
         plugin_dirs=[plugin_root.parent],
         state_path=tmp_path / "state.json",
         include_builtin=False,
+    )
+
+
+def _write_reload_active_plugin(
+    root: Path,
+    version: str,
+    *,
+    fail_before_ready: bool = False,
+    crash_once_after_ready: bool = False,
+) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "plugin.yaml").write_text(
+        "\n".join((
+            "key: user/active-reload",
+            "name: Active Reload",
+            "version: 1.0.0",
+            "entrypoint: active_reload:register",
+            "provides: [active, tools]",
+            "enabled_by_default: true",
+        )),
+        encoding="utf-8",
+    )
+    (root / "active_reload.py").write_text(
+        "\n".join((
+            "import asyncio",
+            "from personal_agent.plugins import ActiveResourceRequest",
+            "from personal_agent.tools.entry import ToolEntry",
+            f"VERSION = {version!r}",
+            f"FAIL = {fail_before_ready!r}",
+            f"CRASH_ONCE = {crash_once_after_ready!r}",
+            "ATTEMPTS = 0",
+            "",
+            "async def value():",
+            "    return VERSION",
+            "",
+            "async def run(ctx):",
+            "    global ATTEMPTS",
+            "    ATTEMPTS += 1",
+            "    ctx.resources.storage.write_text('runner.txt', VERSION)",
+            "    if FAIL:",
+            "        raise RuntimeError('candidate startup failed')",
+            "    await ctx.runtime.ready()",
+            "    if CRASH_ONCE and ATTEMPTS == 1:",
+            "        raise RuntimeError('crash once')",
+            "    while not ctx.runtime.stop_requested:",
+            "        await ctx.runtime.wait_until_resumed()",
+            "        await asyncio.sleep(0.01)",
+            "",
+            "def register(ctx):",
+            "    ctx.register.tool(ToolEntry(",
+            "        name='active_reload_value',",
+            "        description='Return active version',",
+            "        schema={'type': 'object', 'properties': {}},",
+            "        handler=value,",
+            "    ))",
+            "    ctx.register.active(run=run, resources=ActiveResourceRequest())",
+        )),
+        encoding="utf-8",
     )
 
 
@@ -326,3 +385,101 @@ def test_active_resource_request_validates_mcp_readiness_declarations():
             required_mcp_servers=("demo",),
             optional_mcp_servers=("demo",),
         )
+
+
+@pytest.mark.asyncio
+async def test_active_reload_commits_ready_generation_and_revision_atomically(tmp_path):
+    plugin_root = tmp_path / "plugins" / "active-reload"
+    _write_reload_active_plugin(plugin_root, "v1")
+    manager = _manager(
+        tmp_path,
+        plugin_root,
+        plugins_config={"user/active-reload": {"active": {"enabled": True}}},
+    )
+    first = manager.load_plugin("user/active-reload")
+    await manager.runtime_manager.start_active()
+    old_revision = first.data_revision_id
+    old_lease = await manager.capability_store.acquire()
+    old_route = old_lease.view().resolve(CapabilityKind.TOOL, "active_reload_value")
+    old_entry = manager.capability_payload(old_route.binding_id)
+
+    _write_reload_active_plugin(plugin_root, "v2")
+    second = await manager.reload_plugin_runtime("user/active-reload")
+    new_route = manager.capability_store.current.view().resolve(
+        CapabilityKind.TOOL,
+        "active_reload_value",
+    )
+    new_entry = manager.capability_payload(new_route.binding_id)
+
+    assert second is manager._plugins["user/active-reload"]
+    assert second.data_revision_id != old_revision
+    assert manager.data_revisions.current_revision(second.key) == second.data_revision_id
+    assert second.ctx.resources.storage.read_text("runner.txt") == "v2"
+    assert await old_entry.handler() == "v1"
+    assert await new_entry.handler() == "v2"
+    assert first.active_runner.control.state is ActiveRunnerState.STOPPED
+    assert second.active_runner.control.state is ActiveRunnerState.ACTIVE
+
+    await old_lease.release()
+    await manager.runtime_manager.stop_active()
+
+
+@pytest.mark.asyncio
+async def test_active_reload_failure_restores_previous_runtime_and_data(tmp_path):
+    plugin_root = tmp_path / "plugins" / "active-reload"
+    _write_reload_active_plugin(plugin_root, "v1")
+    manager = _manager(
+        tmp_path,
+        plugin_root,
+        plugins_config={"user/active-reload": {"active": {"enabled": True}}},
+    )
+    first = manager.load_plugin("user/active-reload")
+    await manager.runtime_manager.start_active()
+    old_snapshot_revision = manager.capability_store.current.revision
+    old_data_revision = manager.data_revisions.current_revision(first.key)
+
+    _write_reload_active_plugin(plugin_root, "broken", fail_before_ready=True)
+    with pytest.raises(RuntimeError, match="candidate startup failed"):
+        await manager.reload_plugin_runtime("user/active-reload")
+
+    assert manager._plugins[first.key] is first
+    assert manager.capability_store.current.revision == old_snapshot_revision
+    assert manager.data_revisions.current_revision(first.key) == old_data_revision
+    assert first.ctx.resources.storage.read_text("runner.txt") == "v1"
+    assert first.active_runner.control.state is ActiveRunnerState.ACTIVE
+
+    await manager.runtime_manager.stop_active()
+
+
+@pytest.mark.asyncio
+async def test_active_runner_restarts_after_runtime_failure(tmp_path):
+    plugin_root = tmp_path / "plugins" / "active-reload"
+    _write_reload_active_plugin(plugin_root, "v1", crash_once_after_ready=True)
+    manager = _manager(
+        tmp_path,
+        plugin_root,
+        plugins_config={
+            "user/active-reload": {
+                "active": {
+                    "enabled": True,
+                    "restart_backoff_seconds": [0],
+                }
+            }
+        },
+    )
+    plugin = manager.load_plugin("user/active-reload")
+
+    await manager.runtime_manager.start_active()
+    for _ in range(100):
+        if (
+            plugin.active_restart_count == 1
+            and plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
+        ):
+            break
+        await asyncio.sleep(0.01)
+
+    assert plugin.active_restart_count == 1
+    assert plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
+    assert plugin.active_runner.control.restart_count == 1
+
+    await manager.runtime_manager.stop_active()

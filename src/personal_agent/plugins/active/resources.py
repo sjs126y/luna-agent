@@ -51,6 +51,8 @@ class PluginResourceFacade:
             ),
             request=request,
         )
+        self._llm = None
+        self._artifacts = None
 
     @property
     def tool(self) -> "ActiveToolPort":
@@ -80,7 +82,9 @@ class PluginResourceFacade:
     @property
     def llm(self):
         self._require("llm", self._request.llm)
-        return self._manager.plugin_llm_port(self._plugin)
+        if self._llm is None:
+            self._llm = self._manager.plugin_llm_port(self._plugin)
+        return self._llm
 
     @property
     def events(self):
@@ -90,7 +94,9 @@ class PluginResourceFacade:
     @property
     def artifacts(self):
         self._require("artifacts", self._request.artifacts)
-        return self._manager.plugin_artifact_port(self._plugin)
+        if self._artifacts is None:
+            self._artifacts = self._manager.plugin_artifact_port(self._plugin)
+        return self._artifacts
 
     def safe_summary(self) -> dict[str, Any]:
         return self._request.safe_summary()

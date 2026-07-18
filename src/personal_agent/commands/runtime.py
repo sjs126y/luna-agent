@@ -319,6 +319,12 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
             plugin = await manager.enable_plugin_runtime(values[0])
         elif action == "disable" and len(values) == 1:
             plugin = await manager.disable_plugin_runtime(values[0])
+        elif action == "active" and len(values) == 2 and values[1].lower() in {"on", "off", "restart"}:
+            operation = values[1].lower()
+            if operation == "restart":
+                plugin = await manager.restart_active_plugin(values[0])
+            else:
+                plugin = await manager.set_active_enabled(values[0], operation == "on")
         elif action == "rollback" and len(values) == 2:
             plugin = await manager.rollback_plugin_runtime(values[0], values[1])
         elif action == "uninstall" and values:
@@ -334,6 +340,7 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
             return (
                 "用法: /plugins [list|info <key>|install <path>|reload <key>|"
                 "enable <key>|disable <key>|rollback <key> <digest>|"
+                "active <key> <on|off|restart>|"
                 "uninstall <key> [--purge-data]]",
                 {"error": "invalid plugin command"},
             )
@@ -345,6 +352,12 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
         "status": plugin.status.value,
         "generation_id": plugin.generation_id,
         "runtime_instance_id": plugin.runtime_instance_id,
+        "active_enabled": bool(getattr(plugin, "active_enabled", False)),
+        "active": (
+            plugin.active_runner.control.safe_summary()
+            if getattr(plugin, "active_runner", None) is not None
+            else {}
+        ),
         "capabilities": manager.capability_health(),
     }
     return (

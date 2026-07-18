@@ -52,7 +52,11 @@ from personal_agent.plugins.runtime.importer import (
     import_generation_entrypoint,
 )
 from personal_agent.plugins.install import PluginInstaller, PluginInstallStore
-from personal_agent.plugins.active import ActivePluginRunner, PluginGenerationScope
+from personal_agent.plugins.active import (
+    ActivePluginRunner,
+    PluginDataRevisionStore,
+    PluginGenerationScope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +84,6 @@ class PluginManager:
         self._conversation_coordinator = None
         self._delivery_service = None
         self._artifact_store = None
-        self._llm_port_factory = None
         self._event_port_factory = None
         self._capability_mapper = CapabilityMapper()
         self._capability_builder = CapabilitySnapshotBuilder()
@@ -94,10 +97,12 @@ class PluginManager:
         install_root = Path(getattr(settings, "agent_data_dir", "data")) / "plugins"
         self.install_store = PluginInstallStore(install_root / "install-state.json")
         self.installer = PluginInstaller(install_root)
+        self.data_revisions = PluginDataRevisionStore(self.installer.data_root)
         self._pending_package_removals: dict[str, dict[str, Any]] = {}
         self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
         self._active_owner_running = False
         self._active_lifecycle_lock = asyncio.Lock()
+        self._active_watch_tasks: dict[str, asyncio.Task] = {}
         self._capability_view: ContextVar[Any | None] = ContextVar(
             f"plugin-capability-view:{id(self)}",
             default=None,
@@ -164,9 +169,9 @@ class PluginManager:
         return PluginResourceFacade(manager=self, plugin=plugin, request=request)
 
     def plugin_llm_port(self, plugin):
-        if self._llm_port_factory is None:
-            raise RuntimeError("active plugin LLM resource is unavailable")
-        return self._llm_port_factory(plugin)
+        from personal_agent.plugins.core.ports import PluginLLMPort
+
+        return PluginLLMPort(plugin=plugin, settings=self.settings)
 
     def plugin_event_port(self, plugin):
         if self._event_port_factory is None:
@@ -176,7 +181,9 @@ class PluginManager:
     def plugin_artifact_port(self, plugin):
         if self._artifact_store is None:
             raise RuntimeError("active plugin artifact resource is unavailable")
-        return self._artifact_store
+        from personal_agent.plugins.core.ports import PluginArtifactPort
+
+        return PluginArtifactPort(plugin=plugin, store=self._artifact_store)
 
     def plugin_storage_port(self, plugin):
         from personal_agent.plugins.core.ports import PluginStoragePort
@@ -230,7 +237,7 @@ class PluginManager:
                 continue
             self.load_plugin(plugin.key)
 
-    def load_plugin(self, key: str) -> LoadedPlugin:
+    def load_plugin(self, key: str, *, publish: bool = True) -> LoadedPlugin:
         if not self._plugins:
             self.discover()
         plugin = self._plugins[key]
@@ -284,6 +291,7 @@ class PluginManager:
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
             if plugin.active_registration is not None:
                 plugin.active_enabled = self._resolve_active_enabled(plugin.key)
+                self.data_revisions.prepare(plugin, candidate=not publish)
                 plugin.active_runner = ActivePluginRunner(
                     plugin=plugin,
                     registration=plugin.active_registration,
@@ -294,11 +302,15 @@ class PluginManager:
             self._assert_no_registry_replacements(before, after, plugin.key)
             if plugin.manifest.record_import_delta:
                 self._record_registry_delta(plugin, before["names"], after["names"])
-            self._publish_plugin_capabilities(plugin, after)
+            plugin.prepare_rollback_snapshot = before if not publish else None
+            self._publish_plugin_capabilities(plugin, after, publish=publish)
             plugin.status = PluginStatus.LOADED
-            plugin.runtime_state = PluginRuntimeState.ACTIVE
+            plugin.runtime_state = (
+                PluginRuntimeState.ACTIVE if publish else PluginRuntimeState.PREPARING
+            )
             self._runtime_records[plugin.runtime_instance_id] = plugin
-            self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
+            if publish:
+                self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
             counts = plugin.registration_counts()
             logger.info(
                 "Plugin loaded: %s skills=%d mcp=%d hooks=%d commands=%d",
@@ -394,6 +406,7 @@ class PluginManager:
         previous: LoadedPlugin | None = None,
         evict: bool = False,
         force_enabled: bool | None = None,
+        publish: bool = True,
     ) -> LoadedPlugin:
         if evict and manifest.source == "builtin":
             self._evict_entrypoint_module(manifest)
@@ -411,29 +424,98 @@ class PluginManager:
             ),
         )
         self._plugins[manifest.key] = candidate
-        loaded = self.load_plugin(manifest.key)
+        loaded = self.load_plugin(manifest.key, publish=publish)
         if loaded.status != PluginStatus.LOADED:
             if previous is not None:
                 self._plugins[manifest.key] = previous
                 previous.runtime_state = PluginRuntimeState.ACTIVE
             return loaded
-        if previous is not None:
+        if previous is not None and publish:
             previous.runtime_state = PluginRuntimeState.DRAINING
         return loaded
 
     async def reload_plugin_runtime(self, key: str) -> LoadedPlugin:
         previous = self._plugins.get(key)
-        previous_runtime_id = previous.runtime_instance_id if previous is not None else ""
-        loaded = self.reload_plugin(key)
-        if loaded.status != PluginStatus.LOADED or self._mcp_manager is None:
-            return loaded
+        if previous is None or previous.status is not PluginStatus.LOADED:
+            return self.load_plugin(key)
+        candidate = self._activate_manifest(
+            previous.manifest,
+            previous=previous,
+            evict=True,
+            publish=False,
+        )
+        if candidate.status is not PluginStatus.LOADED:
+            return candidate
+        previous_quiesced = False
         try:
-            await self._mcp_manager.reconcile(self._desired_mcp_configs())
+            if self._mcp_manager is not None:
+                await self._mcp_manager.reconcile(self._desired_mcp_configs())
+            should_start = (
+                self._active_owner_running
+                and candidate.active_enabled
+                and candidate.active_runner is not None
+            )
+            if should_start:
+                old_runner = previous.active_runner
+                if (
+                    old_runner is not None
+                    and old_runner.root_task is not None
+                    and not old_runner.root_task.done()
+                ):
+                    await old_runner.quiesce()
+                    previous_quiesced = True
+                await self._wait_required_mcp(candidate)
+                candidate.active_runner.start()
+                await candidate.active_runner.wait_ready()
+
+            if candidate.active_registration is not None:
+                self.data_revisions.commit(candidate)
+            self._publish_staged_plugin(candidate)
+            previous.runtime_state = PluginRuntimeState.DRAINING
+            if should_start:
+                candidate.active_runner.control.commit()
+                self._watch_active_plugin(candidate, candidate.active_runner)
+            if previous.active_runner is not None:
+                await self._stop_active_plugin(previous)
+            return candidate
         except Exception:
-            if previous_runtime_id:
-                self._rollback_to_runtime(key, previous_runtime_id)
+            await self._discard_staged_plugin(candidate, previous)
+            if previous_quiesced and previous.active_runner is not None:
+                await previous.active_runner.resume()
+            if self._mcp_manager is not None:
+                await self._mcp_manager.reconcile(self._desired_mcp_configs())
             raise
-        return loaded
+
+    async def _discard_staged_plugin(
+        self,
+        candidate: LoadedPlugin,
+        previous: LoadedPlugin,
+    ) -> None:
+        runner = candidate.active_runner
+        if runner is not None:
+            runner.control.abort(candidate.active_error or "candidate activation failed")
+            await runner.stop()
+        rollback = candidate.prepare_rollback_snapshot
+        if rollback is not None:
+            self._restore_registration_snapshot(rollback)
+        self.data_revisions.discard(candidate)
+        bindings = self._runtime_bindings.pop(candidate.runtime_instance_id, ())
+        for binding in bindings:
+            self._binding_payloads.pop(binding.binding_id, None)
+        self._runtime_records.pop(candidate.runtime_instance_id, None)
+        self.hook_manager.unregister_owner(candidate.runtime_instance_id)
+        scope = candidate.generation_scope
+        if scope is not None:
+            await scope.aclose()
+        cleanup_generation_namespace(candidate.module_namespace)
+        candidate.module = None
+        candidate.ctx = None
+        candidate.runtime_state = PluginRuntimeState.FAILED
+        self._plugins[previous.key] = previous
+        previous.runtime_state = PluginRuntimeState.ACTIVE
+        self._active_runtime_by_plugin[previous.key] = previous.runtime_instance_id
+        old_bindings = self._runtime_bindings.get(previous.runtime_instance_id, ())
+        self._activate_binding_payloads(old_bindings)
 
     async def unload_plugin_runtime(self, key: str) -> LoadedPlugin:
         current = self._plugins.get(key)
@@ -513,6 +595,9 @@ class PluginManager:
         if not plugin.active_enabled:
             raise ValueError(f"active plugin is disabled: {key}")
         await self._stop_active_plugin(plugin)
+        plugin.active_circuit_open = False
+        plugin.active_failure_times.clear()
+        plugin.active_error = ""
         plugin.active_runner = ActivePluginRunner(
             plugin=plugin,
             registration=plugin.active_registration,
@@ -543,6 +628,7 @@ class PluginManager:
             runner.start()
             await runner.wait_ready()
             runner.control.commit()
+            self._watch_active_plugin(plugin, runner)
             logger.info("Active plugin started: %s", plugin.key)
         except Exception as exc:
             plugin.active_error = f"{type(exc).__name__}: {exc}"
@@ -559,6 +645,82 @@ class PluginManager:
         except Exception as exc:
             plugin.active_error = f"{type(exc).__name__}: {exc}"
             logger.exception("Active plugin failed to stop: %s", plugin.key)
+
+    def _watch_active_plugin(self, plugin: LoadedPlugin, runner: ActivePluginRunner) -> None:
+        existing = self._active_watch_tasks.get(plugin.runtime_instance_id)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(
+            self._supervise_active_plugin(plugin, runner),
+            name=f"plugin-active-watch:{plugin.key}:{plugin.runtime_instance_id}",
+        )
+        self._active_watch_tasks[plugin.runtime_instance_id] = task
+        task.add_done_callback(
+            lambda done, runtime_id=plugin.runtime_instance_id: self._discard_active_watch(
+                runtime_id,
+                done,
+            )
+        )
+
+    def _discard_active_watch(self, runtime_id: str, task: asyncio.Task) -> None:
+        if self._active_watch_tasks.get(runtime_id) is task:
+            self._active_watch_tasks.pop(runtime_id, None)
+
+    async def _supervise_active_plugin(
+        self,
+        plugin: LoadedPlugin,
+        runner: ActivePluginRunner,
+    ) -> None:
+        task = runner.root_task
+        if task is None:
+            return
+        results = await asyncio.gather(task, return_exceptions=True)
+        if runner.control.stop_requested or not self._active_owner_running:
+            return
+        if self._plugins.get(plugin.key) is not plugin or not plugin.active_enabled:
+            return
+        failed = bool(results and isinstance(results[0], BaseException))
+        policy = runner.registration.restart_policy.value
+        if policy == "never" or (policy == "on_failure" and not failed):
+            return
+
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        plugin.active_failure_times = [
+            value for value in plugin.active_failure_times if now - value <= 300.0
+        ]
+        plugin.active_failure_times.append(now)
+        if len(plugin.active_failure_times) >= 5:
+            plugin.active_circuit_open = True
+            plugin.active_error = "active runner circuit opened after repeated failures"
+            logger.error("Active plugin circuit opened: %s", plugin.key)
+            return
+        delays = self._active_restart_delays(plugin.key)
+        delay = delays[min(plugin.active_restart_count, len(delays) - 1)]
+        plugin.active_restart_count += 1
+        await asyncio.sleep(delay)
+        if not self._active_owner_running or self._plugins.get(plugin.key) is not plugin:
+            return
+        plugin.active_runner = ActivePluginRunner(
+            plugin=plugin,
+            registration=plugin.active_registration,
+            context=plugin.ctx,
+            scope=plugin.generation_scope,
+        )
+        plugin.active_runner.control.restart_count = plugin.active_restart_count
+        self._active_watch_tasks.pop(plugin.runtime_instance_id, None)
+        await self._start_active_plugin(plugin)
+
+    def _active_restart_delays(self, key: str) -> tuple[float, ...]:
+        all_config = getattr(self.settings, "plugins_config", {}) or {}
+        plugin_config = all_config.get(key, {}) if isinstance(all_config, dict) else {}
+        active = plugin_config.get("active", {}) if isinstance(plugin_config, dict) else {}
+        configured = active.get("restart_backoff_seconds", ()) if isinstance(active, dict) else ()
+        if isinstance(configured, (list, tuple)):
+            values = tuple(float(value) for value in configured if float(value) >= 0)
+            if values:
+                return values
+        return (1.0, 2.0, 5.0, 10.0, 30.0)
 
     async def _wait_required_mcp(self, plugin: LoadedPlugin) -> None:
         registration = plugin.active_registration
@@ -705,6 +867,8 @@ class PluginManager:
                     "key": plugin.key,
                     "enabled": plugin.active_enabled,
                     "error": plugin.active_error,
+                    "restart_count": plugin.active_restart_count,
+                    "circuit_open": plugin.active_circuit_open,
                     **(
                         plugin.active_runner.control.safe_summary()
                         if plugin.active_runner is not None
@@ -954,6 +1118,8 @@ class PluginManager:
                 else {}
             ),
             "active_error": plugin.active_error,
+            "active_restart_count": plugin.active_restart_count,
+            "active_circuit_open": plugin.active_circuit_open,
             "package_digest": plugin.package_digest,
             "deferred": plugin.deferred,
             "source": plugin.manifest.source,
@@ -1486,7 +1652,13 @@ class PluginManager:
             "mcp_servers": self.mcp_server_registry.snapshot(),
         }
 
-    def _publish_plugin_capabilities(self, plugin: LoadedPlugin, snapshot: dict[str, Any]) -> None:
+    def _publish_plugin_capabilities(
+        self,
+        plugin: LoadedPlugin,
+        snapshot: dict[str, Any],
+        *,
+        publish: bool = True,
+    ) -> None:
         bindings: list[Any] = []
         payloads: dict[str, Any] = {}
 
@@ -1571,6 +1743,11 @@ class PluginManager:
                 )
 
         core_bindings, core_payloads = self._capture_core_bindings(snapshot, plugin)
+        self._binding_payloads.update(core_payloads)
+        self._binding_payloads.update(payloads)
+        self._runtime_bindings[plugin.runtime_instance_id] = tuple(bindings)
+        if not publish:
+            return
         active = {
             owner: values
             for owner, values in self._active_bindings.items()
@@ -1591,10 +1768,7 @@ class PluginManager:
             catalog,
             revision=self.capability_store.current.revision + 1,
         )
-        self._binding_payloads.update(core_payloads)
-        self._binding_payloads.update(payloads)
         self._active_bindings = active
-        self._runtime_bindings[plugin.runtime_instance_id] = tuple(bindings)
         self.capability_store.publish_nowait(next_snapshot)
         active_hook_ids = {
             route.manager_key
@@ -1602,6 +1776,20 @@ class PluginManager:
             for route in routes
         }
         self.hook_manager.activate_managed_routes(active_hook_ids)
+
+    def _publish_staged_plugin(self, plugin: LoadedPlugin) -> None:
+        bindings = self._runtime_bindings.get(plugin.runtime_instance_id)
+        if bindings is None:
+            raise RuntimeError(f"staged plugin bindings are unavailable: {plugin.key}")
+        active = dict(self._active_bindings)
+        active[plugin.key] = bindings
+        self._active_bindings = active
+        self._plugins[plugin.key] = plugin
+        self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
+        plugin.runtime_state = PluginRuntimeState.ACTIVE
+        plugin.status = PluginStatus.LOADED
+        plugin.prepare_rollback_snapshot = None
+        self._publish_current_bindings()
 
     def _capture_core_bindings(
         self,

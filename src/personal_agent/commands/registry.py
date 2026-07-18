@@ -310,7 +310,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "plugins",
         "管理运行中的插件",
-        "/plugins [list|info|install|reload|enable|disable|rollback|uninstall]",
+        "/plugins [list|info|install|reload|enable|disable|active|rollback|uninstall]",
         category="runtime",
         mutates_state=True,
         children=(
@@ -320,6 +320,13 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
             CommandSpec("reload", "热重载插件", "/plugins reload <key>", category="runtime", mutates_state=True),
             CommandSpec("enable", "启用插件", "/plugins enable <key>", category="runtime", mutates_state=True),
             CommandSpec("disable", "禁用插件", "/plugins disable <key>", category="runtime", mutates_state=True),
+            CommandSpec(
+                "active",
+                "控制主动运行器",
+                "/plugins active <key> <on|off|restart>",
+                category="runtime",
+                mutates_state=True,
+            ),
             CommandSpec("rollback", "回滚插件包", "/plugins rollback <key> <digest>", category="runtime", mutates_state=True),
             CommandSpec("uninstall", "卸载插件", "/plugins uninstall <key> [--purge-data]", category="runtime", mutates_state=True),
         ),

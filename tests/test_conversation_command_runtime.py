@@ -149,6 +149,8 @@ async def test_plugins_command_controls_live_runtime():
         status=SimpleNamespace(value="LOADED"),
         generation_id="user/demo@g2",
         runtime_instance_id="runtime-2",
+        active_enabled=False,
+        active_runner=None,
     )
 
     class Plugins:
@@ -166,6 +168,11 @@ async def test_plugins_command_controls_live_runtime():
             assert key == plugin.key
             return plugin
 
+        async def set_active_enabled(self, key, enabled):
+            assert key == plugin.key
+            plugin.active_enabled = enabled
+            return plugin
+
         def capability_health(self):
             return {"current_revision": 4, "active_leases": 0}
 
@@ -173,6 +180,8 @@ async def test_plugins_command_controls_live_runtime():
 
     listed = await handle_slash_command(runtime, "/plugins list")
     reloaded = await handle_slash_command(runtime, "/plugins reload user/demo")
+    active = await handle_slash_command(runtime, "/plugins active user/demo on")
 
     assert listed.handled and "user/demo" in listed.response
     assert reloaded.handled and reloaded.payload["generation_id"] == "user/demo@g2"
+    assert active.handled and active.payload["active_enabled"] is True
