@@ -226,6 +226,8 @@ class LoadedPlugin:
     generation_scope: Any | None = None
     active_registration: Any | None = None
     active_runner: Any | None = None
+    active_enabled: bool = False
+    active_error: str = ""
     tools_registered: list[str] = field(default_factory=list)
     skills_registered: list[str] = field(default_factory=list)
     workflows_registered: list[str] = field(default_factory=list)

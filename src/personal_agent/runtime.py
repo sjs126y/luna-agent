@@ -423,6 +423,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             plugin_manager.bind_application_ports(
                 conversation_coordinator=conversation_coordinator,
                 delivery_service=delivery_service,
+                artifact_store=artifact_store,
             )
 
         with boot_report.step("runtime"):

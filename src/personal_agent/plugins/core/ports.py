@@ -57,12 +57,20 @@ class PluginConversationPort:
 
 
 class PluginNotificationPort(PluginConversationPort):
-    def __init__(self, *, plugin, coordinator, delivery_service) -> None:
+    def __init__(
+        self,
+        *,
+        plugin,
+        coordinator,
+        delivery_service,
+        capability: str = "notification",
+    ) -> None:
         super().__init__(plugin=plugin, coordinator=coordinator)
         self._delivery_service = delivery_service
+        self._capability = capability
 
     async def send(self, *, session_key: str, text: str, metadata: dict | None = None):
-        self._authorize(session_key, capability="notification")
+        self._authorize(session_key, capability=self._capability)
         return await self._delivery_service.deliver(DeliveryRequest(
             session_key=session_key,
             message=OutboundMessage.text(text),

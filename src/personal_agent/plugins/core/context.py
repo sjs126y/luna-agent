@@ -91,6 +91,7 @@ class PluginRuntimeContext:
             raise ValueError(f"Plugin config must be an object: {plugin.key}")
         self._config = MappingProxyType(deepcopy(plugin_config))
         self.register = PluginRegistrationPort(self)
+        self._resources = None
 
     @property
     def plugin_key(self) -> str:
@@ -114,6 +115,18 @@ class PluginRuntimeContext:
         if runner is None:
             raise RuntimeError(f"active plugin runtime is unavailable: {self.plugin.key}")
         return runner.control
+
+    @property
+    def resources(self):
+        registration = self.plugin.active_registration
+        if registration is None:
+            raise RuntimeError(f"plugin has no active resource declaration: {self.plugin.key}")
+        if self._resources is None:
+            self._resources = self.manager.plugin_resource_facade(
+                self.plugin,
+                registration.resources,
+            )
+        return self._resources
 
     @property
     def config(self):

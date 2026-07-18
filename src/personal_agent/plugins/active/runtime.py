@@ -171,6 +171,9 @@ class ActivePluginRunner:
         if task is not None and not task.done():
             try:
                 await asyncio.wait_for(asyncio.shield(task), self.registration.shutdown_timeout)
+            except asyncio.CancelledError:
+                if not self.control.stop_requested:
+                    raise
             except asyncio.TimeoutError:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)

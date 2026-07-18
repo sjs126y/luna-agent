@@ -79,6 +79,9 @@ class PluginManager:
         self.mcp_server_registry = MCPServerRegistry()
         self._conversation_coordinator = None
         self._delivery_service = None
+        self._artifact_store = None
+        self._llm_port_factory = None
+        self._event_port_factory = None
         self._capability_mapper = CapabilityMapper()
         self._capability_builder = CapabilitySnapshotBuilder()
         self._active_bindings: dict[str, tuple[Any, ...]] = {}
@@ -93,6 +96,8 @@ class PluginManager:
         self.installer = PluginInstaller(install_root)
         self._pending_package_removals: dict[str, dict[str, Any]] = {}
         self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
+        self._active_owner_running = False
+        self._active_lifecycle_lock = asyncio.Lock()
         self._capability_view: ContextVar[Any | None] = ContextVar(
             f"plugin-capability-view:{id(self)}",
             default=None,
@@ -117,9 +122,16 @@ class PluginManager:
     def hooks(self) -> dict[str, list[HookRegistration]]:
         return {name: list(items) for name, items in self._hooks.items()}
 
-    def bind_application_ports(self, *, conversation_coordinator, delivery_service) -> None:
+    def bind_application_ports(
+        self,
+        *,
+        conversation_coordinator,
+        delivery_service,
+        artifact_store=None,
+    ) -> None:
         self._conversation_coordinator = conversation_coordinator
         self._delivery_service = delivery_service
+        self._artifact_store = artifact_store
 
     def bind_mcp_manager(self, manager) -> None:
         self._mcp_manager = manager
@@ -134,7 +146,7 @@ class PluginManager:
             coordinator=self._conversation_coordinator,
         )
 
-    def plugin_notification_port(self, plugin):
+    def plugin_notification_port(self, plugin, *, capability: str = "notification"):
         if self._conversation_coordinator is None or self._delivery_service is None:
             raise RuntimeError("active plugin runtime is unavailable")
         from personal_agent.plugins.core.ports import PluginNotificationPort
@@ -143,7 +155,28 @@ class PluginManager:
             plugin=plugin,
             coordinator=self._conversation_coordinator,
             delivery_service=self._delivery_service,
+            capability=capability,
         )
+
+    def plugin_resource_facade(self, plugin, request):
+        from personal_agent.plugins.active.resources import PluginResourceFacade
+
+        return PluginResourceFacade(manager=self, plugin=plugin, request=request)
+
+    def plugin_llm_port(self, plugin):
+        if self._llm_port_factory is None:
+            raise RuntimeError("active plugin LLM resource is unavailable")
+        return self._llm_port_factory(plugin)
+
+    def plugin_event_port(self, plugin):
+        if self._event_port_factory is None:
+            raise RuntimeError("active plugin event resource is unavailable")
+        return self._event_port_factory(plugin)
+
+    def plugin_artifact_port(self, plugin):
+        if self._artifact_store is None:
+            raise RuntimeError("active plugin artifact resource is unavailable")
+        return self._artifact_store
 
     def plugin_storage_port(self, plugin):
         from personal_agent.plugins.core.ports import PluginStoragePort
@@ -250,6 +283,7 @@ class PluginManager:
                 if inspect.isawaitable(result):
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
             if plugin.active_registration is not None:
+                plugin.active_enabled = self._resolve_active_enabled(plugin.key)
                 plugin.active_runner = ActivePluginRunner(
                     plugin=plugin,
                     registration=plugin.active_registration,
@@ -402,6 +436,9 @@ class PluginManager:
         return loaded
 
     async def unload_plugin_runtime(self, key: str) -> LoadedPlugin:
+        current = self._plugins.get(key)
+        if current is not None:
+            await self._stop_active_plugin(current)
         plugin = self.unload_plugin(key)
         if self._mcp_manager is not None:
             await self._mcp_manager.reconcile(self._desired_mcp_configs())
@@ -425,6 +462,130 @@ class PluginManager:
         self._save_state()
         self.install_store.set_enabled(key, False)
         return await self.unload_plugin_runtime(key)
+
+    async def start_active_plugins(self) -> None:
+        """Start enabled active runners. Gateway is the sole owner of this call."""
+        async with self._active_lifecycle_lock:
+            if self._active_owner_running:
+                return
+            self._active_owner_running = True
+            for plugin in list(self._plugins.values()):
+                if plugin.status is not PluginStatus.LOADED:
+                    continue
+                if plugin.active_enabled and plugin.active_runner is not None:
+                    await self._start_active_plugin(plugin)
+
+    async def stop_active_plugins(self) -> None:
+        async with self._active_lifecycle_lock:
+            self._active_owner_running = False
+            runners = [
+                plugin
+                for plugin in self._runtime_records.values()
+                if plugin.active_runner is not None
+            ]
+            await asyncio.gather(
+                *(self._stop_active_plugin(plugin) for plugin in runners),
+                return_exceptions=True,
+            )
+
+    async def set_active_enabled(self, key: str, enabled: bool) -> LoadedPlugin:
+        plugin = self._plugins[key]
+        if plugin.active_registration is None:
+            raise ValueError(f"plugin does not register an active runner: {key}")
+        plugin.active_enabled = bool(enabled)
+        self._state.setdefault("active_enabled", [])
+        self._state.setdefault("active_disabled", [])
+        target = "active_enabled" if enabled else "active_disabled"
+        opposite = "active_disabled" if enabled else "active_enabled"
+        if key not in self._state[target]:
+            self._state[target].append(key)
+        self._state[opposite] = [item for item in self._state[opposite] if item != key]
+        self._save_state()
+        if self._active_owner_running:
+            if enabled:
+                await self._start_active_plugin(plugin)
+            else:
+                await self._stop_active_plugin(plugin)
+        return plugin
+
+    async def restart_active_plugin(self, key: str) -> LoadedPlugin:
+        plugin = self._plugins[key]
+        if not plugin.active_enabled:
+            raise ValueError(f"active plugin is disabled: {key}")
+        await self._stop_active_plugin(plugin)
+        plugin.active_runner = ActivePluginRunner(
+            plugin=plugin,
+            registration=plugin.active_registration,
+            context=plugin.ctx,
+            scope=plugin.generation_scope,
+        )
+        if self._active_owner_running:
+            await self._start_active_plugin(plugin)
+        return plugin
+
+    async def _start_active_plugin(self, plugin: LoadedPlugin) -> None:
+        runner = plugin.active_runner
+        if runner is None or not plugin.active_enabled:
+            return
+        if runner.root_task is not None and not runner.root_task.done():
+            return
+        if runner.root_task is not None:
+            runner = ActivePluginRunner(
+                plugin=plugin,
+                registration=plugin.active_registration,
+                context=plugin.ctx,
+                scope=plugin.generation_scope,
+            )
+            plugin.active_runner = runner
+        plugin.active_error = ""
+        try:
+            await self._wait_required_mcp(plugin)
+            runner.start()
+            await runner.wait_ready()
+            runner.control.commit()
+            logger.info("Active plugin started: %s", plugin.key)
+        except Exception as exc:
+            plugin.active_error = f"{type(exc).__name__}: {exc}"
+            runner.control.abort(plugin.active_error)
+            await runner.stop()
+            logger.exception("Active plugin failed to start: %s", plugin.key)
+
+    async def _stop_active_plugin(self, plugin: LoadedPlugin) -> None:
+        runner = plugin.active_runner
+        if runner is None or runner.root_task is None:
+            return
+        try:
+            await runner.stop()
+        except Exception as exc:
+            plugin.active_error = f"{type(exc).__name__}: {exc}"
+            logger.exception("Active plugin failed to stop: %s", plugin.key)
+
+    async def _wait_required_mcp(self, plugin: LoadedPlugin) -> None:
+        registration = plugin.active_registration
+        required = tuple(registration.resources.required_mcp_servers)
+        if not required:
+            return
+        if self._mcp_manager is None:
+            raise RuntimeError(
+                "required MCP runtime is unavailable: " + ", ".join(required)
+            )
+        deadline = asyncio.get_running_loop().time() + registration.startup_timeout
+        while True:
+            health = self._mcp_manager.health_snapshot()
+            servers = {item["name"]: item for item in health.get("servers", [])}
+            missing = [name for name in required if name not in servers]
+            if missing:
+                raise RuntimeError(
+                    "required MCP server is not configured: " + ", ".join(missing)
+                )
+            pending = [name for name in required if not servers[name].get("connected")]
+            if not pending:
+                return
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(
+                    "required MCP server did not become ready: " + ", ".join(pending)
+                )
+            await asyncio.sleep(0.05)
 
     async def install_plugin_runtime(
         self,
@@ -538,6 +699,21 @@ class PluginManager:
             "install_revision": self.install_store.revision,
             "installed_packages": len(self.install_store.packages()),
             "pending_removals": sorted(self._pending_package_removals),
+            "active_owner_running": self._active_owner_running,
+            "active_plugins": [
+                {
+                    "key": plugin.key,
+                    "enabled": plugin.active_enabled,
+                    "error": plugin.active_error,
+                    **(
+                        plugin.active_runner.control.safe_summary()
+                        if plugin.active_runner is not None
+                        else {"state": "unavailable"}
+                    ),
+                }
+                for plugin in self._plugins.values()
+                if plugin.active_registration is not None
+            ],
         })
         return data
 
@@ -771,6 +947,13 @@ class PluginManager:
             "runtime_state": plugin.runtime_state.value,
             "generation_id": plugin.generation_id,
             "runtime_instance_id": plugin.runtime_instance_id,
+            "active_enabled": plugin.active_enabled,
+            "active": (
+                plugin.active_runner.control.safe_summary()
+                if plugin.active_runner is not None
+                else {}
+            ),
+            "active_error": plugin.active_error,
             "package_digest": plugin.package_digest,
             "deferred": plugin.deferred,
             "source": plugin.manifest.source,
@@ -1104,11 +1287,28 @@ class PluginManager:
             return True
         return manifest.enabled_by_default
 
+    def _resolve_active_enabled(self, key: str) -> bool:
+        enabled = set(self._state.get("active_enabled", []))
+        disabled = set(self._state.get("active_disabled", []))
+        if key in disabled:
+            return False
+        if key in enabled:
+            return True
+        all_config = getattr(self.settings, "plugins_config", {}) or {}
+        plugin_config = all_config.get(key, {}) if isinstance(all_config, dict) else {}
+        active = plugin_config.get("active", {}) if isinstance(plugin_config, dict) else {}
+        return bool(active.get("enabled", False)) if isinstance(active, dict) else False
+
     def _load_state(self) -> dict[str, list[str]]:
-        data = read_json_object(self._state_path, {"enabled": [], "disabled": []})
+        data = read_json_object(
+            self._state_path,
+            {"enabled": [], "disabled": [], "active_enabled": [], "active_disabled": []},
+        )
         return {
             "enabled": list(data.get("enabled", [])),
             "disabled": list(data.get("disabled", [])),
+            "active_enabled": list(data.get("active_enabled", [])),
+            "active_disabled": list(data.get("active_disabled", [])),
         }
 
     def _save_state(self) -> None:

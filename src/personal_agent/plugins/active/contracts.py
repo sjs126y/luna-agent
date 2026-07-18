@@ -61,6 +61,21 @@ class ActiveResourceRequest:
                 raise ValueError("Active MCP server names must not be empty")
             normalized[name] = _names(tools, f"mcp.{name}")
         object.__setattr__(self, "mcp", MappingProxyType(normalized))
+        declared_servers = set(normalized)
+        missing = (
+            set(self.required_mcp_servers) | set(self.optional_mcp_servers)
+        ) - declared_servers
+        if missing:
+            raise ValueError(
+                "Active MCP readiness servers must also declare tools: "
+                + ", ".join(sorted(missing))
+            )
+        overlap = set(self.required_mcp_servers) & set(self.optional_mcp_servers)
+        if overlap:
+            raise ValueError(
+                "Active MCP servers cannot be both required and optional: "
+                + ", ".join(sorted(overlap))
+            )
 
     def safe_summary(self) -> dict[str, Any]:
         return {

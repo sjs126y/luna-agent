@@ -31,5 +31,17 @@ class PluginRuntimeManager:
     async def uninstall(self, key: str, *, purge_data: bool = False):
         return await self._plugins.uninstall_plugin_runtime(key, purge_data=purge_data)
 
+    async def start_active(self):
+        await self._plugins.start_active_plugins()
+
+    async def stop_active(self):
+        await self._plugins.stop_active_plugins()
+
+    async def set_active(self, key: str, enabled: bool):
+        return await self._plugins.set_active_enabled(key, enabled)
+
+    async def restart_active(self, key: str):
+        return await self._plugins.restart_active_plugin(key)
+
     def health_snapshot(self):
         return self._plugins.capability_health()
