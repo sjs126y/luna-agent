@@ -343,11 +343,11 @@ async def test_active_runner_starts_only_when_gateway_owner_is_running(tmp_path)
     assert plugin.active_enabled is True
     assert plugin.active_runner.root_task is None
 
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     assert plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
     assert plugin.active_runner.root_task is not None
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
     assert plugin.active_runner.control.state is ActiveRunnerState.STOPPED
 
 
@@ -357,23 +357,23 @@ async def test_active_toggle_is_separate_from_plugin_enabled_state(tmp_path):
     _write_active_plugin(plugin_root)
     manager = _manager(tmp_path, plugin_root)
     plugin = manager.load_plugin("user/active-test")
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
 
     assert plugin.enabled is True
     assert plugin.active_enabled is False
     assert plugin.active_runner.root_task is None
 
-    await manager.runtime_manager.set_active(plugin.key, True)
+    await manager.set_active_enabled(plugin.key, True)
     assert plugin.enabled is True
     assert plugin.active_enabled is True
     assert plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
 
-    await manager.runtime_manager.set_active(plugin.key, False)
+    await manager.set_active_enabled(plugin.key, False)
     assert plugin.enabled is True
     assert plugin.active_enabled is False
     assert plugin.active_runner.control.state is ActiveRunnerState.STOPPED
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
 
 
 def test_active_resource_request_validates_mcp_readiness_declarations():
@@ -397,7 +397,7 @@ async def test_active_reload_commits_ready_generation_and_revision_atomically(tm
         plugins_config={"user/active-reload": {"active": {"enabled": True}}},
     )
     first = manager.load_plugin("user/active-reload")
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     old_revision = first.data_revision_id
     old_lease = await manager.capability_store.acquire()
     old_route = old_lease.view().resolve(CapabilityKind.TOOL, "active_reload_value")
@@ -421,7 +421,7 @@ async def test_active_reload_commits_ready_generation_and_revision_atomically(tm
     assert second.active_runner.control.state is ActiveRunnerState.ACTIVE
 
     await old_lease.release()
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
 
 
 @pytest.mark.asyncio
@@ -434,7 +434,7 @@ async def test_active_reload_failure_restores_previous_runtime_and_data(tmp_path
         plugins_config={"user/active-reload": {"active": {"enabled": True}}},
     )
     first = manager.load_plugin("user/active-reload")
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     old_snapshot_revision = manager.capability_store.current.revision
     old_data_revision = manager.data_revisions.current_revision(first.key)
 
@@ -448,7 +448,7 @@ async def test_active_reload_failure_restores_previous_runtime_and_data(tmp_path
     assert first.ctx.resources.storage.read_text("runner.txt") == "v1"
     assert first.active_runner.control.state is ActiveRunnerState.ACTIVE
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
 
 
 @pytest.mark.asyncio
@@ -469,7 +469,7 @@ async def test_active_runner_restarts_after_runtime_failure(tmp_path):
     )
     plugin = manager.load_plugin("user/active-reload")
 
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     for _ in range(100):
         if (
             plugin.active_restart_count == 1
@@ -482,4 +482,4 @@ async def test_active_runner_restarts_after_runtime_failure(tmp_path):
     assert plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
     assert plugin.active_runner.control.restart_count == 1
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()

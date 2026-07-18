@@ -40,7 +40,8 @@ class PluginQueryService:
         else:
             entrypoint_checked = True
             entrypoint_ok, entrypoint_error = manager._check_entrypoint(plugin.manifest)
-        return {
+        report = {
+            "management_schema_version": 1,
             "key": plugin.key,
             "name": plugin.manifest.name,
             "version": plugin.manifest.version,
@@ -100,6 +101,13 @@ class PluginQueryService:
                 entrypoint_error,
             ),
         }
+        operations = self.operations(key=plugin.key, limit=1)
+        events = self.events(plugin.key, limit=1)
+        report["latest_operation"] = operations[0] if operations else {}
+        report["latest_event"] = events[0] if events else {}
+        report["installed_versions"] = self.versions(plugin.key)
+        report["mcp"] = self._mcp_health(plugin.mcp_servers_registered)
+        return report
 
     def runtime_health(self) -> dict[str, Any]:
         manager = self._manager
@@ -137,3 +145,40 @@ class PluginQueryService:
         })
         return data
 
+    def versions(self, key: str) -> list[dict[str, Any]]:
+        record = self._manager.install_store.packages().get(key, {})
+        active = str(record.get("active_package") or "") if isinstance(record, dict) else ""
+        versions = record.get("versions", {}) if isinstance(record, dict) else {}
+        result = []
+        for digest, item in versions.items():
+            if not isinstance(item, dict):
+                continue
+            result.append({
+                "plugin_key": key,
+                "digest": str(digest),
+                "version": str(item.get("version") or ""),
+                "source": str(item.get("source") or ""),
+                "path": str(item.get("path") or ""),
+                "active": str(digest) == active,
+                "status": str(record.get("status") or ""),
+            })
+        return sorted(result, key=lambda item: (not item["active"], item["version"], item["digest"]))
+
+    def events(self, key: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        return self._manager.events.list(key, limit=limit)
+
+    def operations(self, *, key: str = "", limit: int = 50) -> list[dict[str, Any]]:
+        return self._manager.operations.list(plugin_key=key, limit=limit)
+
+    def operation(self, operation_id: str) -> dict[str, Any] | None:
+        return self._manager.operations.get(operation_id)
+
+    def _mcp_health(self, server_names: list[str]) -> list[dict[str, Any]]:
+        manager = self._manager._mcp_manager
+        if manager is None or not hasattr(manager, "health_snapshot"):
+            return [{"name": name, "state": "runtime_unavailable"} for name in server_names]
+        servers = {
+            str(item.get("name") or ""): item
+            for item in manager.health_snapshot().get("servers", [])
+        }
+        return [dict(servers.get(name) or {"name": name, "state": "not_registered"}) for name in server_names]
