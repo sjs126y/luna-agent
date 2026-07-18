@@ -186,6 +186,15 @@ plugins:
       active:
         enabled: false              # 插件能力与主动 runner 分开启用；仅 serve/Gateway 会启动
         restart_backoff_seconds: [1, 2, 5, 10, 30]
+    integrations/workspace-watch:
+      paths: ["TODO.md", "BACKEND_PROGRESS.md"]
+      session_key: ""               # 例如 wechat:<chat_id>:<user_id>
+      poll_interval_seconds: 30
+      settle_seconds: 10
+      active:
+        enabled: false
+        sessions: []                 # 必须包含上面的精确 session_key
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "~/.codex"

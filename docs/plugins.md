@@ -300,6 +300,32 @@ def register(ctx):
 
 根任务异常退出时按 `never`、`on_failure` 或 `always` 重启；默认退避为 `1/2/5/10/30` 秒，可通过 `active.restart_backoff_seconds` 修改。同一 generation 在 5 分钟内连续失败 5 次会打开熔断，需 `/plugins active <key> restart` 人工恢复。
 
+### Workspace Watch 示例
+
+仓库内的 `plugins/proactive_workspace` 是一个可运行的主动插件，不是单纯心跳：
+
+1. 周期性通过受限 `file_info` 工具读取指定文件的大小和修改时间。
+2. 第一次扫描只建立基线；变化持续超过 `settle_seconds` 才算稳定。
+3. 多个稳定变化合并成一次 `ConversationCoordinator` 请求，由主 Agent 判断是否值得提醒。
+4. 已通知签名保存在该插件的数据 revision 中，重启和热更新不会重复报告同一状态。
+
+```yaml
+plugins:
+  enabled: [integrations/workspace-watch]
+  config:
+    integrations/workspace-watch:
+      paths: ["TODO.md", "BACKEND_PROGRESS.md"]
+      session_key: "wechat:<chat_id>:<user_id>"
+      poll_interval_seconds: 30
+      settle_seconds: 10
+      active:
+        enabled: true
+        sessions: ["wechat:<chat_id>:<user_id>"]
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+```
+
+`session_key` 必须同时出现在 `active.sessions` 精确 allowlist 中。启动 Gateway 后可用 `/workspace-watch-status` 查看配置与 runner 状态；也可以用 `/plugins active integrations/workspace-watch off|on|restart` 临时控制。没有配置 session 时插件仍可观察并更新基线，但不会向任何会话投递。
+
 ## 插件配置
 
 ```yaml

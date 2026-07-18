@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1110%20passed-2EA44F?logo=pytest&logoColor=white" alt="1110 tests passed">
+  <img src="https://img.shields.io/badge/tests-1112%20passed-2EA44F?logo=pytest&logoColor=white" alt="1112 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -161,6 +161,7 @@ uv run personal-agent serve
 | **Developer Docs** | 查询库文档、比较 API、辅助版本升级 |
 | **Browser Operator** | 网页检查、网页测试、受控页面操作 |
 | **Codex Bridge** | 通过受限 MCP/Hook 连接外部 Codex 能力 |
+| **Workspace Watch** | 主动观察工作区文件变化，稳定后请求主 Agent 分析并投递结果 |
 
 [查看插件格式与注册能力](docs/plugins.md)
 
@@ -175,7 +176,7 @@ uv run personal-agent serve
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest -q  # 1110 passed, 1 warning
+uv run pytest -q  # 1112 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。
