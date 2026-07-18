@@ -376,6 +376,8 @@ def _resolve_tool_entry(agent: Any, name: str):
             if entry is not None:
                 return entry
             return None
+        if manager is not None and getattr(agent, "_capability_view", None) is not None:
+            return None
     return tool_registry.get(name)
 
 
