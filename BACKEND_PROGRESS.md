@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1116%20passed-2EA44F" alt="1116 tests passed">
+  <img src="https://img.shields.io/badge/tests-1131%20passed-2EA44F" alt="1131 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
 </p>
 
@@ -28,7 +28,8 @@
 - GitHub Assistant v0.2 增加 PR、Issue、Commit、Actions 主动监视，并兼容 GitHub MCP `actions_list` 与旧式 workflow 工具。
 - 新增 `automation/reminder`、`automation/feed-watch`、`automation/inbox-watch`，覆盖持久时间调度、RSS/Atom 条件抓取与受控目录 Artifact 输入。
 - Plugin Storage 新增原子 JSON；Conversation Port 新增稳定 request id 和插件自有 Artifact 输入校验；主动工具产物可以按目标 session 建立正确 scope。
-- 插件、配置、命令、Artifact 与热更新宽回归：`149 passed`；全量结果见本节最终验证记录。
+- 插件、配置、命令、Artifact 与热更新宽回归：`149 passed`；完整回归 `1131 passed, 1 warning`，唯一警告仍来自飞书 SDK 的弃用 API。
+- 真实 `doctor --verbose`：Boot `17/17`、56 个工具全部可用、GitHub/Context7/Playwright/Codex 等启用 MCP 均 ready；新增插件全部 LOADED。总体提示只包含既有 workspace-watch source 警告和未配置的 QQ/Telegram。
 
 ## 2026-07-18：主动插件 Runtime
 

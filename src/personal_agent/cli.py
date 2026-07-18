@@ -716,14 +716,20 @@ def plugins_operation(
 @plugins_app.command("enable")
 def plugins_enable(key: str) -> None:
     manager = _plugin_manager()
-    plugin = manager.enable_plugin(key)
+    try:
+        plugin = asyncio.run(manager.enable_plugin_runtime(key))
+    except Exception as exc:
+        _exit_error(f"插件启用失败: {exc}")
     typer.echo(f"已启用插件: {plugin.key}")
 
 
 @plugins_app.command("disable")
 def plugins_disable(key: str) -> None:
     manager = _plugin_manager()
-    plugin = manager.disable_plugin(key)
+    try:
+        plugin = asyncio.run(manager.disable_plugin_runtime(key))
+    except Exception as exc:
+        _exit_error(f"插件禁用失败: {exc}")
     typer.echo(f"已禁用插件: {plugin.key}")
 
 
@@ -2661,10 +2667,13 @@ def format_plugin_list(reports: list[dict[str, Any]], *, include_summary: bool =
             lines.append("")
         lines.append(f"{group}:")
         for report in grouped_reports:
+            active = report.get("active") or {}
+            active_text = str(active.get("state") or ("disabled" if report.get("active_enabled") is False and report.get("active_resources") else "passive"))
             lines.append(
                 f"  - {report['key']} [{report['status']}] "
                 f"启用={_yes(report['enabled'])} "
                 f"延迟={_yes(report['deferred'])} "
+                f"主动={active_text} "
                 f"注册={_registration_summary(report['registered'])} "
                 f"问题={_plugin_issue_summary(report)}"
             )
@@ -2688,12 +2697,19 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         f"入口: {report['entrypoint']} [{_entrypoint_status_text(report)}]",
         f"启用: {_yes(report['enabled'])}  默认启用: {_yes(report['enabled_by_default'])}  延迟加载: {_yes(report['deferred'])}",
         f"状态: {report['status']}",
+        f"Runtime: {report.get('runtime_state') or '-'}",
+        f"Generation: {report.get('generation_id') or '-'}",
+        f"Runtime Instance: {report.get('runtime_instance_id') or '-'}",
+        f"Snapshot Revision: {report.get('snapshot_revision', 0)}",
+        f"Package Digest: {report.get('package_digest') or '-'}",
+        f"主动运行: {'启用' if report.get('active_enabled') else '关闭'} 状态={(report.get('active') or {}).get('state') or 'passive'}",
         f"提供能力: {_list_or_none(report['provides'])}",
         f"标签: {_list_or_none(report.get('tags', []))}",
         f"需要环境变量: {_list_or_none(report['requires_env'])}",
         f"缺失环境变量: {_list_or_none(report['missing_env'])}",
         f"来源边界: 声明={report.get('declared_source') or report.get('source') or '-'} 实际={report.get('source') or '-'} 路径={report.get('source_boundary') or '-'}",
         f"注册数量: {_registration_summary(report['registered'])}",
+        f"已安装版本: {len(report.get('installed_versions') or [])}",
         "诊断:",
     ]
     if manifest_error:

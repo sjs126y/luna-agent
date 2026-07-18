@@ -171,10 +171,10 @@ uv run personal-agent serve
 ## 项目状态
 
 <p>
-  <img src="https://img.shields.io/badge/Python%20files-325-3776AB" alt="325 Python files">
-  <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-555555" alt="75811 Python lines">
-  <img src="https://img.shields.io/badge/runtime%20LOC-47%2C458-0A84FF" alt="47458 runtime lines">
-  <img src="https://img.shields.io/badge/test%20LOC-27%2C549-2EA44F" alt="27549 test lines">
+  <img src="https://img.shields.io/badge/Python%20files-365-3776AB" alt="365 Python files">
+  <img src="https://img.shields.io/badge/Python%20LOC-85%2C714-555555" alt="85714 Python lines">
+  <img src="https://img.shields.io/badge/runtime%20LOC-52%2C956-0A84FF" alt="52956 runtime lines">
+  <img src="https://img.shields.io/badge/test%20LOC-30%2C157-2EA44F" alt="30157 test lines">
 </p>
 
 ```bash
