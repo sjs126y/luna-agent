@@ -4,20 +4,15 @@ Hermes pattern: tools don't declare themselves as "core" — a central
 list decides which tools get full schemas vs get deferred via bridge tools.
 """
 
-# Tools that always get full schemas (never deferred)
+# Tools that define the agent's everyday execution surface. Less common
+# capabilities remain registered and are discovered through tool_search.
 _CORE_TOOLS: set[str] = {
-    "calculator", "datetime", "web_search", "web_fetch",
-    "bash", "memory", "memory_buffer", "todo", "read", "write", "edit",
-    "weather", "random", "timer", "json",
-    "grep", "glob",
+    "read", "write", "edit", "grep", "glob", "bash",
+    "web_search", "web_fetch",
+    "memory", "memory_buffer", "todo",
     "skill_search", "skill_load",
-    "clarify", "execute_code",
-    "sub_agent", "sub_parallel", "sub_pipeline",
-    "delegate_task", "run_research", "run_review", "run_workflow",
-    "process_start", "process_list", "process_read", "process_clear", "process_kill", "process_wait",
-    "confirm", "task",
-    "workflow_run", "workflow_list",
-    "worktree_create", "worktree_merge", "worktree_cleanup", "worktree_list",
+    "sub_agent",
+    "process_start", "process_read", "process_kill", "process_wait",
 }
 
 # Toolset groups — name → list of tool names

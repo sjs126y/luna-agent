@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+from personal_agent.plugins.builtin.tools.builtin.file_scan import scan_files
 from personal_agent.tools.entry import ToolEntry, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 from personal_agent.tools.sandbox import get_sandbox
@@ -11,7 +13,7 @@ from personal_agent.tools.sandbox import get_sandbox
 _MAX_RESULTS = 100
 
 
-async def _glob(pattern: str, path: str = ".") -> str:
+async def _glob(pattern: str, path: str = ".", max_results: int = _MAX_RESULTS) -> str:
     """Find files matching glob pattern."""
     sandbox = get_sandbox()
     search_dir = sandbox.resolve(path)
@@ -21,41 +23,39 @@ async def _glob(pattern: str, path: str = ".") -> str:
 
     if not search_dir.exists():
         return f"Error: path not found: {path}"
+    if not search_dir.is_dir():
+        return f"Error: '{path}' is not a directory"
 
-    results = []
-    blocked_error = ""
-    allowed_candidates = 0
     try:
-        for f in sorted(search_dir.rglob(pattern)):
-            if not f.is_file():
-                continue
-            candidate_error = sandbox.check_path(f)
-            if candidate_error:
-                if "path blocked by sandbox" in candidate_error.lower():
-                    blocked_error = blocked_error or candidate_error
-                continue
-            if any(p.startswith(".") for p in f.parts):
-                continue
-            if any(p in ("node_modules", "__pycache__", ".venv", ".git")
-                   for p in f.parts):
-                continue
-            allowed_candidates += 1
-            rel = str(f.relative_to(search_dir))
-            results.append(rel)
-            if len(results) >= _MAX_RESULTS:
-                results.append(f"...({len(results) - _MAX_RESULTS + 1} more files)")
-                break
+        limit = max(1, min(int(max_results), 500))
+    except (TypeError, ValueError):
+        return "Error: max_results must be an integer"
+
+    try:
+        scan = await asyncio.to_thread(
+            scan_files,
+            search_dir,
+            sandbox,
+            accept=lambda candidate, relative: candidate.match(pattern),
+            max_files=limit,
+        )
     except Exception as e:
         return f"Error: {e}"
 
-    if not results and blocked_error and not allowed_candidates:
+    if not scan.files and scan.blocked_error:
         return ToolHandlerOutput(
-            text=blocked_error,
+            text=scan.blocked_error,
             is_error=True,
             metadata={"reason_code": "sandbox_blocked"},
         )
-    if not results:
+    if not scan.files:
         return f"No files matching '{pattern}' in {path}"
+    results = [candidate.relative_to(search_dir).as_posix() for candidate in scan.files]
+    if scan.truncated_reason:
+        results.append(
+            f"...(truncated: {scan.truncated_reason}; "
+            f"scanned {scan.scanned_entries} entries)"
+        )
     return "\n".join(results)
 
 
@@ -67,6 +67,12 @@ tool_registry.register(ToolEntry(
         "properties": {
             "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.py' or '*.md'"},
             "path": {"type": "string", "description": "Directory to search in (relative or absolute), default '.'"},
+            "max_results": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 500,
+                "description": "Maximum matching files to return, default 100",
+            },
         },
         "required": ["pattern"],
     },
@@ -76,4 +82,5 @@ tool_registry.register(ToolEntry(
     tags=["file", "search", "read"],
     risk_level="low",
     usage_hint="Use to find files by path pattern before reading or editing them.",
+    timeout_seconds=12,
 ))

@@ -939,12 +939,26 @@ def test_key_builtin_tools_declare_usage_metadata():
         assert entry.usage_hint
 
 
-def test_process_tools_are_core_and_in_interact_toolset():
+def test_only_everyday_process_tools_are_core_and_all_remain_discoverable():
     from personal_agent.tools.toolsets import TOOLSETS, is_core_tool
 
-    for name in {"process_start", "process_list", "process_read", "process_clear", "process_kill", "process_wait"}:
-        assert is_core_tool(name) is True
+    core = {"process_start", "process_read", "process_kill", "process_wait"}
+    deferred = {"process_list", "process_clear"}
+    for name in core | deferred:
         assert name in TOOLSETS["interact"]
+    assert all(is_core_tool(name) for name in core)
+    assert all(not is_core_tool(name) for name in deferred)
+
+
+def test_convenience_tools_are_deferred_behind_tool_search():
+    from personal_agent.tools.toolsets import get_core_tools
+
+    core = get_core_tools()
+
+    assert len(core) <= 20
+    assert {"read", "write", "edit", "grep", "glob", "bash"} <= core
+    assert {"calculator", "datetime", "random", "timer", "json", "weather"}.isdisjoint(core)
+    assert {"task", "workflow_run", "worktree_create", "run_review"}.isdisjoint(core)
 
 
 def test_worktree_tools_declare_permission_metadata():
