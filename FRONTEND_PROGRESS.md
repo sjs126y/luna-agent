@@ -1,6 +1,25 @@
-# Frontend Progress
+<div align="center">
 
-更新时间：2026-07-18 CST
+<h1>Frontend Progress</h1>
+
+<p><strong>Inline TUI 的交互、视觉与后端契约消费状态</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/TUI-inline-0A84FF" alt="Inline TUI">
+  <img src="https://img.shields.io/badge/security%20v4-merged-2EA44F" alt="Security v4 merged">
+  <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
+</p>
+
+<p>
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="BACKEND_INTERFACE.md">后端接口</a> ·
+  <a href="FRONTEND_INTERFACE_REQUIREMENTS.md">前端需求</a>
+</p>
+
+</div>
+
+---
 
 本文给下一位前端 Codex 接手用，记录 inline TUI 当前进度、已接后端接口、用户偏好和下一步准备做但尚未开始的前端微调。后端接口权威文档仍以 `BACKEND_INTERFACE.md` 为准；前端给后端的需求仍写在 `FRONTEND_INTERFACE_REQUIREMENTS.md`。
 
@@ -133,6 +152,9 @@
 - 多工具结果列表 / Ctrl+O 选择展开：用户感兴趣，但之前尝试失败过，暂缓，不作为当前优先项。
 
 ## 最近完成
+
+<details>
+<summary><strong>展开按日期记录的前端完成历史</strong></summary>
 
 ### 2026-07-18 主干接口同步
 
@@ -290,6 +312,8 @@ git diff --check
 ```
 
 结果：`98 passed`。
+
+</details>
 
 ## 不建议现在做
 

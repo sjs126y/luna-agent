@@ -1,6 +1,25 @@
-# Lumora 项目演进记录
+<div align="center">
 
-更新时间：2026-07-18 CST
+<h1>Lumora 项目演进记录</h1>
+
+<p><strong>从原型到完整个人 Agent Runtime</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/phases-13-7C3AED" alt="13 phases">
+  <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-0A84FF" alt="75811 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1050%20passed-2EA44F" alt="1050 tests passed">
+</p>
+
+<p>
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="lumora-roadmap.zh-CN.md">后续方向</a> ·
+  <a href="BACKEND_PROGRESS.md">当前进度</a>
+</p>
+
+</div>
+
+---
 
 本文记录 Lumora 从最初原型到当前 Agent Runtime 的主要结构变化。它不是逐 commit changelog，也不再只描述 Windows 到 Linux/WSL 的迁移，而是按阶段梳理架构、能力和工程边界的演进，并标注代表提交。
 
@@ -10,6 +29,9 @@
 - 本次统计基准：`f3da3d7 Refresh project docs and remove obsolete plans`
 - 基准提交数：`551`
 - 最近全量验证：`uv run pytest -q`，结果 `1050 passed, 1 warning`
+
+<details>
+<summary><strong>展开早期阶段：v0.1 - v0.7</strong></summary>
 
 ## v0.1 Runtime 原型落地
 
@@ -229,6 +251,8 @@
 - 前端 inline TUI 接入 activity、context budget、turn token、confirm action row、tool result 展开。
 - 后端/前端分支合并回 `main`，根 README 和交接文档刷新。
 
+</details>
+
 ## v0.8 MCP Runtime 与 Memory v2
 
 时间：2026-07-12
@@ -376,6 +400,7 @@
 - 删除三份已完成的 `docs/archive` 计划、已验证的 Security/Integration Plugin 清单和 168 行 TUI Phase 0 spike。
 - 出站清单收敛为 `PLATFORM_MEDIA_TEST_CHECKLIST.md`，只保留微信/QQ 真实平台待验证项。
 - `BACKEND_INTERFACE.md` 继续作为前端契约唯一权威；`FRONTEND_INTERFACE_REQUIREMENTS.md` 只保留活动需求，不再复制已完成 schema。
+- README 重构为功能导向的视觉化项目首页；新增文档中心，并为主文档统一状态标签、导航、图表、摘要卡与折叠历史。
 
 ## 当前能力快照
 

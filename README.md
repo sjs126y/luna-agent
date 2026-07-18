@@ -1,408 +1,201 @@
-# Lumora
+<div align="center">
 
-**Lumora is a personal AI agent runtime for tools, memory, platforms, multimodal input, and observable automation.**
+<h1>Lumora</h1>
 
-Lumora 是一个插件化、多入口、可观测的个人 AI Agent runtime。它不是单轮聊天脚本，而是一套能长期运行的个人智能底座：同一个后端 runtime 同时支撑 CLI、inline TUI、平台 Gateway，以及未来的 desktop/web 客户端。
+<p><strong>一个真正长期运行、会使用工具、拥有记忆、连接多平台的个人 AI 助手</strong></p>
 
-当前对外项目名是 **Lumora**；为了避免破坏现有入口，Python 包名仍是 `personal_agent`，CLI 命令仍是 `personal-agent`。
+<p>
+  <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/tests-1050%20passed-2EA44F?logo=pytest&logoColor=white" alt="1050 tests passed">
+  <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
+  <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
+  <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
+  <img src="https://img.shields.io/github/last-commit/sujinsheng123/Personal-Agent?label=last%20commit" alt="Last commit">
+  <img src="https://img.shields.io/github/repo-size/sujinsheng123/Personal-Agent" alt="Repository size">
+</p>
 
-## 一眼看懂
+<p>
+  <a href="#快速开始">快速开始</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="docs/capabilities-and-boundaries.md">功能全景</a> ·
+  <a href="docs/platforms.md">平台接入</a> ·
+  <a href="docs/plugins.md">插件开发</a> ·
+  <a href="docs/architecture.md">实现原理</a>
+</p>
 
-| 你想要的能力 | Lumora 已经具备的底座 |
-| --- | --- |
-| 个人 AI 助手不只聊天，还能真正做事 | 工具执行、权限、安全、审计、后台进程、MCP、workflow、sub-agent 都在同一条主链路里。 |
-| 多个平台共用同一个智能核心 | CLI、inline TUI、Gateway、Cron、插件和未来 desktop/web 都提交到 `ConversationCoordinator`，再复用同一 Agent Runtime。 |
-| 模型调用、工具调用、后台任务都能看见 | `tool_runs`、`turn_reports`、`activity runtime`、provider cache diagnostics 和 doctor 内建。 |
-| 工具调用要安全可控 | execution mode、permission policy、sandbox、path precheck、risk preview、限时授权和 audit log。 |
-| 不同使用场景需要不同自动化程度 | `read-only` / `ask-first` / `local-auto` / `full-auto` 四档 mode 覆盖只读、询问优先、项目内放权和全自动。 |
-| 长期运行不能靠侥幸 | Coordinator 管理会话队列，Gateway 管理平台连接，Delivery Outbox 负责持久重试和恢复。 |
-| 本机环境差异要能配置 | provider、transport、context window、sandbox roots、权限策略、MCP、memory、multimodal、平台 adapter 都可配置。 |
-| 后续要扩展模型、平台、工具、MCP、skill | 插件系统负责装配，核心 runtime 保持轻量，不依赖 LangChain / CrewAI 这类重框架。 |
+</div>
 
-## 为什么做它
+---
 
-很多 Agent 项目可以快速 demo，但一旦真正长期使用，就会遇到同一批问题：
+Lumora 不是套在模型外面的一层聊天界面。它可以在终端与你对话，也可以长期运行在微信、QQ、Telegram 和飞书；它会真实调用工具、记住重要信息、处理文件和图片，并在执行敏感操作前向你确认。
 
-- 模型说自己调用了工具，但实际上没有调用。
-- 工具权限、安全、确认、审计散落在不同路径里。
-- CLI、Bot、TUI、未来桌面端各写一套逻辑，越接越乱。
-- provider、transport、缓存、context usage 语义不清。
-- 后台任务、子 agent、平台连接状态出了问题看不见。
-- 多模态、MCP、skill、workflow 后续扩展会挤压原本架构。
+> 你面对的是同一个助手。换到另一个平台、隔几天再回来，工具、记忆、会话和行为边界仍然保持一致。
 
-Lumora 的方向是把这些问题先放进底层 runtime 里解决，再让不同入口复用同一套能力。
+## 它能做什么
 
-## 架构概览
+<table>
+  <tr>
+    <td width="33%" valign="top"><strong>使用电脑与工具</strong><br><br>读写文件、搜索内容、执行命令、运行代码、管理后台进程，并保留真实工具记录。</td>
+    <td width="33%" valign="top"><strong>连接外部世界</strong><br><br>通过 MCP 使用 GitHub、浏览器、开发文档和其他外部服务，工具可按需发现。</td>
+    <td width="33%" valign="top"><strong>记住长期信息</strong><br><br>保存偏好、经历、关系、承诺和行为信息，在后续会话中自然召回。</td>
+  </tr>
+  <tr>
+    <td valign="top"><strong>跨平台陪伴</strong><br><br>支持 CLI、inline TUI、微信、QQ、Telegram 与飞书，不需要为每个平台配置一套人格。</td>
+    <td valign="top"><strong>发送图片与文件</strong><br><br>理解用户附件，也能把截图、文档和工具产物作为真正的平台附件发回，而不是返回本地路径。</td>
+    <td valign="top"><strong>完成复杂任务</strong><br><br>支持工作流、子 Agent、后台任务、运行中修正和停止，适合多步骤任务。</td>
+  </tr>
+</table>
+
+## 使用方式
+
+| 入口 | 适合场景 | 当前能力 |
+| --- | --- | --- |
+| **Inline TUI** | 本地开发、连续工作 | 流式回答、工具轨迹、命令菜单、权限确认、上下文状态 |
+| **微信** | 日常对话与轻量任务 | 私聊、附件输入、图片/文件/视频发送 |
+| **QQ / NapCat** | 长期在线与丰富媒体 | 私聊、群聊、图片、文件、音频、视频 |
+| **Telegram** | Bot 与远程使用 | 文本、图片、文件、音频、视频 |
+| **飞书** | 工作沟通 | 长连接消息、图片和文件 |
+| **Cron / Plugin** | 定时与外部触发 | 使用正式会话、工具、记忆和投递链路 |
 
 ```mermaid
 flowchart LR
-    User[User] --> CLI[CLI / Inline TUI]
-    User --> Gateway[Platform Gateway]
-    User --> Desktop[Future Desktop / Web]
-
-    CLI --> Service[ConversationService]
-    Gateway --> Service
-    Desktop --> Service
-
-    Service --> Runtime[Agent Runtime]
-    Runtime --> Loop[Agent Loop]
-    Loop --> LLM[Provider-aware LLM Transport]
-    Loop --> Tools[Tool Executor]
-    Loop --> Memory[Memory]
-    Loop --> Activity[Activity Runtime]
-    Loop --> Multi[Multimodal Processor]
-
-    Tools --> Guard[Permission / Sandbox / Audit]
-    Tools --> MCP[MCP Servers]
-    Tools --> Workflow[Workflow]
-    Tools --> SubAgent[Sub Agents]
-    Gateway --> Platforms[Telegram / Feishu / QQ / WeChat]
-    Service --> Store[(SQLite / data/)]
+    You([You]) --> TUI[Terminal]
+    You --> Apps[WeChat · QQ · Telegram · Feishu]
+    TUI --> Lumora[Lumora]
+    Apps --> Lumora
+    Lumora --> Tools[Tools & MCP]
+    Lumora --> Memory[Long-term Memory]
+    Lumora --> Tasks[Workflows & Sub-agents]
+    Lumora --> Reply[Text · Images · Files · Media]
 ```
 
-入口层只负责接入和展示；`ConversationService` 负责把输入转成统一会话请求；Agent Runtime 负责推理、工具、安全、记忆、多模态、状态和持久化。
+## 典型任务
 
-## Runtime Flow
+<table>
+  <tr>
+    <td><strong>项目协作</strong></td>
+    <td>“检查这个仓库最近的改动，找出风险并整理成报告发给我。”</td>
+  </tr>
+  <tr>
+    <td><strong>网页操作</strong></td>
+    <td>“打开这个页面，检查实际内容，截一张图并发给我。”</td>
+  </tr>
+  <tr>
+    <td><strong>长期记忆</strong></td>
+    <td>“记住我偏好的工作方式，下次给方案时继续按这个习惯。”</td>
+  </tr>
+  <tr>
+    <td><strong>后台任务</strong></td>
+    <td>“启动这个长任务，我需要时查看进度；现在先处理另一件事。”</td>
+  </tr>
+  <tr>
+    <td><strong>多平台文件</strong></td>
+    <td>“生成一份结果文件，然后直接通过当前聊天发给我。”</td>
+  </tr>
+</table>
 
-```mermaid
-flowchart TB
-    subgraph Entry["入口层"]
-        CLI["CLI / Inline TUI"]
-        Gateway["Gateway / Platform Adapters"]
-        Desktop["Future Desktop / Web"]
-    end
+## 安全不是一个开关
 
-    subgraph Bootstrap["启动与装配"]
-        Settings["Settings / ConfigLoader"]
-        AppRuntime["create_app_runtime"]
-        AgentRuntime["create_agent_runtime"]
-        Plugins["PluginManager"]
-    end
+你可以按场景选择自动化程度：
 
-    subgraph Conversation["会话层"]
-        Coordinator["ConversationCoordinator"]
-        ActiveTurns["ActiveTurnRegistry"]
-        Service["ConversationService"]
-        Commands["ConversationCommandRuntime"]
-        Sessions["SessionStore"]
-        Directory["SessionDirectory"]
-        Delivery["DeliveryService"]
-        Input["ConversationInput"]
-    end
-
-    subgraph InputLayer["输入与附件"]
-        Text["Text Message"]
-        PlatformParts["Platform Message Parts"]
-        Attachments["AttachmentRef"]
-        AttachmentStore["AttachmentStore"]
-        Multi["MultiAttachmentProcessor"]
-    end
-
-    subgraph AgentCore["Agent 核心"]
-        Context["build_turn_context"]
-        Memory["Memory Prefetch"]
-        Skills["Skill Injection"]
-        Planner["Request Planning"]
-        Loop["run_conversation"]
-        Steer["SteerManager"]
-        Reports["TurnReportRecorder"]
-    end
-
-    subgraph LLM["Provider / Transport"]
-        Provider["ProviderProfile"]
-        Registry["Transport Registry"]
-        Anthropic["Anthropic Messages"]
-        Chat["Chat Completions"]
-        Responses["Responses / Codex Responses"]
-        Cache["Cache Diagnostics / Usage"]
-    end
-
-    subgraph Tools["工具执行"]
-        ToolRegistry["ToolRegistry"]
-        Executor["ToolExecutor"]
-        Guard["ExecutionGuard"]
-        Permission["PermissionManager"]
-        Sandbox["Sandbox / Path Safety"]
-        Audit["Audit Log"]
-        MCP["MCP Tools"]
-        Process["Background Processes"]
-    end
-
-    subgraph Extensions["扩展能力"]
-        BuiltinPlugins["Builtin Plugins"]
-        UserPlugins["User Plugins"]
-        SkillsExt["Skills"]
-        Workflows["Workflows"]
-        SubAgents["Sub Agents"]
-    end
-
-    subgraph Storage["持久化与观测"]
-        DB["SQLite"]
-        Messages["Messages"]
-        ToolRuns["Tool Runs"]
-        TurnReports["Turn Reports"]
-        Outbox["Delivery Outbox"]
-        Activity["Activity Runtime"]
-        Doctor["Doctor / Health"]
-    end
-
-    CLI --> AppRuntime
-    Gateway --> AppRuntime
-    Desktop --> AppRuntime
-
-    Settings --> AppRuntime
-    Plugins --> AppRuntime
-    AppRuntime --> Coordinator
-    AppRuntime --> Service
-    AppRuntime --> AgentRuntime
-
-    CLI --> Coordinator
-    Gateway --> Coordinator
-    Desktop --> Coordinator
-    Coordinator --> Commands
-    Coordinator --> ActiveTurns
-    Coordinator --> Service
-    Coordinator --> Delivery
-    Service --> Sessions
-    Service --> Input
-    Delivery --> Directory
-    Delivery --> Outbox
-    Outbox --> Gateway
-
-    Text --> Input
-    Gateway --> PlatformParts
-    PlatformParts --> Attachments
-    Input --> Multi
-    Attachments --> AttachmentStore
-    AttachmentStore --> Multi
-
-    Service --> Loop
-    Loop --> Context
-    Context --> Memory
-    Context --> Skills
-    Context --> Planner
-    ActiveTurns --> Steer
-    Loop --> Reports
-
-    Planner --> Provider
-    Provider --> Registry
-    Registry --> Anthropic
-    Registry --> Chat
-    Registry --> Responses
-    Anthropic --> Cache
-    Chat --> Cache
-    Responses --> Cache
-
-    Loop --> ToolRegistry
-    ToolRegistry --> Executor
-    Executor --> Guard
-    Guard --> Permission
-    Guard --> Sandbox
-    Executor --> Audit
-    Executor --> MCP
-    Executor --> Process
-
-    Plugins --> BuiltinPlugins
-    Plugins --> UserPlugins
-    BuiltinPlugins --> SkillsExt
-    BuiltinPlugins --> Workflows
-    BuiltinPlugins --> SubAgents
-
-    Service --> DB
-    DB --> Messages
-    Reports --> TurnReports
-    Executor --> ToolRuns
-    AgentRuntime --> Activity
-    Process --> Activity
-    Gateway --> Activity
-    Doctor --> Activity
-```
-
-这张图描述内部流转和开发者接入点；更具体的分层说明见 [架构说明](docs/architecture.md)。
-
-## 核心亮点
-
-### 1. 真正的 Agent Runtime
-
-Agent loop、LLM transport、工具执行、权限、安全、记忆、workflow、MCP、Gateway 和会话存储是独立模块，通过清晰接口组合。新增入口时复用 runtime，而不是复制一套 agent 逻辑。
-
-### 2. 多入口共享同一套后端
-
-`personal-agent chat`、inline TUI、`personal-agent serve`、平台 adapter、未来 desktop/web shell 都走同一个 `ConversationService`。这让会话、权限、工具、activity、turn report 和 context usage 的语义保持一致。
-
-### 3. 工具调用可验证
-
-Lumora 不只记录模型文本，还记录真实工具链路：
-
-- 实时事件：`tool_start`、`tool_decision`、`tool_end`
-- 持久化：`tool_runs`
-- 单轮审计：`AgentTurnReport`
-- tool truth：区分“真的调用工具”和“只是声称调用工具”
-
-### 4. Mode、权限与安全在主链路里
-
-危险操作不会直接裸露给模型。`read-only`、`ask-first`、`local-auto`、`full-auto` 四档 execution mode 组合资源 profile 与审批策略；所有工具统一经过 prepare、hard precheck、资源/工具审批、dispatch 和 audit。CLI/TUI 与 Gateway 复用允许一次、拒绝、限时允许和 pending confirmation 语义。
-
-### 5. Gateway 能长期跑
-
-Gateway 不是简单 webhook 包装。它负责平台 runtime、鉴权、异步工具确认、附件准备和断线重连；ConversationCoordinator 负责会话排队与实时控制，Delivery Outbox 负责发送失败恢复，Adapter 负责平台编码和长文本切分。网络抖动、provider 503、平台限制不会轻易打断整个会话链路。
-
-### 6. Provider-aware Transport
-
-Provider 不只是 base URL 和 model。`ProviderProfile` 描述 provider 能力、API mode、cache strategy 和 usage 字段。transport 支持 Chat Completions、Anthropic Messages、OpenAI Responses、Codex Responses 和兼容中转站路径，并归一化 cache/context usage。
-
-### 7. Prompt Cache 可诊断
-
-系统会记录 provider cache capability、system/tools/message prefix hash、cache read/write/hit/miss tokens。你可以判断问题到底是前缀变了、provider 没命中，还是命中了但之前没有解析出来。
-
-### 8. Context 语义清楚
-
-`context_used_tokens/context_window/context_percent` 表示当前上下文占用；`input_tokens/output_tokens` 表示最近一次模型调用消耗。UI 不再把一轮 API token 误当作上下文窗口。
-
-### 9. Activity Runtime 统一运行态
-
-`/activity` 可以查看子 agent、后台进程和 Gateway agent 的 summary/list/detail。前端拿到结构化 payload，可以直接渲染状态、耗时、token quota、工具计数、任务预览和错误信息。
-
-### 10. Runtime Steer 支持运行中修正
-
-`/steer <text>` 可以向正在运行的同会话 turn 注入高优先级修正。Coordinator 的独立 control channel 不等待普通对话队列，Agent Loop 会在下一步消费 steer 并调整后续行为。
-
-### 11. 入站与出站多模态链路
-
-平台 adapter 会把用户发来的图片、文件、音频等标准化为 attachment。后端按配置处理 native、text fallback、notice 或 off；图片原生输入、文档文本抽取、vision fallback 和 OCR HTTP 扩展点已经预留。工具与 MCP 产生的图片、音频、视频和文件则进入受控 ArtifactStore；`write`、`edit` 或 `bash` 已经生成的普通本地文件可由 `artifact_from_file` 安全复制进当前 turn。模型拿到 `artifact_id` 后通过 `response_attach` 明确选入最终回复，再由 DeliveryPlanner 和分片 Outbox 完成平台原生发送、降级、重试和恢复。
-
-### 12. 插件、MCP、Skill 都能扩展
-
-工具、平台、LLM transport、外部 memory provider、workflow 都通过插件系统装配。被动插件通过 `register(ctx)` 原子注册 Tool、Skill、MCP、Hook 等能力，插件配置隔离在 `plugins.config.<key>`；普通插件在各 Manager 前加载，只有平台插件允许 deferred。记忆领域模型、internal Markdown、archive、review worker、router 和 fallback 属于核心；`memory/lumora` 与 `memory/mem0` 是可替换插件。Lumora 内部再通过轻量工厂装配 embedding、vector、keyword、fusion 和可选 reranker Backend，SQLite Archive 始终保留可重建的权威记忆。MCP runtime 支持 stdio 与 Streamable HTTP、后台并发启动、单 server 隔离恢复和下一轮动态工具刷新，不阻塞 Gateway 核心启动。
-
-## Memory
-
-内部记忆从 `data/system/*.md` 全量进入 system prompt，并按缓存 Agent 固定 revision，避免每轮修改破坏 prompt cache。自动整理只写入 `lumora-managed` 托管区块，用户手写内容受 hash 冲突检查和原子写入保护。
-
-外部记忆保存事实、偏好、事件、关系、承诺和行为。Lumora provider 使用两次 Memory LLM 调用完成提取与变更决策，以 SQLite 保存权威数据和历史，以阿里百炼 embedding + Qdrant 提供语义检索，并与 SQLite FTS5/BM25 通过 RRF 融合。Mem0 provider 直接适配官方依赖；配置或运行条件不满足时自动切换 SQLite + BM25 fallback。知识 RAG 不与个人记忆共用 provider。
-
-```bash
-# Lumora/Qdrant 随默认依赖安装；启用 Mem0 时再安装可选依赖
-uv sync --extra memory-mem0
-```
-
-## 安全与可靠性边界
-
-Lumora 的安全下限不依赖模型自觉，而是放在 runtime 边界里：
-
-- mode、工具审批和具体文件/网络资源共同决定工具能否执行；授权只覆盖确认中列出的最小资源，并受统一 TTL 约束。
-- Bash、后台进程与 stdio MCP 可使用 Bubblewrap 文件系统隔离；MCP HTTP 目标和不可信载荷在 transport 边界校验。
-- sandbox roots、blocked patterns、bash path restrict、secret/path precheck 和文件写入上限属于硬边界。
-- 所有工具决策和结果可以进入 audit / tool runs / turn reports，方便回看真实发生了什么。
-- Gateway 暴露平台连接与确认状态，Coordinator 暴露 active/queued session，Delivery Outbox 持久化发送状态与失败恢复。
-- LLM 请求有重试、provider-aware transport、cache/context usage 诊断和非 JSON 响应错误归因。
-
-详细说明见 [能力、边界与配置化](docs/capabilities-and-boundaries.md)。
-
-## 当前能力地图
-
-| 模块 | 已有能力 |
+| Mode | 行为 |
 | --- | --- |
-| CLI / inline TUI | 多轮对话、流式输出、thinking 展示、slash menu、工具确认、会话切换、导出、context meter。 |
-| Gateway | Telegram、飞书、QQ、微信插件式接入；会话路由、pending 消息、确认回复、重连、长文本切分。 |
-| Tools | 文件、shell、网络、后台进程、工作区、记忆、delegate、workflow、MCP 工具统一执行。 |
-| Permission | execution mode、category permission、限时授权、confirm timeout、Gateway 异步确认、audit log。 |
-| Observability | doctor、health snapshot、tool runs、turn reports、activity snapshot、provider cache diagnostics。 |
-| Multi-agent | delegate/sub-agent 有配额、状态、结果、工具统计和 activity detail。 |
-| Multimodal | 结构化 attachment、平台下载、本地缓存、图片原生输入、文档文本抽取、vision/OCR 扩展点。 |
-| Provider | DeepSeek、OpenAI-compatible、Anthropic、OpenRouter、Responses/Codex Responses 中转站路径。 |
+| **Read Only** | 只读取允许范围内的内容，扩权请求直接拒绝 |
+| **Ask First** | 读取优先，写入和网络等资源按需确认 |
+| **Local Auto** | 在工作目录内自主操作，越界时询问 |
+| **Full Auto** | 最大化自动执行，但受保护路径等硬限制仍然有效 |
+
+授权可以只允许一次，也可以在当前会话内限时生效。工具调用、拒绝原因和真实结果都有记录，不需要只相信模型声称做过什么。
+
+[查看完整能力与安全边界](docs/capabilities-and-boundaries.md)
+
+## 功能全景
+
+| 能力 | 状态 | 说明 |
+| --- | :---: | --- |
+| 多轮会话与流式输出 | Ready | 会话切换、上下文统计、运行中停止与修正 |
+| 文件、Shell、网络与进程工具 | Ready | 统一确认、安全检查和结果记录 |
+| MCP Client Runtime | Ready | stdio / Streamable HTTP、后台启动、断线恢复 |
+| 长期个人记忆 | Ready | Lumora、Mem0、混合检索和本地 Qdrant |
+| 插件与 Skill | Ready | Tool、Skill、MCP、Hook、Command、Workflow |
+| 多平台 Gateway | Ready | 微信、QQ、Telegram、飞书 |
+| 入站与出站多模态 | Ready | 图片、文件、音频、视频按平台能力处理 |
+| Workflow 与 Sub-agent | Ready | 并行、流水线、配额、活动状态 |
+| 主动决策系统 | Planned | 已有正式触发入口，决策策略后续推进 |
+| Desktop / Web | Reserved | 后端契约已预留，前端尚未实现 |
 
 ## 快速开始
 
-需要先安装 Python 3.12+ 和 `uv`。
+需要 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
-# macOS / Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone https://github.com/sujinsheng123/Personal-Agent.git
+cd Personal-Agent
 
-# Windows PowerShell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-拉取项目后安装依赖，并生成本机配置：
-
-```bash
 uv sync
 uv run personal-agent init --profile local --copy-env --fix-dirs
 ```
 
-也可以直接从模板复制，去掉 `.example` 后缀即可使用：
-
-```bash
-cp .env.example .env
-cp config.yaml.example config.yaml
-cp -r data/system.example data/system
-```
-
-编辑 `.env`，至少填写模型密钥：
-
-```env
-LLM_API_KEY=...
-```
-
-检查并启动：
+在 `.env` 中填写至少一个模型 API Key，然后检查环境：
 
 ```bash
 uv run personal-agent doctor
 uv run personal-agent chat
 ```
 
-启动平台 Gateway：
+启动微信、QQ、Telegram 或飞书 Gateway：
 
 ```bash
-uv run personal-agent init --profile telegram --copy-env --fix-dirs
 uv run personal-agent serve
 ```
 
-更多命令、平台接入、配置项、MCP 和插件开发见文档索引。
+平台 Token、NapCat、MCP、Memory 和安全模式配置见 [配置说明](docs/configuration.md) 与 [平台接入](docs/platforms.md)。
 
-## 配置入口
+## 扩展 Lumora
 
-Lumora 的运行行为主要通过 `.env` 和 `config.yaml` 控制，不需要改代码就能切换 provider、API mode、上下文窗口、execution mode、sandbox、安全策略、MCP、memory、multimodal 和平台插件。
+插件可以组合工具、Skill、MCP Server、Hook、命令和工作流。当前仓库已经包含：
 
-| 文件或目录 | 用途 |
+| 插件 | 提供能力 |
 | --- | --- |
-| `.env` | secret 和 provider/platform 环境变量，例如 `LLM_API_KEY`、`TELEGRAM_BOT_TOKEN`。 |
-| `config.yaml` | 本机行为配置，例如 storage、plugins、memory、sandbox、MCP、auth、session、execution mode。 |
-| `.env.example` | 环境变量模板，复制为 `.env` 后填写密钥。 |
-| `config.yaml.example` | 可发布模板，不包含个人密钥和本机私有路径。 |
-| `plugins/` | 用户插件或本地开发插件目录。 |
-| `data/system.example/` | 默认 system prompt 模板，复制为 `data/system/` 后可按个人偏好修改。 |
-| `data/` | 运行数据、会话、记忆、附件缓存、审计日志等；仓库只保留目录骨架，不提交个人数据。 |
+| **GitHub Assistant** | 仓库概览、PR Review、Issue 分类、Release Notes |
+| **Developer Docs** | 查询库文档、比较 API、辅助版本升级 |
+| **Browser Operator** | 网页检查、网页测试、受控页面操作 |
+| **Codex Bridge** | 通过受限 MCP/Hook 连接外部 Codex 能力 |
 
-## 技术栈
+[查看插件格式与注册能力](docs/plugins.md)
 
-Python 3.12+ / uv / Typer / asyncio / httpx / aiohttp / aiosqlite / MCP SDK / Qdrant Client / tiktoken / prompt-toolkit / PyMuPDF / python-docx。
+## 项目状态
 
-项目保持轻量 runtime，不依赖 LangChain、CrewAI 等重框架。
-
-## 验证
+<p>
+  <img src="https://img.shields.io/badge/Python%20files-325-3776AB" alt="325 Python files">
+  <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-555555" alt="75811 Python lines">
+  <img src="https://img.shields.io/badge/runtime%20LOC-47%2C458-0A84FF" alt="47458 runtime lines">
+  <img src="https://img.shields.io/badge/test%20LOC-27%2C549-2EA44F" alt="27549 test lines">
+</p>
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest -q
+uv run pytest -q  # 1050 passed, 1 warning
 ```
 
-当前主干最近一次全量验证结果：`1050 passed, 1 warning`。
+项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。
 
-清理后基准 `f3da3d7` 的 Git tracked Python 规模为 325 个文件、75,811 个物理行，其中 Runtime 47,458 行、测试 27,549 行。详细口径和分阶段变化见 `PROJECT_EVOLUTION.md`。
+## 继续阅读
 
-## 文档索引
-
-| 文档 | 内容 |
+| 想了解 | 文档 |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Runtime Flow 分层说明和开发者接入边界。 |
-| [docs/configuration.md](docs/configuration.md) | 配置项、profile、execution mode、sandbox、multimodal、MCP。 |
-| [docs/capabilities-and-boundaries.md](docs/capabilities-and-boundaries.md) | 项目亮点、安全边界、可靠性设计、mode 和可配置化总览。 |
-| [docs/platforms.md](docs/platforms.md) | Gateway 和平台插件接入。 |
-| [docs/plugins.md](docs/plugins.md) | 插件系统和扩展方式。 |
-| [docs/operations.md](docs/operations.md) | 运行、排错、doctor、常用维护命令。 |
-| [BACKEND_INTERFACE.md](BACKEND_INTERFACE.md) | 后端提供给前端的结构化事件和接口契约。 |
-| [FRONTEND_INTERFACE_REQUIREMENTS.md](FRONTEND_INTERFACE_REQUIREMENTS.md) | 前端提出的后端字段和接口需求。 |
-| [PROJECT_EVOLUTION.md](PROJECT_EVOLUTION.md) | 从原型到当前 Runtime 的阶段性项目变化、代表提交和代码规模。 |
-| [CODEX_HANDOFF.md](CODEX_HANDOFF.md) | 前后端 Codex 协作和交接状态。 |
+| Lumora 到底有哪些能力 | [功能、边界与配置化](docs/capabilities-and-boundaries.md) |
+| 输入如何变成工具调用和回复 | [架构说明](docs/architecture.md) |
+| 如何配置模型、记忆、MCP 和安全模式 | [配置说明](docs/configuration.md) |
+| 如何连接微信、QQ、Telegram、飞书 | [平台接入](docs/platforms.md) |
+| 如何编写和组合插件 | [插件系统](docs/plugins.md) |
+| 如何启动、诊断和排错 | [运维与排错](docs/operations.md) |
+| 项目这段时间发生了什么 | [项目演进记录](PROJECT_EVOLUTION.md) |
+| 后续准备推进什么 | [架构方向](lumora-roadmap.zh-CN.md) |
+
+---
+
+<div align="center">
+  <strong>Lumora</strong><br>
+  Tools, memory and conversations that stay with you.
+</div>

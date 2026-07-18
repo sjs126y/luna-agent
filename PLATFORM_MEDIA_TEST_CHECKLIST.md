@@ -1,6 +1,25 @@
-# Lumora 平台媒体联调清单
+<div align="center">
 
-更新时间：2026-07-18
+<h1>Lumora 平台媒体联调清单</h1>
+
+<p><strong>自动化测试已通过，剩下的是微信与 QQ 的真实客户端体验</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/automated-1050%20passed-2EA44F" alt="Automated tests passed">
+  <img src="https://img.shields.io/badge/WeChat-E2E%20pending-F59E0B" alt="WeChat E2E pending">
+  <img src="https://img.shields.io/badge/QQ-E2E%20pending-F59E0B" alt="QQ E2E pending">
+</p>
+
+<p>
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/platforms.md">平台接入</a> ·
+  <a href="docs/operations.md">排错</a> ·
+  <a href="TODO.md">当前待办</a>
+</p>
+
+</div>
+
+---
 
 本文只保留仍需真实平台验证的出站媒体场景。ArtifactStore、DeliveryPlanner、multipart Outbox 和各 Adapter 的自动化测试已经进入全量回归，不在这里重复测试内部实现。
 

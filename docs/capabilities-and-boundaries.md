@@ -1,236 +1,144 @@
-# 能力、边界与配置化
+<div align="center">
 
-更新时间：2026-07-18
+<h1>功能与边界</h1>
 
-这份文档补充 README 的项目亮点。README 只放首页级介绍；如果想了解 Lumora 为什么适合长期运行、哪些事情有安全边界、哪些行为可以配置，就看这里。
+<p><strong>Lumora 能做什么，哪些事情会先问你，哪些事情永远不会偷偷做</strong></p>
 
-## 项目定位
+<p>
+  <img src="https://img.shields.io/badge/tools-ready-2EA44F" alt="Tools ready">
+  <img src="https://img.shields.io/badge/memory-ready-2EA44F" alt="Memory ready">
+  <img src="https://img.shields.io/badge/multimodal-ready-2EA44F" alt="Multimodal ready">
+  <img src="https://img.shields.io/badge/security-4%20modes-7C3AED" alt="4 security modes">
+</p>
 
-Lumora 是一个个人 AI Agent runtime，不是单一聊天界面。它把模型调用、工具执行、权限、安全、记忆、平台 Gateway、MCP、workflow、sub-agent、多模态和运行态观测放到同一个后端核心里。
+<p>
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档中心</a> ·
+  <a href="configuration.md">配置</a> ·
+  <a href="architecture.md">实现原理</a>
+</p>
 
-核心目标：
+</div>
 
-- 多个入口复用同一个 agent runtime。
-- 真实工具调用可确认、可审计、可回看。
-- 平台长期在线时有重试、重连、限流和异常兜底。
-- 供应商、协议、缓存、上下文、权限和多模态策略都能配置。
-- 新工具、MCP、skill、平台 adapter 和未来 desktop/web 入口可以继续接入。
+---
 
-## 功能亮点
+## 一张表看懂
 
-### 统一会话入口
+| 你可以让 Lumora | 它会怎样完成 |
+| --- | --- |
+| 处理本地项目 | 读取、搜索、修改文件，执行命令和代码，管理后台进程 |
+| 查询外部信息 | 使用网页工具、MCP、GitHub 和开发文档插件 |
+| 记住长期信息 | 保存偏好、经历、关系和承诺，并在以后自然召回 |
+| 处理复杂任务 | 拆分步骤、调用子 Agent、运行工作流、接受中途修正 |
+| 在聊天平台工作 | 连接微信、QQ、Telegram、飞书，共享同一套会话能力 |
+| 收发多媒体 | 理解图片和文件，把截图、文档、音视频作为真正附件发送 |
+| 解释自己做了什么 | 展示真实工具调用、权限决定、任务状态和错误原因 |
 
-CLI、inline TUI、Gateway、Cron 和插件 submit 都构造 `SubmissionRequest` 并进入 `ConversationCoordinator`，再由它选择命令/控制通道或有序 Agent turn。入口层只负责接入、展示和平台差异，核心推理链路保持一致。
+## 核心能力
 
-这样可以避免每个入口各写一套工具、权限、记忆和状态逻辑。
+<table>
+  <tr>
+    <td width="50%" valign="top"><strong>工具与自动化</strong><br><br>文件、Shell、代码、网络、进程、任务、工作流和 MCP 工具使用同一套调用体验。模型不能只说“已经执行”，系统会记录真实调用与结果。</td>
+    <td width="50%" valign="top"><strong>长期记忆</strong><br><br>稳定人格与用户资料全量进入上下文；日常事件、偏好和承诺进入可检索记忆。支持 Lumora、Mem0 和 SQLite fallback。</td>
+  </tr>
+  <tr>
+    <td valign="top"><strong>多平台会话</strong><br><br>CLI/TUI、微信、QQ、Telegram、飞书、Cron 和插件触发共享会话、工具、记忆与安全策略。</td>
+    <td valign="top"><strong>多模态</strong><br><br>入站附件可原生理解或文本化；工具生成的截图和文件可被明确选择并发送到当前平台。</td>
+  </tr>
+  <tr>
+    <td valign="top"><strong>复杂任务</strong><br><br>支持后台进程、并行子任务、流水线工作流、任务额度、实时停止和运行中 steer。</td>
+    <td valign="top"><strong>可观测性</strong><br><br>Doctor、Activity、Tool Runs、Turn Reports 和缓存诊断帮助判断系统正在做什么、为什么失败。</td>
+  </tr>
+</table>
 
-### Provider-aware LLM Transport
+## 平台与媒体
 
-Provider 不只是 `base_url` 和 `model`。Lumora 会根据 provider profile 和 API mode 选择 transport，并处理不同协议的请求格式：
+| 平台 | 文本 | 图片 | 文件 | 音频 | 视频 |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| 微信 | Yes | Yes | Yes | - | Yes |
+| QQ / NapCat | Yes | Yes | Yes | Yes | Yes |
+| Telegram | Yes | Yes | Yes | Yes | Yes |
+| 飞书 | Yes | Yes | Yes | - | - |
 
-- Chat Completions
-- Anthropic Messages
-- OpenAI Responses
-- Codex Responses
-- OpenAI-compatible / 中转站路径
+最终发送能力以平台实际限制与 Adapter capability 为准；不支持的类型会降级成文件或明确提示，不会把服务器本地路径发给用户。
 
-transport 还负责归一化 usage、context、cache diagnostics、流式 delta 和错误归因。
+## 安全模式
 
-### 工具与 MCP
+```mermaid
+flowchart LR
+    RO[Read Only] --> AF[Ask First]
+    AF --> LA[Local Auto]
+    LA --> FA[Full Auto]
+    RO -. 自动化程度 .-> FA
+```
 
-内置工具、MCP 工具和插件工具进入同一套 tool registry、权限判断、执行器和审计链路。模型不能绕过这条链路直接执行危险操作。
-
-工具运行结果会被记录到：
-
-- 实时事件
-- `tool_runs`
-- `AgentTurnReport`
-- audit log
-
-### Gateway 与平台
-
-Gateway 不是简单地把平台消息转发给模型。它管理平台 adapter、来源到 session 的绑定、异步确认、附件准备和连接状态；会话队列属于 Coordinator，发送重试属于 Delivery Outbox。
-
-平台侧当前覆盖：
-
-- Telegram
-- 飞书
-- QQ
-- 微信
-
-不同平台只处理自己的消息解析、发送、附件引用和下载能力，后续统一进入后端核心。
-
-### 多模态链路
-
-平台 adapter 会把图片、文件、音频、视频等输入标准化为 attachment。Gateway 在授权通过后触发附件准备，`MultiAttachmentProcessor` 再按配置决定如何处理：
-
-- `native`：传给支持原生多模态的 provider。
-- `text`：尝试文本化，例如文本文件、PDF、docx、vision fallback、OCR HTTP 服务。
-- `auto`：优先使用可用能力，不可用时降级。
-- `off`：不下载、不缓存、不处理，只给出提示。
-
-处理失败不会直接打断 turn，而是转成模型可见 notice 和前端可展示 diagnostics。
-
-出站链路与入站附件分离。工具/MCP 产物进入 ArtifactStore，普通工作区文件用 `artifact_from_file` 显式提升；模型通过 `response_attach` 选择当前 turn 的产物。DeliveryPlanner 和 multipart Outbox 再按平台能力原生发送、降级、重试和恢复，本地路径不会进入平台消息。
-
-### 长期记忆
-
-内部 Markdown、review buffer 和 Agent revision snapshot 保存稳定人格、用户偏好和关系信息；SQLite Archive 保存可审计的 observation 与权威记忆。Lumora/Mem0 是可替换外部 provider，Lumora 内部可独立选择 embedding、vector、keyword、fusion 和可选 reranker backend，本地或远程索引都可从 SQLite 重建。
-
-### 运行中观测
-
-Lumora 不是只看模型回复文本。它还提供：
-
-- doctor 启动体检
-- runtime health snapshot
-- tool runs 查询
-- turn reports
-- activity runtime
-- provider cache diagnostics
-- context usage
-- gateway/platform status
-
-这些数据能帮助判断：模型是否真的调用工具、工具为什么被拒绝、平台为什么积压、provider 是否命中缓存、当前上下文还有多少空间。
-
-## 安全边界
-
-Lumora 的安全设计分两层：可配置权限和不可轻易绕过的硬边界。
-
-### Execution Mode
-
-`execution.mode` 控制默认自动化程度：
-
-| mode | 定位 | 默认倾向 |
+| Mode | 适合场景 | 默认行为 |
 | --- | --- | --- |
-| `read-only` | Read Only | roots 内只读，扩权请求拒绝 |
-| `ask-first` | Ask First | roots 内只读，具体写入/网络资源按需确认 |
-| `local-auto` | Local Auto | roots 内可读写，越界资源与需审批工具按需确认 |
-| `full-auto` | Full Auto | roots 内可读写并允许网络，硬安全边界仍生效 |
+| **Read Only** | 浏览与检查 | 允许范围内只读；扩权请求直接拒绝 |
+| **Ask First** | 日常协作 | 读操作优先，写入和网络按需询问 |
+| **Local Auto** | 项目开发 | 工作目录内自主读写，越界资源询问 |
+| **Full Auto** | 受信环境 | 最大化自动执行，硬安全边界仍保留 |
 
-mode 可以作为全局默认，也可以在会话中临时切换。
+### 不会被模式关闭的边界
 
-### Tool Approval 与资源权限
+<table>
+  <tr>
+    <td><strong>Protected paths</strong><br>密钥、Git 内部目录、SSH 等受保护位置。</td>
+    <td><strong>Path safety</strong><br>路径穿越、符号链接和越界访问检查。</td>
+  </tr>
+  <tr>
+    <td><strong>Sandbox</strong><br>文件根目录、只读根目录、进程和网络隔离。</td>
+    <td><strong>Audit</strong><br>工具决定、实际结果和失败原因保留安全摘要。</td>
+  </tr>
+</table>
 
-工具审批模式：
+允许操作时可以选择：
 
-```text
-auto, cached, prompt, deny
-```
+- 只允许这一次。
+- 拒绝这一次并停止当前工具链。
+- 在当前会话中限时允许同类工具或精确资源。
 
-资源类型：
+切换 Mode、重置会话或重启服务后，临时授权会被清空。
 
-```text
-filesystem(read/write), network(connect)
-```
+## 长期运行能力
 
-`cached` 首次确认后按统一 TTL 缓存，`prompt` 每次确认，`deny` 禁止。资源授权始终记录具体路径或 host；类别级 `/allow` 命令已经删除。
+| 问题 | Lumora 的用户体验 |
+| --- | --- |
+| 平台断线 | 自动重连并在 Doctor 中显示状态 |
+| 同一会话连续来消息 | 保持顺序，不让两个回合互相覆盖 |
+| 需要立刻停止 | `/stop` 走实时控制通道，不等待普通队列 |
+| 需要中途改要求 | `/steer` 注入当前正在运行的回合 |
+| 发送到一半失败 | 记录每个消息分片，只重试没有成功的部分 |
+| MCP 很慢 | 后台启动，单个 Server 不阻塞核心 Gateway |
+| 向量库不可用 | 保留 SQLite 权威数据并使用 fallback |
+| 模型返回空内容 | 进入无工具收尾，避免发送内部占位文本 |
 
-### Sandbox 与硬预检
+## 配置哪些行为
 
-权限允许不代表可以越过沙箱。以下属于硬边界：
+| 配置入口 | 用途 |
+| --- | --- |
+| `.env` | 模型、平台和外部服务密钥 |
+| `config.yaml` | Mode、工具审批、沙箱、插件、MCP、Memory、附件和平台行为 |
+| `data/system/*.md` | Agent 人格、用户资料、关系和长期系统提示 |
+| `plugins.config.*` | 每个外置插件自己的隔离配置 |
 
-- sandbox roots
-- blocked glob patterns
-- secret/path precheck
-- bash path restrict
-- bash network restrict
-- file write size limit
-- destructive operation precheck
+配置示例、字段和迁移说明见 [配置说明](configuration.md)。
 
-这些边界的目标是防止工具访问密钥、越权路径、系统目录、仓库内部敏感文件或执行明显危险的 bash。
+## 明确没有做什么
 
-### 审计
+- 不让模型绕过工具 Runtime 直接操作系统。
+- 不把知识 RAG 和个人记忆混成同一份数据。
+- 不因为启用了 Full Auto 就开放受保护路径。
+- 不把本地文件路径当成平台附件协议。
+- 不把插件变成可以任意访问核心对象的 Module 注入。
+- 不为每个平台复制一套 Agent Loop。
 
-工具决策、工具结果和关键运行态可以记录下来。实际排查时，不需要只相信模型文本，可以回看真实工具调用、授权 scope、拒绝原因、输出截断和错误信息。
+## 继续深入
 
-## 可靠性设计
-
-### Gateway 长期运行
-
-平台 Gateway 有自己的运行态，而不是只靠一次请求：
-
-- 平台 adapter 连接状态
-- 连接失败后的 reconnect delay
-- Coordinator 同 session 队列
-- 独立 command/control 通道与 `/stop` 中断
-- Delivery Outbox 的分片发送、重试与恢复
-- 长文本切分
-- 附件准备失败 diagnostics
-
-这让平台 bot 更适合长期在线，而不是一次异常就丢消息。
-
-### LLM 请求可靠性
-
-LLM client 和 transport 会处理：
-
-- HTTP 429/5xx 重试
-- stream / non-stream 响应
-- 非 JSON 响应错误摘要
-- provider-specific path
-- usage 和 context 归一化
-- cache hit/miss/write/read 字段
-- 图片输入不支持时的降级重试
-
-### 工具执行可靠性
-
-工具执行会经过统一 executor。权限拒绝、确认超时、工具异常、输出截断、真实调用统计和结果持久化都在同一条路径里处理，减少入口之间行为不一致。
-
-## 可配置化
-
-Lumora 的目标是尽量通过配置切换运行方式，而不是改代码。
-
-### `.env`
-
-`.env` 主要放 secret 和 provider/platform 环境变量，例如：
-
-- `LLM_PROVIDER`
-- `LLM_API_KEY`
-- `LLM_BASE_URL`
-- `LLM_MODEL`
-- `LLM_API_MODE`
-- `LLM_CONTEXT_WINDOW`
-- `IMAGE_TEXT_API_KEY`
-- 平台 token / app id / secret
-
-### `config.yaml`
-
-`config.yaml` 主要放本机行为配置：
-
-- `execution.mode`
-- `permissions.grant_ttl_minutes`
-- `permissions.tool_approval`
-- `sandbox.process_backend`
-- `sandbox.roots`
-- `sandbox.read_roots`
-- `sandbox.blocked`
-- `sandbox.bash_allow_network`
-- `storage.data_dir`
-- `plugins.enabled`
-- `memory.provider`
-- `mcp.servers`
-- `multimodal.*`
-- `attachments.*`
-- `session.*`
-- `auth.*`
-
-### Profile
-
-`personal-agent init --profile ...` 用于生成不同场景的初始配置，例如 local、server、bot、telegram、feishu、wechat。profile 是起点，不是锁死的模式，后续仍然可以手动调整配置。
-
-## 边界说明
-
-Lumora 不是为了让模型无限制接管机器。更准确地说，它是在安全边界内给模型自动化能力：
-
-- 模型可以建议和调用工具，但工具必须通过 runtime。
-- 用户可以给临时授权，但不能越过配置里的 `deny` 和硬安全边界。
-- 平台可以长期运行，但需要正确配置 token、白名单和权限策略。
-- 多模态可以原生或文本化处理，但无法处理的附件会降级成明确提示。
-- MCP 和插件可以扩展能力，但仍然进入统一权限、审计和工具结果链路。
-
-## 相关文档
-
-- [配置说明](configuration.md)
-- [平台接入](platforms.md)
-- [插件系统](plugins.md)
-- [运维与排错](operations.md)
-- [后端接口契约](../BACKEND_INTERFACE.md)
+| 主题 | 文档 |
+| --- | --- |
+| 这些能力内部如何协作 | [架构说明](architecture.md) |
+| 如何配置安全、Memory 和 MCP | [配置说明](configuration.md) |
+| 如何连接各聊天平台 | [平台接入](platforms.md) |
+| 插件能注册哪些能力 | [插件系统](plugins.md) |
+| 出问题怎样定位 | [运维与排错](operations.md) |

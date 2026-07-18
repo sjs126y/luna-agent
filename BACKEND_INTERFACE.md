@@ -1,8 +1,40 @@
-# Backend Interface Contract
+<div align="center">
 
-更新时间：2026-07-18
+<h1>Backend Interface Contract</h1>
+
+<p><strong>TUI、未来 Desktop/Web 与后端 Runtime 之间的稳定契约</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/protocol-v1-0A84FF" alt="Protocol v1">
+  <img src="https://img.shields.io/badge/events-stable-2EA44F" alt="Events stable">
+  <img src="https://img.shields.io/badge/compatibility-text%20preserved-2EA44F" alt="Text compatibility preserved">
+</p>
+
+<p>
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="FRONTEND_INTERFACE_REQUIREMENTS.md">前端需求</a> ·
+  <a href="docs/architecture.md">架构</a>
+</p>
+
+</div>
+
+---
 
 本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；阶段背景见 `CODEX_HANDOFF.md` 和 `PROJECT_EVOLUTION.md`。
+
+## 快速导航
+
+| 前端正在做 | 直接查看 |
+| --- | --- |
+| 实时聊天与工具轨迹 | [Conversation Event Stream](#1-conversation-event-stream) / [Event Types](#2-event-types) |
+| 文件上传与出站附件 | [Desktop Multimodal](#3-desktop-multimodal-input-reserved-interface) / [Artifact 与 Delivery](#出站-artifact-与-delivery) |
+| 工具确认和安全模式 | [Inline Tool Confirmation](#4-inline-tool-confirmation) / [Execution Mode](#6-execution-mode) |
+| `/stop`、`/steer` | [Runtime Steer](#5-runtime-steer) |
+| Usage、Tool Runs、Activity | [Usage](#7-usage--context-summary) / [Tool Runs](#8-tool-runs--tool-truth) / [Activity](#11-activity-runtime-interface) |
+| Memory、Plugin、MCP、QQ 状态 | [Memory](#12-memory-runtime) / [Plugin](#13-plugin-diagnostics) / [MCP](#14-mcp-runtime-diagnostics) / [QQ](#15-qq-runtime-diagnostics) |
+
+> 字段级定义只在本文件维护。Progress 和 Requirements 文档只记录消费状态与未完成需求，不复制完整 Schema。
 
 ## 0. 统一提交边界
 

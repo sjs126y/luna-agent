@@ -1,6 +1,36 @@
-# 配置说明
+<div align="center">
 
-更新时间：2026-07-18
+<h1>配置说明</h1>
+
+<p><strong>用 <code>.env</code> 管密钥，用 <code>config.yaml</code> 管行为</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/secrets-.env-E34F26" alt="Secrets in env">
+  <img src="https://img.shields.io/badge/behavior-config.yaml-2EA44F" alt="Behavior in config yaml">
+  <img src="https://img.shields.io/badge/validation-doctor-0A84FF" alt="Doctor validation">
+</p>
+
+<p>
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档中心</a> ·
+  <a href="operations.md">运维</a> ·
+  <a href="platforms.md">平台</a>
+</p>
+
+</div>
+
+---
+
+## 快速定位
+
+| 我想配置 | 直接看 |
+| --- | --- |
+| 模型、API Key、平台 Token | [`.env`](#env) |
+| Mode、沙箱、插件和 Memory | [`config.yaml`](#configyaml) |
+| MCP Server | [MCP Server](#mcp-server) |
+| 工具审批与安全模式 | [执行模式与权限](#执行模式与权限) |
+| 图片、文件和 Artifact | [多模态配置](#多模态配置) |
+| 旧配置升级 | [旧配置迁移](#旧配置迁移) |
 
 Lumora 使用两类配置文件：
 

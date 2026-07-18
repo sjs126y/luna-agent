@@ -1,6 +1,37 @@
-# Lumora 后续架构方向
+<div align="center">
 
-更新时间：2026-07-18
+<h1>Lumora 后续架构方向</h1>
+
+<p><strong>已完成什么、真实缺口在哪里、下一步为什么值得做</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/MCP-core%20complete-2EA44F" alt="MCP complete">
+  <img src="https://img.shields.io/badge/memory-refactor%20complete-2EA44F" alt="Memory complete">
+  <img src="https://img.shields.io/badge/multimodal-foundation%20complete-2EA44F" alt="Multimodal complete">
+  <img src="https://img.shields.io/badge/active%20decision-planned-7C3AED" alt="Active decision planned">
+</p>
+
+<p>
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="TODO.md">当前待办</a> ·
+  <a href="PROJECT_EVOLUTION.md">项目演进</a>
+</p>
+
+</div>
+
+---
+
+## 当前路线图
+
+| 方向 | 当前状态 | 下一步 |
+| --- | :---: | --- |
+| MCP Runtime | Core complete | OAuth / sampling / elicitation 按需求补充 |
+| Memory | Refactor complete | 知识 RAG 独立成插件，reranker 按需实现 |
+| 被动插件 | Foundation complete | 安装、卸载、快照和热加载 |
+| 出站多模态 | Foundation complete | 微信/QQ 实机反馈与格式体验 |
+| Conversation Runtime | Complete | 继续真实使用与性能观测 |
+| 主动决策 | Planned | 候选、冷却、静默时间、预算与反馈 |
 
 ## 1. Lumora：已有基础与真实缺口
 
@@ -13,6 +44,9 @@ Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工
 3. **已完成基础**：完整的“入站媒体 -> 模型/工具 -> Artifact -> 出站媒体”路径；后续按真实平台反馈补格式与 caption 体验。
 4. **已完成基础**：统一 turn 分发、Delivery/Outbox、Cron 正式提交和主动插件端口；主动决策策略仍待推进。
 5. **已完成**：长期记忆与知识 RAG 已拆分；RAG 不再由 memory provider 承担。
+
+<details>
+<summary><strong>展开设计背景：Hermes、MCP、主动能力、多模态与 Memory/RAG</strong></summary>
 
 ## 2. Hermes 的工具与插件模型
 
@@ -122,6 +156,8 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 - 核心 fallback 在主 provider 不可用时保存 observation，并在恢复后迁移。
 
 后续知识 RAG 作为独立通用插件设计，不恢复 `memory_ingest`，也不与个人记忆共用集合和更新语义。
+
+</details>
 
 ## 7. 当前推进状态
 

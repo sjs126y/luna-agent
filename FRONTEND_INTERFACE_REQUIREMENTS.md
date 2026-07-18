@@ -1,6 +1,24 @@
-# Frontend Interface Requirements
+<div align="center">
 
-更新时间：2026-07-18 CST
+<h1>Frontend Interface Requirements</h1>
+
+<p><strong>前端仍需要后端提供什么，以及哪些能力已经可以直接消费</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/blocking%20requirements-0-2EA44F" alt="No blocking requirements">
+  <img src="https://img.shields.io/badge/artifact%20UI-optional-0A84FF" alt="Artifact UI optional">
+</p>
+
+<p>
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="BACKEND_INTERFACE.md">后端契约</a> ·
+  <a href="FRONTEND_PROGRESS.md">前端进度</a>
+</p>
+
+</div>
+
+---
 
 本文是前端向后端提出小型字段/接口需求的活动清单。已经实现的字段级契约不在这里重复，统一以 `BACKEND_INTERFACE.md` 为准。
 

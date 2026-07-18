@@ -1,6 +1,37 @@
-# 运维与排错
+<div align="center">
 
-更新时间：2026-07-18
+<h1>运维与排错</h1>
+
+<p><strong>从“能不能启动”到“是哪条链路出了问题”</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/first%20step-doctor-0A84FF" alt="Run doctor first">
+  <img src="https://img.shields.io/badge/logs-data%2Flogs-555555" alt="Logs directory">
+  <img src="https://img.shields.io/badge/tests-1050%20passed-2EA44F" alt="1050 tests passed">
+</p>
+
+<p>
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档中心</a> ·
+  <a href="configuration.md">配置</a> ·
+  <a href="platforms.md">平台</a>
+</p>
+
+</div>
+
+---
+
+## 30 秒排错路线
+
+```mermaid
+flowchart LR
+    Start[启动失败或行为异常] --> Doctor[personal-agent doctor]
+    Doctor --> Config{Config 正常?}
+    Config -- No --> Fix[修正 .env / config.yaml]
+    Config -- Yes --> Runtime{Runtime ready?}
+    Runtime -- No --> Detail[doctor --verbose]
+    Runtime -- Yes --> Logs[查看平台 / MCP / Delivery / Memory 状态]
+```
 
 这份文档只覆盖日常使用和排错入口。
 

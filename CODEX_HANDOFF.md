@@ -1,6 +1,25 @@
-# Codex 交接记录
+<div align="center">
 
-更新时间：2026-07-18 CST
+<h1>Codex 交接记录</h1>
+
+<p><strong>当前主干、协作边界和下一位 Agent 应该先看什么</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/branch-main-2EA44F" alt="Main branch">
+  <img src="https://img.shields.io/badge/backend-stable-0A84FF" alt="Backend stable">
+  <img src="https://img.shields.io/badge/tests-1050%20passed-2EA44F" alt="1050 tests passed">
+</p>
+
+<p>
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/README.md">文档中心</a> ·
+  <a href="BACKEND_PROGRESS.md">后端进度</a> ·
+  <a href="FRONTEND_PROGRESS.md">前端进度</a>
+</p>
+
+</div>
+
+---
 
 本文是当前主干的协作入口。阶段历史与代码规模见 `PROJECT_EVOLUTION.md`；后端详细实现记录见 `BACKEND_PROGRESS.md`；前端状态见 `FRONTEND_PROGRESS.md`。
 

@@ -1,8 +1,47 @@
-# 插件系统
+<div align="center">
 
-更新时间：2026-07-18
+<h1>插件系统</h1>
+
+<p><strong>用一个 <code>register(ctx)</code> 组合 Tool、Skill、MCP、Hook、Command 与 Workflow</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/registration-transactional-2EA44F" alt="Transactional registration">
+  <img src="https://img.shields.io/badge/config-isolated-0A84FF" alt="Isolated config">
+  <img src="https://img.shields.io/badge/core-lightweight-555555" alt="Lightweight core">
+</p>
+
+<p>
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档中心</a> ·
+  <a href="architecture.md">架构</a> ·
+  <a href="configuration.md">配置</a>
+</p>
+
+</div>
+
+---
+
+```mermaid
+flowchart LR
+    Manifest[plugin.yaml] --> Register[register ctx]
+    Register --> Tool[Tools]
+    Register --> Skill[Skills]
+    Register --> MCP[MCP Servers]
+    Register --> Hook[Hooks]
+    Register --> Command[Commands]
+    Register --> Workflow[Workflows]
+    Register --> Port[Submit / Notification Ports]
+    Tool & MCP --> Pipeline[Host Security & Runtime]
+```
 
 Lumora 的被动插件系统是一个“装配层”：插件不需要继承基类，只通过同步 `register(ctx)` 把能力放入已有 registry。对应 manager 负责连接、运行、停止和后续热加载，插件层不接管子系统生命周期。
+
+<table>
+  <tr>
+    <td width="50%"><strong>插件负责</strong><br><br>声明能力、注册资源、读取自己的配置、响应稳定 Hook。</td>
+    <td width="50%"><strong>宿主负责</strong><br><br>连接、权限、安全、审计、生命周期、故障隔离和最终执行。</td>
+  </tr>
+</table>
 
 已启用的普通插件在 Skill、MCP 等 manager 初始化前完成注册。平台插件是唯一允许 `deferred: true` 的类型，由 Gateway 启动时加载。
 

@@ -1,6 +1,38 @@
-# MCP Runtime Design
+<div align="center">
 
-状态：Implemented（核心 runtime，2026-07-12；后台启动与 Artifact 补充至 2026-07-18）
+<h1>MCP Runtime</h1>
+
+<p><strong>长期连接、动态工具与故障隔离的外部能力运行时</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/status-implemented-2EA44F" alt="Implemented">
+  <img src="https://img.shields.io/badge/stdio-supported-555555" alt="stdio supported">
+  <img src="https://img.shields.io/badge/Streamable%20HTTP-supported-0A84FF" alt="Streamable HTTP supported">
+</p>
+
+<p>
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档中心</a> ·
+  <a href="plugins.md">插件</a> ·
+  <a href="configuration.md#mcp-server">配置</a>
+</p>
+
+</div>
+
+---
+
+> **状态**：核心 Runtime 于 2026-07-12 完成；后台启动、安全收口和 Artifact 支持补充至 2026-07-18。
+
+```mermaid
+flowchart LR
+    Config[Config / Plugin] --> Manager[MCPManager]
+    Manager --> A[Server Runtime A]
+    Manager --> B[Server Runtime B]
+    A & B --> Snapshot[Tool Snapshot]
+    Snapshot --> Registry[Tool Registry]
+    Registry --> Security[Host Security]
+    Security --> Agent[Agent]
+```
 
 ## 目标
 

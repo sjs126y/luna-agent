@@ -1,6 +1,24 @@
-# Frontend Decisions
+<div align="center">
 
-更新时间：2026-07-18
+<h1>Frontend Decisions</h1>
+
+<p><strong>Inline TUI 的视觉和交互取舍</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/style-quiet%20%26%20informative-0A84FF" alt="Quiet and informative">
+  <img src="https://img.shields.io/badge/tool%20trace-compact-2EA44F" alt="Compact tool trace">
+</p>
+
+<p>
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档中心</a> ·
+  <a href="../FRONTEND_PROGRESS.md">前端进度</a> ·
+  <a href="../BACKEND_INTERFACE.md">接口契约</a>
+</p>
+
+</div>
+
+---
 
 本文记录当前用户对 inline TUI / future frontend polish 的取舍偏好。以下判断是 2026-07-06 的当前意见，后续可以随产品体验变化而调整。
 

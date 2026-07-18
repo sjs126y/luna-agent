@@ -1,4 +1,24 @@
-# Inline TUI (CC/Codex-style)
+<div align="center">
+
+<h1>Inline TUI</h1>
+
+<p><strong>保留终端 Scrollback 的事件驱动交互界面</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/prompt--toolkit-inline-0A84FF" alt="prompt-toolkit inline">
+  <img src="https://img.shields.io/badge/streaming-supported-2EA44F" alt="Streaming supported">
+  <img src="https://img.shields.io/badge/confirm-interactive-7C3AED" alt="Interactive confirmation">
+</p>
+
+<p>
+  <a href="../../../README.md">项目首页</a> ·
+  <a href="../../../docs/README.md">文档中心</a> ·
+  <a href="../../../FRONTEND_PROGRESS.md">前端进度</a>
+</p>
+
+</div>
+
+---
 
 CC/Codex 风格的行内滚动渲染器。当前后端事件契约见根目录 `BACKEND_INTERFACE.md`，前端进度见 `FRONTEND_PROGRESS.md`。
 

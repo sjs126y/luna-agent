@@ -1,6 +1,35 @@
-# 平台接入
+<div align="center">
 
-更新时间：2026-07-18
+<h1>平台接入</h1>
+
+<p><strong>让同一个 Lumora 出现在终端、微信、QQ、Telegram 和飞书</strong></p>
+
+<p>
+  <img src="https://img.shields.io/badge/WeChat-ready-07C160?logo=wechat&logoColor=white" alt="WeChat ready">
+  <img src="https://img.shields.io/badge/QQ-NapCat-12B7F5" alt="QQ NapCat">
+  <img src="https://img.shields.io/badge/Telegram-ready-26A5E4?logo=telegram&logoColor=white" alt="Telegram ready">
+  <img src="https://img.shields.io/badge/Feishu-ready-3370FF" alt="Feishu ready">
+</p>
+
+<p>
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档中心</a> ·
+  <a href="configuration.md">配置</a> ·
+  <a href="operations.md">排错</a>
+</p>
+
+</div>
+
+---
+
+## 平台矩阵
+
+| 平台 | 连接方式 | 入站 | 原生出站 |
+| --- | --- | --- | --- |
+| **微信** | iLink 长轮询 | 文本、附件 | 图片、文件、视频 |
+| **QQ** | NapCat OneBot WebSocket | 私聊、群聊、附件 | 图片、文件、音频、视频 |
+| **Telegram** | Bot API | 文本、附件 | 图片、文件、音频、视频 |
+| **飞书** | WebSocket | 文本、附件 | 图片、文件 |
 
 平台能力由内置平台插件注册到 Gateway。平台插件是 deferred 插件：启动时发现，但直到 `personal-agent serve` 才加载并连接。
 
@@ -16,6 +45,8 @@ Gateway.start()
   ├─ 启动平台消息循环
   └─ 消息提交 ConversationCoordinator
 ```
+
+> 平台只负责连接和协议差异。会话、工具、记忆、权限与发送恢复仍由共享 Runtime 处理。
 
 ## Telegram
 
