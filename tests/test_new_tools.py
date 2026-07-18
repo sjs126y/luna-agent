@@ -393,6 +393,22 @@ async def test_bash_timeout_suggests_background(tmp_path: Path):
     assert "exit_code:" in result
 
 
+@pytest.mark.asyncio
+async def test_bash_drains_large_output_with_bounded_capture(tmp_path: Path):
+    from personal_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    set_work_dir(tmp_path)
+
+    result = await _bash('python -u -c "print(\'x\' * 200000)"', timeout=5)
+
+    assert "Command finished" in result
+    assert "truncated: true" in result
+    assert "more bytes" in result
+    assert len(result) < 10_000
+
+
 # ── file edit/write reliability ────────────────────────
 
 
@@ -988,7 +1004,7 @@ def test_convenience_tools_are_deferred_behind_tool_search():
     assert len(core) <= 20
     assert {"read", "write", "edit", "grep", "glob", "bash"} <= core
     assert {"calculator", "datetime", "random", "timer", "json", "weather"}.isdisjoint(core)
-    assert {"task", "workflow_run", "worktree_create", "run_review"}.isdisjoint(core)
+    assert {"todo", "task", "workflow_run", "worktree_create", "run_review"}.isdisjoint(core)
 
 
 def test_worktree_tools_declare_permission_metadata():

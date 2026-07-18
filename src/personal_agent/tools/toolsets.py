@@ -9,7 +9,7 @@ list decides which tools get full schemas vs get deferred via bridge tools.
 _CORE_TOOLS: set[str] = {
     "read", "write", "edit", "grep", "glob", "bash",
     "web_search", "web_fetch",
-    "memory", "memory_buffer", "todo",
+    "memory", "memory_buffer",
     "skill_search", "skill_load",
     "sub_agent",
     "process_start", "process_read", "process_kill", "process_wait",
