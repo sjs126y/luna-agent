@@ -23,7 +23,7 @@ enabled_by_default: true
     (plugin_dir / "mcp_plugin.py").write_text(
         """
 def register(ctx):
-    ctx.register_mcp("mcp.yaml")
+    ctx.register.mcp("mcp.yaml")
 """.strip(),
         encoding="utf-8",
     )

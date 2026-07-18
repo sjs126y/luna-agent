@@ -161,7 +161,10 @@ def discover_skills(
         if existing is not None and registrar is None:
             continue  # don't overwrite explicitly registered skills
         if registrar is not None:
-            registrar.register_skill(entry)
+            register_skill = getattr(registrar, "skill", None)
+            if not callable(register_skill):
+                register_skill = getattr(registrar, "register_skill")
+            register_skill(entry)
         else:
             skill_registry.register(entry)
         count += 1

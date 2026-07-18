@@ -22,4 +22,4 @@ def create_provider(*, context, archive, **kwargs):
 
 
 def register(ctx) -> None:
-    ctx.register_memory_provider(name="mem0", factory=create_provider, validator=validate_config)
+    ctx.register.memory_provider(name="mem0", factory=create_provider, validator=validate_config)

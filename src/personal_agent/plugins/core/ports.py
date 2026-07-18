@@ -5,6 +5,7 @@ from __future__ import annotations
 from personal_agent.conversation import ResponseMode, SubmissionOrigin, SubmissionRequest
 from personal_agent.delivery import DeliveryKind, DeliveryRequest
 from personal_agent.models.messages import OutboundMessage, SessionSource
+from personal_agent.plugins.runtime import PluginRuntimeState
 
 
 class PluginConversationPort:
@@ -40,8 +41,7 @@ class PluginConversationPort:
         return await self._coordinator.submit(request)
 
     def _authorize(self, session_key: str, *, capability: str) -> None:
-        status = str(getattr(self._plugin.status, "value", self._plugin.status) or "")
-        if not self._plugin.enabled or status != "loaded":
+        if not self._plugin.enabled or self._plugin.runtime_state is not PluginRuntimeState.ACTIVE:
             raise RuntimeError(f"plugin is not active: {self._plugin.key}")
         if capability not in set(self._plugin.manifest.provides or []):
             raise PermissionError(f"plugin does not declare '{capability}' capability")

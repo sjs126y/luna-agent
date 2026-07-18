@@ -199,7 +199,7 @@ def hello(args="", **kwargs):
     return "hello " + (args or "world")
 
 def register(ctx):
-    ctx.register_command(CommandEntry(
+    ctx.register.command(CommandEntry(
         name="pkghello",
         description="package command",
         handler=hello,
@@ -410,14 +410,14 @@ async def sample_hook(value):
     return value + "-hook"
 
 def register(ctx):
-    ctx.register_tool(ToolEntry(
+    ctx.register.tool(ToolEntry(
         name="plugin_sample_tool",
         description="sample",
         schema={"type": "object", "properties": {}},
         handler=sample_tool,
     ))
-    ctx.register_hook("sample_hook", sample_hook, priority=10)
-    ctx.register_command(CommandEntry(
+    ctx.register.hook("sample_hook", sample_hook, priority=10)
+    ctx.register.command(CommandEntry(
         name="hello",
         description="sample command",
         handler=sample_command,
@@ -539,14 +539,14 @@ async def handler(**kwargs):
     return "ok"
 
 def register(ctx):
-    ctx.register_tool(ToolEntry(
+    ctx.register.tool(ToolEntry(
         name="partial_registration_tool",
         description="partial",
         schema={"type": "object", "properties": {}},
         handler=handler,
     ))
-    ctx.register_hook("partial_hook", handler)
-    ctx.register_command(CommandEntry(
+    ctx.register.hook("partial_hook", handler)
+    ctx.register.command(CommandEntry(
         name="partial-command",
         description="partial",
         handler=handler,
@@ -595,7 +595,7 @@ async def handler(**kwargs):
     return "{key}"
 
 def register(ctx):
-    ctx.register_tool(ToolEntry(
+    ctx.register.tool(ToolEntry(
         name="shared_plugin_tool",
         description="{key}",
         schema={{"type": "object", "properties": {{}}}},
@@ -640,7 +640,7 @@ enabled_by_default: true
         encoding="utf-8",
     )
     (plugin_dir / "skill_bundle.py").write_text(
-        "def register(ctx): ctx.register_skills('skills')\n",
+        "def register(ctx): ctx.register.skills('skills')\n",
         encoding="utf-8",
     )
     (plugin_dir / "skills" / "flat.md").write_text(
@@ -699,7 +699,7 @@ enabled_by_default: true
         encoding="utf-8",
     )
     (plugin_dir / "escaping_skill.py").write_text(
-        "def register(ctx): ctx.register_skills('../outside')\n",
+        "def register(ctx): ctx.register.skills('../outside')\n",
         encoding="utf-8",
     )
     manager = PluginManager(
@@ -733,7 +733,7 @@ enabled_by_default: true
         encoding="utf-8",
     )
     (plugin_dir / "mcp_bundle.py").write_text(
-        "def register(ctx): ctx.register_mcp('mcp.yaml')\n",
+        "def register(ctx): ctx.register.mcp('mcp.yaml')\n",
         encoding="utf-8",
     )
     (plugin_dir / "mcp.yaml").write_text(
@@ -785,7 +785,7 @@ enabled_by_default: true
         encoding="utf-8",
     )
     (plugin_dir / "bad_mcp.py").write_text(
-        "def register(ctx): ctx.register_mcp('mcp.json')\n",
+        "def register(ctx): ctx.register.mcp('mcp.json')\n",
         encoding="utf-8",
     )
     (plugin_dir / "mcp.json").write_text(
@@ -1119,7 +1119,7 @@ async def before_tool(*args, **kwargs):
     return None
 
 def register(ctx):
-    ctx.register_hook("on_before_tool_exec", before_tool)
+    ctx.register.hook("on_before_tool_exec", before_tool)
 """.strip(),
         encoding="utf-8",
     )
@@ -1159,7 +1159,7 @@ async def protect(event):
     return PreToolUseOutcome.block("protected")
 
 def register(ctx):
-    ctx.register_hook(
+    ctx.register.hook(
         HookEvent.PRE_TOOL_USE,
         protect,
         name="protect",

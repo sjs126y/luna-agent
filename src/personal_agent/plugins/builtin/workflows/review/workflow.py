@@ -197,6 +197,6 @@ _WORKFLOW_DEF = WorkflowDef(
 def register(ctx=None) -> None:
     """Register the review workflow with a plugin context or the global registry."""
     if ctx is not None and hasattr(ctx, "register_workflow"):
-        ctx.register_workflow(_WORKFLOW_DEF)
+        ctx.register.workflow(_WORKFLOW_DEF)
     else:
         workflow_registry.register(_WORKFLOW_DEF)

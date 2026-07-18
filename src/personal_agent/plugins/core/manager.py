@@ -20,7 +20,7 @@ import yaml
 from personal_agent.persistence.json_store import read_json_object, write_json_atomic
 from personal_agent.commands.registry import CORE_COMMAND_NAMES
 from personal_agent.mcp.server_registry import MCPServerRegistry
-from personal_agent.plugins.core.context import PluginContext
+from personal_agent.plugins.core.context import PluginRuntimeContext
 from personal_agent.plugins.core.models import (
     CommandEntry,
     HookRegistration,
@@ -29,6 +29,12 @@ from personal_agent.plugins.core.models import (
     PluginStatus,
 )
 from personal_agent.hooks import HookEvent, HookManager, HookSource
+from personal_agent.plugins.runtime import PluginRuntimeState
+from personal_agent.plugins.runtime.identity import (
+    generation_id,
+    package_digest,
+    runtime_instance_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,11 +151,21 @@ class PluginManager:
             return plugin
 
         plugin.status = PluginStatus.LOADING
+        plugin.runtime_state = PluginRuntimeState.PREPARING
         plugin.error = None
         plugin.error_traceback = None
         before = self._registration_snapshot()
         try:
-            plugin.ctx = PluginContext(self, plugin)
+            all_config = getattr(self.settings, "plugins_config", {}) or {}
+            plugin_config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
+            plugin.package_digest = package_digest(plugin.manifest.path)
+            plugin.generation_id = generation_id(
+                plugin.key,
+                plugin.package_digest,
+                plugin_config if isinstance(plugin_config, dict) else {},
+            )
+            plugin.runtime_instance_id = runtime_instance_id(plugin.key)
+            plugin.ctx = PluginRuntimeContext(self, plugin)
             module, register_fn = self._import_entrypoint(plugin.manifest)
             plugin.module = module
             if register_fn is not None:
@@ -165,6 +181,7 @@ class PluginManager:
             if plugin.manifest.record_import_delta:
                 self._record_registry_delta(plugin, before["names"], after["names"])
             plugin.status = PluginStatus.LOADED
+            plugin.runtime_state = PluginRuntimeState.ACTIVE
             counts = plugin.registration_counts()
             logger.info(
                 "Plugin loaded: %s skills=%d mcp=%d hooks=%d commands=%d",
@@ -181,6 +198,7 @@ class PluginManager:
             plugin.module = None
             plugin.ctx = None
             plugin.status = PluginStatus.ERROR
+            plugin.runtime_state = PluginRuntimeState.FAILED
             plugin.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             plugin.error_traceback = traceback.format_exc()
             logger.exception("Plugin '%s' failed to load", key)
@@ -211,6 +229,7 @@ class PluginManager:
 
     def unload_plugin(self, key: str) -> LoadedPlugin:
         plugin = self._plugins[key]
+        plugin.runtime_state = PluginRuntimeState.DRAINING
         self._remove_plugin_commands(key)
         self._remove_plugin_hooks(key)
         self.hook_manager.unregister_owner(key)
@@ -238,6 +257,7 @@ class PluginManager:
         plugin.error = None
         plugin.error_traceback = None
         plugin.status = PluginStatus.DISABLED if not plugin.enabled else PluginStatus.DISCOVERED
+        plugin.runtime_state = PluginRuntimeState.STOPPED
         return plugin
 
     def enable_plugin(self, key: str) -> LoadedPlugin:

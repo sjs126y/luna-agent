@@ -11,7 +11,7 @@ def register(ctx) -> None:
     def _check(config):
         return bool(getattr(config, "telegram_bot_token", ""))
 
-    ctx.register_platform(PlatformEntry(
+    ctx.register.platform(PlatformEntry(
         name="telegram",
         factory=_factory,
         check_fn=_check,

@@ -31,7 +31,7 @@ def register(ctx) -> None:
     config = ctx.parse_config(GitHubAssistantConfig)
     repositories = {_normalize_repo(value) for value in config.repositories if _normalize_repo(value)}
 
-    ctx.register_mcp_server({
+    ctx.register.mcp_server({
         "name": "github",
         "transport": "streamable_http",
         "url": config.url,
@@ -41,7 +41,7 @@ def register(ctx) -> None:
         "allow_network": True,
         "max_tools": 100,
     })
-    ctx.register_skills("skills")
+    ctx.register.skills("skills")
 
     def enforce_github_policy(envelope):
         tool_name = str(envelope.payload.get("tool_name") or "")
@@ -57,14 +57,14 @@ def register(ctx) -> None:
             )
         return None
 
-    ctx.register_hook(
+    ctx.register.hook(
         HookEvent.PRE_TOOL_USE,
         enforce_github_policy,
         name="enforce-github-policy",
         matcher=r"^mcp__github__.+$",
         priority=10,
     )
-    ctx.register_command(CommandEntry(
+    ctx.register.command(CommandEntry(
         name="github-status",
         description="Show GitHub Assistant configuration and MCP runtime status.",
         handler=lambda args="", **kwargs: _status(config, repositories, kwargs),

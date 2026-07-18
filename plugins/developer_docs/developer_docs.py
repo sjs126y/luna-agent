@@ -18,7 +18,7 @@ class DeveloperDocsConfig(BaseModel):
 
 def register(ctx) -> None:
     config = ctx.parse_config(DeveloperDocsConfig)
-    ctx.register_mcp_server({
+    ctx.register.mcp_server({
         "name": "context7",
         "transport": "stdio",
         "command": config.command,
@@ -28,8 +28,8 @@ def register(ctx) -> None:
         "allow_network": True,
         "max_tools": 8,
     })
-    ctx.register_skills("skills")
-    ctx.register_command(CommandEntry(
+    ctx.register.skills("skills")
+    ctx.register.command(CommandEntry(
         name="developer-docs-status",
         description="Show Developer Docs and Context7 configuration.",
         handler=lambda args="", **kwargs: (

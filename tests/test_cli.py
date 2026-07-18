@@ -400,7 +400,7 @@ def hello(args="", **kwargs):
     return "hello"
 
 def register(ctx):
-    ctx.register_command(CommandEntry(
+    ctx.register.command(CommandEntry(
         name="clihello",
         description="CLI validation command",
         handler=hello,

@@ -4,6 +4,7 @@ import pytest
 
 from personal_agent.delivery import DeliveryResult, DeliveryStatus
 from personal_agent.plugins.core.ports import PluginConversationPort, PluginNotificationPort
+from personal_agent.plugins.runtime import PluginRuntimeState
 
 
 def _plugin(*, provides=("active", "notification"), sessions=("wechat:c1:u1",)):
@@ -11,6 +12,7 @@ def _plugin(*, provides=("active", "notification"), sessions=("wechat:c1:u1",)):
         key="user/reminder",
         enabled=True,
         status=SimpleNamespace(value="loaded"),
+        runtime_state=PluginRuntimeState.ACTIVE,
         manifest=SimpleNamespace(name="Reminder", provides=list(provides)),
         ctx=SimpleNamespace(config={"active": {"sessions": list(sessions)}}),
     )
@@ -59,6 +61,16 @@ async def test_disabled_plugin_cannot_reuse_old_port():
     plugin = _plugin()
     port = PluginConversationPort(plugin=plugin, coordinator=Coordinator())
     plugin.enabled = False
+
+    with pytest.raises(RuntimeError, match="not active"):
+        await port.submit(session_key="wechat:c1:u1", text="no")
+
+
+@pytest.mark.asyncio
+async def test_draining_plugin_cannot_start_new_work():
+    plugin = _plugin()
+    port = PluginConversationPort(plugin=plugin, coordinator=Coordinator())
+    plugin.runtime_state = PluginRuntimeState.DRAINING
 
     with pytest.raises(RuntimeError, match="not active"):
         await port.submit(session_key="wechat:c1:u1", text="no")

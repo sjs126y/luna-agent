@@ -142,7 +142,7 @@ def register(ctx) -> None:
             entry = tool_registry.get(name)
             if entry is None:
                 raise RuntimeError(f"Built-in tool did not register: {name}")
-            ctx.register_tool(entry)
+            ctx.register.tool(entry)
 
-    ctx.register_hook("configure", _configure, priority=20)
-    ctx.register_hook("on_agent_created", _setup_delegate, priority=20)
+    ctx.register.hook("configure", _configure, priority=20)
+    ctx.register.hook("on_agent_created", _setup_delegate, priority=20)

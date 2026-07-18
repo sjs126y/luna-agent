@@ -19,7 +19,7 @@ def register(ctx) -> None:
     def _check(config):
         return bool(getattr(config, "qq_bot_ws_url", ""))
 
-    ctx.register_platform(PlatformEntry(
+    ctx.register.platform(PlatformEntry(
         name="qq",
         factory=_factory,
         check_fn=_check,
