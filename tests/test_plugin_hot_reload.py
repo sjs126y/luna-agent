@@ -55,6 +55,16 @@ async def test_reload_publishes_new_routes_and_drains_old_runtime(tmp_path):
     first = manager.load_plugin("user/hot-reload")
     assert first.status is PluginStatus.LOADED
 
+    class Coordinator:
+        async def submit(self, request):
+            return request
+
+    manager.bind_application_ports(
+        conversation_coordinator=Coordinator(),
+        delivery_service=object(),
+    )
+    old_context = first.ctx
+
     old_lease = await manager.capability_store.acquire()
     old_route = old_lease.view().resolve(CapabilityKind.TOOL, "hot_value")
     old_entry = manager.capability_payload(old_route.binding_id)
@@ -73,6 +83,8 @@ async def test_reload_publishes_new_routes_and_drains_old_runtime(tmp_path):
     assert await old_entry.handler() == "version-one"
     assert await new_entry.handler() == "version-two-with-new-code"
     assert first.runtime_state is PluginRuntimeState.DRAINING
+    with pytest.raises(RuntimeError, match="not active"):
+        await old_context.conversation.submit(session_key="test", text="must not escape")
 
     await old_lease.release()
     await asyncio.sleep(0)

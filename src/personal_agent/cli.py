@@ -650,11 +650,14 @@ def plugins_disable(key: str) -> None:
 
 
 @plugins_app.command("install")
-def plugins_install(source: Path) -> None:
+def plugins_install(
+    source: Path,
+    enable: bool = typer.Option(True, "--enable/--no-enable", help="安装后立即启用。"),
+) -> None:
     """Install or update an immutable local plugin package."""
     manager = _plugin_manager()
     try:
-        plugin = asyncio.run(manager.install_plugin_runtime(source))
+        plugin = asyncio.run(manager.install_plugin_runtime(source, enable=enable))
     except Exception as exc:
         _exit_error(f"插件安装失败: {exc}")
     typer.echo(

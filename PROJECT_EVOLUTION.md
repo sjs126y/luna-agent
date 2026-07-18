@@ -5,9 +5,9 @@
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-13-7C3AED" alt="13 phases">
+  <img src="https://img.shields.io/badge/phases-14-7C3AED" alt="14 phases">
   <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-0A84FF" alt="75811 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1078%20passed-2EA44F" alt="1078 tests passed">
+  <img src="https://img.shields.io/badge/tests-1092%20passed-2EA44F" alt="1092 tests passed">
 </p>
 
 <p>
@@ -28,7 +28,7 @@
 - 分支：`main`
 - 本次统计基准：`f3da3d7 Refresh project docs and remove obsolete plans`
 - 基准提交数：`551`
-- 最近全量验证：`uv run pytest -q`，结果 `1078 passed, 1 warning`
+- 最近全量验证：`uv run pytest -q`，结果 `1092 passed, 1 warning`
 
 <details>
 <summary><strong>展开早期阶段：v0.1 - v0.7</strong></summary>
@@ -376,6 +376,26 @@
 - 新增 `artifact_from_file`，把 `write/edit/bash` 已生成的普通文件安全复制进当前 turn，再交给 `response_attach`。
 - 微信图片/视频/文件协议按官方 iLink 对齐；QQ 完成 NapCat OneBot WebSocket 双向链路、媒体发送和可选 companion 生命周期管理。
 
+## v0.14 Plugin Runtime 热重载
+
+时间：2026-07-18
+
+目标：让插件能力可以在宿主不停机、活跃 Turn 不串代的前提下安装、更新、回滚和卸载。
+
+代表提交：
+
+- `fda608b` `Introduce plugin runtime primitives`
+- `01a1e51` `Route plugin generations through snapshots`
+- `f25e956` `Add hot-swappable plugin packages`
+
+主要变化：
+
+- `PluginRuntimeContext` 绑定 generation/runtime instance，注册 API 收敛为 `ctx.register.*`，运行时 Port 不再按插件 key 借用当前实例。
+- CapabilitySnapshot 作为现有 manager 上方的不可变路由层；Turn lease 固定 Tool、Skill、Workflow、Command 和 Hook，旧 generation 在 lease 排空后回收。
+- Agent 使用能力投影 fingerprint 保持缓存稳定；MCP 权威工具列表变化发布 revision，普通连接健康波动不影响 Prompt Cache。
+- 插件包经过 staging 与安全检查进入不可变 digest 目录，支持本地目录/压缩包安装、更新、回滚、延迟卸载和数据保留。
+- `ctx.storage` 与 `ctx.tasks` 为后续主动插件预留隔离数据和实例级任务生命周期，本阶段仍不实现主动决策系统。
+
 ## 当前代码规模
 
 统计口径：基准提交 `f3da3d7`，只统计 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。
@@ -392,7 +412,7 @@
 | Markdown 文档 | 39 | 6,468 |
 | Git 已跟踪文件总数 | 407 | - |
 
-项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1078 passed`。
+项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1092 passed`。
 
 ### 2026-07-18 文档收敛
 
@@ -410,7 +430,7 @@
 - 系统提示词：`data/system/*.md` 与 `profiles` session 映射。
 - 运行数据：`data/`，不进入 git。
 - 对话主链路：所有入口提交到 Coordinator，ConversationService 负责 Agent turn，Delivery/Outbox 负责出站。
-- 扩展能力：被动插件可注册 Tool、Skill、MCP、Hook、Command 和受限 submit 端口。
+- 扩展能力：被动插件可注册 Tool、Skill、MCP、Hook、Command 和受限 submit 端口，并支持 generation snapshot 热重载。
 - 记忆：internal snapshot + review buffer + SQLite Archive + 可替换 Lumora/Mem0 外部 provider。
 - 多模态：入站 attachment 与出站 Artifact 分离，四个平台按 capability 原生发送或确定性降级。
 - 可观测性：doctor、runtime health、tool runs、turn reports、activity、cache diagnostics、delivery audit。

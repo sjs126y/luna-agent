@@ -6,7 +6,7 @@
 
 ![Core](https://img.shields.io/badge/core-19%20tools-2EA44F)
 ![Bridge](https://img.shields.io/badge/tool%20bridge-3%20entries-2563EB)
-![Tests](https://img.shields.io/badge/tests-1078%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-1092%20passed-2EA44F)
 
 [项目首页](../README.md) · [文档中心](README.md) · [架构说明](architecture.md) · [安全边界](capabilities-and-boundaries.md)
 

@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/first%20step-doctor-0A84FF" alt="Run doctor first">
   <img src="https://img.shields.io/badge/logs-data%2Flogs-555555" alt="Logs directory">
-  <img src="https://img.shields.io/badge/tests-1078%20passed-2EA44F" alt="1078 tests passed">
+  <img src="https://img.shields.io/badge/tests-1092%20passed-2EA44F" alt="1092 tests passed">
 </p>
 
 <p>
@@ -99,6 +99,12 @@ uv run personal-agent doctor
 - 顶层 `llm` 改到 `.env` 的 `LLM_*`。
 - 顶层 `platform` / `platforms` 删除，平台 token 改到 `.env`。
 - 平台插件用 `plugins.enabled` 显式启用，例如 `platforms/telegram`。
+
+## 插件热重载
+
+包安装状态可以用 `personal-agent plugins install|rollback|uninstall` 离线管理；Gateway/TUI 已运行时使用核心 `/plugins` 命令，操作会直接进入当前 `PluginRuntimeManager`，不需要重启进程。独立 CLI 进程中的 `reload` 只用于加载验证，真正的进程内热重载应使用 `/plugins reload`。
+
+更新会发布新 Capability Snapshot。新 Turn 立即使用新 generation，执行中的 Turn 保持旧 lease；`plugin_runtime.active_leases` 与 `retired_revisions` 可以判断旧实例是否仍在排空。普通卸载保留 `data/plugins/data/<plugin-key>`，只有显式 `--purge-data` 才删除数据。
 
 ## Doctor 结果怎么读
 

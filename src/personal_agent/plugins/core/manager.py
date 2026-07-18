@@ -39,6 +39,7 @@ from personal_agent.plugins.runtime import (
     CapabilitySnapshotBuilder,
     CapabilityStore,
     PluginRuntimeState,
+    PluginRuntimeManager,
 )
 from personal_agent.plugins.runtime.identity import (
     generation_id,
@@ -85,11 +86,13 @@ class PluginManager:
         self.install_store = PluginInstallStore(install_root / "install-state.json")
         self.installer = PluginInstaller(install_root)
         self._pending_package_removals: dict[str, dict[str, Any]] = {}
+        self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
         self._capability_view: ContextVar[Any | None] = ContextVar(
             f"plugin-capability-view:{id(self)}",
             default=None,
         )
         self.capability_store = CapabilityStore(on_retire=self._retire_snapshot)
+        self.runtime_manager = PluginRuntimeManager(self)
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -115,26 +118,36 @@ class PluginManager:
     def bind_mcp_manager(self, manager) -> None:
         self._mcp_manager = manager
 
-    def plugin_conversation_port(self, plugin_key: str):
+    def plugin_conversation_port(self, plugin):
         if self._conversation_coordinator is None:
             raise RuntimeError("active plugin runtime is unavailable")
         from personal_agent.plugins.core.ports import PluginConversationPort
 
         return PluginConversationPort(
-            plugin=self._plugins[plugin_key],
+            plugin=plugin,
             coordinator=self._conversation_coordinator,
         )
 
-    def plugin_notification_port(self, plugin_key: str):
+    def plugin_notification_port(self, plugin):
         if self._conversation_coordinator is None or self._delivery_service is None:
             raise RuntimeError("active plugin runtime is unavailable")
         from personal_agent.plugins.core.ports import PluginNotificationPort
 
         return PluginNotificationPort(
-            plugin=self._plugins[plugin_key],
+            plugin=plugin,
             coordinator=self._conversation_coordinator,
             delivery_service=self._delivery_service,
         )
+
+    def plugin_storage_port(self, plugin):
+        from personal_agent.plugins.core.ports import PluginStoragePort
+
+        return PluginStoragePort(plugin=plugin, root=self.installer.data_root)
+
+    def plugin_task_port(self, plugin):
+        from personal_agent.plugins.core.ports import PluginTaskPort
+
+        return PluginTaskPort(plugin=plugin, tasks=self._plugin_tasks)
 
     def discover(self) -> list[LoadedPlugin]:
         self.installer.cleanup_staging()
@@ -152,7 +165,12 @@ class PluginManager:
         for plugin in self._plugins.values():
             if plugin.status == PluginStatus.ERROR:
                 continue
-            plugin.enabled = self._resolve_enabled(plugin.manifest)
+            installed_enabled = self.install_store.enabled_for(plugin.key)
+            plugin.enabled = (
+                installed_enabled
+                if plugin.manifest.source == "installed" and installed_enabled is not None
+                else self._resolve_enabled(plugin.manifest)
+            )
             if not plugin.enabled and plugin.status != PluginStatus.ERROR:
                 plugin.status = PluginStatus.DISABLED
             elif plugin.manifest.deferred and plugin.status == PluginStatus.DISCOVERED:
@@ -317,6 +335,7 @@ class PluginManager:
         *,
         previous: LoadedPlugin | None = None,
         evict: bool = False,
+        force_enabled: bool | None = None,
     ) -> LoadedPlugin:
         if evict:
             self._evict_entrypoint_module(manifest)
@@ -326,7 +345,9 @@ class PluginManager:
             status=PluginStatus.DISCOVERED,
             deferred=manifest.deferred,
             enabled=(
-                previous.enabled
+                bool(force_enabled)
+                if force_enabled is not None
+                else previous.enabled
                 if previous is not None
                 else self._resolve_enabled(manifest)
             ),
@@ -364,6 +385,7 @@ class PluginManager:
 
     async def enable_plugin_runtime(self, key: str) -> LoadedPlugin:
         plugin = self.enable_plugin(key)
+        self.install_store.set_enabled(key, True)
         loaded = self.load_plugin(plugin.key)
         if self._mcp_manager is not None:
             await self._mcp_manager.reconcile(self._desired_mcp_configs())
@@ -377,16 +399,37 @@ class PluginManager:
             self._state["disabled"].append(key)
         self._state["enabled"] = [item for item in self._state.get("enabled", []) if item != key]
         self._save_state()
+        self.install_store.set_enabled(key, False)
         return await self.unload_plugin_runtime(key)
 
-    async def install_plugin_runtime(self, source: Path | str) -> LoadedPlugin:
+    async def install_plugin_runtime(
+        self,
+        source: Path | str,
+        *,
+        enable: bool = True,
+    ) -> LoadedPlugin:
         package = self.installer.prepare(source)
         previous = self._plugins.get(package.manifest.key)
+        if not enable and previous is None:
+            self._add_manifest(package.manifest)
+            plugin = self._plugins[package.manifest.key]
+            plugin.enabled = False
+            plugin.status = PluginStatus.DISABLED
+            self.install_store.record_install(
+                plugin_key=plugin.key,
+                digest=package.digest,
+                path=package.path,
+                version=package.manifest.version,
+                source=package.source,
+                enabled=False,
+            )
+            return plugin
         try:
             loaded = self._activate_manifest(
                 package.manifest,
                 previous=previous,
                 evict=previous is not None,
+                force_enabled=enable,
             )
             if loaded.status != PluginStatus.LOADED:
                 raise RuntimeError(loaded.error or f"Plugin failed to load: {loaded.key}")
@@ -403,11 +446,12 @@ class PluginManager:
             path=package.path,
             version=package.manifest.version,
             source=package.source,
+            enabled=enable,
         )
         return loaded
 
     async def rollback_plugin_runtime(self, key: str, digest: str) -> LoadedPlugin:
-        path = self.install_store.activate(key, digest)
+        path = self.install_store.package_path(key, digest)
         manifest_path = self._resolve_plugin_manifest_path(path)
         manifest = PluginManifest.from_mapping(
             self._read_manifest_file(manifest_path),
@@ -421,7 +465,13 @@ class PluginManager:
                 self._rollback_to_runtime(key, previous.runtime_instance_id)
             raise RuntimeError(loaded.error or f"Plugin rollback failed: {key}")
         if self._mcp_manager is not None:
-            await self._mcp_manager.reconcile(self._desired_mcp_configs())
+            try:
+                await self._mcp_manager.reconcile(self._desired_mcp_configs())
+            except Exception:
+                if previous is not None:
+                    self._rollback_to_runtime(key, previous.runtime_instance_id)
+                raise
+        self.install_store.activate(key, digest)
         return loaded
 
     async def uninstall_plugin_runtime(
@@ -451,11 +501,19 @@ class PluginManager:
 
     def capability_health(self) -> dict[str, Any]:
         data = self.capability_store.health_snapshot()
+        runtime_counts: dict[str, int] = {}
+        for plugin in self._runtime_records.values():
+            state = plugin.runtime_state.value
+            runtime_counts[state] = runtime_counts.get(state, 0) + 1
         data.update({
             "active_plugin_owners": sorted(
                 owner for owner in self._active_bindings if owner != "core"
             ),
             "payload_count": len(self._binding_payloads),
+            "runtime_counts": runtime_counts,
+            "install_revision": self.install_store.revision,
+            "installed_packages": len(self.install_store.packages()),
+            "pending_removals": sorted(self._pending_package_removals),
         })
         return data
 
@@ -1418,6 +1476,10 @@ class PluginManager:
             if plugin is None or plugin.runtime_state is PluginRuntimeState.ACTIVE:
                 continue
             self.hook_manager.unregister_owner(runtime_id)
+            tasks = self._plugin_tasks.pop(runtime_id, set())
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
             plugin.ctx = None
             plugin.module = None
             plugin.runtime_state = PluginRuntimeState.STOPPED
@@ -1485,7 +1547,43 @@ class PluginManager:
         previous.status = PluginStatus.LOADED
         self._active_runtime_by_plugin[plugin_key] = runtime_id
         self._active_bindings[plugin_key] = bindings
+        self._activate_binding_payloads(bindings)
         self._publish_current_bindings()
+
+    def _activate_binding_payloads(self, bindings) -> None:
+        from personal_agent.memory.provider_registry import memory_provider_registry
+        from personal_agent.platforms.core import platform_registry
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.tools.registry import tool_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        for binding in bindings:
+            payload = self.capability_payload(binding.binding_id)
+            if payload is None:
+                continue
+            if binding.kind is CapabilityKind.TOOL:
+                tool_registry.register(payload)
+            elif binding.kind is CapabilityKind.SKILL:
+                skill_registry.register(payload)
+            elif binding.kind is CapabilityKind.WORKFLOW:
+                workflow_registry.register(payload)
+            elif binding.kind is CapabilityKind.PLATFORM:
+                platform_registry.register(payload)
+            elif binding.kind is CapabilityKind.COMMAND:
+                self._commands[binding.public_name] = payload
+            elif binding.kind is CapabilityKind.MCP_SERVER:
+                self.mcp_server_registry.register(
+                    payload.plugin_key,
+                    payload.config,
+                    runtime_instance_id=payload.runtime_instance_id,
+                )
+            elif binding.kind is CapabilityKind.MEMORY_PROVIDER:
+                memory_provider_registry.register(
+                    name=payload.name,
+                    plugin_key=payload.plugin_key,
+                    factory=payload.factory,
+                    validator=payload.validator,
+                )
 
     def _restore_registration_snapshot(self, snapshot: dict[str, Any]) -> None:
         from personal_agent.memory.provider_registry import memory_provider_registry

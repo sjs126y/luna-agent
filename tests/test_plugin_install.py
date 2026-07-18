@@ -103,6 +103,24 @@ async def test_uninstall_waits_for_snapshot_lease_and_keeps_data_by_default(tmp_
     assert (data_path / "state.txt").read_text(encoding="utf-8") == "keep"
 
 
+@pytest.mark.asyncio
+async def test_install_only_stays_disabled_after_manager_restart(tmp_path):
+    manager = _manager(tmp_path)
+    source = _source(tmp_path / "source", version="1.0.0", value="one")
+
+    installed = await manager.install_plugin_runtime(source, enable=False)
+    restarted = _manager(tmp_path)
+    restarted.discover()
+    discovered = restarted._plugins[installed.key]
+
+    assert installed.enabled is False
+    assert manager.capability_store.current.view().resolve(
+        CapabilityKind.TOOL,
+        "installed_value",
+    ) is None
+    assert discovered.enabled is False
+
+
 def test_installer_rejects_archive_path_traversal(tmp_path):
     archive = tmp_path / "bad.zip"
     with zipfile.ZipFile(archive, "w") as output:

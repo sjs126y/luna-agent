@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from personal_agent.conversation import ConversationCommandRuntime
+from personal_agent.commands.runtime import handle_slash_command
 
 
 class Service:
@@ -138,3 +139,40 @@ async def test_conversation_command_runtime_clears_current_session_grants():
     assert await runtime.clear_security_grants() is True
     assert current.state.tool_grants == {}
     assert "core:bash" in other.state.tool_grants
+
+
+@pytest.mark.asyncio
+async def test_plugins_command_controls_live_runtime():
+    runtime = Runtime(Service())
+    plugin = SimpleNamespace(
+        key="user/demo",
+        status=SimpleNamespace(value="LOADED"),
+        generation_id="user/demo@g2",
+        runtime_instance_id="runtime-2",
+    )
+
+    class Plugins:
+        def list_plugins(self):
+            return [plugin]
+
+        def doctor_plugin(self, key):
+            return {
+                "key": key,
+                "status": "LOADED",
+                "generation_id": plugin.generation_id,
+            }
+
+        async def reload_plugin_runtime(self, key):
+            assert key == plugin.key
+            return plugin
+
+        def capability_health(self):
+            return {"current_revision": 4, "active_leases": 0}
+
+    runtime.plugin_manager = Plugins()
+
+    listed = await handle_slash_command(runtime, "/plugins list")
+    reloaded = await handle_slash_command(runtime, "/plugins reload user/demo")
+
+    assert listed.handled and "user/demo" in listed.response
+    assert reloaded.handled and reloaded.payload["generation_id"] == "user/demo@g2"

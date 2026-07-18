@@ -98,12 +98,20 @@ class PluginRuntimeContext:
     @property
     def conversation(self):
         """Return the capability-bound active conversation port."""
-        return self.manager.plugin_conversation_port(self.plugin.key)
+        return self.manager.plugin_conversation_port(self.plugin)
 
     @property
     def notifications(self):
         """Return the separately permissioned direct delivery port."""
-        return self.manager.plugin_notification_port(self.plugin.key)
+        return self.manager.plugin_notification_port(self.plugin)
+
+    @property
+    def storage(self):
+        return self.manager.plugin_storage_port(self.plugin)
+
+    @property
+    def tasks(self):
+        return self.manager.plugin_task_port(self.plugin)
 
     def parse_config(self, model_type):
         """Validate plugin configuration with a Pydantic model type."""

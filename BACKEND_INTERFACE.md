@@ -1073,6 +1073,10 @@ Review worker payload 提供：
 - `provides: list[string]`
 - `registered: object`，各类能力计数
 - `registered_items: object`，按 Tool、Skill、MCP Server、Hook 等分组的名称
+- `runtime_state: "discovered" | "preparing" | "ready" | "active" | "draining" | "stopped" | "failed"`
+- `generation_id: string`
+- `runtime_instance_id: string`
+- `package_digest: string`
 
 插件配置位于 `plugins.config.<plugin-key>`。配置诊断会递归遮蔽键名中的 token、secret、password、authorization 和 api key；前端不应尝试从诊断 payload 恢复真实密钥。
 
@@ -1084,6 +1088,21 @@ Review worker payload 提供：
 - `items: list[object]`
 
 `items[]` 常见字段：`hook_id`、`owner`、`source`、`event_name`、`name`、`matcher`、`priority`、`timeout_seconds`、`execution_count`、`blocked_count`、`timeout_count`、`failure_count`、`last_duration_ms`、`last_error`。这些字段是诊断信息，不进入 Conversation Event Stream；前端应允许新增事件名和诊断字段。
+
+`AppRuntime.health_snapshot().plugin_runtime` 提供热重载运行态：
+
+- `current_revision: integer`
+- `current_fingerprint: string`
+- `current_bindings: integer`
+- `active_leases: integer`
+- `leases_by_revision: object`
+- `retired_revisions: list[integer]`
+- `runtime_counts: object`
+- `install_revision: integer`
+- `installed_packages: integer`
+- `pending_removals: list[string]`
+
+核心 slash command registry 新增 `/plugins` 及 `list/info/install/reload/enable/disable/rollback/uninstall` 子命令。修改操作的回执 `kind="plugins"`，失败为 `kind="plugins_error"`；payload 包含 `action`、`plugin_key`、`status`、`generation_id`、`runtime_instance_id` 和最新 `capabilities`。
 
 ## 14. MCP Runtime Diagnostics
 
@@ -1099,9 +1118,10 @@ Review worker payload 提供：
 - `failed_count: integer`
 - `total_tools: integer`
 - `registered_tools: list[string]`
+- `retired_runtime_count: integer`
 - `servers: list[object]`
 
-`servers[]` 新增 `initial_attempt_done` 和 `initial_attempt_duration_seconds`。MCP 工具断线后仍可出现在 Tool Catalog，但 `available=false`，`unavailable_reason` 会说明 server 正在 starting、reconnecting、failed 或 stopped，并可附带最近错误。MCP 工具只在下一轮刷新进入 Agent 工具快照，前端不要假定 `core_ready=true` 等于所有 MCP 已连接。
+`servers[]` 提供 `runtime_instance_id`、`initial_attempt_done` 和 `initial_attempt_duration_seconds`。MCP 工具断线后仍可出现在 Tool Catalog，但 `available=false`，`unavailable_reason` 会说明 server 正在 starting、reconnecting、failed 或 stopped，并可附带最近错误。MCP 权威工具列表变化会发布 Capability Snapshot，Agent 在下一轮按投影 fingerprint 刷新；前端不要假定 `core_ready=true` 等于所有 MCP 已连接。
 
 ## 15. QQ Runtime Diagnostics
 

@@ -36,6 +36,12 @@ class PluginInstallStore:
                 result.append(path)
         return result
 
+    def enabled_for(self, plugin_key: str) -> bool | None:
+        record = self._state.get("packages", {}).get(plugin_key)
+        if not isinstance(record, dict) or "enabled" not in record:
+            return None
+        return bool(record["enabled"])
+
     def record_install(
         self,
         *,
@@ -44,6 +50,7 @@ class PluginInstallStore:
         path: Path,
         version: str,
         source: str,
+        enabled: bool = True,
     ) -> None:
         packages = self._state.setdefault("packages", {})
         record = packages.setdefault(plugin_key, {"versions": {}})
@@ -54,21 +61,33 @@ class PluginInstallStore:
         }
         record["active_package"] = digest
         record["status"] = "active"
+        record["enabled"] = bool(enabled)
         self._save()
 
     def activate(self, plugin_key: str, digest: str) -> Path:
-        record = self._state.get("packages", {}).get(plugin_key)
-        if not isinstance(record, dict) or digest not in record.get("versions", {}):
-            raise KeyError(f"Installed plugin package not found: {plugin_key}@{digest}")
+        path = self.package_path(plugin_key, digest)
+        record = self._state["packages"][plugin_key]
         record["active_package"] = digest
         record["status"] = "active"
         self._save()
+        return path
+
+    def package_path(self, plugin_key: str, digest: str) -> Path:
+        record = self._state.get("packages", {}).get(plugin_key)
+        if not isinstance(record, dict) or digest not in record.get("versions", {}):
+            raise KeyError(f"Installed plugin package not found: {plugin_key}@{digest}")
         return Path(record["versions"][digest]["path"])
 
     def mark_pending_removal(self, plugin_key: str) -> None:
         record = self._state.get("packages", {}).get(plugin_key)
         if isinstance(record, dict):
             record["status"] = "pending_removal"
+            self._save()
+
+    def set_enabled(self, plugin_key: str, enabled: bool) -> None:
+        record = self._state.get("packages", {}).get(plugin_key)
+        if isinstance(record, dict):
+            record["enabled"] = bool(enabled)
             self._save()
 
     def remove(self, plugin_key: str) -> dict[str, Any]:
