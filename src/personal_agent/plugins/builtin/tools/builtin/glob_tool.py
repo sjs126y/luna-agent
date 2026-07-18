@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import glob as glob_module
 from pathlib import Path
 
 from personal_agent.plugins.builtin.tools.builtin.file_scan import scan_files
@@ -13,7 +14,13 @@ from personal_agent.tools.sandbox import get_sandbox
 _MAX_RESULTS = 100
 
 
-async def _glob(pattern: str, path: str = ".", max_results: int = _MAX_RESULTS) -> str:
+async def _glob(
+    pattern: str,
+    path: str = ".",
+    max_results: int = _MAX_RESULTS,
+    max_depth: int | None = None,
+    include_hidden: bool = False,
+) -> str:
     """Find files matching glob pattern."""
     sandbox = get_sandbox()
     search_dir = sandbox.resolve(path)
@@ -30,14 +37,32 @@ async def _glob(pattern: str, path: str = ".", max_results: int = _MAX_RESULTS) 
         limit = max(1, min(int(max_results), 500))
     except (TypeError, ValueError):
         return "Error: max_results must be an integer"
+    if max_depth is not None:
+        try:
+            max_depth = int(max_depth)
+        except (TypeError, ValueError):
+            return "Error: max_depth must be an integer"
+        if max_depth < 1 or max_depth > 100:
+            return "Error: max_depth must be between 1 and 100"
+
+    explicit_name = not glob_module.has_magic(Path(pattern).name)
+
+    def matches(candidate: Path, relative: str) -> bool:
+        return candidate.match(pattern)
+
+    def explicitly_matches_blocked(candidate: Path, relative: str) -> bool:
+        return explicit_name and candidate.match(pattern)
 
     try:
         scan = await asyncio.to_thread(
             scan_files,
             search_dir,
             sandbox,
-            accept=lambda candidate, relative: candidate.match(pattern),
+            accept=matches,
+            blocked_accept=explicitly_matches_blocked,
             max_files=limit,
+            max_depth=max_depth,
+            include_hidden=bool(include_hidden),
         )
     except Exception as e:
         return f"Error: {e}"
@@ -72,6 +97,16 @@ tool_registry.register(ToolEntry(
                 "minimum": 1,
                 "maximum": 500,
                 "description": "Maximum matching files to return, default 100",
+            },
+            "max_depth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum path depth below the search directory; 1 means immediate files only",
+            },
+            "include_hidden": {
+                "type": "boolean",
+                "description": "Include hidden files and ordinary hidden directories, default false",
             },
         },
         "required": ["pattern"],
