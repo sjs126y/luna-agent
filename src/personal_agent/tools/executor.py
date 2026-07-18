@@ -741,6 +741,7 @@ async def execute_tool_call_result(
                     ),
                     turn_id=str(getattr(agent, "_hook_turn_id", "") or ""),
                     tool_name=name,
+                    owner_id=str(getattr(agent, "_artifact_owner_id", "") or ""),
                     result_metadata=handler_output.metadata,
                 ))
             except ArtifactStoreError as exc:

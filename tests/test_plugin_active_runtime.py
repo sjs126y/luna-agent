@@ -1,16 +1,19 @@
 import asyncio
+import base64
 from pathlib import Path
 
 import pytest
 
 from personal_agent.config import Settings
+from personal_agent.artifacts import ArtifactStore
+from personal_agent.db.database import Database
 from personal_agent.plugins import PluginManager, PluginStatus
 from personal_agent.plugins.active import (
     ActiveResourceRequest,
     ActiveRunnerState,
     PluginGenerationScope,
 )
-from personal_agent.tools.entry import ToolEntry
+from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 from personal_agent.plugins.runtime import CapabilityKind
 
@@ -249,10 +252,66 @@ async def test_active_tool_resource_uses_exact_allowlist_and_execution_pipeline(
         assert result.status == "success"
         assert result.content == "found:one"
         assert calls == ["one"]
+        first_context = resources.tool._execution_context(session_key="wechat:c1:u1")
+        second_context = resources.tool._execution_context(session_key="wechat:c1:u1")
+        assert first_context._hook_turn_id != second_context._hook_turn_id
+        assert first_context._artifact_owner_id == plugin.key
         with pytest.raises(PermissionError, match="not allowlisted"):
             await resources.tool.call("read", {"path": "."})
     finally:
         tool_registry.unregister("active_lookup_test")
+
+
+@pytest.mark.asyncio
+async def test_active_tool_artifacts_have_plugin_owner_and_per_call_scope(tmp_path):
+    plugin_root = tmp_path / "plugins" / "active"
+    _write_active_plugin(plugin_root)
+    manager = _manager(tmp_path, plugin_root)
+    plugin = manager.load_plugin("user/active-test")
+    db = Database(tmp_path / "artifact-state.db")
+    await db.initialize()
+    store = ArtifactStore(tmp_path / "artifacts", db, max_artifacts_per_turn=10)
+    await store.initialize()
+    manager._artifact_store = store
+
+    async def artifact():
+        return ToolHandlerOutput(
+            text="created",
+            artifacts=[ToolArtifact(
+                kind="file",
+                name="active.txt",
+                mime_type="text/plain",
+                data=base64.b64encode(b"active").decode(),
+            )],
+        )
+
+    tool_registry.register(ToolEntry(
+        name="active_artifact_test",
+        description="Create an active plugin artifact",
+        schema={"type": "object", "properties": {}},
+        handler=artifact,
+        permission_category="read",
+    ))
+    try:
+        resources = manager.plugin_resource_facade(
+            plugin,
+            ActiveResourceRequest(tools=("active_artifact_test",)),
+        )
+        refs = []
+        for _ in range(11):
+            result = await resources.tool.call(
+                "active_artifact_test",
+                session_key="wechat:c1:u1",
+            )
+            assert result.status == "success"
+            assert len(result.artifacts) == 1
+            refs.append(result.artifacts[0])
+
+        assert {ref.owner_id for ref in refs} == {plugin.key}
+        assert len({ref.turn_id for ref in refs}) == 11
+    finally:
+        tool_registry.unregister("active_artifact_test")
+        await db.close()
 
 
 @pytest.mark.asyncio

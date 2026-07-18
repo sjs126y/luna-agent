@@ -15,6 +15,7 @@ async def materialize_tool_artifact(
     session_key: str,
     turn_id: str,
     tool_name: str,
+    owner_id: str = "",
     result_metadata: dict | None = None,
 ) -> StoredArtifactRef:
     metadata = dict(getattr(artifact, "metadata", {}) or {})
@@ -37,6 +38,7 @@ async def materialize_tool_artifact(
         turn_id=turn_id,
         source=source,
         source_name=source_name,
+        owner_id=str(owner_id or ""),
         truncated=truncated,
         metadata={"source_uri_scheme": _uri_scheme(getattr(artifact, "uri", ""))},
     )

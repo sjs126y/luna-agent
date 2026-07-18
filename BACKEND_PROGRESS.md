@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1132%20passed-2EA44F" alt="1132 tests passed">
+  <img src="https://img.shields.io/badge/tests-1133%20passed-2EA44F" alt="1133 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
@@ -26,7 +26,8 @@
 - 修复删除 `PluginRuntimeManager` 后 Gateway 仍访问旧包装层、从而静默跳过所有主动 runner 的生命周期回归；Gateway 现在直接调用 `PluginManager.start_active_plugins()` / `stop_active_plugins()`，并有启停集成断言。
 - Reminder 已持久化的过期任务和 Inbox 中未处理文件会在 Gateway 重启后由各自 runner 恢复消费；GitHub Watch 的测试配置改为真实微信 session。
 - Feed Watch 新增精确 `trusted_private_hosts`，兼容 Watt Toolkit 将指定公网域名映射到本地加速器的场景；其他域名、私网和云元数据端点仍保持 SSRF 硬拦截。
-- Codex Releases Atom 已真实抓取并解析成功；针对性回归 `66 passed`，完整回归 `1132 passed, 1 warning`。
+- 修复主动 Tool 长期复用同一 Artifact turn scope、累计触发 10 个产物上限的问题；每次调用现在拥有独立 operation scope，并向统一物化链路传递插件 owner，Inbox Artifact 可以通过 Conversation Port 所有权校验。
+- Codex Releases Atom 已真实抓取并解析成功；新增连续 11 次主动 Artifact 物化回归，完整回归 `1133 passed, 1 warning`。
 
 ## 2026-07-18：主动插件套件与管理查询
 
