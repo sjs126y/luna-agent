@@ -10,6 +10,8 @@ import logging
 import re
 import sys
 import traceback
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from collections.abc import Iterable
 from pathlib import Path
 from types import ModuleType
@@ -29,7 +31,14 @@ from personal_agent.plugins.core.models import (
     PluginStatus,
 )
 from personal_agent.hooks import HookEvent, HookManager, HookSource
-from personal_agent.plugins.runtime import PluginRuntimeState
+from personal_agent.plugins.runtime import (
+    CandidateCatalog,
+    CapabilityKind,
+    CapabilityMapper,
+    CapabilitySnapshotBuilder,
+    CapabilityStore,
+    PluginRuntimeState,
+)
 from personal_agent.plugins.runtime.identity import (
     generation_id,
     package_digest,
@@ -61,6 +70,17 @@ class PluginManager:
         self.mcp_server_registry = MCPServerRegistry()
         self._conversation_coordinator = None
         self._delivery_service = None
+        self._capability_mapper = CapabilityMapper()
+        self._capability_builder = CapabilitySnapshotBuilder()
+        self._active_bindings: dict[str, tuple[Any, ...]] = {}
+        self._binding_payloads: dict[str, Any] = {}
+        self._runtime_records: dict[str, LoadedPlugin] = {}
+        self._active_runtime_by_plugin: dict[str, str] = {}
+        self._capability_view: ContextVar[Any | None] = ContextVar(
+            f"plugin-capability-view:{id(self)}",
+            default=None,
+        )
+        self.capability_store = CapabilityStore(on_retire=self._retire_snapshot)
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -180,8 +200,11 @@ class PluginManager:
             self._assert_no_registry_replacements(before, after, plugin.key)
             if plugin.manifest.record_import_delta:
                 self._record_registry_delta(plugin, before["names"], after["names"])
+            self._publish_plugin_capabilities(plugin, after)
             plugin.status = PluginStatus.LOADED
             plugin.runtime_state = PluginRuntimeState.ACTIVE
+            self._runtime_records[plugin.runtime_instance_id] = plugin
+            self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
             counts = plugin.registration_counts()
             logger.info(
                 "Plugin loaded: %s skills=%d mcp=%d hooks=%d commands=%d",
@@ -192,7 +215,7 @@ class PluginManager:
                 counts["commands"],
             )
         except Exception as exc:
-            self.hook_manager.unregister_owner(plugin.key)
+            self.hook_manager.unregister_owner(plugin.runtime_instance_id)
             self._restore_registration_snapshot(before)
             self._clear_plugin_registrations(plugin)
             plugin.module = None
@@ -232,8 +255,6 @@ class PluginManager:
         plugin.runtime_state = PluginRuntimeState.DRAINING
         self._remove_plugin_commands(key)
         self._remove_plugin_hooks(key)
-        self.hook_manager.unregister_owner(key)
-
         from personal_agent.platforms.core import platform_registry
         from personal_agent.skills.registry import skill_registry
         from personal_agent.tools.registry import tool_registry
@@ -257,8 +278,76 @@ class PluginManager:
         plugin.error = None
         plugin.error_traceback = None
         plugin.status = PluginStatus.DISABLED if not plugin.enabled else PluginStatus.DISCOVERED
-        plugin.runtime_state = PluginRuntimeState.STOPPED
+        self._publish_without_owner(plugin.key)
+        self._active_runtime_by_plugin.pop(plugin.key, None)
         return plugin
+
+    def reload_plugin(self, key: str) -> LoadedPlugin:
+        """Load a fresh generation and atomically replace the active route set."""
+        if not self._plugins:
+            self.discover()
+        previous = self._plugins[key]
+        if previous.status != PluginStatus.LOADED:
+            return self.load_plugin(key)
+        self._evict_entrypoint_module(previous.manifest)
+        candidate = LoadedPlugin(
+            key=previous.key,
+            manifest=previous.manifest,
+            status=PluginStatus.DISCOVERED,
+            deferred=previous.deferred,
+            enabled=previous.enabled,
+        )
+        self._plugins[key] = candidate
+        loaded = self.load_plugin(key)
+        if loaded.status != PluginStatus.LOADED:
+            self._plugins[key] = previous
+            previous.runtime_state = PluginRuntimeState.ACTIVE
+            return loaded
+        previous.runtime_state = PluginRuntimeState.DRAINING
+        return loaded
+
+    def capability_payload(self, binding_id: str) -> Any | None:
+        return self._binding_payloads.get(binding_id)
+
+    def capability_health(self) -> dict[str, Any]:
+        data = self.capability_store.health_snapshot()
+        data.update({
+            "active_plugin_owners": sorted(
+                owner for owner in self._active_bindings if owner != "core"
+            ),
+            "payload_count": len(self._binding_payloads),
+        })
+        return data
+
+    @contextmanager
+    def bind_capability_view(self, view):
+        from personal_agent.skills.registry import skill_registry
+        from personal_agent.workflow.registry import workflow_registry
+
+        hook_ids = {
+            route.manager_key
+            for routes in view.routes.get(CapabilityKind.HOOK, {}).values()
+            for route in routes
+        }
+        skills = {
+            name: self.capability_payload(routes[0].binding_id)
+            for name, routes in view.routes.get(CapabilityKind.SKILL, {}).items()
+            if routes and self.capability_payload(routes[0].binding_id) is not None
+        }
+        workflows = {
+            name: self.capability_payload(routes[0].binding_id)
+            for name, routes in view.routes.get(CapabilityKind.WORKFLOW, {}).items()
+            if routes and self.capability_payload(routes[0].binding_id) is not None
+        }
+        token = self._capability_view.set(view)
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(self.hook_manager.bind_routes(hook_ids))
+                stack.enter_context(skill_registry.bind_entries(skills))
+                stack.enter_context(workflow_registry.bind_entries(workflows))
+                yield
+        finally:
+            self._capability_view.reset(token)
 
     def enable_plugin(self, key: str) -> LoadedPlugin:
         if not self._plugins:
@@ -303,8 +392,10 @@ class PluginManager:
         priority: int = 100,
         timeout_seconds: float | None = None,
     ):
+        plugin = self._plugins.get(plugin_key)
+        owner = plugin.runtime_instance_id if plugin is not None else plugin_key
         return self.hook_manager.register(
-            owner=plugin_key,
+            owner=owner,
             source=HookSource.PLUGIN,
             event=event,
             callback=callback,
@@ -312,6 +403,8 @@ class PluginManager:
             matcher=matcher,
             priority=priority,
             timeout_seconds=timeout_seconds,
+            active=plugin is None,
+            managed=plugin is not None,
         )
 
     async def invoke_hook(self, name: str, *args, **kwargs) -> Any:
@@ -341,7 +434,15 @@ class PluginManager:
         self._commands[entry.name] = entry
 
     def get_command(self, name: str, *, scope: str = "slash") -> CommandEntry | None:
-        entry = self._commands.get(name.lstrip("/"))
+        normalized = name.lstrip("/")
+        entry = None
+        view = self._capability_view.get()
+        if view is not None:
+            route = view.resolve(CapabilityKind.COMMAND, normalized)
+            if route is not None:
+                entry = self.capability_payload(route.binding_id)
+        if entry is None:
+            entry = self._commands.get(normalized)
         if entry is None:
             return None
         if entry.scope not in {scope, "both"}:
@@ -740,6 +841,25 @@ class PluginManager:
         fn = getattr(module, func_name) if func_name else None
         return module, fn
 
+    @staticmethod
+    def _evict_entrypoint_module(manifest: PluginManifest) -> None:
+        module_name = manifest.entrypoint.partition(":")[0]
+        root_name = module_name.split(".", 1)[0]
+        for loaded_name in list(sys.modules):
+            if loaded_name == module_name or loaded_name.startswith(f"{module_name}."):
+                sys.modules.pop(loaded_name, None)
+            elif manifest.source != "builtin" and (
+                loaded_name == root_name or loaded_name.startswith(f"{root_name}.")
+            ):
+                sys.modules.pop(loaded_name, None)
+        if manifest.path is not None:
+            for cached in manifest.path.rglob("__pycache__/*.pyc"):
+                try:
+                    cached.unlink()
+                except OSError:
+                    pass
+        importlib.invalidate_caches()
+
     def _import_paths_for_manifest(self, manifest: PluginManifest) -> list[Path]:
         paths: list[Path] = []
         if manifest.path:
@@ -840,6 +960,220 @@ class PluginManager:
             "hooks": {name: list(items) for name, items in self._hooks.items()},
             "mcp_servers": self.mcp_server_registry.snapshot(),
         }
+
+    def _publish_plugin_capabilities(self, plugin: LoadedPlugin, snapshot: dict[str, Any]) -> None:
+        bindings: list[Any] = []
+        payloads: dict[str, Any] = {}
+
+        def add(kind, name, payload, *, manager_key=None, contract=None, metadata=None, ordinal=0):
+            binding = self._capability_mapper.binding(
+                kind=kind,
+                public_name=name,
+                owner=plugin.key,
+                generation_id=plugin.generation_id,
+                runtime_instance_id=plugin.runtime_instance_id,
+                manager_key=manager_key or name,
+                contract=contract if contract is not None else payload,
+                metadata=metadata,
+                ordinal=ordinal,
+            )
+            bindings.append(binding)
+            payloads[binding.binding_id] = payload
+
+        entries = snapshot["entries"]
+        for name in plugin.tools_registered:
+            entry = entries["tools"].get(name)
+            if entry is not None:
+                add(CapabilityKind.TOOL, name, entry, contract=_tool_contract(entry))
+        for name in plugin.skills_registered:
+            entry = entries["skills"].get(name)
+            if entry is not None:
+                add(CapabilityKind.SKILL, name, entry, contract=_skill_contract(entry))
+        for name in plugin.workflows_registered:
+            entry = entries["workflows"].get(name)
+            if entry is not None:
+                add(CapabilityKind.WORKFLOW, name, entry, contract=_workflow_contract(entry))
+        for name in plugin.platforms_registered:
+            entry = entries["platforms"].get(name)
+            if entry is not None:
+                add(CapabilityKind.PLATFORM, name, entry, contract=_platform_contract(entry))
+        for name in plugin.memory_providers_registered:
+            entry = entries["memory_providers"].get(name)
+            if entry is not None:
+                add(CapabilityKind.MEMORY_PROVIDER, name, entry, contract=name)
+        for name in plugin.commands_registered:
+            entry = self._commands.get(name)
+            if entry is not None:
+                add(
+                    CapabilityKind.COMMAND,
+                    name,
+                    entry,
+                    contract={"description": entry.description, "scope": entry.scope},
+                )
+
+        typed_hooks = [
+            item for item in self.hook_manager.registrations(include_inactive=True)
+            if item.owner == plugin.runtime_instance_id
+        ]
+        for ordinal, registration in enumerate(typed_hooks):
+            add(
+                CapabilityKind.HOOK,
+                registration.event.value,
+                registration,
+                manager_key=registration.hook_id,
+                contract={
+                    "event": registration.event.value,
+                    "matcher": registration.matcher,
+                    "name": registration.name,
+                    "priority": registration.priority,
+                },
+                metadata={
+                    "priority": registration.priority,
+                    "order": registration.order,
+                    "matcher": registration.matcher,
+                },
+                ordinal=ordinal,
+            )
+        mcp_entries, _revision = self.mcp_server_registry.snapshot()
+        for name in plugin.mcp_servers_registered:
+            registration = mcp_entries.get(name)
+            if registration is not None:
+                add(
+                    CapabilityKind.MCP_SERVER,
+                    name,
+                    registration,
+                    contract=registration.config,
+                )
+
+        core_bindings, core_payloads = self._capture_core_bindings(snapshot, plugin)
+        active = {
+            owner: values
+            for owner, values in self._active_bindings.items()
+            if owner not in {plugin.key, "core"}
+        }
+        active["core"] = tuple(core_bindings)
+        active[plugin.key] = tuple(bindings)
+        catalog = CandidateCatalog([
+            binding
+            for owner_bindings in active.values()
+            for binding in owner_bindings
+        ])
+        next_snapshot = self._capability_builder.build(
+            catalog,
+            revision=self.capability_store.current.revision + 1,
+        )
+        self._binding_payloads.update(core_payloads)
+        self._binding_payloads.update(payloads)
+        self._active_bindings = active
+        self.capability_store.publish_nowait(next_snapshot)
+        active_hook_ids = {
+            route.manager_key
+            for routes in next_snapshot.routes.get(CapabilityKind.HOOK, {}).values()
+            for route in routes
+        }
+        self.hook_manager.activate_managed_routes(active_hook_ids)
+
+    def _capture_core_bindings(
+        self,
+        snapshot: dict[str, Any],
+        current_plugin: LoadedPlugin,
+    ) -> tuple[list[Any], dict[str, Any]]:
+        bindings: list[Any] = []
+        payloads: dict[str, Any] = {}
+        plugin_names = {
+            "tools": set(current_plugin.tools_registered),
+            "skills": set(current_plugin.skills_registered),
+            "workflows": set(current_plugin.workflows_registered),
+            "platforms": set(current_plugin.platforms_registered),
+            "memory_providers": set(current_plugin.memory_providers_registered),
+        }
+        kind_map = {
+            "tools": CapabilityKind.TOOL,
+            "skills": CapabilityKind.SKILL,
+            "workflows": CapabilityKind.WORKFLOW,
+            "platforms": CapabilityKind.PLATFORM,
+            "memory_providers": CapabilityKind.MEMORY_PROVIDER,
+        }
+        known_plugin_names: dict[str, set[str]] = {name: set() for name in kind_map}
+        attributes = {
+            "tools": "tools_registered",
+            "skills": "skills_registered",
+            "workflows": "workflows_registered",
+            "platforms": "platforms_registered",
+            "memory_providers": "memory_providers_registered",
+        }
+        for loaded in self._plugins.values():
+            if loaded.key == current_plugin.key:
+                continue
+            for group, attribute in attributes.items():
+                known_plugin_names[group].update(getattr(loaded, attribute))
+
+        for group, entries in snapshot["entries"].items():
+            if group not in kind_map:
+                continue
+            for name, payload in entries.items():
+                if name in plugin_names[group] or name in known_plugin_names[group]:
+                    continue
+                contract_fn = {
+                    "tools": _tool_contract,
+                    "skills": _skill_contract,
+                    "workflows": _workflow_contract,
+                    "platforms": _platform_contract,
+                }.get(group, lambda item: name)
+                binding = self._capability_mapper.binding(
+                    kind=kind_map[group],
+                    public_name=name,
+                    owner="core",
+                    generation_id="core@host-v1",
+                    runtime_instance_id="host",
+                    manager_key=name,
+                    contract=contract_fn(payload),
+                )
+                bindings.append(binding)
+                payloads[binding.binding_id] = payload
+        return bindings, payloads
+
+    def _publish_without_owner(self, owner: str) -> None:
+        if owner not in self._active_bindings:
+            return
+        active = {
+            key: bindings for key, bindings in self._active_bindings.items() if key != owner
+        }
+        catalog = CandidateCatalog([
+            binding for owner_bindings in active.values() for binding in owner_bindings
+        ])
+        snapshot = self._capability_builder.build(
+            catalog,
+            revision=self.capability_store.current.revision + 1,
+        )
+        self._active_bindings = active
+        self.capability_store.publish_nowait(snapshot)
+        active_hook_ids = {
+            route.manager_key
+            for routes in snapshot.routes.get(CapabilityKind.HOOK, {}).values()
+            for route in routes
+        }
+        self.hook_manager.activate_managed_routes(active_hook_ids)
+
+    def _retire_snapshot(self, snapshot) -> None:
+        retained_ids = self.capability_store.retained_binding_ids()
+        for binding_id in snapshot.binding_ids - retained_ids:
+            self._binding_payloads.pop(binding_id, None)
+        retained_runtimes = self.capability_store.retained_runtime_ids()
+        runtime_ids = {
+            route.runtime_instance_id
+            for by_name in snapshot.routes.values()
+            for routes in by_name.values()
+            for route in routes
+        }
+        for runtime_id in runtime_ids - retained_runtimes - {"host"}:
+            plugin = self._runtime_records.pop(runtime_id, None)
+            if plugin is None or plugin.runtime_state is PluginRuntimeState.ACTIVE:
+                continue
+            self.hook_manager.unregister_owner(runtime_id)
+            plugin.ctx = None
+            plugin.module = None
+            plugin.runtime_state = PluginRuntimeState.STOPPED
 
     def _restore_registration_snapshot(self, snapshot: dict[str, Any]) -> None:
         from personal_agent.memory.provider_registry import memory_provider_registry
@@ -958,7 +1292,6 @@ class PluginManager:
         plugin.commands_registered.clear()
         plugin.middleware_registered.clear()
         plugin.memory_providers_registered.clear()
-
     def _extend_unique(self, target: list[str], values: list[str]) -> None:
         for value in values:
             if value not in target:
@@ -981,6 +1314,42 @@ class PluginManager:
             return left.resolve() == right.resolve()
         except OSError:
             return left.absolute() == right.absolute()
+
+
+def _tool_contract(entry: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(entry, "name", ""),
+        "description": getattr(entry, "description", ""),
+        "schema": getattr(entry, "schema", {}),
+        "permission_category": getattr(entry, "permission_category", ""),
+        "risk_level": getattr(entry, "risk_level", ""),
+    }
+
+
+def _skill_contract(entry: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(entry, "name", ""),
+        "description": getattr(entry, "description", ""),
+        "path": getattr(entry, "path", ""),
+        "triggers": list(getattr(entry, "triggers", []) or []),
+    }
+
+
+def _workflow_contract(entry: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(entry, "name", ""),
+        "description": getattr(entry, "description", ""),
+        "phases": list(getattr(entry, "phases", []) or []),
+        "when_to_use": getattr(entry, "when_to_use", ""),
+    }
+
+
+def _platform_contract(entry: Any) -> dict[str, Any]:
+    capabilities = getattr(entry, "capabilities", None)
+    return {
+        "name": getattr(entry, "name", ""),
+        "capabilities": repr(capabilities),
+    }
 
 
 def run_async(coro):

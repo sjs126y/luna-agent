@@ -7,6 +7,7 @@ from personal_agent.plugins.runtime.models import (
     CapabilityRoute,
     PluginRuntimeState,
 )
+from personal_agent.plugins.runtime.mapper import CapabilityMapper
 from personal_agent.plugins.runtime.snapshot import (
     CapabilityLease,
     CapabilitySnapshot,
@@ -19,6 +20,7 @@ __all__ = [
     "CapabilityBinding",
     "CapabilityKind",
     "CapabilityLease",
+    "CapabilityMapper",
     "CapabilityRoute",
     "CapabilitySnapshot",
     "CapabilitySnapshotBuilder",

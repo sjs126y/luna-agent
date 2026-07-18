@@ -31,6 +31,19 @@ class CapabilityView:
     def select(self, kind: CapabilityKind, name: str) -> tuple[CapabilityRoute, ...]:
         return self.routes.get(kind, {}).get(name, ())
 
+    def project(self, kinds: Iterable[CapabilityKind]) -> "CapabilityView":
+        selected = set(kinds)
+        routes = MappingProxyType({
+            kind: self.routes[kind]
+            for kind in sorted(selected, key=lambda item: item.value)
+            if kind in self.routes
+        })
+        return CapabilityView(
+            self.snapshot_revision,
+            routes,
+            _fingerprint(_route_rows(routes)),
+        )
+
 
 @dataclass(frozen=True)
 class CapabilitySnapshot:
@@ -132,6 +145,22 @@ class CapabilityStore:
     def current(self) -> CapabilitySnapshot:
         return self._current
 
+    def retained_binding_ids(self) -> frozenset[str]:
+        return frozenset().union(
+            self._current.binding_ids,
+            *(snapshot.binding_ids for snapshot in self._retired.values()),
+        )
+
+    def retained_runtime_ids(self) -> frozenset[str]:
+        snapshots = [self._current, *self._retired.values()]
+        return frozenset(
+            route.runtime_instance_id
+            for snapshot in snapshots
+            for by_name in snapshot.routes.values()
+            for routes in by_name.values()
+            for route in routes
+        )
+
     async def acquire(self) -> CapabilityLease:
         async with self._lock:
             snapshot = self._current
@@ -148,6 +177,25 @@ class CapabilityStore:
             self._retired[previous.revision] = previous
             releasable = self._collect_releasable_locked()
         await self._retire(releasable)
+        return snapshot
+
+    def publish_nowait(self, snapshot: CapabilitySnapshot) -> CapabilitySnapshot:
+        """Publish from synchronous startup or registration code on the event-loop thread."""
+        previous = self._current
+        if snapshot.revision <= previous.revision:
+            raise ValueError("Published capability snapshot revision must increase")
+        self._current = snapshot
+        self._refcounts.setdefault(snapshot.revision, 0)
+        self._retired[previous.revision] = previous
+        releasable = self._collect_releasable_locked()
+        if releasable and self._on_retire is not None:
+            result = self._retire(releasable)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(result)
+            else:
+                loop.create_task(result, name="capability-snapshot-retire")
         return snapshot
 
     async def release(self, revision: int) -> None:

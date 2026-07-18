@@ -35,6 +35,10 @@ class Agent:
     tools: list[dict] = field(default_factory=list)
     enabled_toolsets: list[str] | None = None   # None = all tools
     _tools_generation: int = -1
+    _capability_fingerprint: str = ""
+    _capability_view: Any = None
+    _plugin_manager: Any = None
+    _tool_bindings: dict[str, Any] = field(default_factory=dict)
 
     # ── system prompt ──
     _cached_system_prompt: str | None = None  # None=not built, ""=empty, str=present
@@ -97,6 +101,8 @@ def init_agent(
     system_prompt_template: str = "",
     enabled_toolsets: list[str] | None = None,
     hook_manager=None,
+    plugin_manager=None,
+    capability_view=None,
 ) -> Agent:
     """Wire an Agent instance. Flat initialization — no 1700-line magic."""
     from concurrent.futures import ThreadPoolExecutor
@@ -112,6 +118,8 @@ def init_agent(
         _memory_snapshot_refresh_interval=memory_snapshot_refresh_interval,
         _compressor=compressor,
         _hook_manager=hook_manager,
+        _plugin_manager=plugin_manager,
+        _capability_view=capability_view,
         enabled_toolsets=enabled_toolsets,
         _llm_pool=pool,
         _tool_pool=pool,  # shared pool for MVP, separate later
@@ -125,6 +133,30 @@ def init_agent(
 
 def _refresh_tools(agent: Agent) -> None:
     """Sync agent.tools with current registry state, respecting enabled_toolsets."""
+    view = agent._capability_view
+    manager = agent._plugin_manager
+    if view is not None and manager is not None:
+        from personal_agent.plugins.runtime import CapabilityKind
+
+        fingerprint = view.fingerprint
+        if agent._capability_fingerprint == fingerprint:
+            return
+        routes = view.routes.get(CapabilityKind.TOOL, {})
+        bindings = {
+            name: values[0]
+            for name, values in routes.items()
+            if values
+        }
+        entries = [manager.capability_payload(route.binding_id) for route in bindings.values()]
+        agent.tools = tool_registry.get_definitions_for_entries(
+            entries,
+            enabled_toolsets=agent.enabled_toolsets,
+        )
+        agent._tool_bindings = bindings
+        agent._capability_fingerprint = fingerprint
+        agent._tools_generation = tool_registry.generation
+        agent._cached_system_prompt = None
+        return
     gen = tool_registry.generation
     if agent._tools_generation != gen:
         agent.tools = tool_registry.get_definitions(

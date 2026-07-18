@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,6 +33,10 @@ MAX_SKILL_BYTES = 50_000
 class SkillRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, SkillEntry] = {}
+        self._pinned_entries: ContextVar[dict[str, SkillEntry] | None] = ContextVar(
+            f"skill-entries:{id(self)}",
+            default=None,
+        )
         self._usage_path = Path("data") / "skills" / "usage.json"
 
     def register(self, entry: SkillEntry) -> None:
@@ -41,7 +47,7 @@ class SkillRegistry:
         self._entries.pop(name, None)
 
     def get(self, name: str) -> SkillEntry | None:
-        return self._entries.get(name)
+        return self._effective_entries().get(name)
 
     @property
     def usage_path(self) -> Path:
@@ -51,20 +57,32 @@ class SkillRegistry:
         self._usage_path = Path(path)
 
     def list(self) -> list[SkillEntry]:
-        return list(self._entries.values())
+        return list(self._effective_entries().values())
+
+    @contextmanager
+    def bind_entries(self, entries: dict[str, SkillEntry]):
+        token = self._pinned_entries.set(dict(entries))
+        try:
+            yield
+        finally:
+            self._pinned_entries.reset(token)
+
+    def _effective_entries(self) -> dict[str, SkillEntry]:
+        return self._pinned_entries.get() or self._entries
 
     def get_summaries(self) -> str:
         """Tier 1: name + one-line description for system prompt."""
-        if not self._entries:
+        entries = self._effective_entries()
+        if not entries:
             return ""
         lines = ["可用技能："]
-        for entry in self._entries.values():
+        for entry in entries.values():
             lines.append(f"- {entry.name}: {entry.description}")
         return "\n".join(lines)
 
     def load(self, name: str) -> str | None:
         """Tier 2: load skill content through security pipeline. Returns content or None."""
-        entry = self._entries.get(name)
+        entry = self._effective_entries().get(name)
         if entry is None:
             return None
 

@@ -415,6 +415,9 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 conversation_service,
                 command_dispatcher=dispatch_command,
                 delivery_service=delivery_service,
+                capability_store=plugin_manager.capability_store,
+                hook_manager=hook_manager,
+                capability_binder=plugin_manager.bind_capability_view,
             )
             plugin_manager.bind_application_ports(
                 conversation_coordinator=conversation_coordinator,
