@@ -215,6 +215,42 @@ async def test_codex_responses_returns_empty_when_final_channel_has_no_text():
 
 
 @pytest.mark.asyncio
+async def test_codex_responses_always_uses_sse_for_middle_station(monkeypatch):
+    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+
+    calls: list[bool] = []
+
+    async def fake_call_openai_responses(**kwargs):
+        calls.append(kwargs["stream"])
+        yield {
+            "type": "response.output_text.delta",
+            "delta": "测试成功",
+        }
+        yield {
+            "type": "response.completed",
+            "response": {
+                "status": "completed",
+                "usage": {"input_tokens": 3, "output_tokens": 2},
+            },
+        }
+
+    monkeypatch.setattr(
+        responses_module,
+        "call_openai_responses",
+        fake_call_openai_responses,
+    )
+    transport = CodexResponsesTransport(_provider())
+
+    response = await transport.call(
+        [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        stream=False,
+    )
+
+    assert calls == [True]
+    assert response.text == "测试成功"
+
+
+@pytest.mark.asyncio
 async def test_responses_transport_parses_non_stream_output_text():
     transport = OpenAIResponsesTransport(_provider())
 

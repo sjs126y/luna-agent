@@ -250,6 +250,30 @@ class OpenAIResponsesTransport(BaseTransport):
 class CodexResponsesTransport(OpenAIResponsesTransport):
     """Semantic alias for Codex-style middle stations using Responses API."""
 
+    async def call(
+        self,
+        messages: list[dict],
+        system_prompt: str = "",
+        tools: list[dict] | None = None,
+        max_tokens: int = 4096,
+        stream: bool = False,
+        on_delta: DeltaCallback | None = None,
+        request_plan: LLMRequestPlan | None = None,
+    ) -> NormalizedResponse:
+        # Codex middle stations can return only an encrypted reasoning item for
+        # non-streaming requests while still emitting the final text over SSE.
+        # Always use SSE for this transport; parse_stream still buffers output
+        # when the caller does not request visible deltas.
+        return await super().call(
+            messages,
+            system_prompt,
+            tools,
+            max_tokens,
+            stream=True,
+            on_delta=on_delta,
+            request_plan=request_plan,
+        )
+
     async def parse_stream(
         self,
         stream: AsyncIterator[dict],
