@@ -154,15 +154,18 @@ async def test_plugins_command_controls_live_runtime():
     )
 
     class Plugins:
-        def list_plugins(self):
-            return [plugin]
+        def __init__(self):
+            self.queries = self
 
-        def doctor_plugin(self, key):
-            return {
-                "key": key,
+        def list_plugins(self):
+            return [{
+                "key": plugin.key,
                 "status": "LOADED",
                 "generation_id": plugin.generation_id,
-            }
+            }]
+
+        def plugin_info(self, key):
+            return {"key": key, "status": "LOADED", "generation_id": plugin.generation_id}
 
         async def reload_plugin_runtime(self, key):
             assert key == plugin.key
@@ -173,8 +176,11 @@ async def test_plugins_command_controls_live_runtime():
             plugin.active_enabled = enabled
             return plugin
 
-        def capability_health(self):
+        def runtime_health(self):
             return {"current_revision": 4, "active_leases": 0}
+
+        def operations(self, *, key="", limit=50):
+            return [{"operation_id": "pop_test", "plugin_key": key, "status": "completed"}]
 
     runtime.plugin_manager = Plugins()
 
@@ -184,4 +190,5 @@ async def test_plugins_command_controls_live_runtime():
 
     assert listed.handled and "user/demo" in listed.response
     assert reloaded.handled and reloaded.payload["generation_id"] == "user/demo@g2"
+    assert reloaded.payload["operation_id"] == "pop_test"
     assert active.handled and active.payload["active_enabled"] is True

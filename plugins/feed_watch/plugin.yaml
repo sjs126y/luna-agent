@@ -1,0 +1,11 @@
+schema_version: 1
+key: automation/feed-watch
+name: Feed Watch
+version: "0.1.0"
+description: Watches RSS and Atom feeds and submits new entries to Lumora.
+kind: automation
+entrypoint: feed_watch:register
+provides: [active, tools, command]
+tags: [active, rss, atom, feed, monitoring]
+enabled_by_default: false
+source: local

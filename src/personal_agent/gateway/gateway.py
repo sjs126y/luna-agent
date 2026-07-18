@@ -107,6 +107,8 @@ class Gateway:
         self._session_router.overrides.update(self.config.session_override)
         await self._session_store.initialize()
         await self._session_store.expire_sessions(self.config.session_expire_days)
+        restored_bindings = self._session_router.restore(self._session_store.entries())
+        logger.info("Restored %d delivery binding(s) from session store", restored_bindings)
 
         if self.plugin_manager is not None:
             for plugin in self.plugin_manager.list_plugins():
@@ -133,9 +135,8 @@ class Gateway:
         if self._delivery_worker is not None:
             await self._delivery_worker.process_due()
             self._delivery_worker.start()
-        plugin_runtime = getattr(self.plugin_manager, "runtime_manager", None)
-        if plugin_runtime is not None:
-            await plugin_runtime.start_active()
+        if self.plugin_manager is not None:
+            await self.plugin_manager.start_active_plugins()
 
         logger.info("Gateway started with %d platform(s)", len(self._adapters))
         await self._dispatch_gateway_observer(
@@ -149,9 +150,8 @@ class Gateway:
             payload={"platform_count": len(self._adapters)},
         )
         self._started = False
-        plugin_runtime = getattr(self.plugin_manager, "runtime_manager", None)
-        if plugin_runtime is not None:
-            await plugin_runtime.stop_active()
+        if self.plugin_manager is not None:
+            await self.plugin_manager.stop_active_plugins()
         if self._cron_scheduler:
             self._cron_scheduler.stop()
         if self._delivery_worker is not None:

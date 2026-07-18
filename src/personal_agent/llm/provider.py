@@ -57,19 +57,32 @@ class ProviderProfile:
 
 
 def _detect_context_window(model: str) -> int:
-    """Infer context window from model name. Conservative estimates."""
+    """Infer a practical context window from explicit markers and model family."""
     m = model.lower()
-    if "1m" in m or "1.0m" in m:
+    if any(marker in m for marker in ("1m", "1.0m", "1000k")):
         return 1_000_000
-    if "200k" in m or "claude" in m:
+    if "400k" in m:
+        return 400_000
+    if "256k" in m:
+        return 256_000
+    if "200k" in m:
         return 200_000
-    if "128k" in m or "gpt-4" in m or "gpt-4o" in m:
+    if "128k" in m:
         return 128_000
+    if "64k" in m:
+        return 64_000
     if "32k" in m:
         return 32_000
-    if "deepseek" in m:  # all DeepSeek models = 1M (v4, r1, chat)
+
+    if "gemini" in m or "gpt-4.1" in m or "deepseek" in m:
         return 1_000_000
-    return 64_000
+    if "gpt-5" in m:
+        return 400_000
+    if "claude" in m or any(name in m for name in ("o1", "o3", "o4")):
+        return 200_000
+    if "gpt-4" in m or "gpt-4o" in m or "qwen" in m:
+        return 128_000
+    return 256_000
 
 
 def _configured_context_window(config) -> int:

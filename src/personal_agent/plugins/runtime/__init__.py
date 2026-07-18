@@ -8,7 +8,6 @@ from personal_agent.plugins.runtime.models import (
     PluginRuntimeState,
 )
 from personal_agent.plugins.runtime.mapper import CapabilityMapper
-from personal_agent.plugins.runtime.manager import PluginRuntimeManager
 from personal_agent.plugins.runtime.snapshot import (
     CapabilityLease,
     CapabilitySnapshot,
@@ -27,5 +26,4 @@ __all__ = [
     "CapabilitySnapshotBuilder",
     "CapabilityStore",
     "PluginRuntimeState",
-    "PluginRuntimeManager",
 ]

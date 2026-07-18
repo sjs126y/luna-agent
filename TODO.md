@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/platform%20E2E-pending-F59E0B" alt="Platform E2E pending">
   <img src="https://img.shields.io/badge/plugin%20hot%20reload-ready-2EA44F" alt="Plugin hot reload ready">
   <img src="https://img.shields.io/badge/active%20plugin-runtime%20ready-2EA44F" alt="Active plugin runtime ready">
+  <img src="https://img.shields.io/badge/active%20plugins-4%20ready-2EA44F" alt="Four active plugins ready">
 </p>
 
 <p>
@@ -43,6 +44,7 @@
 
 - 首 Token 和完整响应 P50/P95。
 - 长会话上下文与 provider cache。
+- 自动识别与显式配置的 context window 是否和中转站真实限制一致。
 - 并发 Memory prefetch。
 - MCP cold start / ready time。
 - Tool task success rate 与重复调用。

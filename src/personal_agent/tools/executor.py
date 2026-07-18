@@ -376,6 +376,8 @@ def _resolve_tool_entry(agent: Any, name: str):
             if entry is not None:
                 return entry
             return None
+        if manager is not None and getattr(agent, "_capability_view", None) is not None:
+            return None
     return tool_registry.get(name)
 
 
@@ -741,6 +743,7 @@ async def execute_tool_call_result(
                     ),
                     turn_id=str(getattr(agent, "_hook_turn_id", "") or ""),
                     tool_name=name,
+                    owner_id=str(getattr(agent, "_artifact_owner_id", "") or ""),
                     result_metadata=handler_output.metadata,
                 ))
             except ArtifactStoreError as exc:

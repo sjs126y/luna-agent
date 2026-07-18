@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from personal_agent.conversation import ResponseMode, SubmissionOrigin, SubmissionRequest
+from personal_agent.conversation.input import ConversationInput
 from personal_agent.delivery import DeliveryKind, DeliveryRequest
-from personal_agent.models.messages import OutboundMessage, SessionSource
+from personal_agent.models.messages import AttachmentRef, OutboundMessage, SessionSource
+from personal_agent.persistence.json_store import write_json_atomic
 from personal_agent.plugins.runtime import PluginRuntimeState
 
 
 class PluginConversationPort:
-    def __init__(self, *, plugin, coordinator) -> None:
+    def __init__(self, *, plugin, coordinator, artifact_store=None) -> None:
         self._plugin = plugin
         self._coordinator = coordinator
+        self._artifact_store = artifact_store
 
     async def submit(
         self,
@@ -24,6 +29,8 @@ class PluginConversationPort:
         text: str,
         response_mode: ResponseMode | str = ResponseMode.DELIVER,
         metadata: dict | None = None,
+        request_id: str = "",
+        artifact_ids: list[str] | tuple[str, ...] = (),
     ):
         self._authorize(session_key, capability="active")
         mode = response_mode if isinstance(response_mode, ResponseMode) else ResponseMode(response_mode)
@@ -33,16 +40,55 @@ class PluginConversationPort:
             user_name=self._plugin.manifest.name,
             chat_id=session_key,
         )
-        request = SubmissionRequest.text(
+        attachments = await self._artifact_attachments(session_key, artifact_ids)
+        request = SubmissionRequest(
             session_key=session_key,
-            text=text,
+            input=ConversationInput(
+                text=str(text),
+                source=source,
+                attachments=attachments,
+                metadata={"plugin_id": self._plugin.key},
+            ),
             origin=SubmissionOrigin.PLUGIN,
             response_mode=mode,
-            source=source,
+            request_id=str(request_id or f"plugin:{self._plugin.runtime_instance_id}:{uuid4().hex}"),
             owner_id=self._plugin.key,
             metadata={"plugin_id": self._plugin.key, **dict(metadata or {})},
         )
         return await self._coordinator.submit(request)
+
+    async def _artifact_attachments(
+        self,
+        session_key: str,
+        artifact_ids: list[str] | tuple[str, ...],
+    ) -> list[AttachmentRef]:
+        requested = tuple(dict.fromkeys(str(value or "").strip() for value in artifact_ids))
+        if not requested:
+            return []
+        if self._artifact_store is None:
+            raise RuntimeError("plugin artifact submission is unavailable")
+        attachments: list[AttachmentRef] = []
+        for artifact_id in requested:
+            if not artifact_id:
+                continue
+            ref = await self._artifact_store.get(artifact_id)
+            if ref is None:
+                raise KeyError(f"plugin artifact not found: {artifact_id}")
+            if ref.owner_id != self._plugin.key:
+                raise PermissionError("plugin cannot submit an artifact owned by another runtime")
+            if ref.session_key != session_key:
+                raise PermissionError("plugin artifact belongs to another session")
+            path = await self._artifact_store.resolve_path(ref)
+            attachments.append(AttachmentRef(
+                id=ref.artifact_id,
+                kind=ref.kind,
+                name=ref.filename,
+                mime_type=ref.mime_type,
+                size=ref.size_bytes,
+                local_path=str(path),
+                metadata={"artifact_id": ref.artifact_id, "source": "plugin"},
+            ))
+        return attachments
 
     def _authorize(self, session_key: str, *, capability: str) -> None:
         if not self._plugin.enabled or self._plugin.runtime_state is not PluginRuntimeState.ACTIVE:
@@ -91,6 +137,7 @@ class PluginStoragePort:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def resolve(self, relative_path: str | Path) -> Path:
+        self._validate()
         candidate = Path(relative_path)
         if candidate.is_absolute():
             raise ValueError("plugin storage path must be relative")
@@ -112,6 +159,36 @@ class PluginStoragePort:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(text), encoding="utf-8")
         return path
+
+    def exists(self, relative_path: str | Path) -> bool:
+        return self.resolve(relative_path).exists()
+
+    def read_json(
+        self,
+        relative_path: str | Path,
+        *,
+        default: Any = None,
+        schema_version: int | None = None,
+    ) -> Any:
+        path = self.resolve(relative_path)
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return default
+        if schema_version is not None:
+            if not isinstance(value, dict) or int(value.get("schema_version") or 0) != schema_version:
+                raise ValueError(f"plugin storage schema mismatch: {relative_path}")
+        return value
+
+    def write_json_atomic(self, relative_path: str | Path, value: Any) -> Path:
+        path = self.resolve(relative_path)
+        write_json_atomic(path, value)
+        return path
+
+    def _validate(self) -> None:
+        scope = getattr(self._plugin, "generation_scope", None)
+        if scope is not None and scope.closed:
+            raise RuntimeError(f"plugin generation is no longer active: {self._plugin.key}")
 
 
 class PluginTaskPort:

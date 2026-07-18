@@ -39,7 +39,6 @@ from personal_agent.plugins.runtime import (
     CapabilitySnapshotBuilder,
     CapabilityStore,
     PluginRuntimeState,
-    PluginRuntimeManager,
 )
 from personal_agent.plugins.runtime.identity import (
     generation_id,
@@ -98,6 +97,13 @@ class PluginManager:
         self.install_store = PluginInstallStore(install_root / "install-state.json")
         self.installer = PluginInstaller(install_root)
         self.data_revisions = PluginDataRevisionStore(self.installer.data_root)
+        from personal_agent.plugins.control_state import PluginControlStateStore
+        from personal_agent.plugins.events import PluginEventJournal
+        from personal_agent.plugins.operations import PluginOperationTracker
+
+        self._control_store = PluginControlStateStore(install_root / "control-state.json")
+        self.events = PluginEventJournal(self._control_store)
+        self.operations = PluginOperationTracker(self._control_store, self.events)
         self._pending_package_removals: dict[str, dict[str, Any]] = {}
         self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
         self._active_owner_running = False
@@ -108,7 +114,9 @@ class PluginManager:
             default=None,
         )
         self.capability_store = CapabilityStore(on_retire=self._retire_snapshot)
-        self.runtime_manager = PluginRuntimeManager(self)
+        from personal_agent.plugins.query import PluginQueryService
+
+        self.queries = PluginQueryService(self)
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -149,6 +157,7 @@ class PluginManager:
         return PluginConversationPort(
             plugin=plugin,
             coordinator=self._conversation_coordinator,
+            artifact_store=self._artifact_store,
         )
 
     def plugin_notification_port(self, plugin, *, capability: str = "notification"):
@@ -438,6 +447,11 @@ class PluginManager:
         return loaded
 
     async def reload_plugin_runtime(self, key: str) -> LoadedPlugin:
+        async with self.operations.track(key, "reload"):
+            return await self._reload_plugin_runtime(key)
+
+    async def _reload_plugin_runtime(self, key: str) -> LoadedPlugin:
+        self.operations.stage("preparing")
         previous = self._plugins.get(key)
         if previous is None or previous.status is not PluginStatus.LOADED:
             return self.load_plugin(key)
@@ -459,6 +473,7 @@ class PluginManager:
         previous_quiesced = False
         try:
             if self._mcp_manager is not None:
+                self.operations.stage("waiting_mcp")
                 await self._mcp_manager.reconcile(self._desired_mcp_configs())
             should_start = (
                 self._active_owner_running
@@ -466,6 +481,7 @@ class PluginManager:
                 and candidate.active_runner is not None
             )
             if should_start:
+                self.operations.stage("waiting_ready")
                 old_runner = previous.active_runner
                 if (
                     old_runner is not None
@@ -480,12 +496,23 @@ class PluginManager:
 
             if candidate.active_registration is not None:
                 self.data_revisions.commit(candidate)
+            self.operations.stage("publishing")
             self._publish_staged_plugin(candidate)
+            self.events.record(
+                candidate.key,
+                "generation_published",
+                operation_id=self.operations.current_operation_id(),
+                details={
+                    "generation_id": candidate.generation_id,
+                    "runtime_instance_id": candidate.runtime_instance_id,
+                },
+            )
             previous.runtime_state = PluginRuntimeState.DRAINING
             if should_start:
                 candidate.active_runner.control.commit()
                 self._watch_active_plugin(candidate, candidate.active_runner)
             if previous.active_runner is not None:
+                self.operations.stage("draining")
                 await self._stop_active_plugin(previous)
             return candidate
         except Exception:
@@ -537,6 +564,11 @@ class PluginManager:
         return plugin
 
     async def enable_plugin_runtime(self, key: str) -> LoadedPlugin:
+        async with self.operations.track(key, "enable"):
+            return await self._enable_plugin_runtime(key)
+
+    async def _enable_plugin_runtime(self, key: str) -> LoadedPlugin:
+        self.operations.stage("preparing")
         plugin = self.enable_plugin(key)
         self.install_store.set_enabled(key, True)
         loaded = self.load_plugin(plugin.key)
@@ -547,6 +579,11 @@ class PluginManager:
         return loaded
 
     async def disable_plugin_runtime(self, key: str) -> LoadedPlugin:
+        async with self.operations.track(key, "disable"):
+            return await self._disable_plugin_runtime(key)
+
+    async def _disable_plugin_runtime(self, key: str) -> LoadedPlugin:
+        self.operations.stage("draining")
         plugin = self._plugins[key]
         plugin.enabled = False
         self._state.setdefault("disabled", [])
@@ -583,6 +620,11 @@ class PluginManager:
             )
 
     async def set_active_enabled(self, key: str, enabled: bool) -> LoadedPlugin:
+        action = "active_enable" if enabled else "active_disable"
+        async with self.operations.track(key, action):
+            return await self._set_active_enabled(key, enabled)
+
+    async def _set_active_enabled(self, key: str, enabled: bool) -> LoadedPlugin:
         plugin = self._plugins[key]
         if plugin.active_registration is None:
             raise ValueError(f"plugin does not register an active runner: {key}")
@@ -603,6 +645,11 @@ class PluginManager:
         return plugin
 
     async def restart_active_plugin(self, key: str) -> LoadedPlugin:
+        async with self.operations.track(key, "active_restart"):
+            return await self._restart_active_plugin(key)
+
+    async def _restart_active_plugin(self, key: str) -> LoadedPlugin:
+        self.operations.stage("draining")
         plugin = self._plugins[key]
         if not plugin.active_enabled:
             raise ValueError(f"active plugin is disabled: {key}")
@@ -617,6 +664,7 @@ class PluginManager:
             scope=plugin.generation_scope,
         )
         if self._active_owner_running:
+            self.operations.stage("waiting_ready")
             await self._start_active_plugin(plugin)
         return plugin
 
@@ -646,6 +694,12 @@ class PluginManager:
                 self.data_revisions.commit(plugin)
             runner.control.commit()
             self._watch_active_plugin(plugin, runner)
+            self.events.record(
+                plugin.key,
+                "active_started",
+                operation_id=self.operations.current_operation_id(),
+                details={"runtime_instance_id": plugin.runtime_instance_id},
+            )
             logger.info("Active plugin started: %s", plugin.key)
         except Exception as exc:
             plugin.active_error = f"{type(exc).__name__}: {exc}"
@@ -655,6 +709,13 @@ class PluginManager:
                 self.data_revisions.discard(plugin)
                 plugin.data_revision_id = ""
                 plugin.data_path = None
+            self.events.record(
+                plugin.key,
+                "active_start_failed",
+                operation_id=self.operations.current_operation_id(),
+                level="error",
+                details={"error": plugin.active_error},
+            )
             logger.exception("Active plugin failed to start: %s", plugin.key)
 
     async def _stop_active_plugin(self, plugin: LoadedPlugin) -> None:
@@ -663,6 +724,12 @@ class PluginManager:
             return
         try:
             await runner.stop()
+            self.events.record(
+                plugin.key,
+                "active_stopped",
+                operation_id=self.operations.current_operation_id(),
+                details={"runtime_instance_id": plugin.runtime_instance_id},
+            )
         except Exception as exc:
             plugin.active_error = f"{type(exc).__name__}: {exc}"
             logger.exception("Active plugin failed to stop: %s", plugin.key)
@@ -714,6 +781,12 @@ class PluginManager:
         if len(plugin.active_failure_times) >= 5:
             plugin.active_circuit_open = True
             plugin.active_error = "active runner circuit opened after repeated failures"
+            self.events.record(
+                plugin.key,
+                "active_circuit_opened",
+                level="error",
+                details={"restart_count": plugin.active_restart_count},
+            )
             logger.error("Active plugin circuit opened: %s", plugin.key)
             return
         delays = self._active_restart_delays(plugin.key)
@@ -777,6 +850,16 @@ class PluginManager:
         enable: bool = True,
     ) -> LoadedPlugin:
         package = self.installer.prepare(source)
+        async with self.operations.track(package.manifest.key, "install"):
+            return await self._install_prepared_plugin(package, enable=enable)
+
+    async def _install_prepared_plugin(
+        self,
+        package,
+        *,
+        enable: bool,
+    ) -> LoadedPlugin:
+        self.operations.stage("validating", details={"source": package.source})
         previous = self._plugins.get(package.manifest.key)
         if not enable and previous is None:
             self._add_manifest(package.manifest)
@@ -791,8 +874,15 @@ class PluginManager:
                 source=package.source,
                 enabled=False,
             )
+            self.events.record(
+                plugin.key,
+                "installed",
+                operation_id=self.operations.current_operation_id(),
+                details={"version": plugin.manifest.version, "enabled": False},
+            )
             return plugin
         try:
+            self.operations.stage("preparing")
             if previous is not None and previous.status is PluginStatus.LOADED:
                 candidate = self._activate_manifest(
                     package.manifest,
@@ -814,6 +904,7 @@ class PluginManager:
             if loaded.status != PluginStatus.LOADED:
                 raise RuntimeError(loaded.error or f"Plugin failed to load: {loaded.key}")
             if self._mcp_manager is not None:
+                self.operations.stage("waiting_mcp")
                 await self._mcp_manager.reconcile(self._desired_mcp_configs())
             if previous is None and self._active_owner_running and loaded.active_enabled:
                 await self._start_active_plugin(loaded)
@@ -834,9 +925,24 @@ class PluginManager:
             source=package.source,
             enabled=enable,
         )
+        self.events.record(
+            loaded.key,
+            "installed",
+            operation_id=self.operations.current_operation_id(),
+            details={
+                "version": loaded.manifest.version,
+                "package_digest": package.digest,
+                "enabled": enable,
+            },
+        )
         return loaded
 
     async def rollback_plugin_runtime(self, key: str, digest: str) -> LoadedPlugin:
+        async with self.operations.track(key, "rollback"):
+            return await self._rollback_plugin_runtime(key, digest)
+
+    async def _rollback_plugin_runtime(self, key: str, digest: str) -> LoadedPlugin:
+        self.operations.stage("preparing", details={"package_digest": digest})
         path = self.install_store.package_path(key, digest)
         manifest_path = self._resolve_plugin_manifest_path(path)
         manifest = PluginManifest.from_mapping(
@@ -870,6 +976,12 @@ class PluginManager:
                     self._rollback_to_runtime(key, previous.runtime_instance_id)
                 raise
         self.install_store.activate(key, digest)
+        self.events.record(
+            key,
+            "rolled_back",
+            operation_id=self.operations.current_operation_id(),
+            details={"package_digest": digest, "version": loaded.manifest.version},
+        )
         return loaded
 
     async def uninstall_plugin_runtime(
@@ -878,6 +990,16 @@ class PluginManager:
         *,
         purge_data: bool = False,
     ) -> LoadedPlugin:
+        async with self.operations.track(key, "uninstall"):
+            return await self._uninstall_plugin_runtime(key, purge_data=purge_data)
+
+    async def _uninstall_plugin_runtime(
+        self,
+        key: str,
+        *,
+        purge_data: bool,
+    ) -> LoadedPlugin:
+        self.operations.stage("draining", details={"purge_data": purge_data})
         record = self.install_store.packages().get(key)
         if not isinstance(record, dict):
             raise KeyError(f"Installed plugin not found: {key}")
@@ -892,45 +1014,16 @@ class PluginManager:
         }
         plugin = await self.unload_plugin_runtime(key)
         self._finalize_pending_removals()
+        self.events.record(
+            key,
+            "uninstalled",
+            operation_id=self.operations.current_operation_id(),
+            details={"purge_data": purge_data},
+        )
         return plugin
 
     def capability_payload(self, binding_id: str) -> Any | None:
         return self._binding_payloads.get(binding_id)
-
-    def capability_health(self) -> dict[str, Any]:
-        data = self.capability_store.health_snapshot()
-        runtime_counts: dict[str, int] = {}
-        for plugin in self._runtime_records.values():
-            state = plugin.runtime_state.value
-            runtime_counts[state] = runtime_counts.get(state, 0) + 1
-        data.update({
-            "active_plugin_owners": sorted(
-                owner for owner in self._active_bindings if owner != "core"
-            ),
-            "payload_count": len(self._binding_payloads),
-            "runtime_counts": runtime_counts,
-            "install_revision": self.install_store.revision,
-            "installed_packages": len(self.install_store.packages()),
-            "pending_removals": sorted(self._pending_package_removals),
-            "active_owner_running": self._active_owner_running,
-            "active_plugins": [
-                {
-                    "key": plugin.key,
-                    "enabled": plugin.active_enabled,
-                    "error": plugin.active_error,
-                    "restart_count": plugin.active_restart_count,
-                    "circuit_open": plugin.active_circuit_open,
-                    **(
-                        plugin.active_runner.control.safe_summary()
-                        if plugin.active_runner is not None
-                        else {"state": "unavailable"}
-                    ),
-                }
-                for plugin in self._plugins.values()
-                if plugin.active_registration is not None
-            ],
-        })
-        return data
 
     def refresh_mcp_tools(
         self,
@@ -1130,72 +1223,6 @@ class PluginManager:
     def list_plugins(self) -> list[LoadedPlugin]:
         return [self._plugins[key] for key in sorted(self._plugins)]
 
-    def doctor_plugin(self, key: str, *, check_entrypoint: bool | None = None) -> dict[str, Any]:
-        if not self._plugins:
-            self.discover()
-        plugin = self._plugins[key]
-        missing_env = self._missing_env(plugin.manifest)
-        manifest_error = (plugin.error or "") if plugin.manifest.entrypoint == "invalid" else ""
-        entrypoint_checked = False
-        if manifest_error:
-            entrypoint_ok, entrypoint_error = False, ""
-        elif check_entrypoint is False:
-            entrypoint_ok, entrypoint_error = True, ""
-        elif check_entrypoint is None and plugin.status == PluginStatus.DEFERRED:
-            entrypoint_ok, entrypoint_error = True, ""
-        else:
-            entrypoint_checked = True
-            entrypoint_ok, entrypoint_error = self._check_entrypoint(plugin.manifest)
-        return {
-            "key": plugin.key,
-            "name": plugin.manifest.name,
-            "version": plugin.manifest.version,
-            "schema_version": plugin.manifest.schema_version,
-            "description": plugin.manifest.description,
-            "kind": plugin.manifest.kind,
-            "entrypoint": plugin.manifest.entrypoint,
-            "provides": plugin.manifest.provides,
-            "tags": plugin.manifest.tags,
-            "enabled_by_default": plugin.manifest.enabled_by_default,
-            "enabled": plugin.enabled,
-            "status": plugin.status.value,
-            "runtime_state": plugin.runtime_state.value,
-            "generation_id": plugin.generation_id,
-            "runtime_instance_id": plugin.runtime_instance_id,
-            "active_enabled": plugin.active_enabled,
-            "active": (
-                plugin.active_runner.control.safe_summary()
-                if plugin.active_runner is not None
-                else {}
-            ),
-            "active_error": plugin.active_error,
-            "active_restart_count": plugin.active_restart_count,
-            "active_circuit_open": plugin.active_circuit_open,
-            "package_digest": plugin.package_digest,
-            "deferred": plugin.deferred,
-            "source": plugin.manifest.source,
-            "declared_source": plugin.manifest.declared_source or plugin.manifest.source,
-            "path": str(plugin.manifest.path) if plugin.manifest.path else "",
-            "manifest_path": self._manifest_path(plugin),
-            "source_boundary": self._source_boundary(plugin),
-            "requires_env": plugin.manifest.requires_env,
-            "missing_env": missing_env,
-            "manifest_valid": not manifest_error,
-            "manifest_error": manifest_error,
-            "manifest_unknown_fields": list(plugin.manifest.unknown_fields),
-            "manifest_warnings": self._manifest_warnings(plugin),
-            "boundary_warnings": self._boundary_warnings(plugin),
-            "entrypoint_checked": entrypoint_checked,
-            "entrypoint_importable": entrypoint_ok,
-            "entrypoint_error": entrypoint_error,
-            "deferred_reason": self._deferred_reason(plugin),
-            "error": plugin.error or "",
-            "error_traceback": plugin.error_traceback or "",
-            "registered": plugin.registration_counts(),
-            "registered_items": self._registered_items(plugin),
-            "diagnostic_hints": self._diagnostic_hints(plugin, missing_env, entrypoint_ok, entrypoint_error),
-        }
-
     def validate_plugin_path(self, path: Path, *, load: bool = True) -> dict[str, Any]:
         manifest_path = self._resolve_plugin_manifest_path(Path(path))
         plugin_dir = manifest_path.parent
@@ -1220,7 +1247,7 @@ class PluginManager:
             if load:
                 plugin = self.load_plugin(plugin.key)
 
-        report = self.doctor_plugin(plugin.key, check_entrypoint=True)
+        report = self.queries.plugin_info(plugin.key, check_entrypoint=True)
         report["validation_path"] = str(plugin_dir)
         report["validation_manifest"] = str(manifest_path)
         report["validation_load_requested"] = load

@@ -1,5 +1,6 @@
 from personal_agent.conversation import SessionDirectory
 from personal_agent.models.messages import SessionSource
+from personal_agent.models.session import SessionEntry
 
 
 def _source(chat_id: str = "c1") -> SessionSource:
@@ -41,3 +42,24 @@ def test_delete_restores_base_session_binding():
 
     assert directory.active_key(source) == base
     assert directory.resolve(base).source.user_id == "u1"
+
+
+def test_restore_rehydrates_delivery_binding_from_persisted_session():
+    directory = SessionDirectory()
+
+    restored = directory.restore((SessionEntry(
+        session_id="session-id",
+        session_key="wechat:work:u1",
+        platform="wechat",
+        user_id="u1",
+        user_name="User",
+        chat_id="chat-1",
+        chat_type="group",
+    ),))
+
+    binding = directory.resolve("wechat:work:u1")
+    assert restored == 1
+    assert binding is not None
+    assert binding.source.platform == "wechat"
+    assert binding.source.chat_id == "chat-1"
+    assert binding.source.chat_type == "group"

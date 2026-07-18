@@ -41,11 +41,11 @@ Gateway / TUI / CLI / Cron / Active Plugin
           DeliveryService -> DeliveryPlanner -> SQLite multipart Outbox -> Adapter.send_message/send_artifact
 ```
 
-`ConversationCoordinator` 是应用层唯一提交边界。同一 `session_key` 的 Agent turn 串行，不同 session 并发；每轮开始时捕获 `TurnPolicySnapshot` 并登记 `ActiveTurnRegistry`。`ConversationService` 只处理 session/history、AgentLoop、持久化、memory review 和事件。
+`ConversationCoordinator` 是应用层唯一提交边界。同一 `session_key` 的 Agent turn 串行，不同 session 并发；每轮开始时捕获 `TurnPolicySnapshot` 和 Capability lease，并登记 `ActiveTurnRegistry`。稳定 `request_id` 在有界幂等缓存中复用进行中或已完成结果，防止主动 runner 和入口重试重复运行模型。`ConversationService` 只处理 session/history、AgentLoop、持久化、memory review 和事件。
 
 Gateway 负责平台连接、鉴权、入站 Hook、附件准备与请求规范化。新 Runtime 下 Adapter 只转发入站并执行平台单次发送，不再决定会话忙碌、steer 旁路或 Agent 排队。
 
-Delivery 使用 `SessionDirectory` 从 session 解析平台目标，执行 `PreDelivery/PostDelivery`，并在发送前写入 Outbox。工具/MCP 产物先进入 ArtifactStore；普通本地文件可通过 `artifact_from_file` 显式复制进当前 turn；模型再用 `response_attach` 将产物选入 `OutboundMessage`。DeliveryPlanner 按平台能力生成 text/image/file/audio/video operation。AUTH、APPROVAL、SYSTEM 类型跳过插件可变 Hook；临时失败按分片后台重试，超时或部分内容已送达标记 ambiguous，已成功 part 不会重复发送。重试次数由 `gateway.delivery_max_attempts` 控制。
+Delivery 使用 `SessionDirectory` 从 session 解析平台目标，执行 `PreDelivery/PostDelivery`，并在发送前写入 Outbox。Gateway 启动时会用 SessionStore 中持久化的 `platform/chat_id/user_id` 恢复反向投递绑定，所以 Cron 和主动插件无需等待一条新平台入站。工具/MCP 产物先进入 ArtifactStore；普通本地文件可通过 `artifact_from_file` 显式复制进当前 turn；模型再用 `response_attach` 将产物选入 `OutboundMessage`。DeliveryPlanner 按平台能力生成 text/image/file/audio/video operation。AUTH、APPROVAL、SYSTEM 类型跳过插件可变 Hook；临时失败按分片后台重试，超时或部分内容已送达标记 ambiguous，已成功 part 不会重复发送。Conversation 成功但 Delivery 暂不可用时结果保持完成，Outbox 只重试消息，不重跑 Agent。重试次数由 `gateway.delivery_max_attempts` 控制。
 
 这份文档对应 README 里的 `Runtime Flow`，用于帮助开发者理解 Lumora 内部怎么从“用户输入”流转到“模型调用、工具执行、持久化和观测”。
 
@@ -214,6 +214,7 @@ Gateway 负责：
 - `CapabilityMapper` 将既有 manager 注册项映射为稳定 binding。
 - `SnapshotBuilder` 校验冲突并生成不可变路由；`CapabilityStore` 原子发布 revision。
 - Coordinator 为 Turn 获取 lease，Tool/Skill/Workflow/Command/Hook 使用同一能力视图。
+- `tool_search`、`tool_describe` 和嵌套 `tool_call` 同样读取该 lease，不能穿透到新 generation 的全局 Registry。
 - 新 generation 发布后旧实例进入 DRAINING，最后一个 lease 释放后才停止 Hook、MCP 与后台任务。
 - installer 使用 staging 与不可变 package digest 支持安装、更新、回滚和延迟卸载。
 
@@ -241,7 +242,7 @@ Gateway 负责：
 
 ### ConversationCoordinator
 
-`ConversationCoordinator` 是 CLI、TUI、Gateway、Cron 和主动插件共享的应用入口。它负责同 session 串行、跨 session 并发、命令执行通道、`/stop`/`/steer` 实时控制、每轮策略快照，以及根据 `ResponseMode` 返回或交给 Delivery。
+`ConversationCoordinator` 是 CLI、TUI、Gateway、Cron 和主动插件共享的应用入口。它负责同 session 串行、跨 session 并发、命令执行通道、`/stop`/`/steer` 实时控制、每轮策略/能力快照，以及根据 `ResponseMode` 返回或交给 Delivery。`request_id` 同时承担一次运行生命周期内的幂等键：重复提交返回原 handle/outcome，不再次排队；相同 ID 对应不同 session、owner、response mode 或输入摘要时直接拒绝。缓存有界，不替代业务插件自身的持久 checkpoint。
 
 ### ConversationService
 
@@ -278,6 +279,8 @@ Gateway 负责：
 - compressed session。
 - session rename / delete。
 - session expire。
+
+除了消息历史，SessionStore 还持久化 `session_key` 对应的 platform、chat ID、user ID 和 chat type。Gateway 启动时把这些元数据恢复到内存 `SessionDirectory`；逻辑 session key 不需要也不应该通过字符串拆分来猜真实平台目标。
 
 Gateway 和 CLI 不直接维护历史消息，而是通过 `ConversationService` 使用 `SessionStore`。
 
@@ -605,6 +608,8 @@ Usage 会归一成前端和 doctor 能理解的字段：
 
 `context_used_tokens` 表示当前上下文占用，不等同于最近一次 API 的 input tokens。
 
+Provider 优先使用显式 `llm.context_window`；配置为 `0` 时按模型名中的容量标记和已知模型族推断。无法识别的新模型使用 256K fallback，压缩阈值再按 `compression.threshold_ratio` 计算，不再因为自定义中转模型名退回 64K。
+
 </details>
 
 <details>
@@ -796,6 +801,31 @@ Sub-agent / delegate 用于把任务拆给子 agent。
 - tool call。
 - activity 状态。
 - turn report。
+
+</details>
+
+<details>
+<summary><strong>投递层：Binding、Outbox 与平台 Adapter</strong></summary>
+
+## 投递层
+
+投递层把逻辑 `session_key` 转换为真实平台目标，并保证发送失败不会污染 Conversation 语义。
+
+```text
+SessionStore (persistent platform/chat metadata)
+        -> SessionDirectory.restore()
+        -> SessionBinding(session_key -> SessionSource)
+        -> PlatformDirectory(platform -> connected adapter)
+        -> DeliveryPlanner
+        -> multipart Outbox
+        -> adapter.send_message / send_artifact
+```
+
+`SessionBinding` 是反向路由，不是聊天历史：它保存逻辑 session 对应的 platform、chat ID、user ID 和 chat type。正常平台入站会刷新绑定；Gateway 重启则从 SessionStore 恢复。Binding 存在但 Adapter 不在线，以及绑定暂时不可用，都属于可恢复的 `DEFERRED`；永久发送错误才把本次 Delivery 标记为失败。
+
+Coordinator 把 Conversation 和 Delivery 分成两个结果层次。Agent 已经生成并持久化回复后，即使初次发送进入 `DEFERRED`，Submission 仍是 `COMPLETED`，具体投递状态位于 `payload.delivery_result`。Outbox 持有同一 `OutboundMessage` 并后台重试，不重新构造用户消息，也不再次调用 LLM。
+
+Outbox 在逻辑消息下保存多个 operation。文本、图片和文件可以分别成功或失败；已经成功的 part 后续跳过。超时和部分成功属于 ambiguous，避免无法判断平台是否收件时盲目重复发送。
 
 </details>
 

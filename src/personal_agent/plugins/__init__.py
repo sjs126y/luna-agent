@@ -7,8 +7,8 @@ from personal_agent.plugins.active import (
     ActiveRunnerState,
 )
 from personal_agent.plugins.core.context import PluginRuntimeContext
-from personal_agent.plugins.runtime import PluginRuntimeManager
 from personal_agent.plugins.core.manager import PluginManager
+from personal_agent.plugins.query import PluginQueryService
 from personal_agent.plugins.core.models import (
     CommandEntry,
     HookRegistration,
@@ -26,8 +26,8 @@ __all__ = [
     "HookRegistration",
     "LoadedPlugin",
     "PluginRuntimeContext",
-    "PluginRuntimeManager",
     "PluginManager",
+    "PluginQueryService",
     "PluginManifest",
     "PluginStatus",
 ]

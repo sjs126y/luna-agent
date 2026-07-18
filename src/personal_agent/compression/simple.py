@@ -25,7 +25,7 @@ class ContextCompressor(ContextEngine):
 
     def __init__(
         self,
-        context_length: int = 64000,
+        context_length: int = 256000,
         threshold_ratio: float = 0.6,
         tail_token_budget: int = 20000,
         max_summary_tokens: int = 500,
@@ -268,7 +268,7 @@ def build_simple_compressor(
         compressor_transport = transport_registry.get(api_mode, comp_provider)
 
     return ContextCompressor(
-        context_length=provider.context_window or 64_000,
+        context_length=provider.context_window or 256_000,
         threshold_ratio=settings.compression_threshold_ratio,
         tail_token_budget=settings.tail_token_budget,
         max_summary_tokens=settings.compressor_max_tokens,

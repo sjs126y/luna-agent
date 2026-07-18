@@ -1,16 +1,19 @@
 import asyncio
+import base64
 from pathlib import Path
 
 import pytest
 
 from personal_agent.config import Settings
+from personal_agent.artifacts import ArtifactStore
+from personal_agent.db.database import Database
 from personal_agent.plugins import PluginManager, PluginStatus
 from personal_agent.plugins.active import (
     ActiveResourceRequest,
     ActiveRunnerState,
     PluginGenerationScope,
 )
-from personal_agent.tools.entry import ToolEntry
+from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
 from personal_agent.tools.registry import tool_registry
 from personal_agent.plugins.runtime import CapabilityKind
 
@@ -249,10 +252,66 @@ async def test_active_tool_resource_uses_exact_allowlist_and_execution_pipeline(
         assert result.status == "success"
         assert result.content == "found:one"
         assert calls == ["one"]
+        first_context = resources.tool._execution_context(session_key="wechat:c1:u1")
+        second_context = resources.tool._execution_context(session_key="wechat:c1:u1")
+        assert first_context._hook_turn_id != second_context._hook_turn_id
+        assert first_context._artifact_owner_id == plugin.key
         with pytest.raises(PermissionError, match="not allowlisted"):
             await resources.tool.call("read", {"path": "."})
     finally:
         tool_registry.unregister("active_lookup_test")
+
+
+@pytest.mark.asyncio
+async def test_active_tool_artifacts_have_plugin_owner_and_per_call_scope(tmp_path):
+    plugin_root = tmp_path / "plugins" / "active"
+    _write_active_plugin(plugin_root)
+    manager = _manager(tmp_path, plugin_root)
+    plugin = manager.load_plugin("user/active-test")
+    db = Database(tmp_path / "artifact-state.db")
+    await db.initialize()
+    store = ArtifactStore(tmp_path / "artifacts", db, max_artifacts_per_turn=10)
+    await store.initialize()
+    manager._artifact_store = store
+
+    async def artifact():
+        return ToolHandlerOutput(
+            text="created",
+            artifacts=[ToolArtifact(
+                kind="file",
+                name="active.txt",
+                mime_type="text/plain",
+                data=base64.b64encode(b"active").decode(),
+            )],
+        )
+
+    tool_registry.register(ToolEntry(
+        name="active_artifact_test",
+        description="Create an active plugin artifact",
+        schema={"type": "object", "properties": {}},
+        handler=artifact,
+        permission_category="read",
+    ))
+    try:
+        resources = manager.plugin_resource_facade(
+            plugin,
+            ActiveResourceRequest(tools=("active_artifact_test",)),
+        )
+        refs = []
+        for _ in range(11):
+            result = await resources.tool.call(
+                "active_artifact_test",
+                session_key="wechat:c1:u1",
+            )
+            assert result.status == "success"
+            assert len(result.artifacts) == 1
+            refs.append(result.artifacts[0])
+
+        assert {ref.owner_id for ref in refs} == {plugin.key}
+        assert len({ref.turn_id for ref in refs}) == 11
+    finally:
+        tool_registry.unregister("active_artifact_test")
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -343,11 +402,11 @@ async def test_active_runner_starts_only_when_gateway_owner_is_running(tmp_path)
     assert plugin.active_enabled is True
     assert plugin.active_runner.root_task is None
 
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     assert plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
     assert plugin.active_runner.root_task is not None
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
     assert plugin.active_runner.control.state is ActiveRunnerState.STOPPED
 
 
@@ -357,23 +416,23 @@ async def test_active_toggle_is_separate_from_plugin_enabled_state(tmp_path):
     _write_active_plugin(plugin_root)
     manager = _manager(tmp_path, plugin_root)
     plugin = manager.load_plugin("user/active-test")
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
 
     assert plugin.enabled is True
     assert plugin.active_enabled is False
     assert plugin.active_runner.root_task is None
 
-    await manager.runtime_manager.set_active(plugin.key, True)
+    await manager.set_active_enabled(plugin.key, True)
     assert plugin.enabled is True
     assert plugin.active_enabled is True
     assert plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
 
-    await manager.runtime_manager.set_active(plugin.key, False)
+    await manager.set_active_enabled(plugin.key, False)
     assert plugin.enabled is True
     assert plugin.active_enabled is False
     assert plugin.active_runner.control.state is ActiveRunnerState.STOPPED
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
 
 
 def test_active_resource_request_validates_mcp_readiness_declarations():
@@ -397,7 +456,7 @@ async def test_active_reload_commits_ready_generation_and_revision_atomically(tm
         plugins_config={"user/active-reload": {"active": {"enabled": True}}},
     )
     first = manager.load_plugin("user/active-reload")
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     old_revision = first.data_revision_id
     old_lease = await manager.capability_store.acquire()
     old_route = old_lease.view().resolve(CapabilityKind.TOOL, "active_reload_value")
@@ -421,7 +480,7 @@ async def test_active_reload_commits_ready_generation_and_revision_atomically(tm
     assert second.active_runner.control.state is ActiveRunnerState.ACTIVE
 
     await old_lease.release()
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
 
 
 @pytest.mark.asyncio
@@ -434,7 +493,7 @@ async def test_active_reload_failure_restores_previous_runtime_and_data(tmp_path
         plugins_config={"user/active-reload": {"active": {"enabled": True}}},
     )
     first = manager.load_plugin("user/active-reload")
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     old_snapshot_revision = manager.capability_store.current.revision
     old_data_revision = manager.data_revisions.current_revision(first.key)
 
@@ -448,7 +507,7 @@ async def test_active_reload_failure_restores_previous_runtime_and_data(tmp_path
     assert first.ctx.resources.storage.read_text("runner.txt") == "v1"
     assert first.active_runner.control.state is ActiveRunnerState.ACTIVE
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()
 
 
 @pytest.mark.asyncio
@@ -469,7 +528,7 @@ async def test_active_runner_restarts_after_runtime_failure(tmp_path):
     )
     plugin = manager.load_plugin("user/active-reload")
 
-    await manager.runtime_manager.start_active()
+    await manager.start_active_plugins()
     for _ in range(100):
         if (
             plugin.active_restart_count == 1
@@ -482,4 +541,4 @@ async def test_active_runner_restarts_after_runtime_failure(tmp_path):
     assert plugin.active_runner.control.state is ActiveRunnerState.ACTIVE
     assert plugin.active_runner.control.restart_count == 1
 
-    await manager.runtime_manager.stop_active()
+    await manager.stop_active_plugins()

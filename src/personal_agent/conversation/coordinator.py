@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 from typing import Any, Protocol
 import uuid
 
@@ -12,7 +14,7 @@ from personal_agent.commands.policy import CommandExecutionPolicy, command_execu
 from personal_agent.commands.runtime import CommandResult
 from personal_agent.conversation.input import ConversationInput
 from personal_agent.conversation.steer import ActiveTurnRegistry
-from personal_agent.delivery import DeliveryKind, DeliveryRequest
+from personal_agent.delivery import DeliveryKind, DeliveryRequest, DeliveryStatus
 from personal_agent.models.messages import OutboundMessage
 
 from personal_agent.conversation.submission import (
@@ -51,6 +53,12 @@ class _QueuedSubmission:
     future: asyncio.Future[SubmissionOutcome]
 
 
+@dataclass(slots=True)
+class _SubmissionRecord:
+    identity: tuple[str, str, str, str, str]
+    future: asyncio.Future[SubmissionOutcome]
+
+
 class ConversationCoordinator:
     """Serializes turns per session while allowing independent sessions to run."""
 
@@ -64,6 +72,7 @@ class ConversationCoordinator:
         capability_store=None,
         hook_manager=None,
         capability_binder=None,
+        idempotency_cache_size: int = 2048,
     ) -> None:
         self.conversation_service = conversation_service
         self.active_turns = active_turns or ActiveTurnRegistry()
@@ -78,6 +87,8 @@ class ConversationCoordinator:
         self._active: dict[str, SubmissionRequest] = {}
         self._lock = asyncio.Lock()
         self._accepting = True
+        self._idempotency_cache_size = max(1, int(idempotency_cache_size))
+        self._submissions: OrderedDict[str, _SubmissionRecord] = OrderedDict()
 
     async def submit(self, request: SubmissionRequest) -> SubmissionHandle:
         loop = asyncio.get_running_loop()
@@ -101,6 +112,42 @@ class ConversationCoordinator:
                     )
                 )
                 return SubmissionHandle(receipt, future)
+
+            identity = self._submission_identity(request)
+            previous = self._submissions.get(request.request_id)
+            if previous is not None:
+                self._submissions.move_to_end(request.request_id)
+                if previous.identity != identity:
+                    receipt = SubmissionReceipt(
+                        request_id=request.request_id,
+                        session_key=request.session_key,
+                        accepted=False,
+                        status=SubmissionStatus.REJECTED,
+                        reason="request_id is already used by another submission",
+                    )
+                    future.set_result(SubmissionOutcome(
+                        request_id=request.request_id,
+                        session_key=request.session_key,
+                        status=SubmissionStatus.REJECTED,
+                        error=receipt.reason,
+                    ))
+                    return SubmissionHandle(receipt, future)
+                receipt = SubmissionReceipt(
+                    request_id=request.request_id,
+                    session_key=request.session_key,
+                    accepted=True,
+                    status=(
+                        previous.future.result().status
+                        if previous.future.done() and not previous.future.cancelled()
+                        else SubmissionStatus.ACCEPTED
+                    ),
+                    queue_position=0,
+                    reason="duplicate request_id reused existing submission",
+                )
+                return SubmissionHandle(receipt, previous.future)
+
+            self._submissions[request.request_id] = _SubmissionRecord(identity, future)
+            self._prune_submissions()
 
             if policy is not None and policy != CommandExecutionPolicy.BARRIER:
                 task = asyncio.create_task(
@@ -136,6 +183,32 @@ class ConversationCoordinator:
             queue_position=position,
         )
         return SubmissionHandle(receipt, future)
+
+    @staticmethod
+    def _submission_identity(request: SubmissionRequest) -> tuple[str, str, str, str, str]:
+        attachment_ids = "\0".join(
+            str(getattr(item, "id", "") or "")
+            for item in request.input.attachments
+        )
+        content_hash = hashlib.sha256(
+            f"{request.input.text}\0{attachment_ids}".encode("utf-8")
+        ).hexdigest()
+        return (
+            request.session_key,
+            request.origin.value,
+            request.owner_id,
+            request.response_mode.value,
+            content_hash,
+        )
+
+    def _prune_submissions(self) -> None:
+        if len(self._submissions) <= self._idempotency_cache_size:
+            return
+        for request_id, record in list(self._submissions.items()):
+            if len(self._submissions) <= self._idempotency_cache_size:
+                break
+            if record.future.done():
+                self._submissions.pop(request_id, None)
 
     async def close(self, *, cancel_pending: bool = False) -> None:
         async with self._lock:
@@ -178,8 +251,16 @@ class ConversationCoordinator:
             try:
                 if not item.future.cancelled():
                     self._active[session_key] = item.request
-                    outcome = await self._execute(item.request)
-                    outcome = await self._apply_response_mode(item.request, outcome)
+                    try:
+                        outcome = await self._execute(item.request)
+                        outcome = await self._apply_response_mode(item.request, outcome)
+                    except Exception as exc:
+                        outcome = SubmissionOutcome(
+                            request_id=item.request.request_id,
+                            session_key=item.request.session_key,
+                            status=SubmissionStatus.FAILED,
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
                     if not item.future.done():
                         item.future.set_result(outcome)
             finally:
@@ -385,13 +466,18 @@ class ConversationCoordinator:
         ))
         payload = dict(outcome.payload)
         payload["delivery_result"] = delivery
+        delivery_failed = delivery.status not in {
+            DeliveryStatus.DELIVERED,
+            DeliveryStatus.DEFERRED,
+            DeliveryStatus.SUPPRESSED,
+        }
         return SubmissionOutcome(
             request_id=outcome.request_id,
             session_key=outcome.session_key,
-            status=outcome.status if delivery.delivered else SubmissionStatus.FAILED,
+            status=SubmissionStatus.FAILED if delivery_failed else outcome.status,
             kind=outcome.kind,
             response=outcome.response,
-            error=outcome.error or delivery.error,
+            error=outcome.error or (delivery.error if delivery_failed else ""),
             payload=payload,
             message=outcome.message,
             started_at=outcome.started_at,

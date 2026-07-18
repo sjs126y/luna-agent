@@ -223,6 +223,7 @@ async def test_artifact_from_file_materializes_and_can_be_attached(
 ):
     from personal_agent.artifacts import TurnResponseDraft
     from personal_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
+    from personal_agent.plugins.builtin.tools.builtin import response_attach as _response_attach  # noqa: F401
     from personal_agent.tools import sandbox as sandbox_module
 
     monkeypatch.setattr(
@@ -238,6 +239,7 @@ async def test_artifact_from_file_materializes_and_can_be_attached(
         _artifact_store=artifact_runtime,
         _response_draft=TurnResponseDraft("wechat:user", "turn-file"),
     )
+    agent._artifact_owner_id = "automation/inbox-watch"
 
     created = await execute_tool_call_result(
         {
@@ -255,6 +257,7 @@ async def test_artifact_from_file_materializes_and_can_be_attached(
     assert ref.kind == "file"
     assert ref.filename == "report.txt"
     assert ref.mime_type == "text/plain"
+    assert ref.owner_id == "automation/inbox-watch"
     assert (await artifact_runtime.resolve_path(ref)).read_text(encoding="utf-8") == "wechat-file"
 
     attached = await execute_tool_call_result(

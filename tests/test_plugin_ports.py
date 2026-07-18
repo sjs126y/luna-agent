@@ -121,6 +121,58 @@ def test_plugin_storage_is_scoped_to_plugin_root(tmp_path):
         storage.resolve("../outside.txt")
 
 
+def test_plugin_storage_supports_atomic_versioned_json(tmp_path):
+    storage = PluginStoragePort(plugin=_plugin(), root=tmp_path)
+
+    storage.write_json_atomic("state.json", {"schema_version": 1, "items": [1]})
+
+    assert storage.exists("state.json")
+    assert storage.read_json("state.json", schema_version=1)["items"] == [1]
+    with pytest.raises(ValueError, match="schema mismatch"):
+        storage.read_json("state.json", schema_version=2)
+
+
+@pytest.mark.asyncio
+async def test_plugin_conversation_port_submits_owned_artifacts_with_stable_request_id(tmp_path):
+    artifact = SimpleNamespace(
+        artifact_id="art_owned",
+        owner_id="user/reminder",
+        session_key="wechat:c1:u1",
+        kind="file",
+        filename="note.txt",
+        mime_type="text/plain",
+        size_bytes=4,
+    )
+
+    class Artifacts:
+        async def get(self, artifact_id):
+            return artifact if artifact_id == artifact.artifact_id else None
+
+        async def resolve_path(self, ref):
+            path = tmp_path / ref.filename
+            path.write_text("note", encoding="utf-8")
+            return path
+
+    coordinator = Coordinator()
+    port = PluginConversationPort(
+        plugin=_plugin(),
+        coordinator=coordinator,
+        artifact_store=Artifacts(),
+    )
+
+    await port.submit(
+        session_key="wechat:c1:u1",
+        text="inspect",
+        request_id="plugin-event-1",
+        artifact_ids=["art_owned"],
+    )
+
+    request = coordinator.requests[0]
+    assert request.request_id == "plugin-event-1"
+    assert request.input.attachments[0].id == "art_owned"
+    assert request.input.attachments[0].local_path.endswith("note.txt")
+
+
 @pytest.mark.asyncio
 async def test_plugin_tasks_require_active_runtime_and_are_tracked():
     plugin = _plugin()

@@ -107,6 +107,19 @@ async def test_unavailable_platform_is_deferred():
 
 
 @pytest.mark.asyncio
+async def test_missing_delivery_binding_is_deferred():
+    service = DeliveryService(sessions=SessionDirectory(), platforms=PlatformDirectory())
+
+    result = await service.deliver(DeliveryRequest(
+        session_key="wechat:c1:u1",
+        message=OutboundMessage.text("later"),
+    ))
+
+    assert result.status == DeliveryStatus.DEFERRED
+    assert result.error == "session has no delivery binding"
+
+
+@pytest.mark.asyncio
 async def test_partial_platform_delivery_is_ambiguous():
     service, adapter = _runtime()
 

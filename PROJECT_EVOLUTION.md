@@ -5,9 +5,9 @@
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-14-7C3AED" alt="14 phases">
-  <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-0A84FF" alt="75811 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1113%20passed-2EA44F" alt="1113 tests passed">
+  <img src="https://img.shields.io/badge/phases-17-7C3AED" alt="17 phases">
+  <img src="https://img.shields.io/badge/Python%20LOC-86%2C280-0A84FF" alt="86280 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F" alt="1145 tests passed">
 </p>
 
 <p>
@@ -26,9 +26,8 @@
 当前主分支状态：
 
 - 分支：`main`
-- 本次统计基准：`f3da3d7 Refresh project docs and remove obsolete plans`
-- 基准提交数：`551`
-- 最近全量验证：`uv run pytest -q`，结果 `1113 passed, 1 warning`
+- 本次统计基准：v0.17 主动插件与投递稳定性收尾
+- 最近全量验证：`uv run pytest -q`，结果 `1145 passed, 1 warning`
 
 <details>
 <summary><strong>展开早期阶段：v0.1 - v0.7</strong></summary>
@@ -408,23 +407,58 @@
 - 根任务异常支持退避重启和熔断，运行中通过 `/plugins active <key> on|off|restart` 控制。
 - 主动 runtime 只解决生命周期与资源边界，不内置 Job/Cron/Candidate 或主动决策策略；插件内部行为保持自由。
 
+## v0.16 主动插件套件与管理查询
+
+时间：2026-07-18
+
+主要变化：
+
+- 删除无实际调用方的 `PluginRuntimeManager`；`PluginManager` 保持唯一写入和生命周期所有权，只读状态通过附属 `PluginQueryService` 组织。
+- 新增同插件串行的 `PluginOperationTracker`、持久化 `PluginEventJournal`、历史版本、操作阶段和运行事件查询；CLI 与 `/plugins` 共享同一查询对象。
+- GitHub Assistant 增加 PR、Issue、Commit 和 Actions 主动监视；首次建立基线，变化按仓库合并后进入主 Conversation。
+- 新增 Reminder、Feed Watch 和 Inbox Watch：分别覆盖时间、网络订阅和文件 Artifact 三类主动来源，均使用隔离 Storage、session allowlist 和正式提交链路。
+- Plugin Storage 增加原子 JSON；Conversation Port 支持稳定 request id 和插件自有 Artifact 输入，owner/session 不匹配会直接拒绝。
+- 主动插件默认不获得写入、Shell 或进程控制能力；GitHub Watch 只申请只读 MCP，Feed 通过 URL 安全检查的专用工具，Inbox 只使用三个明确文件工具。
+
+## v0.17 主动投递与热重载一致性收尾
+
+时间：2026-07-19
+
+目标：用真实 Gateway/主动插件运行暴露的故障收紧投递恢复、提交幂等和 capability lease 边界。
+
+代表提交：
+
+- `2928a44` `Fix Gateway active plugin lifecycle`
+- `f2df284` `Fix active plugin artifact scoping`
+- `8748be6` `Fix proactive delivery replay`
+- `8ca04e8` `Pin bridged tools to capability leases`
+
+主要变化：
+
+- 修复 Gateway 删除旧管理包装层后未启动主动 runner，以及主动 Tool 长期复用 Artifact turn scope 的问题。
+- Gateway 从 SessionStore 恢复 Delivery Binding；主动提交不再依赖用户重启后先发一条平台消息。
+- Conversation 成功但 Delivery 暂不可用时进入 Outbox 延迟投递，不再把发送失败扩大成整轮 Agent 重跑。
+- Coordinator 增加有界 `request_id` 幂等，同一事件复用原结果；Inbox 同一文件签名默认最多提交 3 次。
+- `tool_search`、`tool_describe`、嵌套 `tool_call` 固定到当前 Turn lease，旧 generation 不会发现或执行新快照工具。
+- 模型上下文识别更新，未知模型 fallback 从 64K 提升至 256K，显式配置仍优先。
+
 ## 当前代码规模
 
-统计口径：基准提交 `f3da3d7`，只统计 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。
+统计口径：v0.16 收尾时 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/personal_agent/**/*.py` | 228 | 47,458 |
-| `tests/**/*.py` | 88 | 27,549 |
-| `plugins/**/*.py` | 5 | 488 |
+| `src/personal_agent/**/*.py` | 251 | 53,154 |
+| `tests/**/*.py` | 98 | 30,474 |
+| `plugins/**/*.py` | 8 | 1,974 |
 | `scripts/**/*.py` | 2 | 287 |
-| `examples/**/*.py` | 1 | 29 |
+| `examples/**/*.py` | 5 | 391 |
 | 其他 Python 包装文件 | 1 | 0 |
-| Python 合计 | 325 | 75,811 |
-| Markdown 文档 | 39 | 6,468 |
-| Git 已跟踪文件总数 | 407 | - |
+| Python 合计 | 365 | 86,280 |
+| Markdown 文档 | 42 | 7,394 |
+| Git 已跟踪文件总数 | 458 | - |
 
-项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1113 passed`。
+项目规模更适合拆开理解：运行时与内置能力约 5.32 万行，测试约 3.05 万行，测试代码占 Python 总量约 35.3%。当前完整测试套件为 `1145 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 
@@ -442,7 +476,7 @@
 - 系统提示词：`data/system/*.md` 与 `profiles` session 映射。
 - 运行数据：`data/`，不进入 git。
 - 对话主链路：所有入口提交到 Coordinator，ConversationService 负责 Agent turn，Delivery/Outbox 负责出站。
-- 扩展能力：被动插件可注册 Tool、Skill、MCP、Hook、Command 和受限 submit 端口，并支持 generation snapshot 热重载。
+- 扩展能力：插件可注册 Tool、Skill、MCP、Hook、Command、主动 runner 和受限资源端口，并支持 generation snapshot 热重载、回滚与卸载。
 - 记忆：internal snapshot + review buffer + SQLite Archive + 可替换 Lumora/Mem0 外部 provider。
 - 多模态：入站 attachment 与出站 Artifact 分离，四个平台按 capability 原生发送或确定性降级。
 - 可观测性：doctor、runtime health、tool runs、turn reports、activity、cache diagnostics、delivery audit。

@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1113%20passed-2EA44F?logo=pytest&logoColor=white" alt="1113 tests passed">
+  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F?logo=pytest&logoColor=white" alt="1145 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -117,7 +117,7 @@ flowchart LR
 | 文件、Shell、网络与进程工具 | Ready | 核心工具直接可用，低频能力按需发现，扫描和输出有界 |
 | MCP Client Runtime | Ready | stdio / Streamable HTTP、后台启动、断线恢复 |
 | 长期个人记忆 | Ready | Lumora、Mem0、混合检索和本地 Qdrant |
-| 插件与 Skill | Ready | 被动能力、Gateway 主动 runner、资源端口与保守热重载 |
+| 插件与 Skill | Ready | 安装、升级、回滚、卸载、热重载、主动 runner 与资源端口 |
 | 多平台 Gateway | Ready | 微信、QQ、Telegram、飞书 |
 | 入站与出站多模态 | Ready | 图片、文件、音频、视频按平台能力处理 |
 | Workflow 与 Sub-agent | Ready | 并行、流水线、配额、活动状态 |
@@ -157,26 +157,29 @@ uv run personal-agent serve
 
 | 插件 | 提供能力 |
 | --- | --- |
-| **GitHub Assistant** | 仓库概览、PR Review、Issue 分类、Release Notes |
+| **GitHub Assistant** | 仓库概览、PR Review、Issue 分类、Release Notes，以及 PR/Issue/Commit/CI 主动监视 |
 | **Developer Docs** | 查询库文档、比较 API、辅助版本升级 |
 | **Browser Operator** | 网页检查、网页测试、受控页面操作 |
 | **Codex Bridge** | 通过受限 MCP/Hook 连接外部 Codex 能力 |
 | **Workspace Watch** | 主动观察工作区文件变化，稳定后请求主 Agent 分析并投递结果 |
+| **Reminder** | 持久提醒、重启恢复、取消和到期后通过正式会话链路提醒 |
+| **Feed Watch** | RSS/Atom 条件抓取、关键词过滤、更新去重和批量摘要 |
+| **Inbox Watch** | 监视受控收件箱目录，将稳定文件物化为 Artifact 后交给主 Agent |
 
 [查看插件格式与注册能力](docs/plugins.md)
 
 ## 项目状态
 
 <p>
-  <img src="https://img.shields.io/badge/Python%20files-325-3776AB" alt="325 Python files">
-  <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-555555" alt="75811 Python lines">
-  <img src="https://img.shields.io/badge/runtime%20LOC-47%2C458-0A84FF" alt="47458 runtime lines">
-  <img src="https://img.shields.io/badge/test%20LOC-27%2C549-2EA44F" alt="27549 test lines">
+  <img src="https://img.shields.io/badge/Python%20files-365-3776AB" alt="365 Python files">
+  <img src="https://img.shields.io/badge/Python%20LOC-86%2C280-555555" alt="86280 Python lines">
+  <img src="https://img.shields.io/badge/runtime%20LOC-53%2C154-0A84FF" alt="53154 runtime lines">
+  <img src="https://img.shields.io/badge/test%20LOC-30%2C474-2EA44F" alt="30474 test lines">
 </p>
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest -q  # 1113 passed, 1 warning
+uv run pytest -q  # 1145 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。

@@ -60,6 +60,27 @@ class SessionDirectory:
     def resolve(self, session_key: str) -> SessionBinding | None:
         return self._bindings.get(str(session_key or "").strip())
 
+    def restore(self, entries) -> int:
+        """Restore reverse delivery routes from persisted session metadata."""
+        restored = 0
+        for entry in entries:
+            session_key = str(getattr(entry, "session_key", "") or "").strip()
+            platform = str(getattr(entry, "platform", "") or "").strip()
+            chat_id = str(getattr(entry, "chat_id", "") or "").strip()
+            user_id = str(getattr(entry, "user_id", "") or "").strip()
+            if not session_key or not platform or not chat_id:
+                continue
+            source = SessionSource(
+                platform=platform,
+                user_id=user_id,
+                user_name=str(getattr(entry, "user_name", "") or ""),
+                chat_id=chat_id,
+                chat_type=str(getattr(entry, "chat_type", "dm") or "dm"),
+            )
+            self.bind(session_key, source)
+            restored += 1
+        return restored
+
     def switch(self, source: SessionSource, name: str) -> str:
         new_key = self.named_key(source, name)
         base_key = self.base_key(source)

@@ -153,16 +153,34 @@ class ToolRegistry:
 
     def catalog(self, enabled_toolsets: list[str] | None = None) -> list[dict]:
         """Return stable metadata for registered tools without executing them."""
-        from personal_agent.tools.toolsets import TOOLSETS, is_core_tool, resolve_toolsets
-
         cache_key = (frozenset(enabled_toolsets or []), self._generation)
         if cache_key in self._catalog_cache:
             return [dict(item) for item in self._catalog_cache[cache_key]]
 
-        resolved = resolve_toolsets(enabled_toolsets, self.all_names)
+        result = self.catalog_for_entries(
+            self._entries.values(),
+            enabled_toolsets=enabled_toolsets,
+        )
+        if len(self._catalog_cache) >= self._cache_maxsize:
+            oldest = next(iter(self._catalog_cache))
+            del self._catalog_cache[oldest]
+        self._catalog_cache[cache_key] = result
+        return [dict(item) for item in result]
+
+    def catalog_for_entries(
+        self,
+        entries,
+        *,
+        enabled_toolsets: list[str] | None = None,
+    ) -> list[dict]:
+        """Build catalog metadata from a pinned capability view."""
+        from personal_agent.tools.toolsets import TOOLSETS, is_core_tool, resolve_toolsets
+
+        by_name = {entry.name: entry for entry in entries if entry is not None}
+        resolved = resolve_toolsets(enabled_toolsets, set(by_name))
         result: list[dict] = []
         for name in sorted(resolved):
-            entry = self._entries.get(name)
+            entry = by_name.get(name)
             if entry is None:
                 continue
             available, unavailable_reason = _entry_availability(entry)
@@ -192,11 +210,7 @@ class ToolRegistry:
                     else []
                 ),
             })
-        if len(self._catalog_cache) >= self._cache_maxsize:
-            oldest = next(iter(self._catalog_cache))
-            del self._catalog_cache[oldest]
-        self._catalog_cache[cache_key] = result
-        return [dict(item) for item in result]
+        return result
 
     def catalog_summary(self, enabled_toolsets: list[str] | None = None) -> dict:
         items = self.catalog(enabled_toolsets)
@@ -348,7 +362,7 @@ async def dispatch_tool_search(query: str) -> str:
     import json
 
     catalog = [
-        d for d in tool_registry.catalog()
+        d for d in _current_tool_catalog()
         if d["name"] not in {"tool_search", "tool_describe", "tool_call"}
     ]
     if not catalog:
@@ -361,7 +375,7 @@ async def dispatch_tool_search(query: str) -> str:
 async def dispatch_tool_describe(name: str) -> str:
     """Return full schema for a specific tool."""
     import json
-    for d in tool_registry.catalog():
+    for d in _current_tool_catalog():
         if d["name"] == name:
             return json.dumps(d, ensure_ascii=False)
     return json.dumps({"error": f"Tool not found: {name}"}, ensure_ascii=False)
@@ -369,9 +383,6 @@ async def dispatch_tool_describe(name: str) -> str:
 
 async def dispatch_tool_call(name: str, arguments: dict) -> object:
     """Execute a tool by name."""
-    entry = tool_registry.get(name)
-    if entry is None:
-        return f"Error: unknown tool '{name}'"
     if name == "tool_call":
         return "Error: tool_call cannot call itself"
     from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
@@ -397,6 +408,30 @@ async def dispatch_tool_call(name: str, arguments: dict) -> object:
     if agent is None and confirm is None and event_sink is None:
         return format_tool_result(result)
     return result
+
+
+def _current_tool_catalog() -> list[dict]:
+    from personal_agent.tools.runtime_context import current_tool_agent
+
+    agent = current_tool_agent()
+    manager = getattr(agent, "_plugin_manager", None) if agent is not None else None
+    view = getattr(agent, "_capability_view", None) if agent is not None else None
+    if manager is None or view is None:
+        return tool_registry.catalog(
+            getattr(agent, "enabled_toolsets", None) if agent is not None else None
+        )
+    from personal_agent.plugins.runtime import CapabilityKind
+
+    routes = view.routes.get(CapabilityKind.TOOL, {})
+    entries = [
+        manager.capability_payload(values[0].binding_id)
+        for values in routes.values()
+        if values
+    ]
+    return tool_registry.catalog_for_entries(
+        entries,
+        enabled_toolsets=getattr(agent, "enabled_toolsets", None),
+    )
 
 
 # ── BM25 ──────────────────────────────────────────────

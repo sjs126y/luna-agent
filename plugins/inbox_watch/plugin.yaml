@@ -1,0 +1,11 @@
+schema_version: 1
+key: automation/inbox-watch
+name: Inbox Watch
+version: "0.1.0"
+description: Promotes stable files from a controlled inbox into agent artifacts.
+kind: automation
+entrypoint: inbox_watch:register
+provides: [active, command]
+tags: [active, inbox, artifact, file, monitoring]
+enabled_by_default: false
+source: local

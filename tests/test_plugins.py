@@ -86,7 +86,7 @@ enabled_by_default: true
         state_path=tmp_path / "state.json",
     )
     manager.discover()
-    report = manager.doctor_plugin("invalid/bad-manifest")
+    report = manager.queries.plugin_info("invalid/bad-manifest")
 
     assert report["status"] == "ERROR"
     assert report["manifest_valid"] is False
@@ -150,7 +150,7 @@ def register(ctx):
     )
 
     manager.load_enabled()
-    report = manager.doctor_plugin("user/configured")
+    report = manager.queries.plugin_info("user/configured")
 
     assert report["status"] == "LOADED"
     assert report["schema_version"] == 1
@@ -171,7 +171,7 @@ def test_non_object_manifest_is_preserved_for_doctor(tmp_path):
         state_path=tmp_path / "state.json",
     )
     manager.discover()
-    report = manager.doctor_plugin("invalid/list-manifest")
+    report = manager.queries.plugin_info("invalid/list-manifest")
 
     assert report["manifest_valid"] is False
     assert "must be an object" in report["manifest_error"]
@@ -229,7 +229,7 @@ def test_plugin_doctor_reports_deferred_reason_and_hint(tmp_path):
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
-    report = manager.doctor_plugin("platforms/telegram")
+    report = manager.queries.plugin_info("platforms/telegram")
 
     assert report["status"] == "DEFERRED"
     assert report["entrypoint_checked"] is False
@@ -272,7 +272,7 @@ def register(ctx):
         include_builtin=False,
     )
     manager.discover()
-    report = manager.doctor_plugin("user/lazy")
+    report = manager.queries.plugin_info("user/lazy")
 
     assert report["status"] == "DEFERRED"
     assert report["entrypoint_checked"] is False
@@ -303,7 +303,7 @@ enabled_by_default: true
         include_builtin=False,
     )
     manager.discover()
-    report = manager.doctor_plugin("user/pretend-builtin")
+    report = manager.queries.plugin_info("user/pretend-builtin")
 
     assert report["source"] == "local"
     assert report["declared_source"] == "builtin"
@@ -336,7 +336,7 @@ enabled_by_default: true
     )
 
     manager.discover()
-    report = manager.doctor_plugin("builtin/pretend")
+    report = manager.queries.plugin_info("builtin/pretend")
 
     assert report["status"] == "ERROR"
     assert report["enabled"] is False
@@ -372,7 +372,7 @@ enabled_by_default: true
     )
 
     manager.discover()
-    report = manager.doctor_plugin("user/platformish", check_entrypoint=False)
+    report = manager.queries.plugin_info("user/platformish", check_entrypoint=False)
 
     assert report["manifest_unknown_fields"] == ["typo_field"]
     assert any("provides 包含 platform" in item for item in report["manifest_warnings"])
@@ -507,7 +507,7 @@ def register(ctx):
     )
     manager.discover()
     plugin = manager.load_plugin("user/broken")
-    report = manager.doctor_plugin(plugin.key)
+    report = manager.queries.plugin_info(plugin.key)
 
     assert report["status"] == "ERROR"
     assert report["entrypoint_importable"] is True
@@ -1020,7 +1020,7 @@ def test_memory_provider_doctor_reports_registered_provider(tmp_path):
     manager.discover()
     manager.load_plugin("memory/mem0")
 
-    report = manager.doctor_plugin("memory/mem0")
+    report = manager.queries.plugin_info("memory/mem0")
     assert report["status"] == "LOADED"
     assert report["registered"]["memory_providers"] == 1
     assert report["registered_items"]["memory_providers"] == ["mem0"]

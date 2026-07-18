@@ -9,7 +9,7 @@ agent:
   max_tool_calls_per_turn: 40
 
 llm:
-  context_window: 0               # 0 = 根据模型名自动推断；中转站自定义模型名可填真实窗口，例如 1000000
+  context_window: 0               # 0 = 按模型名推断，未知模型默认 256000；可显式填真实窗口
 
 execution:
   mode: "ask-first"               # read-only | ask-first | local-auto | full-auto
@@ -195,6 +195,40 @@ plugins:
         enabled: false
         sessions: []                 # 必须包含上面的精确 session_key
         restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/reminder:
+      max_overdue_seconds: 604800
+      retry_delay_seconds: 60
+      max_delivery_attempts: 3
+      active:
+        enabled: false
+        sessions: []                 # 允许创建和接收提醒的精确 session_key
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/feed-watch:
+      feeds:
+        # - name: "Python Releases"
+        #   url: "https://blog.python.org/feeds/posts/default"
+        #   keywords: []
+        #   sessions: []
+      poll_interval_seconds: 900
+      max_items_per_feed: 30
+      # 仅用于 Watt Toolkit 等将指定公网域名映射到本地的可信加速器。
+      trusted_private_hosts: []
+      active:
+        enabled: false
+        sessions: []
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/inbox-watch:
+      root: "data/inbox"
+      poll_interval_seconds: 15
+      settle_seconds: 5
+      max_files_per_poll: 20
+      max_file_bytes: 20971520
+      extensions: []                 # 例如 [pdf, md, txt, png, jpg]
+      process_existing: true
+      active:
+        enabled: false
+        sessions: []
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "~/.codex"
@@ -210,6 +244,18 @@ plugins:
       write_enabled: false
       connect_timeout_seconds: 60
       call_timeout_seconds: 120
+      active:
+        enabled: false
+        sessions: []
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+      watch:
+        pull_requests: true
+        issues: true
+        commits: true
+        workflows: true
+        poll_interval_seconds: 300
+        per_page: 20
+        notify_on_start: false
     integrations/developer-docs:
       command: "npx"
       package: "@upstash/context7-mcp"

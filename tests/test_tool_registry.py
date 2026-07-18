@@ -1,6 +1,7 @@
 """Test tool registry registration, definitions, dispatch."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -220,6 +221,60 @@ async def test_bridge_search_and_describe_include_tool_metadata():
     finally:
         if original is None:
             tool_registry.unregister("metadata_bridge_demo")
+        else:
+            tool_registry.register(original)
+
+
+@pytest.mark.asyncio
+async def test_bridge_catalog_and_execution_stay_on_pinned_capability_view():
+    from personal_agent.plugins.runtime import CapabilityKind
+    from personal_agent.tools.executor import _resolve_tool_entry
+    from personal_agent.tools.registry import dispatch_tool_search, tool_registry
+    from personal_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
+
+    async def dummy(**kwargs):
+        return "ok"
+
+    old_entry = ToolEntry(
+        name="generation_old_tool",
+        description="pinnedgeneration old capability",
+        schema={"type": "object", "properties": {}},
+        handler=dummy,
+    )
+    new_entry = ToolEntry(
+        name="generation_new_tool",
+        description="livegeneration new capability",
+        schema={"type": "object", "properties": {}},
+        handler=dummy,
+    )
+    route = SimpleNamespace(binding_id="binding-old")
+    manager = SimpleNamespace(
+        capability_payload=lambda binding_id: old_entry if binding_id == "binding-old" else None
+    )
+    view = SimpleNamespace(routes={
+        CapabilityKind.TOOL: {old_entry.name: (route,)},
+    })
+    agent = SimpleNamespace(
+        _plugin_manager=manager,
+        _capability_view=view,
+        _tool_bindings={old_entry.name: route},
+        enabled_toolsets=None,
+    )
+    original = tool_registry.get(new_entry.name)
+    tool_registry.register(new_entry)
+    token = set_current_tool_agent(agent)
+    try:
+        old_search = json.loads(await dispatch_tool_search("pinnedgeneration"))
+        new_search = json.loads(await dispatch_tool_search("livegeneration"))
+
+        assert [item["name"] for item in old_search["hits"]] == [old_entry.name]
+        assert new_search["hits"] == []
+        assert _resolve_tool_entry(agent, old_entry.name) is old_entry
+        assert _resolve_tool_entry(agent, new_entry.name) is None
+    finally:
+        reset_current_tool_agent(token)
+        if original is None:
+            tool_registry.unregister(new_entry.name)
         else:
             tool_registry.register(original)
 

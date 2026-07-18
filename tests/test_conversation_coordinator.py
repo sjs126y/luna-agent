@@ -133,6 +133,59 @@ async def test_failed_turn_does_not_block_next_submission():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_request_id_reuses_completed_submission():
+    service = RecordingService()
+    coordinator = ConversationCoordinator(service)
+    request = SubmissionRequest(
+        session_key="session",
+        input=_request("session", "once").input,
+        origin=SubmissionOrigin.PLUGIN,
+        response_mode=ResponseMode.RETURN_ONLY,
+        request_id="plugin:event-1",
+        owner_id="automation/test",
+    )
+
+    first = await coordinator.submit(request)
+    first_outcome = await first.outcome()
+    duplicate = await coordinator.submit(request)
+    duplicate_outcome = await duplicate.outcome()
+
+    assert first_outcome is duplicate_outcome
+    assert duplicate.receipt.reason == "duplicate request_id reused existing submission"
+    assert service.calls == [("session", "once")]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_request_id_with_different_owner_is_rejected():
+    service = RecordingService()
+    coordinator = ConversationCoordinator(service)
+    first = SubmissionRequest(
+        session_key="session",
+        input=_request("session", "first").input,
+        origin=SubmissionOrigin.PLUGIN,
+        response_mode=ResponseMode.RETURN_ONLY,
+        request_id="shared-id",
+        owner_id="plugin/one",
+    )
+    conflicting = SubmissionRequest(
+        session_key="session",
+        input=_request("session", "second").input,
+        origin=SubmissionOrigin.PLUGIN,
+        response_mode=ResponseMode.RETURN_ONLY,
+        request_id="shared-id",
+        owner_id="plugin/two",
+    )
+
+    await (await coordinator.submit(first)).outcome()
+    outcome = await (await coordinator.submit(conflicting)).outcome()
+
+    assert outcome.status == SubmissionStatus.REJECTED
+    assert service.calls == [("session", "first")]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
 async def test_coordinator_owns_active_turn_lifecycle():
     service = TurnAwareService()
     coordinator = ConversationCoordinator(service)
@@ -218,4 +271,33 @@ async def test_deliver_response_mode_aggregates_delivery_result():
 
     assert outcome.status == SubmissionStatus.COMPLETED
     assert outcome.payload["delivery_result"].message_id == "m1"
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_deferred_delivery_keeps_completed_conversation_outcome():
+    service = RecordingService()
+
+    class Delivery:
+        async def deliver(self, request):
+            return DeliveryResult(
+                delivery_id=request.delivery_id,
+                session_key=request.session_key,
+                status=DeliveryStatus.DEFERRED,
+                error="adapter is reconnecting",
+            )
+
+    coordinator = ConversationCoordinator(service, delivery_service=Delivery())
+    request = SubmissionRequest.text(
+        session_key="session",
+        text="hello",
+        origin=SubmissionOrigin.PLUGIN,
+        response_mode=ResponseMode.DELIVER,
+    )
+
+    outcome = await (await coordinator.submit(request)).outcome()
+
+    assert outcome.status == SubmissionStatus.COMPLETED
+    assert outcome.payload["delivery_result"].status == DeliveryStatus.DEFERRED
+    assert service.calls == [("session", "hello")]
     await coordinator.close()

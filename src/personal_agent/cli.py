@@ -612,7 +612,7 @@ def plugins_list(
     manager = _plugin_manager()
     if load:
         manager.load_enabled()
-    reports = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
+    reports = manager.queries.list_plugins()
     if json_output:
         typer.echo(json.dumps(reports, indent=2, ensure_ascii=False))
     else:
@@ -628,24 +628,108 @@ def plugins_info(
     manager = _plugin_manager()
     if load:
         manager.load_plugin(key)
-    report = manager.doctor_plugin(key)
+    report = manager.queries.plugin_info(key)
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
         typer.echo(format_plugin_report(report, include_traceback=False))
 
 
+@plugins_app.command("logs")
+def plugins_logs(
+    key: str,
+    limit: int = typer.Option(50, min=1, max=100, help="显示最近事件数量。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    items = manager.queries.events(key, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+    typer.echo(f"插件事件: {key}")
+    for item in items:
+        typer.echo(f"  - {item.get('created_at')} {item.get('event')} [{item.get('level')}]")
+    if not items:
+        typer.echo("  - 无")
+
+
+@plugins_app.command("versions")
+def plugins_versions(
+    key: str,
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    items = manager.queries.versions(key)
+    if json_output:
+        typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+    typer.echo(f"插件版本: {key}")
+    for item in items:
+        marker = "current" if item.get("active") else "available"
+        typer.echo(f"  - {item.get('version')} {str(item.get('digest') or '')[:12]} {marker}")
+    if not items:
+        typer.echo("  - 无已安装版本")
+
+
+@plugins_app.command("operations")
+def plugins_operations(
+    key: str = typer.Option("", help="只显示指定插件。"),
+    limit: int = typer.Option(50, min=1, max=200, help="显示最近操作数量。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    items = manager.queries.operations(key=key, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+    typer.echo("最近插件操作:")
+    for item in items:
+        typer.echo(
+            f"  - {item.get('operation_id')} {item.get('action')} "
+            f"{item.get('plugin_key')} {item.get('status')}:{item.get('stage')}"
+        )
+    if not items:
+        typer.echo("  - 无")
+
+
+@plugins_app.command("operation")
+def plugins_operation(
+    operation_id: str,
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    item = manager.queries.operation(operation_id)
+    if item is None:
+        _exit_error(f"插件操作不存在: {operation_id}")
+    if json_output:
+        typer.echo(json.dumps(item, indent=2, ensure_ascii=False))
+        return
+    typer.echo(
+        f"插件操作: {item.get('operation_id')}\n"
+        f"  - plugin: {item.get('plugin_key')}\n"
+        f"  - action: {item.get('action')}\n"
+        f"  - status: {item.get('status')} / stage={item.get('stage')}\n"
+        f"  - error: {item.get('error') or '-'}"
+    )
+
+
 @plugins_app.command("enable")
 def plugins_enable(key: str) -> None:
     manager = _plugin_manager()
-    plugin = manager.enable_plugin(key)
+    try:
+        plugin = asyncio.run(manager.enable_plugin_runtime(key))
+    except Exception as exc:
+        _exit_error(f"插件启用失败: {exc}")
     typer.echo(f"已启用插件: {plugin.key}")
 
 
 @plugins_app.command("disable")
 def plugins_disable(key: str) -> None:
     manager = _plugin_manager()
-    plugin = manager.disable_plugin(key)
+    try:
+        plugin = asyncio.run(manager.disable_plugin_runtime(key))
+    except Exception as exc:
+        _exit_error(f"插件禁用失败: {exc}")
     typer.echo(f"已禁用插件: {plugin.key}")
 
 
@@ -709,7 +793,7 @@ def plugins_doctor(
 ) -> None:
     manager = _plugin_manager()
     plugin = manager.load_plugin(key)
-    report = manager.doctor_plugin(plugin.key)
+    report = manager.queries.plugin_info(plugin.key)
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
@@ -1174,7 +1258,7 @@ async def _build_serve_dry_run_report() -> dict[str, Any]:
         health = runtime.health_snapshot()
         config_report = build_config_report(Path("."))
         plugins = [
-            runtime.plugin_manager.doctor_plugin(plugin.key)
+            runtime.plugin_manager.queries.plugin_info(plugin.key)
             for plugin in runtime.plugin_manager.list_plugins()
         ]
         platforms = _platform_diagnostics_from_reports(
@@ -1260,7 +1344,7 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
             "review": runtime.memory_review_service.health_snapshot(),
         })
         plugins = [
-            runtime.plugin_manager.doctor_plugin(plugin.key)
+            runtime.plugin_manager.queries.plugin_info(plugin.key)
             for plugin in runtime.plugin_manager.list_plugins()
         ]
         return {
@@ -1368,7 +1452,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
     if plugins is None:
         manager = _plugin_manager(settings)
         manager.load_enabled()
-        plugins = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
+        plugins = manager.queries.list_plugins()
 
     from personal_agent.llm.token_counter import tokenizer_status
     from personal_agent.tools.registry import tool_registry
@@ -2583,10 +2667,13 @@ def format_plugin_list(reports: list[dict[str, Any]], *, include_summary: bool =
             lines.append("")
         lines.append(f"{group}:")
         for report in grouped_reports:
+            active = report.get("active") or {}
+            active_text = str(active.get("state") or ("disabled" if report.get("active_enabled") is False and report.get("active_resources") else "passive"))
             lines.append(
                 f"  - {report['key']} [{report['status']}] "
                 f"启用={_yes(report['enabled'])} "
                 f"延迟={_yes(report['deferred'])} "
+                f"主动={active_text} "
                 f"注册={_registration_summary(report['registered'])} "
                 f"问题={_plugin_issue_summary(report)}"
             )
@@ -2610,12 +2697,19 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         f"入口: {report['entrypoint']} [{_entrypoint_status_text(report)}]",
         f"启用: {_yes(report['enabled'])}  默认启用: {_yes(report['enabled_by_default'])}  延迟加载: {_yes(report['deferred'])}",
         f"状态: {report['status']}",
+        f"Runtime: {report.get('runtime_state') or '-'}",
+        f"Generation: {report.get('generation_id') or '-'}",
+        f"Runtime Instance: {report.get('runtime_instance_id') or '-'}",
+        f"Snapshot Revision: {report.get('snapshot_revision', 0)}",
+        f"Package Digest: {report.get('package_digest') or '-'}",
+        f"主动运行: {'启用' if report.get('active_enabled') else '关闭'} 状态={(report.get('active') or {}).get('state') or 'passive'}",
         f"提供能力: {_list_or_none(report['provides'])}",
         f"标签: {_list_or_none(report.get('tags', []))}",
         f"需要环境变量: {_list_or_none(report['requires_env'])}",
         f"缺失环境变量: {_list_or_none(report['missing_env'])}",
         f"来源边界: 声明={report.get('declared_source') or report.get('source') or '-'} 实际={report.get('source') or '-'} 路径={report.get('source_boundary') or '-'}",
         f"注册数量: {_registration_summary(report['registered'])}",
+        f"已安装版本: {len(report.get('installed_versions') or [])}",
         "诊断:",
     ]
     if manifest_error:

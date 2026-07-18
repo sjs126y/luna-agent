@@ -310,12 +310,16 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "plugins",
         "管理运行中的插件",
-        "/plugins [list|info|install|reload|enable|disable|active|rollback|uninstall]",
+        "/plugins [list|info|logs|versions|operations|install|reload|enable|disable|active|rollback|uninstall]",
         category="runtime",
         mutates_state=True,
         children=(
             CommandSpec("list", "列出插件", "/plugins list", category="runtime"),
             CommandSpec("info", "查看插件", "/plugins info <key>", category="runtime"),
+            CommandSpec("logs", "查看插件运行事件", "/plugins logs <key>", category="runtime"),
+            CommandSpec("versions", "查看插件历史版本", "/plugins versions <key>", category="runtime"),
+            CommandSpec("operations", "查看插件管理操作", "/plugins operations [key]", category="runtime"),
+            CommandSpec("operation", "查看单次插件操作", "/plugins operation <id>", category="runtime"),
             CommandSpec("install", "安装本地插件", "/plugins install <path>", category="runtime", mutates_state=True),
             CommandSpec("reload", "热重载插件", "/plugins reload <key>", category="runtime", mutates_state=True),
             CommandSpec("enable", "启用插件", "/plugins enable <key>", category="runtime", mutates_state=True),

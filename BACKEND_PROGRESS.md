@@ -6,8 +6,8 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1116%20passed-2EA44F" alt="1116 tests passed">
-  <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
+  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F" alt="1145 tests passed">
+  <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
 <p>
@@ -20,6 +20,33 @@
 </div>
 
 ---
+
+## 2026-07-19：主动投递、提交幂等与上下文识别修复
+
+- Gateway 启动时从持久化 SessionStore 恢复 `session_key -> platform/chat_id` Delivery Binding，主动插件无需等待用户先发送一条平台消息即可投递。
+- Delivery Binding 或平台暂不可用统一进入 Outbox `DEFERRED`；Conversation 已完成时不再因为发送延迟而整轮重跑模型。
+- ConversationCoordinator 新增有界 `request_id` 幂等缓存，同一提交复用进行中或已完成结果，冲突载荷直接拒绝；Inbox Watch 对同一文件签名默认最多提交 3 次。
+- 修复热重载旧 Turn 的工具桥接穿透：`tool_search`、`tool_describe` 与嵌套 `tool_call` 现在只读取该 Turn lease 固定的 capability generation。
+- 上下文窗口识别补充 GPT-5、GPT-4.1、Claude、Gemini、DeepSeek、Qwen 与显式容量标记；未知模型默认从 64K 提升为 256K，显式 `llm.context_window` 继续优先。
+- 完整回归：`1145 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
+
+## 2026-07-19：主动插件实机测试修复
+
+- 修复删除 `PluginRuntimeManager` 后 Gateway 仍访问旧包装层、从而静默跳过所有主动 runner 的生命周期回归；Gateway 现在直接调用 `PluginManager.start_active_plugins()` / `stop_active_plugins()`，并有启停集成断言。
+- Reminder 已持久化的过期任务和 Inbox 中未处理文件会在 Gateway 重启后由各自 runner 恢复消费；GitHub Watch 的测试配置改为真实微信 session。
+- Feed Watch 新增精确 `trusted_private_hosts`，兼容 Watt Toolkit 将指定公网域名映射到本地加速器的场景；其他域名、私网和云元数据端点仍保持 SSRF 硬拦截。
+- 修复主动 Tool 长期复用同一 Artifact turn scope、累计触发 10 个产物上限的问题；每次调用现在拥有独立 operation scope，并向统一物化链路传递插件 owner，Inbox Artifact 可以通过 Conversation Port 所有权校验。
+- Codex Releases Atom 已真实抓取并解析成功；新增连续 11 次主动 Artifact 物化回归，完整回归 `1133 passed, 1 warning`。
+
+## 2026-07-18：主动插件套件与管理查询
+
+- 删除仅做转发且没有调用方的 `PluginRuntimeManager`；插件写操作仍由 `PluginManager` 唯一负责，只读列表、详情、版本、事件和操作记录收敛到 `plugin_manager.queries`。
+- 新增每个 plugin key 独立的管理操作锁、operation id、阶段状态和有界持久事件；`/plugins logs|versions|operations|operation` 与 CLI 使用相同数据源。
+- GitHub Assistant v0.2 增加 PR、Issue、Commit、Actions 主动监视，并兼容 GitHub MCP `actions_list` 与旧式 workflow 工具。
+- 新增 `automation/reminder`、`automation/feed-watch`、`automation/inbox-watch`，覆盖持久时间调度、RSS/Atom 条件抓取与受控目录 Artifact 输入。
+- Plugin Storage 新增原子 JSON；Conversation Port 新增稳定 request id 和插件自有 Artifact 输入校验；主动工具产物可以按目标 session 建立正确 scope。
+- 插件、配置、命令、Artifact 与热更新宽回归：`149 passed`；完整回归 `1131 passed, 1 warning`，唯一警告仍来自飞书 SDK 的弃用 API。
+- 真实 `doctor --verbose`：Boot `17/17`、56 个工具全部可用、GitHub/Context7/Playwright/Codex 等启用 MCP 均 ready；新增插件全部 LOADED。总体提示只包含既有 workspace-watch source 警告和未配置的 QQ/Telegram。
 
 ## 2026-07-18：主动插件 Runtime
 
