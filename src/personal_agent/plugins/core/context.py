@@ -54,6 +54,29 @@ class PluginRegistrationPort:
     def memory_provider(self, *, name: str, factory, validator) -> None:
         self._context._register_memory_provider(name=name, factory=factory, validator=validator)
 
+    def active(
+        self,
+        *,
+        run,
+        resources=None,
+        restart_policy="on_failure",
+        startup_timeout: float = 20.0,
+        shutdown_timeout: float = 20.0,
+        on_quiesce=None,
+        on_resume=None,
+        on_stop=None,
+    ) -> None:
+        self._context._register_active(
+            run=run,
+            resources=resources,
+            restart_policy=restart_policy,
+            startup_timeout=startup_timeout,
+            shutdown_timeout=shutdown_timeout,
+            on_quiesce=on_quiesce,
+            on_resume=on_resume,
+            on_stop=on_stop,
+        )
+
 
 class PluginRuntimeContext:
     """Expose scoped registration and application ports to one runtime instance."""
@@ -84,6 +107,13 @@ class PluginRuntimeContext:
     @property
     def state(self):
         return self.plugin.runtime_state
+
+    @property
+    def runtime(self):
+        runner = self.plugin.active_runner
+        if runner is None:
+            raise RuntimeError(f"active plugin runtime is unavailable: {self.plugin.key}")
+        return runner.control
 
     @property
     def config(self):
@@ -317,6 +347,43 @@ class PluginRuntimeContext:
         normalized = str(name).strip().lower()
         if normalized not in self.plugin.memory_providers_registered:
             self.plugin.memory_providers_registered.append(normalized)
+
+    def _register_active(
+        self,
+        *,
+        run,
+        resources=None,
+        restart_policy="on_failure",
+        startup_timeout: float = 20.0,
+        shutdown_timeout: float = 20.0,
+        on_quiesce=None,
+        on_resume=None,
+        on_stop=None,
+    ) -> None:
+        self._require_registration()
+        if "active" not in set(self.plugin.manifest.provides or []):
+            raise ValueError("Plugin must declare provides: [active] before registering a runner")
+        if self.plugin.active_registration is not None:
+            raise ValueError(f"Plugin can register only one active runner: {self.plugin.key}")
+        from personal_agent.plugins.active import (
+            ActiveRegistration,
+            ActiveResourceRequest,
+            ActiveRestartPolicy,
+        )
+
+        request = resources or ActiveResourceRequest()
+        if not isinstance(request, ActiveResourceRequest):
+            raise TypeError("Active plugin resources must be ActiveResourceRequest")
+        self.plugin.active_registration = ActiveRegistration(
+            run=run,
+            resources=request,
+            restart_policy=ActiveRestartPolicy(str(restart_policy)),
+            startup_timeout=float(startup_timeout),
+            shutdown_timeout=float(shutdown_timeout),
+            on_quiesce=on_quiesce,
+            on_resume=on_resume,
+            on_stop=on_stop,
+        )
 
     def _mark_owner(self, entry: Any | None) -> None:
         if entry is None:

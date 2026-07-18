@@ -52,6 +52,7 @@ from personal_agent.plugins.runtime.importer import (
     import_generation_entrypoint,
 )
 from personal_agent.plugins.install import PluginInstaller, PluginInstallStore
+from personal_agent.plugins.active import ActivePluginRunner, PluginGenerationScope
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +220,7 @@ class PluginManager:
         plugin.error_traceback = None
         before = self._registration_snapshot()
         try:
+            plugin.generation_scope = PluginGenerationScope()
             all_config = getattr(self.settings, "plugins_config", {}) or {}
             plugin_config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
             plugin.package_digest = package_digest(plugin.manifest.path)
@@ -247,6 +249,13 @@ class PluginManager:
                 result = module.register(plugin.ctx)
                 if inspect.isawaitable(result):
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
+            if plugin.active_registration is not None:
+                plugin.active_runner = ActivePluginRunner(
+                    plugin=plugin,
+                    registration=plugin.active_registration,
+                    context=plugin.ctx,
+                    scope=plugin.generation_scope,
+                )
             after = self._registration_snapshot()
             self._assert_no_registry_replacements(before, after, plugin.key)
             if plugin.manifest.record_import_delta:
@@ -269,6 +278,7 @@ class PluginManager:
             self.hook_manager.unregister_owner(plugin.runtime_instance_id)
             self._restore_registration_snapshot(before)
             self._clear_plugin_registrations(plugin)
+            self._close_generation_scope(plugin)
             cleanup_generation_namespace(plugin.module_namespace)
             plugin.module = None
             plugin.ctx = None
@@ -1523,6 +1533,7 @@ class PluginManager:
             for task in tasks:
                 if not task.done():
                     task.cancel()
+            self._close_generation_scope(plugin)
             cleanup_generation_namespace(plugin.module_namespace)
             plugin.ctx = None
             plugin.module = None
@@ -1542,6 +1553,21 @@ class PluginManager:
                         name=f"mcp-retire:{runtime_id}",
                     )
         self._finalize_pending_removals()
+
+    @staticmethod
+    def _close_generation_scope(plugin: LoadedPlugin) -> None:
+        scope = plugin.generation_scope
+        if scope is None or scope.closed:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(scope.aclose())
+        else:
+            loop.create_task(
+                scope.aclose(),
+                name=f"plugin-scope-close:{plugin.runtime_instance_id or plugin.key}",
+            )
 
     def _finalize_pending_removals(self) -> None:
         retained_runtimes = self.capability_store.retained_runtime_ids()
