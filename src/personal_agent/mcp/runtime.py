@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import random
 import time
@@ -35,6 +36,9 @@ class MCPServerRuntime:
         process_backend: str = "legacy",
         sandbox_roots: list[Path] | None = None,
         work_dir: Path | None = None,
+        runtime_instance_id: str = "",
+        on_tools_changed: Callable[[str, str, set[str]], Any] | None = None,
+        publish_tools: bool = True,
     ) -> None:
         self.config = config
         self.state = MCPRuntimeState.DISABLED if not config.enabled else MCPRuntimeState.STOPPED
@@ -43,6 +47,8 @@ class MCPServerRuntime:
         self._sandbox_roots = list(sandbox_roots or [])
         base_work_dir = Path(work_dir).resolve() if work_dir is not None else Path.cwd()
         self._work_dir = _resolve_work_dir(base_work_dir, config.work_dir)
+        self.runtime_instance_id = runtime_instance_id or f"mcp:{config.name}"
+        self._on_tools_changed = on_tools_changed
         self._connection_factory = connection_factory or self._create_connection
         self._reconnect_delays = reconnect_delays or DEFAULT_RECONNECT_DELAYS
         self._health_interval = health_interval_seconds
@@ -60,6 +66,7 @@ class MCPServerRuntime:
             server_url=config.url,
             call_timeout_seconds=config.call_timeout_seconds,
             availability_reason=self.availability_reason,
+            publish_tools=publish_tools,
         )
         self._server_info: MCPServerInfo | None = None
         self._last_error = ""
@@ -89,6 +96,13 @@ class MCPServerRuntime:
         message = f"MCP server '{self.config.name}' is {label}"
         return f"{message}: {detail}" if detail else message
 
+    async def activate_tools(self) -> None:
+        if self._registrar.activate_global():
+            await self._notify_tools_changed()
+
+    def deactivate_tools(self) -> None:
+        self._registrar.deactivate_global()
+
     async def start(self) -> int:
         if not self.config.enabled:
             self.state = MCPRuntimeState.DISABLED
@@ -114,7 +128,10 @@ class MCPServerRuntime:
     async def stop(self) -> None:
         task = self._owner_task
         if task is None:
-            self._registrar.unregister_all()
+            was_active = self._registrar.global_active
+            changed = self._registrar.unregister_all()
+            if changed and was_active:
+                await self._notify_tools_changed()
             self.state = MCPRuntimeState.DISABLED if not self.config.enabled else MCPRuntimeState.STOPPED
             return
         self.state = MCPRuntimeState.STOPPING
@@ -131,7 +148,10 @@ class MCPServerRuntime:
         finally:
             self._mark_initial_attempt_done()
             self._owner_task = None
-            self._registrar.unregister_all()
+            was_active = self._registrar.global_active
+            changed = self._registrar.unregister_all()
+            if changed and was_active:
+                await self._notify_tools_changed()
             self.state = MCPRuntimeState.STOPPED
 
     async def restart(self) -> int:
@@ -173,6 +193,7 @@ class MCPServerRuntime:
         )
         return {
             "name": self.config.name,
+            "runtime_instance_id": self.runtime_instance_id,
             "transport": self.config.transport.value,
             "command": self.config.command,
             "args": list(self.config.args),
@@ -212,7 +233,8 @@ class MCPServerRuntime:
                 try:
                     info = await connection.connect()
                     tools = await connection.list_tools()
-                    self._registrar.sync(tools)
+                    if self._registrar.sync(tools) and self._registrar.global_active:
+                        await self._notify_tools_changed()
                     self._server_info = info
                     self._last_error = ""
                     self._stderr_tail = []
@@ -289,7 +311,11 @@ class MCPServerRuntime:
                 if self._refresh_debounce > 0:
                     await asyncio.sleep(self._refresh_debounce)
                 try:
-                    self._registrar.sync(await connection.list_tools())
+                    if (
+                        self._registrar.sync(await connection.list_tools())
+                        and self._registrar.global_active
+                    ):
+                        await self._notify_tools_changed()
                     self._tool_refresh_count += 1
                     self._last_error = ""
                     self.state = MCPRuntimeState.READY
@@ -304,6 +330,17 @@ class MCPServerRuntime:
                 self._last_error = _error_text(exc, self.config)
                 return "reconnect"
         return "stop"
+
+    async def _notify_tools_changed(self) -> None:
+        if self._on_tools_changed is None:
+            return
+        result = self._on_tools_changed(
+            self.config.name,
+            self.runtime_instance_id,
+            self.registered_names,
+        )
+        if inspect.isawaitable(result):
+            await result
 
     async def _wait_for_signal(self) -> str:
         tasks = {

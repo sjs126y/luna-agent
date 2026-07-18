@@ -24,6 +24,7 @@ class MCPToolRegistrar:
         server_url: str = "",
         call_timeout_seconds: float = 120.0,
         availability_reason: Callable[[], str] | None = None,
+        publish_tools: bool = True,
     ) -> None:
         self.server_name = server_name
         self._call_tool = call_tool
@@ -31,42 +32,82 @@ class MCPToolRegistrar:
         self._call_timeout_seconds = float(call_timeout_seconds)
         self._availability_reason = availability_reason
         self._registered: dict[str, str] = {}
+        self._entries: dict[str, ToolEntry] = {}
         self._available = False
+        self._global_active = bool(publish_tools)
 
     @property
     def registered_names(self) -> set[str]:
         return set(self._registered)
 
-    def sync(self, tools: list[MCPToolSpec]) -> None:
+    @property
+    def global_active(self) -> bool:
+        return self._global_active
+
+    def sync(self, tools: list[MCPToolSpec]) -> bool:
+        changed = False
         desired = {self._local_name(tool.name): tool for tool in tools}
         removed = set(self._registered) - set(desired)
         for name in removed:
-            tool_registry.unregister(name)
+            if self._global_active and tool_registry.get(name) is self._entries.get(name):
+                tool_registry.unregister(name)
             self._registered.pop(name, None)
+            self._entries.pop(name, None)
+            changed = True
 
         for local_name, spec in desired.items():
             fingerprint = _tool_fingerprint(spec)
             if self._registered.get(local_name) == fingerprint:
                 continue
             existing = tool_registry.get(local_name)
-            if existing is not None and local_name not in self._registered:
+            if self._global_active and existing is not None and local_name not in self._registered:
                 raise RuntimeError(f"MCP tool name collision: {local_name}")
-            tool_registry.register(self._entry(local_name, spec))
+            entry = self._entry(local_name, spec)
+            self._entries[local_name] = entry
+            if self._global_active:
+                tool_registry.register(entry)
             self._registered[local_name] = fingerprint
+            changed = True
+        return changed
+
+    def activate_global(self) -> bool:
+        if self._global_active:
+            return False
+        for name, entry in self._entries.items():
+            existing = tool_registry.get(name)
+            if existing is not None and existing is not entry:
+                raise RuntimeError(f"MCP tool name collision: {name}")
+        self._global_active = True
+        for entry in self._entries.values():
+            tool_registry.register(entry)
+        return bool(self._entries)
+
+    def deactivate_global(self) -> bool:
+        if not self._global_active:
+            return False
+        for name, entry in self._entries.items():
+            if tool_registry.get(name) is entry:
+                tool_registry.unregister(name)
+        self._global_active = False
+        return bool(self._entries)
 
     def set_available(self, available: bool) -> None:
         value = bool(available)
         if self._available == value:
             return
         self._available = value
-        if self._registered:
+        if self._registered and self._global_active:
             tool_registry.invalidate()
 
-    def unregister_all(self) -> None:
+    def unregister_all(self) -> bool:
+        changed = bool(self._registered)
         for name in sorted(self._registered):
-            tool_registry.unregister(name)
+            if self._global_active and tool_registry.get(name) is self._entries.get(name):
+                tool_registry.unregister(name)
         self._registered.clear()
+        self._entries.clear()
         self._available = False
+        return changed
 
     def _entry(self, local_name: str, spec: MCPToolSpec) -> ToolEntry:
         async def handler(**kwargs):

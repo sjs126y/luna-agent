@@ -6,6 +6,8 @@ import pytest
 from personal_agent.config import Settings
 from personal_agent.plugins import PluginManager, PluginStatus
 from personal_agent.plugins.runtime import CapabilityKind, PluginRuntimeState
+from personal_agent.tools.entry import ToolEntry
+from personal_agent.tools.registry import tool_registry
 
 
 def _write_plugin(root: Path, result: str) -> None:
@@ -77,3 +79,39 @@ async def test_reload_publishes_new_routes_and_drains_old_runtime(tmp_path):
 
     assert first.runtime_state is PluginRuntimeState.STOPPED
     assert manager.capability_payload(old_route.binding_id) is None
+
+
+def test_mcp_tool_list_changes_publish_snapshot_without_health_churn(tmp_path):
+    manager = PluginManager(
+        Settings(agent_data_dir=tmp_path / "data"),
+        plugin_dirs=[],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+    name = "mcp__demo__lookup"
+
+    async def lookup():
+        return "ok"
+
+    tool_registry.register(ToolEntry(
+        name=name,
+        description="demo MCP tool",
+        schema={"type": "object", "properties": {}},
+        handler=lookup,
+    ))
+    try:
+        manager.refresh_mcp_tools("demo", "mcp:demo:r1", {name})
+        published_revision = manager.capability_store.current.revision
+        route = manager.capability_store.current.view().resolve(CapabilityKind.TOOL, name)
+
+        manager.refresh_mcp_tools("demo", "mcp:demo:r1", {name})
+
+        assert route is not None
+        assert route.owner == "configured-mcp"
+        assert manager.capability_store.current.revision == published_revision
+
+        tool_registry.unregister(name)
+        manager.refresh_mcp_tools("demo", "mcp:demo:r1", set())
+        assert manager.capability_store.current.view().resolve(CapabilityKind.TOOL, name) is None
+    finally:
+        tool_registry.unregister(name)

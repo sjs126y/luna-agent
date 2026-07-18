@@ -630,7 +630,9 @@ async def start_mcp_manager(settings: Settings, plugin_manager: PluginManager):
         process_backend=settings.process_sandbox_backend,
         sandbox_roots=list(settings.sandbox_roots),
         work_dir=mcp_work_dir,
+        on_tools_changed=plugin_manager.refresh_mcp_tools,
     )
+    plugin_manager.bind_mcp_manager(manager)
     await manager.start()
     return manager
 

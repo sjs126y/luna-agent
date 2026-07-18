@@ -597,14 +597,18 @@ class ConversationService:
 
         from personal_agent.agent.factory import create_agent_runtime
 
-        runtime = await create_agent_runtime(
-            self.settings,
-            memory_manager=self.memory_manager,
-            plugin_manager=self.plugin_manager,
-            system_prompt_template=self.system_prompt_template,
-            session_key=session_key,
-            capability_view=capability_view,
-        )
+        runtime_kwargs = {
+            "memory_manager": self.memory_manager,
+            "plugin_manager": self.plugin_manager,
+            "system_prompt_template": self.system_prompt_template,
+            "session_key": session_key,
+        }
+        if capability_view is not None and _accepts_parameter(
+            create_agent_runtime,
+            "capability_view",
+        ):
+            runtime_kwargs["capability_view"] = capability_view
+        runtime = await create_agent_runtime(self.settings, **runtime_kwargs)
         agent = runtime.agent
         agent._artifact_store = self.artifact_store
         self._apply_security_context(agent, session_key)
@@ -1233,6 +1237,17 @@ def _accepts_turn_id(func: Any) -> bool:
     except (TypeError, ValueError):
         return True
     return "turn_id" in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in params.values()
+    )
+
+
+def _accepts_parameter(func: Any, name: str) -> bool:
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return True
+    return name in params or any(
         param.kind is inspect.Parameter.VAR_KEYWORD
         for param in params.values()
     )
