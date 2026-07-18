@@ -46,6 +46,11 @@ from personal_agent.plugins.runtime.identity import (
     package_digest,
     runtime_instance_id,
 )
+from personal_agent.plugins.runtime.importer import (
+    cleanup_generation_namespace,
+    generation_module_namespace,
+    import_generation_entrypoint,
+)
 from personal_agent.plugins.install import PluginInstaller, PluginInstallStore
 
 logger = logging.getLogger(__name__)
@@ -223,8 +228,16 @@ class PluginManager:
                 plugin_config if isinstance(plugin_config, dict) else {},
             )
             plugin.runtime_instance_id = runtime_instance_id(plugin.key)
+            if plugin.manifest.source != "builtin":
+                plugin.module_namespace = generation_module_namespace(
+                    plugin.key,
+                    plugin.runtime_instance_id,
+                )
             plugin.ctx = PluginRuntimeContext(self, plugin)
-            module, register_fn = self._import_entrypoint(plugin.manifest)
+            module, register_fn = self._import_entrypoint(
+                plugin.manifest,
+                namespace=plugin.module_namespace,
+            )
             plugin.module = module
             if register_fn is not None:
                 result = register_fn(plugin.ctx)
@@ -256,6 +269,7 @@ class PluginManager:
             self.hook_manager.unregister_owner(plugin.runtime_instance_id)
             self._restore_registration_snapshot(before)
             self._clear_plugin_registrations(plugin)
+            cleanup_generation_namespace(plugin.module_namespace)
             plugin.module = None
             plugin.ctx = None
             plugin.status = PluginStatus.ERROR
@@ -337,7 +351,7 @@ class PluginManager:
         evict: bool = False,
         force_enabled: bool | None = None,
     ) -> LoadedPlugin:
-        if evict:
+        if evict and manifest.source == "builtin":
             self._evict_entrypoint_module(manifest)
         candidate = LoadedPlugin(
             key=manifest.key,
@@ -1103,9 +1117,26 @@ class PluginManager:
             missing.append(name)
         return missing
 
-    def _import_entrypoint(self, manifest: PluginManifest) -> tuple[ModuleType, Any | None]:
+    def _import_entrypoint(
+        self,
+        manifest: PluginManifest,
+        *,
+        namespace: str = "",
+    ) -> tuple[ModuleType, Any | None]:
         entrypoint = manifest.entrypoint
         module_name, _, func_name = entrypoint.partition(":")
+        if manifest.source != "builtin":
+            if manifest.path is None:
+                raise ValueError(f"Plugin path is unavailable: {manifest.key}")
+            active_namespace = namespace or generation_module_namespace(
+                manifest.key,
+                runtime_instance_id(manifest.key),
+            )
+            return import_generation_entrypoint(
+                plugin_root=manifest.path,
+                entrypoint=entrypoint,
+                namespace=active_namespace,
+            )
         for path in self._import_paths_for_manifest(manifest):
             path_text = str(path)
             # Installed generations live in separate immutable directories. A rollback
@@ -1145,8 +1176,14 @@ class PluginManager:
         return paths
 
     def _check_entrypoint(self, manifest: PluginManifest) -> tuple[bool, str]:
+        namespace = ""
         try:
-            module, fn = self._import_entrypoint(manifest)
+            if manifest.source != "builtin":
+                namespace = generation_module_namespace(
+                    manifest.key,
+                    runtime_instance_id(f"validate/{manifest.key}"),
+                )
+            module, fn = self._import_entrypoint(manifest, namespace=namespace)
             if ":" in manifest.entrypoint and fn is None:
                 return False, f"Entrypoint function not found: {manifest.entrypoint}"
             if fn is not None and not callable(fn):
@@ -1156,6 +1193,8 @@ class PluginManager:
             return True, ""
         except Exception as exc:
             return False, "".join(traceback.format_exception_only(type(exc), exc)).strip()
+        finally:
+            cleanup_generation_namespace(namespace)
 
     def _registered_items(self, plugin: LoadedPlugin) -> dict[str, list[str]]:
         return {
@@ -1484,6 +1523,7 @@ class PluginManager:
             for task in tasks:
                 if not task.done():
                     task.cancel()
+            cleanup_generation_namespace(plugin.module_namespace)
             plugin.ctx = None
             plugin.module = None
             plugin.runtime_state = PluginRuntimeState.STOPPED

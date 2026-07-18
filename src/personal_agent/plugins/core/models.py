@@ -220,6 +220,7 @@ class LoadedPlugin:
     enabled: bool = False
     generation_id: str = ""
     runtime_instance_id: str = ""
+    module_namespace: str = ""
     package_digest: str = ""
     runtime_state: PluginRuntimeState = PluginRuntimeState.DISCOVERED
     tools_registered: list[str] = field(default_factory=list)
