@@ -188,6 +188,8 @@ class PluginManager:
     def plugin_storage_port(self, plugin):
         from personal_agent.plugins.core.ports import PluginStoragePort
 
+        if plugin.active_registration is not None and plugin.data_path is None:
+            self.data_revisions.prepare(plugin, candidate=False)
         return PluginStoragePort(plugin=plugin, root=self.installer.data_root)
 
     def plugin_task_port(self, plugin):
@@ -291,7 +293,8 @@ class PluginManager:
                     raise RuntimeError("Async plugin register() is not supported during synchronous load")
             if plugin.active_registration is not None:
                 plugin.active_enabled = self._resolve_active_enabled(plugin.key)
-                self.data_revisions.prepare(plugin, candidate=not publish)
+                if not publish:
+                    self.data_revisions.prepare(plugin, candidate=True)
                 plugin.active_runner = ActivePluginRunner(
                     plugin=plugin,
                     registration=plugin.active_registration,
@@ -446,6 +449,13 @@ class PluginManager:
         )
         if candidate.status is not PluginStatus.LOADED:
             return candidate
+        return await self._commit_staged_plugin(candidate, previous)
+
+    async def _commit_staged_plugin(
+        self,
+        candidate: LoadedPlugin,
+        previous: LoadedPlugin,
+    ) -> LoadedPlugin:
         previous_quiesced = False
         try:
             if self._mcp_manager is not None:
@@ -532,6 +542,8 @@ class PluginManager:
         loaded = self.load_plugin(plugin.key)
         if self._mcp_manager is not None:
             await self._mcp_manager.reconcile(self._desired_mcp_configs())
+        if self._active_owner_running and loaded.active_enabled:
+            await self._start_active_plugin(loaded)
         return loaded
 
     async def disable_plugin_runtime(self, key: str) -> LoadedPlugin:
@@ -622,11 +634,16 @@ class PluginManager:
                 scope=plugin.generation_scope,
             )
             plugin.active_runner = runner
+        prepared_data = plugin.data_path is None
+        if prepared_data:
+            self.data_revisions.prepare(plugin, candidate=True)
         plugin.active_error = ""
         try:
             await self._wait_required_mcp(plugin)
             runner.start()
             await runner.wait_ready()
+            if prepared_data:
+                self.data_revisions.commit(plugin)
             runner.control.commit()
             self._watch_active_plugin(plugin, runner)
             logger.info("Active plugin started: %s", plugin.key)
@@ -634,6 +651,10 @@ class PluginManager:
             plugin.active_error = f"{type(exc).__name__}: {exc}"
             runner.control.abort(plugin.active_error)
             await runner.stop()
+            if prepared_data:
+                self.data_revisions.discard(plugin)
+                plugin.data_revision_id = ""
+                plugin.data_path = None
             logger.exception("Active plugin failed to start: %s", plugin.key)
 
     async def _stop_active_plugin(self, plugin: LoadedPlugin) -> None:
@@ -772,18 +793,36 @@ class PluginManager:
             )
             return plugin
         try:
-            loaded = self._activate_manifest(
-                package.manifest,
-                previous=previous,
-                evict=previous is not None,
-                force_enabled=enable,
-            )
+            if previous is not None and previous.status is PluginStatus.LOADED:
+                candidate = self._activate_manifest(
+                    package.manifest,
+                    previous=previous,
+                    evict=True,
+                    force_enabled=enable,
+                    publish=False,
+                )
+                if candidate.status is not PluginStatus.LOADED:
+                    raise RuntimeError(candidate.error or f"Plugin failed to load: {candidate.key}")
+                loaded = await self._commit_staged_plugin(candidate, previous)
+            else:
+                loaded = self._activate_manifest(
+                    package.manifest,
+                    previous=previous,
+                    evict=previous is not None,
+                    force_enabled=enable,
+                )
             if loaded.status != PluginStatus.LOADED:
                 raise RuntimeError(loaded.error or f"Plugin failed to load: {loaded.key}")
             if self._mcp_manager is not None:
                 await self._mcp_manager.reconcile(self._desired_mcp_configs())
+            if previous is None and self._active_owner_running and loaded.active_enabled:
+                await self._start_active_plugin(loaded)
         except Exception:
-            if previous is not None and previous.runtime_instance_id:
+            if (
+                previous is not None
+                and previous.runtime_instance_id
+                and self._plugins.get(previous.key) is not previous
+            ):
                 self._rollback_to_runtime(previous.key, previous.runtime_instance_id)
             self.installer.discard(package)
             raise
@@ -806,7 +845,19 @@ class PluginManager:
             path=path,
         )
         previous = self._plugins.get(key)
-        loaded = self._activate_manifest(manifest, previous=previous, evict=True)
+        if previous is not None and previous.status is PluginStatus.LOADED:
+            candidate = self._activate_manifest(
+                manifest,
+                previous=previous,
+                evict=True,
+                publish=False,
+            )
+            if candidate.status is not PluginStatus.LOADED:
+                self._rollback_to_runtime(key, previous.runtime_instance_id)
+                raise RuntimeError(candidate.error or f"Plugin rollback failed: {key}")
+            loaded = await self._commit_staged_plugin(candidate, previous)
+        else:
+            loaded = self._activate_manifest(manifest, previous=previous, evict=True)
         if loaded.status != PluginStatus.LOADED:
             if previous is not None:
                 self._rollback_to_runtime(key, previous.runtime_instance_id)

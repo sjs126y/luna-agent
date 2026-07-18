@@ -232,10 +232,73 @@ plugins/hello/
 - `ctx.register.memory_provider(name, factory, validator)`
 - `ctx.register.hook(event, callback, priority=100, name="", matcher="*", timeout=None)`
 - `ctx.register.command(CommandEntry)`
+- `ctx.register.active(run=..., resources=ActiveResourceRequest(...))`
 
 `conversation` 和 `notifications` 不是通用核心对象引用：没有对应 capability 的插件无法使用，submit 仍经过 session、Coordinator、ConversationService 和 Delivery 语义。普通插件也不要注册任意 agent role/team；多 Agent 仍然是 core runtime。
 
 `ctx.register.skills()` 支持平铺 `.md` 和 `skills/<name>/SKILL.md`；`ctx.register.mcp()` 支持 YAML/JSON 中的 `servers` 列表。注册只在 PREPARING 阶段开放，ACTIVE 阶段的 MCP 工具变化通过受控 capability refresh 发布新快照。
+
+## 主动插件
+
+主动插件仍是普通 generation，只额外注册一个长期根运行器；它不是 Job/Cron，也不拥有第二套 Capability Snapshot。插件内部可以用 `asyncio.TaskGroup` 组织自己的短期或长期任务，宿主只管理根任务和 generation 生命周期。
+
+```python
+from personal_agent.plugins import ActiveResourceRequest
+
+async def run(ctx):
+    storage = ctx.resources.storage
+    await ctx.runtime.ready()
+    while not ctx.runtime.stop_requested:
+        await ctx.runtime.wait_until_resumed()
+        # discover -> acquire declared resources -> deliver
+        await ctx.runtime.wait_until_stopped()
+
+def register(ctx):
+    ctx.register.active(
+        run=run,
+        resources=ActiveResourceRequest(
+            tools=("read",),
+            mcp={"github": ("list_issues",)},
+            required_mcp_servers=("github",),
+            llm=True,
+            conversation=True,
+            delivery=True,
+            artifacts=True,
+        ),
+        restart_policy="on_failure",
+    )
+```
+
+运行语义：
+
+1. `register()` 只收集能力和 runner，不会启动任务。
+2. 只有 `personal-agent serve` 创建的 Gateway 是 active owner；CLI chat、doctor 和 validate 不启动 runner。
+3. 插件初始化完成后调用 `await ctx.runtime.ready()`。该调用会阻塞到宿主提交 generation；提交后才允许正式发现、调用资源和投递。
+4. Gateway 停止、插件关闭或 generation 退休时，宿主先请求停止根任务，再按逆序关闭 generation scope 中的连接和清理回调。
+
+插件加载与主动执行是两个开关。`plugins.enabled` 决定 Tool/Skill/Hook 等被动能力是否加载；`plugins.config.<key>.active.enabled` 默认 `false`，决定 Gateway 是否启动根 runner。运行中可以使用：
+
+```text
+/plugins active examples/active-heartbeat on
+/plugins active examples/active-heartbeat off
+/plugins active examples/active-heartbeat restart
+```
+
+`ctx.resources` 是 generation-bound facade：
+
+| 端口 | 约束 |
+| --- | --- |
+| `tool.call(name, input)` | 必须精确声明；写入、Shell、后台进程、代码执行和 destructive 工具硬拒绝 |
+| `mcp.call(server, tool, input)` | server 与 remote tool 都必须精确声明；仍经过 Tool Executor、Hook 与审计 |
+| `llm.complete(...)` | 必须声明 `llm=True`，默认复用宿主当前 LLM 配置 |
+| `conversation.submit(...)` | 必须声明并受 active session allowlist 约束，进入 Coordinator |
+| `delivery.send(...)` | 必须声明并受 session allowlist 约束，进入 DeliveryService |
+| `artifacts.create/get` | 必须声明；只能读取该插件自己创建的 Artifact |
+| `storage` | 始终限定在当前插件的数据 revision |
+
+主动调用没有交互式确认通道。资源声明就是宿主给该 generation 的精确非交互授权；未声明调用直接拒绝，所有调用仍通过现有硬安全、Hook、执行与审计管道。当前是受信任的进程内插件模型；若未来开放第三方市场，再在 generation 外增加系统级进程沙箱。
+
+根任务异常退出时按 `never`、`on_failure` 或 `always` 重启；默认退避为 `1/2/5/10/30` 秒，可通过 `active.restart_backoff_seconds` 修改。同一 generation 在 5 分钟内连续失败 5 次会打开熔断，需 `/plugins active <key> restart` 人工恢复。
 
 ## 插件配置
 
@@ -347,11 +410,12 @@ Memory provider 使用专用 registry 注册，不通过通用 hook 创建，避
 data/plugins/
   packages/<plugin-key>/<package-digest>/
   staging/
-  data/<plugin-key>/
+  data/<plugin-key>/current.json
+  data/<plugin-key>/revisions/<runtime-instance>/
   install-state.json
 ```
 
-每个运行实例都有三个身份：`generation_id` 表示包、有效配置与 Plugin API 的组合；`runtime_instance_id` 表示本次存活实例；`snapshot_revision` 表示宿主当前能力视图。更新会先启动 candidate generation，通过校验后原子发布新快照。执行中的 Turn 持有旧 lease，不会中途切换；旧实例在 lease 清空后进入 STOPPED。
+每个运行实例都有三个身份：`generation_id` 表示包、有效配置与 Plugin API 的组合；`runtime_instance_id` 表示本次存活实例；`snapshot_revision` 表示宿主当前能力视图。更新会先准备隔离 module namespace、MCP 与候选数据 revision，再 quiesce v1 并启动 v2。只有 v2 调用 `ready()` 后，宿主才提交数据指针和 Capability Snapshot、放行 v2、停止 v1。失败会丢弃候选 revision 并 resume v1。执行中的 Turn 持有旧 lease，不会中途切换；旧实例在 lease 清空后进入 STOPPED。
 
 普通卸载先发布不包含该插件的新快照，再等待旧 lease 排空并删除 package；插件数据默认保留，只有 `--purge-data` 才删除隔离数据目录。更新保留历史 package，可按 digest 回滚。
 
@@ -394,6 +458,7 @@ Gateway/TUI 运行中使用同一控制面：
 /plugins install /absolute/path/to/plugin
 /plugins reload integrations/github-assistant
 /plugins disable integrations/github-assistant
+/plugins active examples/active-heartbeat on
 /plugins uninstall user/my-plugin
 ```
 

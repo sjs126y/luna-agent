@@ -1,0 +1,10 @@
+schema_version: 1
+key: examples/active-heartbeat
+name: Active Heartbeat Example
+version: "0.1.0"
+description: Minimal Gateway-owned active runner with revisioned storage.
+kind: general
+entrypoint: active_heartbeat:register
+provides: [active]
+tags: [example, active]
+enabled_by_default: false

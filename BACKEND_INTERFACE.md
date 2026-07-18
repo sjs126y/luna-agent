@@ -1077,6 +1077,10 @@ Review worker payload 提供：
 - `generation_id: string`
 - `runtime_instance_id: string`
 - `package_digest: string`
+- `active_enabled: boolean`
+- `active: object`，包含 `state`、`ready`、`started_at`、`ready_at`、`last_heartbeat`、`restart_count`、`quiescing`、`stop_requested`
+- `active_error: string`
+- `active_circuit_open: boolean`
 
 插件配置位于 `plugins.config.<plugin-key>`。配置诊断会递归遮蔽键名中的 token、secret、password、authorization 和 api key；前端不应尝试从诊断 payload 恢复真实密钥。
 
@@ -1101,8 +1105,10 @@ Review worker payload 提供：
 - `install_revision: integer`
 - `installed_packages: integer`
 - `pending_removals: list[string]`
+- `active_owner_running: boolean`
+- `active_plugins: list[object]`，稳定字段为 `key`、`enabled`、`state`、`ready`、`restart_count`、`circuit_open`、`error`
 
-核心 slash command registry 新增 `/plugins` 及 `list/info/install/reload/enable/disable/rollback/uninstall` 子命令。修改操作的回执 `kind="plugins"`，失败为 `kind="plugins_error"`；payload 包含 `action`、`plugin_key`、`status`、`generation_id`、`runtime_instance_id` 和最新 `capabilities`。
+核心 slash command registry 提供 `/plugins` 及 `list/info/install/reload/enable/disable/active/rollback/uninstall` 子命令。`active` 用法为 `/plugins active <key> <on|off|restart>`。修改操作的回执 `kind="plugins"`，失败为 `kind="plugins_error"`；payload 包含 `action`、`plugin_key`、`status`、`generation_id`、`runtime_instance_id`、`active_enabled`、`active` 和最新 `capabilities`。
 
 ## 14. MCP Runtime Diagnostics
 

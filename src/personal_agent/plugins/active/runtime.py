@@ -71,6 +71,9 @@ class ActiveRuntimeControl:
     async def wait_until_resumed(self) -> None:
         await self._resume.wait()
 
+    async def wait_until_stopped(self) -> None:
+        await self._stop.wait()
+
     def request_stop(self) -> None:
         self.state = ActiveRunnerState.STOPPING
         self._stop.set()

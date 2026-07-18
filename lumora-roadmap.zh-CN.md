@@ -29,7 +29,7 @@
 | --- | :---: | --- |
 | MCP Runtime | Core complete | OAuth / sampling / elicitation 按需求补充 |
 | Memory | Refactor complete | 知识 RAG 独立成插件，reranker 按需实现 |
-| 被动插件 | Runtime complete | 插件生态、依赖策略与主动生命周期按需推进 |
+| 插件 Runtime | Active runtime complete | 插件生态、第三方依赖与系统级沙箱按需推进 |
 | 出站多模态 | Foundation complete | 微信/QQ 实机反馈与格式体验 |
 | Conversation Runtime | Complete | 继续真实使用与性能观测 |
 | 主动决策 | Planned | 候选、冷却、静默时间、预算与反馈 |
@@ -40,7 +40,7 @@ Lumora 已经有完整的 Agent 基础：工具注册、工具集和渐进式工
 
 下一阶段不该重写这些系统，而是改善生命周期边界：
 
-1. **已完成**：被动插件具备版本化安装、不可变 package、generation、能力快照、Turn lease、旧实例排空、热更新、回滚、禁用与卸载；主动插件决策生命周期后续单独设计。
+1. **已完成**：插件具备版本化安装、不可变 package、generation、能力快照、Turn lease、主动根任务、资源 facade、数据 revision、保守热更新、回滚、禁用与卸载；主动决策策略后续单独设计。
 2. **已完成**：MCP transport、单 server runtime、连接恢复、动态工具快照和结构化结果。
 3. **已完成基础**：完整的“入站媒体 -> 模型/工具 -> Artifact -> 出站媒体”路径；后续按真实平台反馈补格式与 caption 体验。
 4. **已完成基础**：统一 turn 分发、Delivery/Outbox、Cron 正式提交和主动插件端口；主动决策策略仍待推进。
@@ -165,7 +165,7 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 | 方向 | 当前基础 | 主要缺口 | 状态 |
 | --- | --- | --- | --- |
 | MCP runtime | stdio、Streamable HTTP、重连、动态工具、结构化结果、诊断 | OAuth、sampling、elicitation 仅按需补充 | 核心完成 |
-| 被动插件 | `PluginRuntimeContext`、`ctx.register.*`、版本安装、快照路由、Turn lease、MCP reconcile、资源排空、回滚和卸载 | 插件索引、第三方依赖策略和主动生命周期按需求推进 | Runtime 完成 |
+| 插件 Runtime | `PluginRuntimeContext`、`ctx.register.*`、主动 runner、资源 facade、版本安装、快照路由、Turn lease、MCP reconcile、数据 revision、资源排空、回滚和卸载 | 插件索引、第三方依赖策略与系统级沙箱按需求推进 | Active Runtime 完成 |
 | 出站多模态 | ArtifactStore、`artifact_from_file`、`response_attach`、结构化 Outcome、能力规划、分片 Outbox 和四平台原生发送 | caption、格式转换和真实平台限制按使用反馈补充 | 基础完成 |
 | 主动能力 | Cron、插件 submit、统一 Coordinator、Delivery/Outbox 已完成 | 候选生成、去重、冷却、静默时间和决策策略 | 基础完成 |
 | Memory / RAG | internal snapshot、buffer、Lumora/Mem0、backend factory、local/remote Qdrant、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件，reranker 按需实现 | 记忆重构完成 |
@@ -179,12 +179,12 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
         -> 主动提醒和后台结果投递
 
 插件 Runtime 与热重载（已完成）
-  -> 插件发现、版本安装、快照切换、回滚与卸载
-     -> 后续主动插件生命周期和插件生态
+  -> 插件发现、版本安装、主动 runner、资源端口、保守快照切换、回滚与卸载
+     -> 后续主动决策策略和插件生态
 
 Memory / RAG 拆分（独立领域）
   -> 长期记忆更新审计
   -> 外部知识证据检索
 ```
 
-出站多模态与插件热重载基础链路都已经完成。下一步更自然的产品方向是主动决策，或继续依据真实长对话、第三方插件和平台联调反馈做稳定化。主动能力可直接复用现有 `PluginRuntimeContext`、runtime-owned tasks、CapabilitySnapshot、Coordinator、Artifact、Delivery 和 Outbox。
+出站多模态、插件热重载与主动插件运行底座都已经完成。下一步更自然的产品方向是用真实插件验证主动决策策略，或继续依据长对话、第三方插件和平台联调反馈做稳定化。主动策略可直接复用现有 `PluginRuntimeContext`、generation scope、资源 facade、CapabilitySnapshot、Coordinator、Artifact、Delivery 和 Outbox。

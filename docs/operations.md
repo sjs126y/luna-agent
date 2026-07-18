@@ -106,6 +106,8 @@ uv run personal-agent doctor
 
 更新会发布新 Capability Snapshot。新 Turn 立即使用新 generation，执行中的 Turn 保持旧 lease；`plugin_runtime.active_leases` 与 `retired_revisions` 可以判断旧实例是否仍在排空。普通卸载保留 `data/plugins/data/<plugin-key>`，只有显式 `--purge-data` 才删除数据。
 
+主动 runner 只由 Gateway 管理，默认关闭。`/plugins active <key> on|off|restart` 可在运行中控制；`/plugins info <key>` 和 `plugin_runtime.active_plugins[]` 会显示 `state`、`ready`、`restart_count`、`circuit_open` 与最近错误。热更新时 v2 未 ready 不会替换 v1，候选数据 revision 也不会成为 current。
+
 ## Doctor 结果怎么读
 
 `doctor` 默认输出启动体检摘要，适合普通用户判断能不能运行；`doctor --verbose` 输出完整开发诊断，包含 runtime、effective config、插件、MCP、Gateway、工具和 sandbox 明细；`doctor --json` 给脚本或前端消费完整结构化数据。
