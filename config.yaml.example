@@ -210,6 +210,18 @@ plugins:
       write_enabled: false
       connect_timeout_seconds: 60
       call_timeout_seconds: 120
+      active:
+        enabled: false
+        sessions: []
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+      watch:
+        pull_requests: true
+        issues: true
+        commits: true
+        workflows: true
+        poll_interval_seconds: 300
+        per_page: 20
+        notify_on_start: false
     integrations/developer-docs:
       command: "npx"
       package: "@upstash/context7-mcp"

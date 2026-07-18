@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,8 +56,89 @@ def test_github_assistant_registers_mcp_skills_command_and_hook(tmp_path, monkey
         "repo-summary", "review-pr", "triage-issues", "release-notes",
     }
     assert manager.get_command("github-status", scope="cli") is not None
+    assert manager.get_command("github-watch-status", scope="cli") is not None
+    assert plugin.active_registration is not None
+    assert plugin.active_registration.resources.mcp["github"] == (
+        "list_pull_requests",
+        "list_issues",
+        "list_commits",
+        "actions_list",
+        "list_workflow_runs",
+    )
     assert len(manager.hook_manager.registrations(HookEvent.PRE_TOOL_USE)) == 1
     manager.unload_plugin(key)
+
+
+@pytest.mark.asyncio
+async def test_github_watch_baselines_then_submits_repository_change(tmp_path, monkeypatch):
+    key = "integrations/github-assistant"
+    manager = _manager(tmp_path, monkeypatch, key, {
+        "repositories": ["openai/codex"],
+        "active": {"enabled": False, "sessions": ["wechat:c1:u1"]},
+        "watch": {
+            "issues": False,
+            "commits": False,
+            "workflows": False,
+            "poll_interval_seconds": 30,
+        },
+    })
+    plugin = next(item for item in manager.list_plugins() if item.key == key)
+    storage = _JsonStorage()
+    conversation = _Conversation()
+    mcp = _MCP([
+        [{"number": 1, "title": "First", "state": "open", "updated_at": "t1"}],
+        [
+            {"number": 1, "title": "First", "state": "open", "updated_at": "t1"},
+            {"number": 2, "title": "Second", "state": "open", "updated_at": "t2"},
+        ],
+    ])
+    ctx = SimpleNamespace(resources=SimpleNamespace(storage=storage, mcp=mcp, conversation=conversation))
+    config = plugin.module.GitHubAssistantConfig.model_validate({
+        "repositories": ["openai/codex"],
+        "active": {"sessions": ["wechat:c1:u1"]},
+        "watch": {"issues": False, "commits": False, "workflows": False, "poll_interval_seconds": 30},
+    })
+    watcher = plugin.module.GitHubWatcher(ctx, config)
+
+    assert await watcher.poll_once() == []
+    events = await watcher.poll_once()
+
+    assert len(events) == 1
+    assert events[0]["item_key"] == "2"
+    assert len(conversation.requests) == 1
+    assert conversation.requests[0]["request_id"].startswith("github-watch:")
+    assert storage.values["watch-state.json"]["pending_events"] == []
+    manager.unload_plugin(key)
+
+
+class _JsonStorage:
+    def __init__(self):
+        self.values = {}
+
+    def read_json(self, path, *, default=None, schema_version=None):
+        return self.values.get(path, default)
+
+    def write_json_atomic(self, path, value):
+        self.values[path] = value
+
+
+class _MCP:
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+
+    async def call(self, server, tool, arguments):
+        assert server == "github"
+        assert tool == "list_pull_requests"
+        return SimpleNamespace(status="success", content=self.payloads.pop(0), error="")
+
+
+class _Conversation:
+    def __init__(self):
+        self.requests = []
+
+    async def submit(self, **kwargs):
+        self.requests.append(kwargs)
+        return "accepted"
 
 
 @pytest.mark.asyncio
