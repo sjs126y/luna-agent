@@ -76,6 +76,28 @@ async def test_install_and_update_use_immutable_packages(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_rollback_imports_handler_from_selected_immutable_package(tmp_path):
+    manager = _manager(tmp_path)
+    source = _source(tmp_path / "source", version="1.0.0", value="one")
+
+    first = await manager.install_plugin_runtime(source)
+    first_digest = first.package_digest
+    _source(source, version="2.0.0", value="two")
+    await manager.install_plugin_runtime(source)
+
+    rolled_back = await manager.rollback_plugin_runtime(first.key, first_digest)
+    route = manager.capability_store.current.view().resolve(
+        CapabilityKind.TOOL,
+        "installed_value",
+    )
+    entry = manager.capability_payload(route.binding_id)
+
+    assert rolled_back.manifest.version == "1.0.0"
+    assert rolled_back.package_digest == first_digest
+    assert await entry.handler() == "one"
+
+
+@pytest.mark.asyncio
 async def test_uninstall_waits_for_snapshot_lease_and_keeps_data_by_default(tmp_path):
     manager = _manager(tmp_path)
     source = _source(tmp_path / "source", version="1.0.0", value="one")

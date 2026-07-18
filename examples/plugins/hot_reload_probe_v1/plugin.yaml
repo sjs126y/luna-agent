@@ -1,0 +1,10 @@
+schema_version: 1
+key: examples/hot-reload-probe
+name: Hot Reload Probe
+version: "1.0.0"
+description: Manual probe for plugin generation and snapshot switching.
+kind: development
+entrypoint: hot_reload_probe:register
+provides: [tool, command]
+tags: [example, hot-reload, test]
+enabled_by_default: true

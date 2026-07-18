@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1092%20passed-2EA44F" alt="1092 tests passed">
+  <img src="https://img.shields.io/badge/tests-1093%20passed-2EA44F" alt="1093 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
 </p>
 
@@ -30,7 +30,8 @@
 - 新增本地目录、ZIP、TAR 的版本化安装，经过 staging、路径/链接/大小安全检查后进入不可变 package digest 目录；支持更新、回滚、延迟卸载和显式数据清除。
 - 核心 `personal-agent plugins` CLI 与运行中 `/plugins` 命令共享控制面；Runtime health 新增 snapshot revision、lease、generation、安装状态和 pending removal 诊断。
 - 新增隔离 `ctx.storage` 与 runtime-owned `ctx.tasks` 作为主动插件生命周期预留，本阶段不开放主动决策调度。
-- 完整回归：`1092 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
+- 新增 v1/v2 手工探针与实机清单；隔离生命周期验证同时发现并修复不可变包回滚时 `sys.path` 仍优先命中新版 handler 的问题。
+- 完整回归：`1093 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
 
 ## 2026-07-18：核心工具质量收口
 

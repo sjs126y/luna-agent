@@ -1107,8 +1107,12 @@ class PluginManager:
         entrypoint = manifest.entrypoint
         module_name, _, func_name = entrypoint.partition(":")
         for path in self._import_paths_for_manifest(manifest):
-            if str(path) not in sys.path:
-                sys.path.insert(0, str(path))
+            path_text = str(path)
+            # Installed generations live in separate immutable directories. A rollback
+            # must make the selected generation win over paths retained from newer ones.
+            while path_text in sys.path:
+                sys.path.remove(path_text)
+            sys.path.insert(0, path_text)
         module = importlib.import_module(module_name)
         fn = getattr(module, func_name) if func_name else None
         return module, fn
