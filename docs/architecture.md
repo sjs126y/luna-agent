@@ -624,6 +624,10 @@ Tool registry 汇总：
 
 模型只能调用 registry 暴露的工具。
 
+Registry 不会把全部 schema 塞进每一轮。17 个日常核心工具直接暴露；calculator、task、workflow、worktree、多 Agent 组合、附件工具、MCP 和插件工具继续注册，但通过 `tool_search / tool_describe / tool_call` 按需发现。延迟工具仍走同一个 Executor 和安全链路。完整边界见 [Core Agent Tools](core-tools.md)。
+
+文件搜索使用线程化的有界扫描内核：进入目录前剪枝，达到结果、条目或时间预算立即停止。文件读取支持行窗口；写入采用原子替换；Bash 持续排空子进程管道但只保留有限输出，避免单个工具冻结 Gateway 或耗尽内存。
+
 ### Tool executor
 
 Tool executor 是统一执行入口。

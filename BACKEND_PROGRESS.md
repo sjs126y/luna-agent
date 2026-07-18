@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1054%20passed-2EA44F" alt="1054 tests passed">
+  <img src="https://img.shields.io/badge/tests-1065%20passed-2EA44F" alt="1065 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
 </p>
 
@@ -20,6 +20,15 @@
 </div>
 
 ---
+
+## 2026-07-18：核心工具质量收口
+
+- 真实定位 Codex Responses 中转站差异：非流式响应只有 encrypted reasoning，流式 SSE 才包含 `response.output_text.delta`；`codex_responses` 现在强制使用 SSE，真实最小请求恢复返回“测试成功”。
+- 新增线程化有界文件扫描内核；`glob` / `grep` 在进入目录前剪枝，受结果数、扫描条目和时间预算约束，不再阻塞 Gateway、微信入站、`/stop` 或 `/steer`。
+- `/home/sujinsheng` 的 `glob('*')` 实测由约 379 秒降至约 0.02 秒，100 个结果后立即停止。
+- `read` 新增 `offset/limit` 行窗口并拒绝二进制；`write/edit` 使用 UTF-8 字节限制和原子替换；Bash 输出改为有界持续排空；Web Fetch 增加逐跳 SSRF、重定向、内容类型和响应大小边界。
+- 常驻工具面从几乎全部内置能力收敛为 17 个高频核心工具加 3 个工具桥接入口；其余能力不删除，通过 `tool_search` 按需发现。
+- 完整回归：`1065 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
 
 ## 2026-07-18：主干状态与项目规模
 

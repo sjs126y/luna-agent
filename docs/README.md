@@ -30,7 +30,7 @@
     <td width="50%" valign="top"><strong>我准备运行它</strong><br><br><a href="configuration.md">配置说明</a><br><a href="platforms.md">平台接入</a><br><a href="operations.md">运维与排错</a></td>
   </tr>
   <tr>
-    <td valign="top"><strong>我准备开发它</strong><br><br><a href="architecture.md">架构说明</a><br><a href="plugins.md">插件系统</a><br><a href="mcp-runtime-design.md">MCP Runtime</a></td>
+    <td valign="top"><strong>我准备开发它</strong><br><br><a href="architecture.md">架构说明</a><br><a href="core-tools.md">核心工具</a><br><a href="plugins.md">插件系统</a><br><a href="mcp-runtime-design.md">MCP Runtime</a></td>
     <td valign="top"><strong>我想了解项目历史</strong><br><br><a href="../PROJECT_EVOLUTION.md">项目演进记录</a><br><a href="../lumora-roadmap.zh-CN.md">后续架构方向</a><br><a href="../TODO.md">当前待办</a></td>
   </tr>
 </table>
@@ -48,6 +48,7 @@ flowchart TD
     Start --> Platform[Platforms]
     Start --> Ops[Operations]
     Dev --> Plugin[Plugins]
+    Dev --> Tools[Core Tools]
     Dev --> MCP[MCP Runtime]
     Arch --> Contract[Backend Interface]
     Plugin --> Contract
