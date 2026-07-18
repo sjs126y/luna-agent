@@ -19,7 +19,7 @@ class ContextEngine(ABC):
     # Per-session state (set/updated by subclasses)
     last_prompt_tokens: int = 0
     threshold_tokens: int = 0
-    context_length: int = 64000
+    context_length: int = 256000
 
     @abstractmethod
     def should_compress(self, token_count: int, messages: list[dict]) -> bool:

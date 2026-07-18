@@ -130,7 +130,7 @@ def test_builtin_compression_registry_registers_aliases():
 def test_compressor_defaults():
     c = ContextCompressor()
     assert c.name == "compressor"
-    assert c.threshold_tokens == int(64000 * 0.6)
+    assert c.threshold_tokens == int(256000 * 0.6)
     assert c.tail_token_budget == 20000
     assert c.max_summary_tokens == 500
     assert c._previous_summary is None
@@ -156,31 +156,31 @@ def test_should_compress_below_threshold():
 
 
 def test_should_compress_above_threshold():
-    c = ContextCompressor(threshold_ratio=0.01)  # threshold = 640, very low
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01)  # threshold = 640
     msgs = _make_long_history(20)
     assert c.should_compress(50000, msgs) is True
 
 
 def test_should_compress_after_two_ineffective():
-    c = ContextCompressor(threshold_ratio=0.01)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01)
     c._ineffective_compression_count = 2
     assert c.should_compress(50000, _make_long_history(30)) is False
 
 
 def test_should_compress_cooldown():
-    c = ContextCompressor(threshold_ratio=0.01)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01)
     c._summary_failure_cooldown_until = time.time() + 60
     assert c.should_compress(50000, _make_long_history(30)) is False
 
 
 def test_should_compress_cooldown_expired():
-    c = ContextCompressor(threshold_ratio=0.01)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01)
     c._summary_failure_cooldown_until = time.time() - 1
     assert c.should_compress(50000, _make_long_history(30)) is True
 
 
 def test_should_compress_too_few_messages():
-    c = ContextCompressor(threshold_ratio=0.01, protect_head=2, protect_tail=6)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01, protect_head=2, protect_tail=6)
     # only 5 messages, need > 2+6+2 = 10
     assert c.should_compress(50000, _make_long_history(3)) is False
 
@@ -439,7 +439,7 @@ async def test_compress_full_summary():
         finish_reason="end_turn", stop_reason="end_turn", model="test",
     )
 
-    c = ContextCompressor(threshold_ratio=0.01, protect_head=2, protect_tail=2)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01, protect_head=2, protect_tail=2)
     c.last_prompt_tokens = 50000
 
     msgs = _make_long_history(20)  # 40 messages, plenty
@@ -465,7 +465,7 @@ async def test_compress_summary_is_safe_for_anthropic_messages():
         text="压缩摘要", tool_calls=[], usage={},
         finish_reason="end_turn", stop_reason="end_turn", model="test",
     )
-    c = ContextCompressor(threshold_ratio=0.01, protect_head=2, protect_tail=2)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01, protect_head=2, protect_tail=2)
     c.last_prompt_tokens = 50000
 
     compressed = await c.compress(_make_long_history(20), "", mock_transport, protect_head=2, protect_tail=2)
@@ -485,7 +485,7 @@ async def test_compress_failure_sets_cooldown():
     mock_transport = AsyncMock()
     mock_transport.call.side_effect = RuntimeError("boom")
 
-    c = ContextCompressor(threshold_ratio=0.01, protect_head=2, protect_tail=2)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01, protect_head=2, protect_tail=2)
     c.last_prompt_tokens = 50000
 
     msgs = _make_long_history(20)
@@ -507,7 +507,7 @@ async def test_compress_ineffective_detection():
         finish_reason="end_turn", stop_reason="end_turn", model="test",
     )
 
-    c = ContextCompressor(threshold_ratio=0.01, protect_head=2, protect_tail=2)
+    c = ContextCompressor(context_length=64_000, threshold_ratio=0.01, protect_head=2, protect_tail=2)
     c.last_prompt_tokens = 50000  # before compression
 
     msgs = _make_long_history(20)

@@ -9,7 +9,7 @@ agent:
   max_tool_calls_per_turn: 40
 
 llm:
-  context_window: 0               # 0 = 根据模型名自动推断；中转站自定义模型名可填真实窗口，例如 1000000
+  context_window: 0               # 0 = 按模型名推断，未知模型默认 256000；可显式填真实窗口
 
 execution:
   mode: "ask-first"               # read-only | ask-first | local-auto | full-auto

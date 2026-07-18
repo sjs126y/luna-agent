@@ -3,6 +3,7 @@
 import pytest
 
 from personal_agent.context_budget import build_context_budget, compose_context_text, estimate_context_budget
+from personal_agent.llm.provider import _detect_context_window
 
 
 def test_context_budget_splits_tools_skills_memory_and_mcp():
@@ -53,6 +54,17 @@ def test_context_budget_splits_tools_skills_memory_and_mcp():
 
 def test_compose_context_text_skips_empty_parts():
     assert compose_context_text("skills", "", "memory") == "skills\nmemory"
+
+
+@pytest.mark.parametrize(("model", "expected"), [
+    ("gpt-5.6-terra", 400_000),
+    ("gpt-4.1", 1_000_000),
+    ("claude-sonnet", 200_000),
+    ("custom-256k", 256_000),
+    ("unknown-future-model", 256_000),
+])
+def test_context_window_detection_uses_updated_families_and_modern_default(model, expected):
+    assert _detect_context_window(model) == expected
 
 
 @pytest.mark.asyncio

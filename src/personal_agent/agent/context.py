@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTEXT_LIMIT = 64000    # DeepSeek context window
+CONTEXT_LIMIT = 256000   # fallback when provider metadata is unavailable
 THRESHOLD = 0.6          # compress at 60% usage
 PROTECT_FIRST = 2        # messages at head to protect
 PROTECT_LAST = 6         # messages at tail to protect
