@@ -407,6 +407,37 @@ class TestFileReadIntegration:
         r = await _file_read(str(o))
         assert "outside" in r.lower()
 
+    @pytest.mark.asyncio
+    async def test_read_supports_bounded_line_windows(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        path = tmp_path / "long.txt"
+        path.write_text("".join(f"line-{index}\n" for index in range(1, 11)), encoding="utf-8")
+        init_sandbox([tmp_path], [])
+
+        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+
+        first = await _file_read(str(path), offset=1, limit=3)
+        second = await _file_read(str(path), offset=4, limit=3)
+
+        assert first.startswith("line-1\nline-2\nline-3\n")
+        assert "continue with offset=4" in first
+        assert second.startswith("line-4\nline-5\nline-6\n")
+
+    @pytest.mark.asyncio
+    async def test_read_rejects_binary_files(self, tmp_path: Path):
+        from personal_agent.tools.sandbox import init_sandbox
+
+        path = tmp_path / "binary.dat"
+        path.write_bytes(b"hello\x00world")
+        init_sandbox([tmp_path], [])
+
+        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+
+        result = await _file_read(str(path))
+
+        assert "binary files are not supported" in result
+
 
 class TestFileWriteIntegration:
     @pytest.mark.asyncio

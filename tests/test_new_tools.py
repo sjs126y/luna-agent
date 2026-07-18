@@ -461,6 +461,36 @@ async def test_file_edit_size_limit_and_sandbox_block(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_file_edit_rejects_existing_file_above_edit_limit(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import file_edit
+    from personal_agent.tools.sandbox import init_sandbox
+
+    path = tmp_path / "large.txt"
+    path.write_text("0123456789", encoding="utf-8")
+    init_sandbox([tmp_path], [])
+    monkeypatch.setattr(file_edit, "_MAX_WRITE_BYTES", 5)
+
+    result = await file_edit._file_edit("replace", str(path), old_text="0", new_text="x")
+
+    assert "existing file exceeds max editable size" in result
+    assert path.read_text(encoding="utf-8") == "0123456789"
+
+
+@pytest.mark.asyncio
+async def test_file_write_limit_uses_utf8_bytes(tmp_path: Path, monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import file_write
+    from personal_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    monkeypatch.setattr(file_write, "_MAX_WRITE_BYTES", 5)
+
+    result = await file_write._file_write("unicode.txt", "你好")
+
+    assert "6 bytes" in result
+    assert not (tmp_path / "unicode.txt").exists()
+
+
+@pytest.mark.asyncio
 async def test_grep_literal_treats_pattern_as_plain_text(tmp_path: Path):
     from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
     from personal_agent.tools.sandbox import init_sandbox
@@ -1033,8 +1063,14 @@ async def test_web_fetch_rechecks_redirect_target(monkeypatch):
     from personal_agent.plugins.builtin.tools.builtin import web_fetch
 
     class FakeResponse:
-        url = "http://127.0.0.1/admin"
-        text = "<html><body>secret</body></html>"
+        status_code = 302
+        headers = {"location": "http://127.0.0.1/admin"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
 
         def raise_for_status(self):
             return None
@@ -1049,7 +1085,7 @@ async def test_web_fetch_rechecks_redirect_target(monkeypatch):
         async def __aexit__(self, *args):
             return None
 
-        async def get(self, *args, **kwargs):
+        def stream(self, *args, **kwargs):
             return FakeResponse()
 
     monkeypatch.setattr(web_fetch.httpx, "AsyncClient", FakeClient)
@@ -1062,3 +1098,48 @@ async def test_web_fetch_rechecks_redirect_target(monkeypatch):
 
     assert "redirected URL blocked" in result
     assert "loopback" in result
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_rejects_oversized_response(monkeypatch):
+    from personal_agent.plugins.builtin.tools.builtin import web_fetch
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/plain; charset=utf-8"}
+        encoding = "utf-8"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_bytes(self):
+            yield b"x" * (web_fetch._MAX_RESPONSE_BYTES + 1)
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def stream(self, *args, **kwargs):
+            return FakeResponse()
+
+    async def checked_url(_url):
+        return None
+
+    monkeypatch.setattr(web_fetch.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(web_fetch, "_checked_url", checked_url)
+
+    result = await web_fetch._web_fetch("https://example.com")
+
+    assert "response exceeds maximum size" in result
