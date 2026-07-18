@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1076%20passed-2EA44F" alt="1076 tests passed">
+  <img src="https://img.shields.io/badge/tests-1078%20passed-2EA44F" alt="1078 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
 </p>
 
@@ -27,10 +27,11 @@
 - 新增线程化有界文件扫描内核；`glob` / `grep` 在进入目录前剪枝，受结果数、扫描条目和时间预算约束，不再阻塞 Gateway、微信入站、`/stop` 或 `/steer`。
 - 修复宽泛搜索的安全误判：`*.jdg` 等无匹配查询不会因为递归路过受保护的 `pyproject.toml` 而触发整轮硬拒绝；明确搜索受保护文件仍会拒绝并进入无工具收尾。
 - `glob` 新增遍历期 `max_depth` 剪枝与显式隐藏项开关；新增核心 `list_directory` 单层分页浏览和 `file_info` 元数据检查，家目录浏览不再需要借助受限 Bash。
+- 修复单个模型响应重复 `tool_use_id`：主 Agent 在构造消息前合并，子 Agent 和 Executor 继续防御；相同 ID 只执行首项并记录 `duplicate_tool_call_suppressed`，不同 ID 的合法重复操作不受影响。
 - `/home/sujinsheng` 的 `glob('*')` 实测由约 379 秒降至约 0.02 秒，100 个结果后立即停止。
 - `read` 新增 `offset/limit` 行窗口并拒绝二进制；`write/edit` 使用 UTF-8 字节限制和原子替换；Bash 输出改为有界持续排空；Web Fetch 增加逐跳 SSRF、重定向、内容类型和响应大小边界。
 - 常驻工具面从几乎全部内置能力收敛为 19 个高频核心工具加 3 个工具桥接入口；其余能力不删除，通过 `tool_search` 按需发现。
-- 完整回归：`1076 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
+- 完整回归：`1078 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
 
 ## 2026-07-18：主干状态与项目规模
 

@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/phases-13-7C3AED" alt="13 phases">
   <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-0A84FF" alt="75811 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1076%20passed-2EA44F" alt="1076 tests passed">
+  <img src="https://img.shields.io/badge/tests-1078%20passed-2EA44F" alt="1078 tests passed">
 </p>
 
 <p>
@@ -28,7 +28,7 @@
 - 分支：`main`
 - 本次统计基准：`f3da3d7 Refresh project docs and remove obsolete plans`
 - 基准提交数：`551`
-- 最近全量验证：`uv run pytest -q`，结果 `1076 passed, 1 warning`
+- 最近全量验证：`uv run pytest -q`，结果 `1078 passed, 1 warning`
 
 <details>
 <summary><strong>展开早期阶段：v0.1 - v0.7</strong></summary>
@@ -392,7 +392,7 @@
 | Markdown 文档 | 39 | 6,468 |
 | Git 已跟踪文件总数 | 407 | - |
 
-项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1076 passed`。
+项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1078 passed`。
 
 ### 2026-07-18 文档收敛
 

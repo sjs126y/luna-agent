@@ -6,7 +6,7 @@
 
 ![Core](https://img.shields.io/badge/core-19%20tools-2EA44F)
 ![Bridge](https://img.shields.io/badge/tool%20bridge-3%20entries-2563EB)
-![Tests](https://img.shields.io/badge/tests-1076%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-1078%20passed-2EA44F)
 
 [项目首页](../README.md) · [文档中心](README.md) · [架构说明](architecture.md) · [安全边界](capabilities-and-boundaries.md)
 
@@ -80,4 +80,5 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 - `web_search` 当前依赖 Bing 页面解析并使用 DDGS fallback，不需要付费 API，但结果质量和站点结构有关。
 - 延迟工具依赖 `tool_search` 的检索质量；工具描述、标签和中文别名需要持续维护。
 - 工具线程超时后不能强制杀死 Python 线程，因此扫描内核自身也必须检查时间和条目预算。
+- 单次模型响应中的重复 `tool_use_id` 会在写入对话前被合并；相同 ID 只执行第一项，冲突参数不会执行。不同 ID 的相同调用保持原有语义。
 - 受保护路径、精确资源授权和审计规则在核心与按需工具之间完全一致。
