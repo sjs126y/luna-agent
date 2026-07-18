@@ -302,14 +302,14 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
     values = parts[1:]
     try:
         if action == "list":
-            reports = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
+            reports = manager.queries.list_plugins()
             lines = [
                 f"- {item['key']}: {item['status']} generation={item.get('generation_id') or '-'}"
                 for item in reports
             ]
             return "当前插件:\n" + ("\n".join(lines) if lines else "- 无"), {"plugins": reports}
         if action == "info" and len(values) == 1:
-            report = manager.doctor_plugin(values[0])
+            report = manager.queries.plugin_info(values[0])
             return json.dumps(report, ensure_ascii=False, indent=2), report
         if action == "install" and len(values) == 1:
             plugin = await manager.install_plugin_runtime(values[0])
@@ -358,7 +358,7 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
             if getattr(plugin, "active_runner", None) is not None
             else {}
         ),
-        "capabilities": manager.capability_health(),
+        "capabilities": manager.queries.runtime_health(),
     }
     return (
         f"插件操作完成: {action} {plugin.key}\n"

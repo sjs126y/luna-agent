@@ -288,7 +288,7 @@ class AppRuntime:
             "query": query_health,
             "execution": _execution_health_snapshot(self.settings),
             "plugins": len(self.plugin_manager.list_plugins()),
-            "plugin_runtime": self.plugin_manager.capability_health(),
+            "plugin_runtime": self.plugin_manager.queries.runtime_health(),
             "hooks": self.hook_manager.health_snapshot(),
             "cached_agents": len(self.conversation_service.agent_cache),
             "closed": self.closed,

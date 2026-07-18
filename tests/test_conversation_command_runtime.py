@@ -154,15 +154,18 @@ async def test_plugins_command_controls_live_runtime():
     )
 
     class Plugins:
-        def list_plugins(self):
-            return [plugin]
+        def __init__(self):
+            self.queries = self
 
-        def doctor_plugin(self, key):
-            return {
-                "key": key,
+        def list_plugins(self):
+            return [{
+                "key": plugin.key,
                 "status": "LOADED",
                 "generation_id": plugin.generation_id,
-            }
+            }]
+
+        def plugin_info(self, key):
+            return {"key": key, "status": "LOADED", "generation_id": plugin.generation_id}
 
         async def reload_plugin_runtime(self, key):
             assert key == plugin.key
@@ -173,7 +176,7 @@ async def test_plugins_command_controls_live_runtime():
             plugin.active_enabled = enabled
             return plugin
 
-        def capability_health(self):
+        def runtime_health(self):
             return {"current_revision": 4, "active_leases": 0}
 
     runtime.plugin_manager = Plugins()

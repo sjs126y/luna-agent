@@ -39,7 +39,6 @@ from personal_agent.plugins.runtime import (
     CapabilitySnapshotBuilder,
     CapabilityStore,
     PluginRuntimeState,
-    PluginRuntimeManager,
 )
 from personal_agent.plugins.runtime.identity import (
     generation_id,
@@ -108,7 +107,9 @@ class PluginManager:
             default=None,
         )
         self.capability_store = CapabilityStore(on_retire=self._retire_snapshot)
-        self.runtime_manager = PluginRuntimeManager(self)
+        from personal_agent.plugins.query import PluginQueryService
+
+        self.queries = PluginQueryService(self)
 
         configured_dirs = list(getattr(settings, "plugins_dirs", []) or [])
         requested_dirs = list(plugin_dirs) if plugin_dirs is not None else configured_dirs
@@ -897,41 +898,6 @@ class PluginManager:
     def capability_payload(self, binding_id: str) -> Any | None:
         return self._binding_payloads.get(binding_id)
 
-    def capability_health(self) -> dict[str, Any]:
-        data = self.capability_store.health_snapshot()
-        runtime_counts: dict[str, int] = {}
-        for plugin in self._runtime_records.values():
-            state = plugin.runtime_state.value
-            runtime_counts[state] = runtime_counts.get(state, 0) + 1
-        data.update({
-            "active_plugin_owners": sorted(
-                owner for owner in self._active_bindings if owner != "core"
-            ),
-            "payload_count": len(self._binding_payloads),
-            "runtime_counts": runtime_counts,
-            "install_revision": self.install_store.revision,
-            "installed_packages": len(self.install_store.packages()),
-            "pending_removals": sorted(self._pending_package_removals),
-            "active_owner_running": self._active_owner_running,
-            "active_plugins": [
-                {
-                    "key": plugin.key,
-                    "enabled": plugin.active_enabled,
-                    "error": plugin.active_error,
-                    "restart_count": plugin.active_restart_count,
-                    "circuit_open": plugin.active_circuit_open,
-                    **(
-                        plugin.active_runner.control.safe_summary()
-                        if plugin.active_runner is not None
-                        else {"state": "unavailable"}
-                    ),
-                }
-                for plugin in self._plugins.values()
-                if plugin.active_registration is not None
-            ],
-        })
-        return data
-
     def refresh_mcp_tools(
         self,
         server_name: str,
@@ -1130,72 +1096,6 @@ class PluginManager:
     def list_plugins(self) -> list[LoadedPlugin]:
         return [self._plugins[key] for key in sorted(self._plugins)]
 
-    def doctor_plugin(self, key: str, *, check_entrypoint: bool | None = None) -> dict[str, Any]:
-        if not self._plugins:
-            self.discover()
-        plugin = self._plugins[key]
-        missing_env = self._missing_env(plugin.manifest)
-        manifest_error = (plugin.error or "") if plugin.manifest.entrypoint == "invalid" else ""
-        entrypoint_checked = False
-        if manifest_error:
-            entrypoint_ok, entrypoint_error = False, ""
-        elif check_entrypoint is False:
-            entrypoint_ok, entrypoint_error = True, ""
-        elif check_entrypoint is None and plugin.status == PluginStatus.DEFERRED:
-            entrypoint_ok, entrypoint_error = True, ""
-        else:
-            entrypoint_checked = True
-            entrypoint_ok, entrypoint_error = self._check_entrypoint(plugin.manifest)
-        return {
-            "key": plugin.key,
-            "name": plugin.manifest.name,
-            "version": plugin.manifest.version,
-            "schema_version": plugin.manifest.schema_version,
-            "description": plugin.manifest.description,
-            "kind": plugin.manifest.kind,
-            "entrypoint": plugin.manifest.entrypoint,
-            "provides": plugin.manifest.provides,
-            "tags": plugin.manifest.tags,
-            "enabled_by_default": plugin.manifest.enabled_by_default,
-            "enabled": plugin.enabled,
-            "status": plugin.status.value,
-            "runtime_state": plugin.runtime_state.value,
-            "generation_id": plugin.generation_id,
-            "runtime_instance_id": plugin.runtime_instance_id,
-            "active_enabled": plugin.active_enabled,
-            "active": (
-                plugin.active_runner.control.safe_summary()
-                if plugin.active_runner is not None
-                else {}
-            ),
-            "active_error": plugin.active_error,
-            "active_restart_count": plugin.active_restart_count,
-            "active_circuit_open": plugin.active_circuit_open,
-            "package_digest": plugin.package_digest,
-            "deferred": plugin.deferred,
-            "source": plugin.manifest.source,
-            "declared_source": plugin.manifest.declared_source or plugin.manifest.source,
-            "path": str(plugin.manifest.path) if plugin.manifest.path else "",
-            "manifest_path": self._manifest_path(plugin),
-            "source_boundary": self._source_boundary(plugin),
-            "requires_env": plugin.manifest.requires_env,
-            "missing_env": missing_env,
-            "manifest_valid": not manifest_error,
-            "manifest_error": manifest_error,
-            "manifest_unknown_fields": list(plugin.manifest.unknown_fields),
-            "manifest_warnings": self._manifest_warnings(plugin),
-            "boundary_warnings": self._boundary_warnings(plugin),
-            "entrypoint_checked": entrypoint_checked,
-            "entrypoint_importable": entrypoint_ok,
-            "entrypoint_error": entrypoint_error,
-            "deferred_reason": self._deferred_reason(plugin),
-            "error": plugin.error or "",
-            "error_traceback": plugin.error_traceback or "",
-            "registered": plugin.registration_counts(),
-            "registered_items": self._registered_items(plugin),
-            "diagnostic_hints": self._diagnostic_hints(plugin, missing_env, entrypoint_ok, entrypoint_error),
-        }
-
     def validate_plugin_path(self, path: Path, *, load: bool = True) -> dict[str, Any]:
         manifest_path = self._resolve_plugin_manifest_path(Path(path))
         plugin_dir = manifest_path.parent
@@ -1220,7 +1120,7 @@ class PluginManager:
             if load:
                 plugin = self.load_plugin(plugin.key)
 
-        report = self.doctor_plugin(plugin.key, check_entrypoint=True)
+        report = self.queries.plugin_info(plugin.key, check_entrypoint=True)
         report["validation_path"] = str(plugin_dir)
         report["validation_manifest"] = str(manifest_path)
         report["validation_load_requested"] = load

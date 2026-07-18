@@ -59,7 +59,7 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
 
     manager.load_enabled()
 
-    plugin = manager.doctor_plugin("integrations/codex-bridge")
+    plugin = manager.queries.plugin_info("integrations/codex-bridge")
     assert plugin["status"] == "LOADED"
     assert plugin["registered"]["mcp_servers"] == 1
     assert plugin["registered"]["hooks"] == 1
@@ -125,6 +125,6 @@ def test_codex_bridge_rejects_cwd_outside_writable_roots(tmp_path, monkeypatch):
 
     manager.load_enabled()
 
-    report = manager.doctor_plugin("integrations/codex-bridge")
+    report = manager.queries.plugin_info("integrations/codex-bridge")
     assert report["status"] == "ERROR"
     assert "cwd must be within sandbox.roots" in report["error"]

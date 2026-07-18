@@ -612,7 +612,7 @@ def plugins_list(
     manager = _plugin_manager()
     if load:
         manager.load_enabled()
-    reports = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
+    reports = manager.queries.list_plugins()
     if json_output:
         typer.echo(json.dumps(reports, indent=2, ensure_ascii=False))
     else:
@@ -628,7 +628,7 @@ def plugins_info(
     manager = _plugin_manager()
     if load:
         manager.load_plugin(key)
-    report = manager.doctor_plugin(key)
+    report = manager.queries.plugin_info(key)
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
@@ -709,7 +709,7 @@ def plugins_doctor(
 ) -> None:
     manager = _plugin_manager()
     plugin = manager.load_plugin(key)
-    report = manager.doctor_plugin(plugin.key)
+    report = manager.queries.plugin_info(plugin.key)
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
@@ -1174,7 +1174,7 @@ async def _build_serve_dry_run_report() -> dict[str, Any]:
         health = runtime.health_snapshot()
         config_report = build_config_report(Path("."))
         plugins = [
-            runtime.plugin_manager.doctor_plugin(plugin.key)
+            runtime.plugin_manager.queries.plugin_info(plugin.key)
             for plugin in runtime.plugin_manager.list_plugins()
         ]
         platforms = _platform_diagnostics_from_reports(
@@ -1260,7 +1260,7 @@ async def _runtime_health_report_async(settings: Settings) -> dict[str, Any]:
             "review": runtime.memory_review_service.health_snapshot(),
         })
         plugins = [
-            runtime.plugin_manager.doctor_plugin(plugin.key)
+            runtime.plugin_manager.queries.plugin_info(plugin.key)
             for plugin in runtime.plugin_manager.list_plugins()
         ]
         return {
@@ -1368,7 +1368,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
     if plugins is None:
         manager = _plugin_manager(settings)
         manager.load_enabled()
-        plugins = [manager.doctor_plugin(plugin.key) for plugin in manager.list_plugins()]
+        plugins = manager.queries.list_plugins()
 
     from personal_agent.llm.token_counter import tokenizer_status
     from personal_agent.tools.registry import tool_registry
