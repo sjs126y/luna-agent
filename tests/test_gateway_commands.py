@@ -47,6 +47,8 @@ class Memory:
 class PluginManager:
     def __init__(self):
         self.commands = {}
+        self.active_start_count = 0
+        self.active_stop_count = 0
 
     def get_command(self, name, *, scope="slash"):
         entry = self.commands.get(name)
@@ -67,6 +69,12 @@ class PluginManager:
 
     def list_plugins(self):
         return []
+
+    async def start_active_plugins(self):
+        self.active_start_count += 1
+
+    async def stop_active_plugins(self):
+        self.active_stop_count += 1
 
 
 @pytest_asyncio.fixture
@@ -551,6 +559,8 @@ async def test_gateway_lifecycle_hooks_observe_start_connect_disconnect_stop(gat
     await gateway.start()
     await gateway.stop()
 
+    assert gateway.plugin_manager.active_start_count == 1
+    assert gateway.plugin_manager.active_stop_count == 1
     assert seen == [
         ("PlatformConnected", "demo"),
         ("GatewayStart", ""),
