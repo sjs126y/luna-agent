@@ -195,6 +195,14 @@ plugins:
         enabled: false
         sessions: []                 # 必须包含上面的精确 session_key
         restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/reminder:
+      max_overdue_seconds: 604800
+      retry_delay_seconds: 60
+      max_delivery_attempts: 3
+      active:
+        enabled: false
+        sessions: []                 # 允许创建和接收提醒的精确 session_key
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "~/.codex"

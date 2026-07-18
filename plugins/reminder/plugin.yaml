@@ -1,0 +1,11 @@
+schema_version: 1
+key: automation/reminder
+name: Reminder
+version: "0.1.0"
+description: Persistent reminders delivered through Lumora's conversation runtime.
+kind: automation
+entrypoint: reminder:register
+provides: [active, tools, command]
+tags: [active, reminder, scheduling, productivity]
+enabled_by_default: false
+source: local

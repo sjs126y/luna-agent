@@ -177,6 +177,7 @@ plugins:
     - "integrations/developer-docs"
     - "integrations/browser-operator"
     - "integrations/workspace-watch"
+    - "automation/reminder"
   disabled: []
   config:
     integrations/workspace-watch:
@@ -190,6 +191,15 @@ plugins:
         sessions:
           - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
         restart_backoff_seconds: [1, 2, 5]
+    automation/reminder:
+      max_overdue_seconds: 604800
+      retry_delay_seconds: 60
+      max_delivery_attempts: 3
+      active:
+        enabled: true
+        sessions:
+          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "/home/sujinsheng/.codex"
