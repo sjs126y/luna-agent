@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 from collections.abc import AsyncIterator
 
 from personal_agent.llm.base import BaseTransport, DeltaCallback, LLMRequestPlan
@@ -12,6 +14,13 @@ from personal_agent.llm.provider import ProviderProfile
 from personal_agent.models.messages import NormalizedResponse
 
 logger = logging.getLogger(__name__)
+
+_RETRYABLE_RESPONSE_CODES = {"rate_limit_exceeded", "server_error"}
+_MAX_RESPONSE_RETRIES = 3
+
+
+class _RetryableResponseError(RuntimeError):
+    """Responses API stream failure that is safe to retry before output."""
 
 
 class OpenAIResponsesTransport(BaseTransport):
@@ -94,6 +103,8 @@ class OpenAIResponsesTransport(BaseTransport):
 
             if etype == "response.failed":
                 error = event.get("error") or event.get("response", {}).get("error") or {}
+                if _is_retryable_response_error(error) and not text_parts and not tool_call_deltas:
+                    raise _RetryableResponseError(f"Responses API failed: {error}")
                 raise RuntimeError(f"Responses API failed: {error}")
 
             if event.get("output"):
@@ -237,14 +248,29 @@ class OpenAIResponsesTransport(BaseTransport):
         else:
             body = self.build_request(messages, system_prompt, tools or [], max_tokens)
         self.remember_cache_diagnostics(body, request_plan=request_plan)
-        event_stream = call_openai_responses(
-            base_url=self._provider.base_url,
-            api_key=self._provider.api_key,
-            body=body,
-            stream=stream or on_delta is not None,
-            extra_headers=self._provider.extra_headers,
-        )
-        return await self.parse_stream(event_stream, on_delta=on_delta)
+        for attempt in range(_MAX_RESPONSE_RETRIES + 1):
+            event_stream = call_openai_responses(
+                base_url=self._provider.base_url,
+                api_key=self._provider.api_key,
+                body=body,
+                stream=stream or on_delta is not None,
+                extra_headers=self._provider.extra_headers,
+            )
+            try:
+                return await self.parse_stream(event_stream, on_delta=on_delta)
+            except _RetryableResponseError:
+                if attempt >= _MAX_RESPONSE_RETRIES:
+                    raise
+                delay = _response_retry_delay(attempt)
+                logger.warning(
+                    "Responses API stream rate limited (attempt %d/%d), retrying in %.1fs",
+                    attempt + 1,
+                    _MAX_RESPONSE_RETRIES,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError("Responses API retry loop exhausted")
 
 
 class CodexResponsesTransport(OpenAIResponsesTransport):
@@ -302,6 +328,21 @@ def _codex_visible_text(value: str) -> str:
     if index < 0:
         return text
     return text[index + len(marker):].lstrip(" \t\r\n:>#*_`|-")
+
+
+def _is_retryable_response_error(error: object) -> bool:
+    if not isinstance(error, dict):
+        return False
+    code = str(error.get("code") or "").strip().lower()
+    if code in _RETRYABLE_RESPONSE_CODES:
+        return True
+    message = str(error.get("message") or "").lower()
+    return "concurrency limit exceeded" in message
+
+
+def _response_retry_delay(attempt: int) -> float:
+    base = min(2**attempt, 30)
+    return base + random.uniform(0, base * 0.3)
 
 
 def _text_part_type(role: str) -> str:

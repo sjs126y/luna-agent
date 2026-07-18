@@ -220,8 +220,20 @@ class LoadedPlugin:
     enabled: bool = False
     generation_id: str = ""
     runtime_instance_id: str = ""
+    module_namespace: str = ""
     package_digest: str = ""
     runtime_state: PluginRuntimeState = PluginRuntimeState.DISCOVERED
+    generation_scope: Any | None = None
+    active_registration: Any | None = None
+    active_runner: Any | None = None
+    active_enabled: bool = False
+    active_error: str = ""
+    active_restart_count: int = 0
+    active_failure_times: list[float] = field(default_factory=list)
+    active_circuit_open: bool = False
+    data_revision_id: str = ""
+    data_path: Any | None = None
+    prepare_rollback_snapshot: Any | None = None
     tools_registered: list[str] = field(default_factory=list)
     skills_registered: list[str] = field(default_factory=list)
     workflows_registered: list[str] = field(default_factory=list)

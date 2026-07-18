@@ -251,6 +251,99 @@ async def test_codex_responses_always_uses_sse_for_middle_station(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_codex_responses_retries_stream_rate_limit_before_output(monkeypatch):
+    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+
+    calls = 0
+    delays: list[float] = []
+
+    async def fake_call_openai_responses(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield {
+                "type": "response.failed",
+                "response": {
+                    "error": {
+                        "code": "rate_limit_exceeded",
+                        "message": "Concurrency limit exceeded for account, please retry later",
+                    }
+                },
+            }
+            return
+        yield {"type": "response.output_text.delta", "delta": "重试成功"}
+        yield {"type": "response.completed", "response": {"status": "completed"}}
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(responses_module, "call_openai_responses", fake_call_openai_responses)
+    monkeypatch.setattr(responses_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(responses_module, "_response_retry_delay", lambda attempt: 1.0)
+
+    response = await CodexResponsesTransport(_provider()).call(
+        [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+    )
+
+    assert calls == 2
+    assert delays == [1.0]
+    assert response.text == "重试成功"
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_rate_limit_stops_after_retry_budget(monkeypatch):
+    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+
+    calls = 0
+
+    async def fake_call_openai_responses(**kwargs):
+        nonlocal calls
+        calls += 1
+        yield {
+            "type": "response.failed",
+            "error": {"code": "rate_limit_exceeded", "message": "try later"},
+        }
+
+    async def fake_sleep(delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(responses_module, "call_openai_responses", fake_call_openai_responses)
+    monkeypatch.setattr(responses_module.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(RuntimeError, match="rate_limit_exceeded"):
+        await OpenAIResponsesTransport(_provider()).call(
+            [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        )
+
+    assert calls == 4
+
+
+@pytest.mark.asyncio
+async def test_responses_does_not_retry_failure_after_output(monkeypatch):
+    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+
+    calls = 0
+
+    async def fake_call_openai_responses(**kwargs):
+        nonlocal calls
+        calls += 1
+        yield {"type": "response.output_text.delta", "delta": "partial"}
+        yield {
+            "type": "response.failed",
+            "error": {"code": "rate_limit_exceeded", "message": "try later"},
+        }
+
+    monkeypatch.setattr(responses_module, "call_openai_responses", fake_call_openai_responses)
+
+    with pytest.raises(RuntimeError, match="rate_limit_exceeded"):
+        await OpenAIResponsesTransport(_provider()).call(
+            [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        )
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_responses_transport_parses_non_stream_output_text():
     transport = OpenAIResponsesTransport(_provider())
 

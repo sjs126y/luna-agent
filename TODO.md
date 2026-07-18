@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/platform%20E2E-pending-F59E0B" alt="Platform E2E pending">
   <img src="https://img.shields.io/badge/plugin%20hot%20reload-ready-2EA44F" alt="Plugin hot reload ready">
-  <img src="https://img.shields.io/badge/active%20system-future-555555" alt="Active system future">
+  <img src="https://img.shields.io/badge/active%20plugin-runtime%20ready-2EA44F" alt="Active plugin runtime ready">
 </p>
 
 <p>
@@ -28,7 +28,7 @@
 | **P0** | 微信 / QQ 真实平台联调 | 微信图片和文件可打开；QQ 私聊、群聊、图片和文件通过 |
 | **P1** | 固定 Benchmark 持续观测 | 长会话、Memory prefetch、MCP 冷启动和缓存有可比较数据 |
 | **P2** | 前端 Artifact / Delivery UI | 真实需要出现后再设计缩略图、附件列表和分片状态 |
-| **Later** | 主动插件与决策系统 | 长期任务恢复、候选、去重、冷却、静默时间、优先级、预算和反馈闭环 |
+| **Later** | 主动决策策略插件 | 在已完成的主动 runtime 上按真实需求增加候选、去重、冷却、静默时间、优先级、预算和反馈闭环 |
 | **Later** | 独立知识 RAG 插件 | 与个人记忆分离，保存原始证据和引用 |
 
 ## P0：真实平台联调

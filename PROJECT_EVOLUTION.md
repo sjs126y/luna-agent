@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/phases-14-7C3AED" alt="14 phases">
   <img src="https://img.shields.io/badge/Python%20LOC-75%2C811-0A84FF" alt="75811 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1093%20passed-2EA44F" alt="1093 tests passed">
+  <img src="https://img.shields.io/badge/tests-1113%20passed-2EA44F" alt="1113 tests passed">
 </p>
 
 <p>
@@ -28,7 +28,7 @@
 - 分支：`main`
 - 本次统计基准：`f3da3d7 Refresh project docs and remove obsolete plans`
 - 基准提交数：`551`
-- 最近全量验证：`uv run pytest -q`，结果 `1093 passed, 1 warning`
+- 最近全量验证：`uv run pytest -q`，结果 `1113 passed, 1 warning`
 
 <details>
 <summary><strong>展开早期阶段：v0.1 - v0.7</strong></summary>
@@ -396,6 +396,18 @@
 - 插件包经过 staging 与安全检查进入不可变 digest 目录，支持本地目录/压缩包安装、更新、回滚、延迟卸载和数据保留。
 - `ctx.storage` 与 `ctx.tasks` 为后续主动插件预留隔离数据和实例级任务生命周期，本阶段仍不实现主动决策系统。
 
+## v0.15 主动插件 Runtime
+
+时间：2026-07-18
+
+主要变化：
+
+- 插件可注册一个自由实现的长期 `run(ctx)`，由 Gateway 独占启停；主动执行开关与被动插件加载开关分离。
+- `ctx.resources` 提供 generation-bound Tool、MCP、LLM、Conversation、Delivery、Artifact 与 Storage facade，资源声明和现有执行安全管道共同限制能力。
+- 主动 generation 热更新加入 readiness handshake、v1 quiesce/resume、required MCP readiness 和数据 revision；v2 失败不会污染当前快照或持久化指针。
+- 根任务异常支持退避重启和熔断，运行中通过 `/plugins active <key> on|off|restart` 控制。
+- 主动 runtime 只解决生命周期与资源边界，不内置 Job/Cron/Candidate 或主动决策策略；插件内部行为保持自由。
+
 ## 当前代码规模
 
 统计口径：基准提交 `f3da3d7`，只统计 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。
@@ -412,7 +424,7 @@
 | Markdown 文档 | 39 | 6,468 |
 | Git 已跟踪文件总数 | 407 | - |
 
-项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1093 passed`。
+项目规模更适合拆开理解：运行时与内置能力约 4.75 万行，测试约 2.75 万行，测试代码占 Python 总量约 36.3%。当前完整测试套件为 `1113 passed`。
 
 ### 2026-07-18 文档收敛
 

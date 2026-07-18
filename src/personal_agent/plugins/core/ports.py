@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from personal_agent.conversation import ResponseMode, SubmissionOrigin, SubmissionRequest
 from personal_agent.delivery import DeliveryKind, DeliveryRequest
@@ -57,12 +58,20 @@ class PluginConversationPort:
 
 
 class PluginNotificationPort(PluginConversationPort):
-    def __init__(self, *, plugin, coordinator, delivery_service) -> None:
+    def __init__(
+        self,
+        *,
+        plugin,
+        coordinator,
+        delivery_service,
+        capability: str = "notification",
+    ) -> None:
         super().__init__(plugin=plugin, coordinator=coordinator)
         self._delivery_service = delivery_service
+        self._capability = capability
 
     async def send(self, *, session_key: str, text: str, metadata: dict | None = None):
-        self._authorize(session_key, capability="notification")
+        self._authorize(session_key, capability=self._capability)
         return await self._delivery_service.deliver(DeliveryRequest(
             session_key=session_key,
             message=OutboundMessage.text(text),
@@ -74,7 +83,11 @@ class PluginNotificationPort(PluginConversationPort):
 class PluginStoragePort:
     def __init__(self, *, plugin, root: Path) -> None:
         self._plugin = plugin
-        self.root = Path(root) / plugin.key.replace("/", "__")
+        self.root = (
+            Path(plugin.data_path)
+            if getattr(plugin, "data_path", None) is not None
+            else Path(root) / plugin.key.replace("/", "__")
+        )
         self.root.mkdir(parents=True, exist_ok=True)
 
     def resolve(self, relative_path: str | Path) -> Path:
@@ -120,3 +133,92 @@ class PluginTaskPort:
         bucket.add(task)
         task.add_done_callback(bucket.discard)
         return task
+
+
+class PluginLLMPort:
+    def __init__(self, *, plugin, settings) -> None:
+        self._plugin = plugin
+        self._settings = settings
+        self._provider = None
+        self._transport = None
+
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str = "",
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+    ):
+        self._validate()
+        if self._transport is None:
+            from personal_agent.llm.provider import provider_registry
+            from personal_agent.llm.transport_registry import transport_registry
+
+            provider_name = self._settings.llm_provider
+            self._provider = provider_registry.get(provider_name, self._settings)
+            api_mode = str(getattr(self._settings, "llm_api_mode", "auto") or "auto")
+            if api_mode == "auto":
+                api_mode = provider_registry.detect_api_mode(
+                    self._settings.llm_base_url,
+                    provider_name,
+                )
+            self._transport = transport_registry.get(api_mode, self._provider)
+            self._plugin.generation_scope.defer("llm-transport", self._transport.close)
+        request_messages = list(messages or [])
+        request_messages.append({"role": "user", "content": str(prompt)})
+        return await self._transport.call(
+            messages=request_messages,
+            system_prompt=str(system_prompt),
+            tools=[],
+            max_tokens=int(max_tokens or self._provider.max_tokens),
+            stream=False,
+        )
+
+    def _validate(self) -> None:
+        scope = self._plugin.generation_scope
+        if scope is None or scope.closed:
+            raise RuntimeError(f"plugin generation is no longer active: {self._plugin.key}")
+
+
+class PluginArtifactPort:
+    def __init__(self, *, plugin, store) -> None:
+        self._plugin = plugin
+        self._store = store
+
+    async def create(
+        self,
+        data: bytes,
+        *,
+        kind: str,
+        filename: str,
+        mime_type: str,
+        session_key: str,
+        turn_id: str,
+        metadata: dict[str, Any] | None = None,
+    ):
+        self._validate()
+        return await self._store.create(
+            data,
+            kind=kind,
+            filename=filename,
+            mime_type=mime_type,
+            session_key=session_key,
+            turn_id=turn_id,
+            source="plugin",
+            source_name=self._plugin.key,
+            owner_id=self._plugin.key,
+            metadata=dict(metadata or {}),
+        )
+
+    async def get(self, artifact_id: str):
+        self._validate()
+        ref = await self._store.get(artifact_id)
+        if ref is not None and ref.owner_id != self._plugin.key:
+            raise PermissionError("plugin cannot access an artifact owned by another runtime")
+        return ref
+
+    def _validate(self) -> None:
+        scope = self._plugin.generation_scope
+        if scope is None or scope.closed:
+            raise RuntimeError(f"plugin generation is no longer active: {self._plugin.key}")

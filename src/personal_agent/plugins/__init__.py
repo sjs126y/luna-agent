@@ -1,5 +1,11 @@
 """Plugin core for Personal Agent."""
 
+from personal_agent.plugins.active import (
+    ActiveRegistration,
+    ActiveResourceRequest,
+    ActiveRestartPolicy,
+    ActiveRunnerState,
+)
 from personal_agent.plugins.core.context import PluginRuntimeContext
 from personal_agent.plugins.runtime import PluginRuntimeManager
 from personal_agent.plugins.core.manager import PluginManager
@@ -12,6 +18,10 @@ from personal_agent.plugins.core.models import (
 )
 
 __all__ = [
+    "ActiveRegistration",
+    "ActiveResourceRequest",
+    "ActiveRestartPolicy",
+    "ActiveRunnerState",
     "CommandEntry",
     "HookRegistration",
     "LoadedPlugin",
