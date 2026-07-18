@@ -868,7 +868,7 @@ async def test_permission_required_network_tool_stops_without_looping(provider):
     ))
     agent = init_agent(transport, provider)
     agent._security_context = SecurityStateStore(SimpleNamespace(
-        execution_mode="local-auto",
+        execution_mode="ask-first",
         sandbox_roots=[Path.cwd()],
         permission_grant_ttl_minutes=60,
         tool_approval_config={},

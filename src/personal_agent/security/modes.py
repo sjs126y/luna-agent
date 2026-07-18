@@ -13,13 +13,26 @@ class ModePreset:
     label: str
     profile: str
     approval_policy: ApprovalPolicy
+    auto_approve_cached_tools: bool = False
 
 
 MODE_PRESETS: dict[str, ModePreset] = {
     "read-only": ModePreset("read-only", "Read Only", "read-only", "never"),
     "ask-first": ModePreset("ask-first", "Ask First", "read-only", "on-request"),
-    "local-auto": ModePreset("local-auto", "Local Auto", "workspace", "on-request"),
-    "full-auto": ModePreset("full-auto", "Full Auto", "trusted", "never"),
+    "local-auto": ModePreset(
+        "local-auto",
+        "Local Auto",
+        "workspace",
+        "on-request",
+        auto_approve_cached_tools=True,
+    ),
+    "full-auto": ModePreset(
+        "full-auto",
+        "Full Auto",
+        "trusted",
+        "never",
+        auto_approve_cached_tools=True,
+    ),
 }
 
 MODE_ALIASES = {

@@ -293,8 +293,8 @@ Codex 需要可写的状态目录。插件首次加载时只将 `source_codex_ho
 | --- | --- | --- |
 | `read-only` | Read Only | sandbox roots 内只读；扩权请求直接拒绝 |
 | `ask-first` | Ask First | sandbox roots 内只读；写入、网络及需审批工具按具体资源确认 |
-| `local-auto` | Local Auto | `sandbox.roots` 内可读写，`sandbox.read_roots` 内只读；其他越界资源按需确认 |
-| `full-auto` | Full Auto | `sandbox.roots` 内可读写、`sandbox.read_roots` 内只读并允许网络；仍受 blocked path 等硬边界约束 |
+| `local-auto` | Local Auto | `sandbox.roots` 内可读写、`sandbox.read_roots` 内只读并允许普通网络；默认 cached 工具自动执行，越界文件和显式审批工具按需确认 |
+| `full-auto` | Full Auto | roots 行为同 Local Auto，默认 cached 工具自动执行且不提供交互扩权；仍受 blocked path 等硬边界约束 |
 
 旧 Mode 名称和 `execution.policy` 已删除。配置必须使用上表稳定 ID；未知值会在配置检查阶段报错。
 
@@ -320,6 +320,8 @@ auto, cached, prompt, deny
 ```
 
 `auto` 不单独询问工具身份，仍检查资源；`cached` 首次询问并在统一 TTL 内缓存；`prompt` 每次询问；`deny` 禁用。具体文件路径和网络 host 由资源权限单独判断，工具审批不能覆盖硬边界。
+
+Mode 会进一步解释默认 `cached`：在 `Ask First` 中仍首次询问；在 `Local Auto` / `Full Auto` 中自动执行。`permissions.tool_approval.tools` 或 `mcp_servers` 中显式配置的 `cached`、`prompt`、`deny` 始终优先，不会被 Mode 自动改写。Local Auto 的普通网络自动放行不覆盖 `sandbox.bash_allow_network: false`、MCP URL 安全校验或插件 Hook。
 
 ## 沙箱配置
 

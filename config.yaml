@@ -13,6 +13,7 @@ permissions:
   grant_ttl_minutes: 60           # shared in-memory TTL for tool and resource grants
   confirm_timeout_seconds: 120
   tool_approval:
+    # Local/Full Auto 自动放行继承的 cached；Ask First 仍会询问。显式覆盖始终优先。
     default_external: "cached"    # auto | cached | prompt | deny
     tools:
       process_kill: "prompt"

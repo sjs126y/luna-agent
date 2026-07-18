@@ -63,6 +63,68 @@ async def test_cached_tool_approval_uses_session_ttl(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_local_auto_runs_cached_tool_without_confirmation(tmp_path):
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    calls = 0
+
+    async def handler():
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    async def unexpected_confirm(_decision):
+        raise AssertionError("Local Auto should not confirm a default cached tool")
+
+    entry = ToolEntry("local_auto_cached_demo", "demo", {}, handler, approval_mode="cached")
+    tool_registry.register(entry)
+    try:
+        result = await execute_tool_call_result(
+            {"id": "local-auto", "name": entry.name, "input": {}},
+            agent=_agent(tmp_path, mode="local-auto"),
+            confirm=unexpected_confirm,
+        )
+    finally:
+        tool_registry.unregister(entry.name)
+
+    assert result.status == "success"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_local_auto_preserves_explicit_prompt_override(tmp_path):
+    from personal_agent.tools.entry import ToolEntry
+    from personal_agent.tools.executor import execute_tool_call_result
+    from personal_agent.tools.registry import tool_registry
+
+    confirmations = 0
+
+    async def handler():
+        return "ok"
+
+    async def confirm(_decision):
+        nonlocal confirmations
+        confirmations += 1
+        return "allow"
+
+    entry = ToolEntry("local_auto_prompt_demo", "demo", {}, handler, approval_mode="prompt")
+    tool_registry.register(entry)
+    try:
+        result = await execute_tool_call_result(
+            {"id": "local-auto-prompt", "name": entry.name, "input": {}},
+            agent=_agent(tmp_path, mode="local-auto"),
+            confirm=confirm,
+        )
+    finally:
+        tool_registry.unregister(entry.name)
+
+    assert result.status == "success"
+    assert confirmations == 1
+
+
+@pytest.mark.asyncio
 async def test_nested_tool_call_inherits_confirm_and_cached_grant(tmp_path):
     import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
 
@@ -229,6 +291,29 @@ def test_tool_and_mcp_server_approval_overrides(tmp_path):
 
     assert local_decision.reason_code == "tool_approval_denied"
     assert github_decision.tool_approval_mode == "prompt"
+
+
+def test_local_auto_keeps_explicit_cached_override(tmp_path):
+    from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+    from personal_agent.security.session import SecurityStateStore
+    from personal_agent.tools.entry import ToolEntry
+
+    settings = SimpleNamespace(
+        execution_mode="local-auto",
+        sandbox_roots=[tmp_path],
+        sandbox_read_roots=[],
+        permission_grant_ttl_minutes=60,
+        tool_approval_config={"tools": {"external_demo": "cached"}},
+    )
+    context = SecurityStateStore(settings).context("session-a")
+    entry = ToolEntry("external_demo", "demo", {}, lambda: None, approval_mode="cached")
+
+    decision = evaluate_tool_security(
+        prepare_tool_call({"name": entry.name, "input": {}}, entry), context
+    )
+
+    assert decision.decision == "ask"
+    assert decision.tool_approval_mode == "cached"
 
 
 def test_bash_declares_working_directory_and_network_resources(tmp_path, monkeypatch):

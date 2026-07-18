@@ -19,7 +19,9 @@ def test_mode_presets_have_one_stable_mapping():
     assert mode_preset("read-only").profile == "read-only"
     assert mode_preset("ask-first").approval_policy == "on-request"
     assert mode_preset("local-auto").profile == "workspace"
+    assert mode_preset("local-auto").auto_approve_cached_tools is True
     assert mode_preset("full-auto").profile == "trusted"
+    assert mode_preset("full-auto").auto_approve_cached_tools is True
     assert mode_preset("standard").id == "ask-first"
 
 
@@ -37,6 +39,17 @@ def test_permission_profiles_enforce_actual_roots(tmp_path):
     assert local_auto.profile.allows(inside) is True
     assert local_auto.profile.allows(outside) is False
     assert ask_first.profile.network_enabled is False
+    assert local_auto.profile.network_enabled is True
+
+
+def test_security_snapshot_reports_effective_cached_tool_behavior(tmp_path):
+    from personal_agent.security.session import security_settings_snapshot
+
+    ask_first = security_settings_snapshot(_settings(tmp_path, mode="ask-first"))
+    local_auto = security_settings_snapshot(_settings(tmp_path, mode="local-auto"))
+
+    assert ask_first["tool_approval"]["cached_tools_auto"] is False
+    assert local_auto["tool_approval"]["cached_tools_auto"] is True
 
 
 def test_local_auto_supports_additional_read_only_roots(tmp_path):

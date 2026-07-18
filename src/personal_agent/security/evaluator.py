@@ -38,7 +38,7 @@ def isolated_security_context(mode_id: str = "read-only") -> SecurityContext:
         profile=PermissionProfile(
             preset.profile,
             filesystem=rules,
-            network_enabled=preset.profile == "trusted",
+            network_enabled=preset.profile in {"workspace", "trusted"},
         ),
         approval_policy=preset.approval_policy,
         state=SecuritySessionState(mode_id=preset.id),
@@ -205,8 +205,15 @@ def _effective_approval_mode(
     if prepared.approval_inherited and not (
         prepared.source == "core" or prepared.source.startswith("builtin/")
     ):
-        return context.tool_approval_default_external
-    return prepared.approval_mode
+        approval_mode = context.tool_approval_default_external
+    else:
+        approval_mode = prepared.approval_mode
+    if approval_mode == "cached":
+        from personal_agent.security.modes import mode_preset
+
+        if mode_preset(context.mode_id).auto_approve_cached_tools:
+            return "auto"
+    return approval_mode
 
 
 def _builtin_resources(name: str, inp: dict[str, Any]) -> list[ResourceRequirement]:

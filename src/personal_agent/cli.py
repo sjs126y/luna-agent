@@ -1438,7 +1438,12 @@ def _settings_failure_doctor_report(exc: Exception) -> dict[str, Any]:
             "approval_policy": "on-request",
             "filesystem": [],
             "network_enabled": False,
-            "tool_approval": {"default_external": "cached", "tools": {}, "mcp_servers": {}},
+            "tool_approval": {
+                "default_external": "cached",
+                "cached_tools_auto": False,
+                "tools": {},
+                "mcp_servers": {},
+            },
             "grant_ttl_seconds": 3600,
         },
         "tools": _empty_tool_summary(),

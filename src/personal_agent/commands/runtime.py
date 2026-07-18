@@ -18,6 +18,7 @@ from personal_agent.permissions import (
     format_expiry,
     temporary_grant_ttl_seconds,
 )
+from personal_agent.security.modes import mode_preset
 
 
 @dataclass
@@ -1098,9 +1099,11 @@ async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
         if not profile.filesystem:
             lines.append("- 无")
         lines.append(f"network: {'allow' if profile.network_enabled else 'restricted'}")
+        cached_tools_auto = mode_preset(security_context.mode_id).auto_approve_cached_tools
         lines.append(
             "tool approval: default_external="
-            f"{security_context.tool_approval_default_external}"
+            f"{security_context.tool_approval_default_external}; "
+            f"cached={'auto' if cached_tools_auto else 'confirm'}"
         )
     ttl = int(getattr(agent, "_security_grant_ttl_seconds", 0) or temporary_grant_ttl_seconds(runtime.settings))
     pending = await _call_optional(runtime, "pending_confirmation_status")
@@ -1153,6 +1156,7 @@ def _security_grants_snapshot(context: Any) -> tuple[list[dict], list[dict]]:
 def _security_context_snapshot(context: Any) -> dict | None:
     if context is None:
         return None
+    preset = mode_preset(context.mode_id)
     return {
         "mode_id": context.mode_id,
         "profile": context.profile.name,
@@ -1164,6 +1168,7 @@ def _security_context_snapshot(context: Any) -> dict | None:
         "network_enabled": context.profile.network_enabled,
         "tool_approval": {
             "default_external": context.tool_approval_default_external,
+            "cached_tools_auto": preset.auto_approve_cached_tools,
             "tools": dict(context.tool_approval_tools),
             "mcp_servers": dict(context.tool_approval_mcp_servers),
         },

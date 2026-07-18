@@ -735,12 +735,16 @@ Gateway / 平台行为：
 
 - `Read Only` -> `read-only` + `never`
 - `Ask First` -> `read-only` + `on-request`
-- `Local Auto` -> `workspace` + `on-request`
-- `Full Auto` -> `trusted` + `never`
+- `Local Auto` -> `workspace` + `on-request`；roots 内读写、普通网络和默认 cached 工具自动
+- `Full Auto` -> `trusted` + `never`；默认 cached 工具自动，不提供交互扩权
 
 切换 mode 会清空当前 session 的工具与资源 grants；重置/删除会话和服务重启也会清空。授权不会跨 session 或跨平台用户合并。前端可通过 runtime 的 `current_execution_mode()` 读取当前显示文案。
 
 新安全上下文不接受 `/allow write` 这类类别级预授权。工具确认返回的授权由两部分组成：`tool_approval_mode` 控制工具身份是否需要确认，`requested_resources` 列出本次缺失的具体路径/host。允许一次只覆盖当前调用；限时允许使用全局 `permissions.grant_ttl_minutes`。
+
+显式 `permissions.tool_approval.tools` / `mcp_servers` 覆盖始终优先。未显式覆盖时，`cached` 在 Ask First 中首次确认，在 Local Auto / Full Auto 中视为 `auto`。Local Auto 允许普通 network resource，但 Bash 独立网络开关、MCP URL 安全校验和插件 Hook 仍可收紧或阻止操作。
+
+权限诊断中的 `security.tool_approval.cached_tools_auto` 表示当前 Mode 是否会把继承的默认 `cached` 解释为自动放行；前端应同时展示该字段与 `default_external`，不要只按静态配置推断实际行为。
 
 新增命令：
 

@@ -133,6 +133,7 @@ def security_settings_snapshot(settings: Any) -> dict[str, Any]:
         "network_enabled": context.profile.network_enabled,
         "tool_approval": {
             "default_external": context.tool_approval_default_external,
+            "cached_tools_auto": preset.auto_approve_cached_tools,
             "tools": dict(context.tool_approval_tools),
             "mcp_servers": dict(context.tool_approval_mcp_servers),
         },
@@ -156,5 +157,5 @@ def _profile_for(settings: Any, name: str) -> PermissionProfile:
     return PermissionProfile(
         name=name,
         filesystem=rules,
-        network_enabled=name == "trusted",
+        network_enabled=name in {"workspace", "trusted"},
     )

@@ -12,21 +12,20 @@ llm:
   context_window: 0               # 0 = 根据模型名自动推断；中转站自定义模型名可填真实窗口，例如 1000000
 
 execution:
-  mode: "standard"                # 执行模式：guarded | standard | trusted | sovereign
-  policy:
-    # 可选权限覆盖。只建议覆盖 tool_permissions；硬沙箱和密钥保护规则不会被这里绕过。
-    # 可选权限类别：default/read/search/write/bash/background/network/destructive
-    # 可选决策：allow（直接允许）| ask（执行前确认）| deny（拒绝）
-    tool_permissions: {}
-    # 示例：
-    # tool_permissions:
-    #   bash: ask
-    #   background: ask
-    #   network: deny
+  mode: "ask-first"               # read-only | ask-first | local-auto | full-auto
 
 permissions:
-  temporary_grant_ttl_hours: 24    # /allow 和 Always 24h 产生的临时授权时长，1-168 小时
+  grant_ttl_minutes: 60            # cached 授权在当前进程、当前会话中的共享有效期
   confirm_timeout_seconds: 120     # 网关异步工具确认超时时间，10-600 秒
+  tool_approval:
+    # 外置工具默认策略。Local/Full Auto 会自动放行继承的 cached；Ask First 仍会询问。
+    default_external: "cached"    # auto | cached | prompt | deny
+    # 显式覆盖始终优先，可用于收紧单个工具或 MCP Server。
+    tools:
+      process_kill: "prompt"
+      worktree_merge: "prompt"
+      worktree_cleanup: "prompt"
+    mcp_servers: {}
 
 agents:
   max_concurrent_runs: 4          # 最多同时运行的委派子代理数

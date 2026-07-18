@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1050%20passed-2EA44F" alt="1050 tests passed">
+  <img src="https://img.shields.io/badge/tests-1054%20passed-2EA44F" alt="1054 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
 </p>
 
@@ -38,6 +38,15 @@
 - `TODO.md` 删除已完成能力，只保留真实平台联调、插件生命周期、Benchmark、主动决策和安全强化等活动项。
 - 实现细节继续由 Architecture、Interface 与专项文档承载；README 不再重复内部类和数据流说明。
 - `imagegen` skill 的内置生成工具在当前会话不可用，因此没有擅自切换到需要额外 API Key 的 CLI fallback；本轮视觉由 GitHub 原生 Markdown、Shields、表格和 Mermaid 完成。
+
+## 2026-07-18：Local Auto 日常放权
+
+- Local Auto 的 workspace profile 现在允许 `sandbox.roots` 写、`sandbox.read_roots` 读和普通 network resource，日常 web/MCP 调用不再重复请求 host 扩权。
+- Mode 对默认 `cached` 工具身份审批采用分级语义：Ask First 仍首次确认；Local Auto 与 Full Auto 自动执行。
+- 用户在 `permissions.tool_approval.tools` / `mcp_servers` 显式配置的 `cached`、`prompt`、`deny` 继续优先；现有 `process_kill`、worktree merge/cleanup 提示不变。
+- blocked paths、越界 filesystem、Bash 独立网络开关、MCP URL 校验、插件 Hook、额度和 audit 不放宽。
+- `/permissions` 与 Doctor 诊断新增 `cached_tools_auto` 有效状态；`config.yaml.example` 删除旧 `execution.policy` / `/allow` 配置并同步四档 Mode。
+- 完整回归：`1054 passed, 1 warning`；唯一警告仍来自飞书 SDK 的弃用 API。
 
 ## 2026-07-18：本地文件提升为出站 Artifact
 
