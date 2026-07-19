@@ -214,6 +214,25 @@ class ConversationService:
             if _accepts_steer(run_conversation):
                 kwargs["steer"] = turn_steer
                 kwargs["session_key"] = session_key
+            checkpoint_contains_current_turn = False
+
+            async def checkpoint_sink(compaction) -> str:
+                nonlocal current_id, history, previous_count, checkpoint_contains_current_turn
+                checkpoint_id = await self.session_store.commit_compaction(
+                    session_key,
+                    source,
+                    compaction.replacement_history,
+                )
+                if not checkpoint_id:
+                    raise RuntimeError("failed to persist mid-turn compaction checkpoint")
+                current_id = checkpoint_id
+                history = list(compaction.replacement_history)
+                previous_count = len(history)
+                checkpoint_contains_current_turn = True
+                return checkpoint_id
+
+            if _accepts_parameter(run_conversation, "checkpoint_sink"):
+                kwargs["checkpoint_sink"] = checkpoint_sink
             result = await run_conversation(agent, ctx, **kwargs)
         except _HookTurnStopped as exc:
             final = str(exc) or "本轮已被钩子停止。"
@@ -305,7 +324,11 @@ class ConversationService:
             stored_session_id = current_id
             persistence_summary = partial.summary
         else:
-            minimal_messages = _minimal_turn_messages(user_input.text, final_response)
+            minimal_messages = (
+                [{"role": "assistant", "content": [{"type": "text", "text": final_response}]}]
+                if "checkpoint_contains_current_turn" in locals() and checkpoint_contains_current_turn
+                else _minimal_turn_messages(user_input.text, final_response)
+            )
             await self.session_store.save_transcript(
                 current_id, history + minimal_messages, previous_count
             )

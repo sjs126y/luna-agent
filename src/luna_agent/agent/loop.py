@@ -28,7 +28,16 @@ MAX_IDENTICAL_SUCCESSFUL_TOOL_CALLS = 3
 EMPTY_RESPONSE_FALLBACK = "抱歉，模型没有返回可发送内容，请重试或让我用更短的格式回答。"
 
 
-async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=None, session_key: str = "") -> dict:
+async def run_conversation(
+    agent,
+    ctx,
+    *,
+    event_sink=None,
+    confirm=None,
+    steer=None,
+    session_key: str = "",
+    checkpoint_sink=None,
+) -> dict:
     """Execute the agent while loop. Returns final result dict."""
     just_executed_tools = False
     successful_tool_calls: dict[str, list[object]] = {}
@@ -38,6 +47,8 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
     finalization_error_label = ""
     stop_hook_active = False
     transient_retry_instruction = ""
+    context_overflow_retried = False
+    last_compacted_message_count = len(ctx.messages) if getattr(ctx, "was_compressed", False) else -1
     report_recorder = TurnReportRecorder(event_sink)
 
     def _with_turn_report(result: dict) -> dict:
@@ -120,6 +131,23 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
         )
         context_usage_payload = _context_usage_payload(context_budget)
 
+        if (
+            agent._compressor is not None
+            and context_budget.over_compression_threshold
+            and len(ctx.messages) != last_compacted_message_count
+        ):
+            compaction = await _compact_active_context(
+                agent,
+                ctx,
+                measured_messages=api_messages,
+                checkpoint_sink=checkpoint_sink,
+                report_recorder=report_recorder,
+                trigger="mid_turn",
+            )
+            if compaction is not None:
+                last_compacted_message_count = len(ctx.messages)
+                continue
+
         # ── LLM call (interruptible — polls _interrupt_requested every 5s) ──
         try:
             await emit_event(
@@ -185,6 +213,39 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
                 "error": "",
             })
         except Exception as exc:
+            if _looks_like_context_overflow_error(exc) and not context_overflow_retried:
+                context_overflow_retried = True
+                compaction = await _compact_active_context(
+                    agent,
+                    ctx,
+                    measured_messages=api_messages,
+                    checkpoint_sink=checkpoint_sink,
+                    report_recorder=report_recorder,
+                    trigger="overflow",
+                    force=True,
+                )
+                if compaction is not None:
+                    last_compacted_message_count = len(ctx.messages)
+                    await emit_event(
+                        report_recorder,
+                        "retry",
+                        "上下文超限，已压缩并重试",
+                        category="context_overflow",
+                        attempt=1,
+                        max_attempts=1,
+                        recoverable=True,
+                    )
+                    continue
+                await _emit_error(report_recorder, "上下文超出限制", exc, category="context")
+                return _with_turn_report({
+                    "final_response": "抱歉，本轮上下文超出限制，未能完成处理。",
+                    "messages": ctx.messages,
+                    "api_calls": agent.session_api_calls,
+                    "completed": False,
+                    "context_overflow": True,
+                    "status": "context_overflow",
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
             if is_forced_finalization:
                 logger.exception("Tool finalization failed: %s", finalization_error_label)
                 await _emit_error(report_recorder, finalization_error_label, exc, category="llm")
@@ -594,6 +655,48 @@ async def run_conversation(agent, ctx, *, event_sink=None, confirm=None, steer=N
     return _with_turn_report(result)
 
 
+async def _compact_active_context(
+    agent,
+    ctx,
+    *,
+    measured_messages: list[dict],
+    checkpoint_sink,
+    report_recorder,
+    trigger: str,
+    force: bool = False,
+):
+    """Compact and durably checkpoint the active tool loop at a safe boundary."""
+    from luna_agent.agent.context import _check_and_build_compaction
+
+    compaction = await _check_and_build_compaction(
+        agent,
+        measured_messages,
+        ctx.messages,
+        trigger=trigger,
+        force=force,
+    )
+    if compaction is None:
+        return None
+    if checkpoint_sink is not None:
+        await checkpoint_sink(compaction)
+    ctx.messages = list(compaction.replacement_history)
+    ctx.current_turn_user_idx = len(ctx.messages)
+    ctx.was_compressed = True
+    await emit_event(
+        report_recorder,
+        "compression",
+        "历史消息已压缩",
+        trigger=trigger,
+        pre_message_count=compaction.metadata.pre_message_count,
+        post_message_count=compaction.metadata.post_message_count,
+        pre_tokens=compaction.metadata.pre_tokens,
+        post_tokens=compaction.metadata.post_tokens,
+        summary_tokens=compaction.metadata.summary_tokens,
+        retained_user_tokens=compaction.metadata.retained_user_tokens,
+    )
+    return compaction
+
+
 def _looks_like_parse_error(exc: Exception) -> bool:
     """Check if an exception is likely a JSON/parse error that should be retried."""
     msg = str(exc).lower()
@@ -939,6 +1042,19 @@ def _context_usage_payload(budget) -> dict:
         "context_percent": budget.percent,
         "context_budget": budget.as_dict(),
     }
+
+
+def _looks_like_context_overflow_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    markers = (
+        "context_length_exceeded",
+        "context window",
+        "maximum context length",
+        "max context length",
+        "prompt is too long",
+        "too many tokens",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _permission_required_stop_message(tool_results: list) -> str:

@@ -1042,6 +1042,51 @@ async def test_compaction_checkpoint_is_persisted_before_failed_turn(service, mo
 
 
 @pytest.mark.asyncio
+async def test_mid_turn_checkpoint_sink_rebases_final_transcript(service, monkeypatch):
+    svc, _manager, _db = service
+    source = _source()
+    original = await svc.session_store.get_or_create("cli:default:local", source)
+    replacement = [
+        {"role": "user", "content": [{"type": "text", "text": "current request"}]},
+        {"role": "user", "content": [{"type": "text", "text": "[Context checkpoint summary]\nworking"}]},
+    ]
+    compaction = CompactionResult(
+        replacement_history=replacement,
+        summary="working",
+        metadata=CompactionMetadata(trigger="mid_turn", pre_tokens=900, post_tokens=100),
+    )
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(
+            [{"role": "user", "content": [{"type": "text", "text": text}]}],
+            current_turn_user_idx=0,
+        )
+
+    async def run_conversation(agent, ctx, checkpoint_sink=None):
+        await checkpoint_sink(compaction)
+        ctx.messages = replacement + [
+            {"role": "assistant", "content": [{"type": "text", "text": "finished"}]}
+        ]
+        return {
+            "final_response": "finished",
+            "messages": ctx.messages,
+            "completed": True,
+        }
+
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", source, "current request")
+
+    current_id = svc.session_store.resolve_session_id("cli:default:local")
+    history = await svc.session_store.load_history(current_id)
+    assert result.status == "completed"
+    assert current_id != original.session_id
+    assert sum("current request" in str(message) for message in history) == 1
+    assert sum("finished" in str(message) for message in history) == 1
+
+
+@pytest.mark.asyncio
 async def test_agent_cache_reuses_and_refreshes_stale_agent(service, monkeypatch):
     svc, _manager, _db = service
     created = []

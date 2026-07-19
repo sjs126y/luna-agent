@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -186,6 +187,8 @@ async def _check_and_build_compaction(
     completed_messages: list[dict],
     *,
     extra_context_text: str = "",
+    trigger: str = "auto",
+    force: bool = False,
 ):
     """Build a checkpoint for completed history when the candidate request is full."""
     if agent._compressor is None:
@@ -202,7 +205,9 @@ async def _check_and_build_compaction(
         }], model=model)
     )
 
-    if not agent._compressor.should_compress(total, completed_messages):
+    if not force and not agent._compressor.should_compress(total, completed_messages):
+        return None
+    if force and len(completed_messages) <= 1:
         return None
 
     hook_manager = getattr(agent, "_hook_manager", None)
@@ -231,7 +236,7 @@ async def _check_and_build_compaction(
         pre_outcome = await hook_manager.dispatch(HookEnvelope(
             event_name=HookEvent.PRE_COMPACT,
             payload={
-                "trigger": "auto",
+                "trigger": trigger,
                 "message_count": len(completed_messages),
                 "estimated_tokens": total,
             },
@@ -246,10 +251,21 @@ async def _check_and_build_compaction(
 
     logger.info("Compressing: %d tokens > %d limit", total, agent._compressor.threshold_tokens)
     try:
+        compress_kwargs = {}
+        try:
+            params = inspect.signature(agent._compressor.compress).parameters
+            if "trigger" in params or any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in params.values()
+            ):
+                compress_kwargs["trigger"] = trigger
+        except (TypeError, ValueError):
+            compress_kwargs["trigger"] = trigger
         compaction = await agent._compressor.compress(
             completed_messages,
             agent._cached_system_prompt or "",
             agent._transport,
+            **compress_kwargs,
         )
         # Third-party engines written against the original contract may still
         # return the replacement list directly. Keep that shape readable while
@@ -273,7 +289,7 @@ async def _check_and_build_compaction(
             await hook_manager.dispatch(HookEnvelope(
                 event_name=HookEvent.POST_COMPACT,
                 payload={
-                    "trigger": "auto",
+                    "trigger": trigger,
                     "pre_message_count": len(completed_messages),
                     "post_message_count": len(result),
                     "fallback": False,
@@ -288,7 +304,7 @@ async def _check_and_build_compaction(
             await hook_manager.dispatch(HookEnvelope(
                 event_name=HookEvent.POST_COMPACT,
                 payload={
-                    "trigger": "auto",
+                    "trigger": trigger,
                     "pre_message_count": len(completed_messages),
                     "post_message_count": len(result),
                     "fallback": True,

@@ -2,12 +2,14 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from luna_agent.agent.agent import init_agent, Agent
 from luna_agent.agent.context import build_turn_context
-from luna_agent.agent.loop import run_conversation
+from luna_agent.agent.loop import _compact_active_context, _looks_like_context_overflow_error, run_conversation
+from luna_agent.compression import CompactionMetadata, CompactionResult
 from luna_agent.agent.retry import RetryState
 from luna_agent.models.messages import NormalizedResponse
 from luna_agent.llm.provider import ProviderProfile
@@ -111,6 +113,66 @@ class ProbeCompressor:
     def update_from_response(self, response):
         self.updated_usage = response.usage
         self.last_prompt_tokens = response.usage.get("input_tokens", 0)
+
+
+@pytest.mark.asyncio
+async def test_mid_turn_compaction_updates_context_and_calls_checkpoint_sink():
+    replacement = [{"role": "user", "content": [{"type": "text", "text": "checkpoint"}]}]
+    compaction = CompactionResult(
+        replacement_history=replacement,
+        summary="checkpoint",
+        metadata=CompactionMetadata(
+            trigger="mid_turn",
+            pre_tokens=900,
+            post_tokens=100,
+            pre_message_count=4,
+            post_message_count=1,
+        ),
+    )
+    compressor = ProbeCompressor(should=True)
+    compressor.compress = AsyncMock(return_value=compaction)
+    agent = SimpleNamespace(
+        _compressor=compressor,
+        _provider=SimpleNamespace(model="test"),
+        _cached_system_prompt="system",
+        _transport=AsyncMock(),
+        _hook_manager=None,
+        _hook_turn_id="turn",
+        _hook_additional_contexts=[],
+        tools=[],
+    )
+    ctx = SimpleNamespace(
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "request"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "working"}]},
+        ],
+        current_turn_user_idx=0,
+        was_compressed=False,
+    )
+    saved = []
+
+    async def checkpoint_sink(result):
+        saved.append(result)
+
+    result = await _compact_active_context(
+        agent,
+        ctx,
+        measured_messages=ctx.messages,
+        checkpoint_sink=checkpoint_sink,
+        report_recorder=EventRecorder(),
+        trigger="mid_turn",
+    )
+
+    assert result is compaction
+    assert saved == [compaction]
+    assert ctx.messages == replacement
+    assert ctx.current_turn_user_idx == 1
+    assert ctx.was_compressed is True
+
+
+def test_context_overflow_error_detection_is_specific():
+    assert _looks_like_context_overflow_error(RuntimeError("maximum context length exceeded"))
+    assert not _looks_like_context_overflow_error(RuntimeError("connection timed out"))
 
 
 @pytest.fixture
