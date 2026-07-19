@@ -57,7 +57,7 @@ def test_compose_context_text_skips_empty_parts():
 
 
 @pytest.mark.parametrize(("model", "expected"), [
-    ("gpt-5.6-terra", 400_000),
+    ("gpt-5.6-terra", 1_050_000),
     ("gpt-4.1", 1_000_000),
     ("claude-sonnet", 200_000),
     ("custom-256k", 256_000),
