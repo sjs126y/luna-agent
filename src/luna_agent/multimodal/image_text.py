@@ -389,6 +389,7 @@ def _vision_provider(settings, provider_name: str) -> ProviderProfile:
         llm_api_key=api_key,
         llm_model=model,
         llm_max_tokens=min(int(getattr(settings, "llm_max_tokens", 4096) or 4096), 2048),
+        llm_api_mode=_configured_vision_api_mode(settings),
     )
     return provider_registry.get(provider_name, provider_settings)
 
@@ -402,12 +403,7 @@ def _vision_transport(provider: ProviderProfile, settings) -> Any:
 
 
 def _vision_api_mode(provider: ProviderProfile, settings) -> str:
-    configured = _configured_vision_api_mode(settings)
-    if configured and configured != "auto":
-        return configured
-    if provider.name == "anthropic":
-        return "anthropic_messages"
-    return provider_registry.detect_api_mode(provider.base_url, provider.name)
+    return provider.api_mode
 
 
 def _normalize_vision_base_url(provider_name: str, base_url: str, settings) -> str:

@@ -240,13 +240,7 @@ class PluginLLMPort:
 
             provider_name = self._settings.llm_provider
             self._provider = provider_registry.get(provider_name, self._settings)
-            api_mode = str(getattr(self._settings, "llm_api_mode", "auto") or "auto")
-            if api_mode == "auto":
-                api_mode = provider_registry.detect_api_mode(
-                    self._settings.llm_base_url,
-                    provider_name,
-                )
-            self._transport = transport_registry.get(api_mode, self._provider)
+            self._transport = transport_registry.get(self._provider.api_mode, self._provider)
             self._plugin.generation_scope.defer("llm-transport", self._transport.close)
         request_messages = list(messages or [])
         request_messages.append({"role": "user", "content": str(prompt)})
