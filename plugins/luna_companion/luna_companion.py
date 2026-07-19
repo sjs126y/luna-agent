@@ -244,7 +244,9 @@ class CompanionRunner:
             candidates.append(candidate)
 
         last_user = _parse_time(status.last_user_at)
-        last_message = (status.recent_user_messages or [""])[-1]
+        recent_messages = list(status.recent_user_messages or [])
+        recent_messages = recent_messages[-self.config.follow_up.max_recent_messages:]
+        last_message = recent_messages[-1] if recent_messages else ""
         if (
             self.config.check_in.enabled
             and last_user is not None
@@ -269,7 +271,7 @@ class CompanionRunner:
                     "kind": "follow_up",
                     "session_key": session_key,
                     "instruction": "判断是否自然跟进用户最近提到的话题；如果没有足够关联就不要主动追问。",
-                    "evidence": {"recent_user_messages": list(status.recent_user_messages)},
+                    "evidence": {"recent_user_messages": recent_messages},
                     "urgency": 0.20,
                     "continuity": 0.75,
                     "previous": 0.0,
