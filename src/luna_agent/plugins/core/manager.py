@@ -1321,10 +1321,24 @@ class PluginManager:
                 and self._same_path(existing.manifest.path, manifest.path)
             ):
                 return
-            existing.status = PluginStatus.ERROR
-            existing.error = f"Duplicate plugin key: {manifest.key}"
-            existing.error_traceback = None
-            return
+            sources = {existing.manifest.source, manifest.source}
+            if sources == {"local", "installed"}:
+                if existing.manifest.source == "installed":
+                    return
+                if existing.status not in {PluginStatus.LOADING, PluginStatus.LOADED}:
+                    del self._plugins[manifest.key]
+                else:
+                    existing.status = PluginStatus.ERROR
+                    existing.error = (
+                        f"Installed plugin conflicts with loaded local source: {manifest.key}"
+                    )
+                    existing.error_traceback = None
+                    return
+            else:
+                existing.status = PluginStatus.ERROR
+                existing.error = f"Duplicate plugin key: {manifest.key}"
+                existing.error_traceback = None
+                return
         boundary_error = self._manifest_boundary_error(manifest)
         enabled = self._resolve_enabled(manifest)
         status = PluginStatus.ERROR if boundary_error else PluginStatus.DISABLED

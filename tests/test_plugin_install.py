@@ -143,6 +143,75 @@ async def test_install_only_stays_disabled_after_manager_restart(tmp_path):
     assert discovered.enabled is False
 
 
+@pytest.mark.asyncio
+async def test_installed_package_shadows_its_local_development_source(tmp_path):
+    source = _source(
+        tmp_path / "plugins" / "installed-demo",
+        version="1.0.0",
+        value="one",
+    )
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[source.parent],
+    )
+    installer = PluginManager(
+        settings,
+        plugin_dirs=[source.parent],
+        state_path=tmp_path / "plugin-state.json",
+        include_builtin=False,
+    )
+    installed = await installer.install_plugin_runtime(source)
+    package_path = installer.install_store.active_path(installed.key)
+
+    restarted = PluginManager(
+        settings,
+        plugin_dirs=[source.parent],
+        state_path=tmp_path / "plugin-state.json",
+        include_builtin=False,
+    )
+    restarted.discover()
+    discovered = restarted._plugins[installed.key]
+
+    assert discovered.manifest.source == "installed"
+    assert discovered.manifest.path == package_path
+    assert discovered.status.name == "DISCOVERED"
+    assert discovered.error is None
+
+
+@pytest.mark.asyncio
+async def test_disabled_installed_package_still_shadows_local_source(tmp_path):
+    source = _source(
+        tmp_path / "plugins" / "installed-demo",
+        version="1.0.0",
+        value="one",
+    )
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[source.parent],
+    )
+    installer = PluginManager(
+        settings,
+        plugin_dirs=[source.parent],
+        state_path=tmp_path / "plugin-state.json",
+        include_builtin=False,
+    )
+    installed = await installer.install_plugin_runtime(source, enable=False)
+
+    restarted = PluginManager(
+        settings,
+        plugin_dirs=[source.parent],
+        state_path=tmp_path / "plugin-state.json",
+        include_builtin=False,
+    )
+    restarted.discover()
+    discovered = restarted._plugins[installed.key]
+
+    assert discovered.manifest.source == "installed"
+    assert discovered.enabled is False
+    assert discovered.status.name == "DISABLED"
+    assert discovered.error is None
+
+
 def test_installer_rejects_archive_path_traversal(tmp_path):
     archive = tmp_path / "bad.zip"
     with zipfile.ZipFile(archive, "w") as output:
