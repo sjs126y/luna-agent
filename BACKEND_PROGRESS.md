@@ -40,6 +40,7 @@
 - 构建/安装路径进入现有 filesystem resource 与 blocked-path 校验；审批按 action 分为 auto/cached/prompt，安装仅接受本地目录/ZIP/TAR，内置插件不可管理，卸载固定保留数据且不开放 force/purge。
 - 插件列表改为有界摘要，安装源缺失会指向 `plugin_build(package)`；Inbox Watch 状态不再绑定项目绝对路径，Workspace Watch 对缺失目标采用独立退避，减少重复投递与轮询审计噪音。
 - Plugin package 增加符号链接拒绝，避免打包阶段跟随链接读取包目录外内容。
+- 已安装 active package 现在会按明确优先级遮蔽同 key 的本地开发源，避免安装后重启被误判为重复插件；两个本地目录、内置与安装包等真实 key 冲突仍保持硬错误。
 - 新增 Agent 工具、watcher 与 Document Converter 回归测试；文档转换聚焦 `4 passed`，SDK/安全聚焦 `26 passed`，完整回归 `1186 passed, 1 warning`。
 
 ## 2026-07-19：项目正式更名为 Luna Agent

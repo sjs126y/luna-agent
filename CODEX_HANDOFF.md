@@ -5,7 +5,7 @@
 <p><strong>当前主干、协作边界和下一位 Agent 应该先看什么</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/branch-security%2Fbash--process--sandbox-2EA44F" alt="Bash process sandbox branch">
+  <img src="https://img.shields.io/badge/branch-feature%2Fplugin--agent--tools-2EA44F" alt="Plugin agent tools branch">
   <img src="https://img.shields.io/badge/backend-stable-0A84FF" alt="Backend stable">
   <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
 </p>
@@ -25,8 +25,8 @@
 
 ## 当前工作分支
 
-- 分支：`security/bash-process-sandbox`
-- 当前分支在插件控制工具与 Document Converter 基线上，新增 Bash/后台进程声明式资源、严格 Bubblewrap mount plan 和 fail-closed 诊断。
+- 分支：`feature/plugin-agent-tools`
+- 当前分支已合入 Bash/后台进程声明式资源、严格 Bubblewrap mount plan、fail-closed 诊断，以及已安装插件遮蔽同 key 本地开发源的发现优先级。
 - 最近完整验证：`python -m compileall -q src/luna_agent` 通过；`uv run python -m pytest -q` 为 `1197 passed, 1 warning`。
 - 唯一 warning 来自飞书 SDK 内部弃用 API，不是当前 Runtime 回归。
 - 用户本地未跟踪的联调文件不属于项目提交，后续 Agent 不应擅自删除或纳入 commit。

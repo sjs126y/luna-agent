@@ -58,6 +58,7 @@
 - 插件源码仍由普通文件工具编辑，插件构建工具只承担静态校验、SDK contract test 和确定性打包。
 - 插件工具按 action 分级审批，拒绝内置插件、限制本地安装源，普通卸载始终保留插件数据。
 - 路径继续经过 sandbox/resource 审批，打包拒绝符号链接；热更新后当前 Turn 保持旧 lease，新快照从下一轮生效。
+- install-state 指向的 active digest 对同 key 本地开发源具有明确优先级；真正的同边界重复 key 仍拒绝加载。
 
 ## v0.19 Luna Agent 命名迁移
 
