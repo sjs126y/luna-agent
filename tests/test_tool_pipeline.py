@@ -1081,6 +1081,38 @@ async def test_tool_call_wrapper_is_excluded_from_turn_tool_count():
     assert payload["tool_truth"]["tool_names"] == ["wrapper_count_target"]
 
 
+def test_turn_report_records_compaction_diagnostics():
+    from luna_agent.agent.report import AgentTurnReport
+    from luna_agent.conversation.events import ConversationEvent
+
+    report = AgentTurnReport()
+    report.apply_event(ConversationEvent(
+        type="compression",
+        message="compressed",
+        data={
+            "trigger": "mid_turn",
+            "pre_message_count": 30,
+            "post_message_count": 8,
+            "pre_tokens": 200000,
+            "post_tokens": 30000,
+            "summary_tokens": 5000,
+            "retained_user_tokens": 12000,
+        },
+    ))
+
+    payload = report.as_dict()
+    assert payload["was_compressed"] is True
+    assert payload["compactions"] == [{
+        "trigger": "mid_turn",
+        "pre_message_count": 30,
+        "post_message_count": 8,
+        "pre_tokens": 200000,
+        "post_tokens": 30000,
+        "summary_tokens": 5000,
+        "retained_user_tokens": 12000,
+    }]
+
+
 @pytest.mark.asyncio
 async def test_structured_tool_output_keeps_artifacts_in_memory_and_redacts_events():
     from luna_agent.conversation.events import EventRecorder

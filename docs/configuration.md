@@ -229,7 +229,7 @@ uv run luna-agent memory reindex --index all
 | `plugins` | 用户插件目录、显式启用/禁用插件 |
 | `memory` | 外部 provider、review/buffer、Memory LLM 和 Luna Agent 检索 Backend |
 | `multimodal` | 平台附件、多模态降级和原生图片输入策略 |
-| `compression` | 上下文压缩阈值和 tail budget |
+| `compression` | Codex 风格交接压缩、用户原话和近期上下文预算 |
 | `sandbox` | 文件、bash、审计的安全边界 |
 | `mcp` | MCP server 开关和 server 列表 |
 | `session` | 会话过期和会话 override |

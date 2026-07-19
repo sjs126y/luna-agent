@@ -79,6 +79,15 @@ async def test_multiple_compressions_preserve_full_chain(store):
 
     assert chain.get_chain(entry.session_id) == [entry.session_id, first_id, second_id]
     assert chain.resolve(entry.session_id) == second_id
+    checkpoints = await session_store.recent_compression_checkpoints(
+        session_key="cli:default:local"
+    )
+    assert [item["window_number"] for item in checkpoints] == [1, 2]
+    assert checkpoints[0]["first_window_id"] == entry.session_id
+    assert checkpoints[1]["first_window_id"] == entry.session_id
+    assert checkpoints[1]["previous_window_id"] == checkpoints[0]["window_id"]
+    assert checkpoints[1]["source_session_id"] == first_id
+    assert checkpoints[1]["target_session_id"] == second_id
 
     await session_store.delete_session("cli:default:local")
 
@@ -86,6 +95,9 @@ async def test_multiple_compressions_preserve_full_chain(store):
     assert await db.get_message_count(first_id) == 0
     assert await db.get_message_count(second_id) == 0
     assert chain.get_chain(entry.session_id) == [entry.session_id]
+    assert await session_store.recent_compression_checkpoints(
+        session_key="cli:default:local"
+    ) == []
 
 
 @pytest.mark.asyncio
@@ -110,6 +122,9 @@ async def test_commit_compaction_rolls_back_database_when_chain_write_fails(stor
     after = await after_cursor.fetchone()
     assert before["count"] == after["count"]
     assert chain.get_chain(entry.session_id) == [entry.session_id]
+    assert await session_store.recent_compression_checkpoints(
+        session_key="cli:default:local"
+    ) == []
 
 
 @pytest.mark.asyncio

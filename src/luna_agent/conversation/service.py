@@ -195,6 +195,7 @@ class ConversationService:
                     session_key,
                     source,
                     compaction_result.replacement_history,
+                    compaction_result.metadata,
                 )
                 if not checkpoint_id:
                     raise RuntimeError("failed to persist compaction checkpoint")
@@ -222,6 +223,7 @@ class ConversationService:
                     session_key,
                     source,
                     compaction.replacement_history,
+                    compaction.metadata,
                 )
                 if not checkpoint_id:
                     raise RuntimeError("failed to persist mid-turn compaction checkpoint")
@@ -544,6 +546,17 @@ class ConversationService:
 
     async def get_persisted_turn_report(self, report_id: int) -> dict[str, Any] | None:
         return await self.session_store.get_turn_report(report_id)
+
+    async def recent_compaction_checkpoints(
+        self,
+        *,
+        session_key: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return await self.session_store.recent_compression_checkpoints(
+            session_key=session_key,
+            limit=limit,
+        )
 
     async def tool_runs_for_turn_report(
         self,

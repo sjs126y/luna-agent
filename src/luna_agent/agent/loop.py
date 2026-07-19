@@ -69,12 +69,21 @@ async def run_conversation(
         multimodal_diagnostics=dict(getattr(ctx, "multimodal_diagnostics", {}) or {}),
     )
     if getattr(ctx, "was_compressed", False):
+        initial_compaction = getattr(ctx, "compaction_result", None)
+        metadata = getattr(initial_compaction, "metadata", None)
         await emit_event(
             report_recorder,
             "compression",
             "历史消息已压缩",
+            trigger=str(getattr(metadata, "trigger", "auto") or "auto"),
             pre_message_count=getattr(ctx, "pre_compress_message_count", 0),
             post_message_count=len(ctx.messages),
+            pre_tokens=int(getattr(metadata, "pre_tokens", 0) or 0),
+            post_tokens=int(getattr(metadata, "post_tokens", 0) or 0),
+            summary_tokens=int(getattr(metadata, "summary_tokens", 0) or 0),
+            retained_user_tokens=int(
+                getattr(metadata, "retained_user_tokens", 0) or 0
+            ),
         )
 
     while agent._iteration_budget > 0:

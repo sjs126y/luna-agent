@@ -39,7 +39,7 @@ artifacts:
 compression:
   engine: "compressor"       # compressor (built-in) | lcm (future)
   model: ""                  # empty = use main model; set = cheap model
-  max_tokens: 500
+  retained_user_tokens: 20000
   tail_token_budget: 20000
   threshold_ratio: 0.6
 

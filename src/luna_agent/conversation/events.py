@@ -265,8 +265,17 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
         "compression",
         "Conversation history was compressed.",
         fields=(
+            EventFieldSpec("trigger", "string", "auto, mid_turn, or overflow."),
             EventFieldSpec("pre_message_count", "integer", "Message count before compression."),
             EventFieldSpec("post_message_count", "integer", "Message count after compression."),
+            EventFieldSpec("pre_tokens", "integer", "Estimated tokens before compression."),
+            EventFieldSpec("post_tokens", "integer", "Estimated tokens after compression."),
+            EventFieldSpec("summary_tokens", "integer", "Handoff summary tokens."),
+            EventFieldSpec(
+                "retained_user_tokens",
+                "integer",
+                "Tokens of verbatim user messages retained.",
+            ),
         ),
     ),
     "steer_consumed": EventSchema(

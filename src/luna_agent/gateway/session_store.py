@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +132,7 @@ class SessionStore:
         session_key: str,
         source,
         replacement_history: list[dict],
+        metadata: Any = None,
     ) -> str:
         """Persist a replacement window before the active turn continues."""
         old_entry = self._index.get(session_key)
@@ -140,6 +141,20 @@ class SessionStore:
         current_id = self._chain.resolve(old_entry.session_id) if self._chain else old_entry.session_id
 
         new_id = str(uuid.uuid4())
+        previous_checkpoint = await self._db.compaction_checkpoint_for_target(current_id)
+        window_number = int((previous_checkpoint or {}).get("window_number") or 0) + 1
+        first_window_id = str(
+            (previous_checkpoint or {}).get("first_window_id") or current_id
+        )
+        previous_window_id = str(
+            (previous_checkpoint or {}).get("window_id") or current_id
+        )
+        window_id = str(uuid.uuid4())
+        metadata_dict = (
+            asdict(metadata)
+            if metadata is not None and is_dataclass(metadata)
+            else dict(metadata or {})
+        )
         entry = SessionEntry(
             session_id=new_id,
             session_key=session_key,
@@ -160,6 +175,18 @@ class SessionStore:
                     new_id, role, content, tool_calls, tool_name, tool_call_id
                 )
 
+            await self._db.save_compression_checkpoint({
+                **metadata_dict,
+                "session_key": session_key,
+                "source_session_id": current_id,
+                "target_session_id": new_id,
+                "window_number": window_number,
+                "window_id": window_id,
+                "first_window_id": first_window_id,
+                "previous_window_id": previous_window_id,
+                "created_at": time.time(),
+            })
+
             if self._chain:
                 self._chain.link(current_id, new_id)
         except Exception:
@@ -169,6 +196,17 @@ class SessionStore:
         logger.info("Compressed session: %s → %s (%d messages)",
                      current_id[:8], new_id[:8], len(replacement_history))
         return new_id
+
+    async def recent_compression_checkpoints(
+        self,
+        *,
+        session_key: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return await self._db.recent_compression_checkpoints(
+            session_key=session_key,
+            limit=limit,
+        )
 
     def get(self, session_key: str) -> SessionEntry | None:
         return self._index.get(session_key)
