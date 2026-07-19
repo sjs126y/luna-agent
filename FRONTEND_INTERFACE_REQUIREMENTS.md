@@ -7,6 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/blocking%20requirements-0-2EA44F" alt="No blocking requirements">
   <img src="https://img.shields.io/badge/artifact%20UI-optional-0A84FF" alt="Artifact UI optional">
+  <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
 <p>
@@ -23,6 +24,8 @@
 本文是前端向后端提出小型字段/接口需求的活动清单。已经实现的字段级契约不在这里重复，统一以 `BACKEND_INTERFACE.md` 为准。
 
 ## 当前状态
+
+Luna Agent 命名迁移没有产生新的前端接口需求：事件协议仍为 v1，字段、命令结果和确认语义均未变化。仓库内前端代码使用 `luna_agent.*`，启动命令使用 `luna-agent`；旧 `personal-agent` 仅作为迁移期兼容入口。
 
 inline TUI 已消费：
 

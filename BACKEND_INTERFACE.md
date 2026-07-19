@@ -23,6 +23,8 @@
 
 本文给前端线使用，描述当前后端已经稳定提供的事件、命令和工具确认语义。后续 desktop/web/TUI 对接时优先看本文；阶段背景见 `CODEX_HANDOFF.md` 和 `PROJECT_EVOLUTION.md`。
 
+> 2026-07-19 命名迁移：宿主 Python 包改为 `luna_agent`，CLI 改为 `luna-agent`，内置 Memory provider 改为 `luna`。本次没有修改 `ConversationEvent`、`SubmissionRequest`、`SubmissionOutcome`、Artifact、Delivery 或确认 payload，`protocol_version` 仍为 `1`，前端不需要做数据迁移。仓库内 TUI 的源码 import 已同步到 `luna_agent.*`。
+
 ## 快速导航
 
 | 前端正在做 | 直接查看 |

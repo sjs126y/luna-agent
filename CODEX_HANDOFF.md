@@ -21,13 +21,13 @@
 
 ---
 
-本文是当前主干的协作入口。阶段历史与代码规模见 `PROJECT_EVOLUTION.md`；后端详细实现记录见 `BACKEND_PROGRESS.md`；前端状态见 `FRONTEND_PROGRESS.md`。
+本文是当前工作分支的协作入口。阶段历史与代码规模见 `PROJECT_EVOLUTION.md`；后端详细实现记录见 `BACKEND_PROGRESS.md`；前端状态见 `FRONTEND_PROGRESS.md`。
 
 ## 当前工作分支
 
 - 分支：`refactor/luna-agent-rename`
-- 已完成提交：`7b798ca Rename runtime and plugin SDK to Luna Agent`、`38c48c6 Migrate Luna Agent configuration`。
-- 后续待提交：文档、进度记录和路线图文件的命名迁移。
+- 已完成提交：`7b798ca Rename runtime and plugin SDK to Luna Agent`、`38c48c6 Migrate Luna Agent configuration`、`f71a507 Refresh Luna Agent documentation`。
+- 命名迁移、配置兼容、README、路线图、进度和前后端接口文档均已同步；当前分支可进入最终复核与合并。
 - 最近完整验证：`python -m compileall -q src/luna_agent` 通过；`uv run pytest -q` 为 `1171 passed, 1 warning`。
 - 唯一 warning 来自飞书 SDK 内部弃用 API，不是当前 Runtime 回归。
 - 用户本地未跟踪的联调文件不属于项目提交，后续 Agent 不应擅自删除或纳入 commit。

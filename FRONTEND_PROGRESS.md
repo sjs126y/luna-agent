@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/TUI-inline-0A84FF" alt="Inline TUI">
   <img src="https://img.shields.io/badge/security%20v4-merged-2EA44F" alt="Security v4 merged">
-  <img src="https://img.shields.io/badge/updated-2026--07--18-555555" alt="Updated 2026-07-18">
+  <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
 <p>
@@ -26,11 +26,19 @@
 ## 当前主干同步与范围
 
 - Security v4 前端实现 `b87c524` 已通过 `7b1afd0` 合并进 `main`；独立前端 worktree 仍保留 `feature/frontend-security-v4` 作为历史工作线，不代表主干尚未合并。
-- 当前主干文档/清理基准：`f3da3d7`；最近后端功能基准：`0bcb55e Merge outbound multimodal delivery`。
+- 当前待合并分支：`refactor/luna-agent-rename`；运行时改名提交为 `7b798ca`，配置迁移为 `38c48c6`，文档迁移为 `f71a507`。
 - 前端主要范围：`src/luna_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`
 - 前端只处理 CLI/TUI/desktop-web 侧内容；后端接口权威仍是 `BACKEND_INTERFACE.md`。
+
+## 2026-07-19：Luna Agent 命名同步
+
+- TUI 源码随宿主主包迁移到 `src/luna_agent/tui/`，内部 import 已全部切换为 `luna_agent.*`。
+- 正式启动入口改为 `luna-agent chat`；旧 `personal-agent` 命令仍可用，但不再写入新文档和前端提示。
+- Banner、Doctor、帮助文本和文档展示名统一为 `Luna Agent`。
+- `ConversationEvent` 与前后端 payload 没有结构变化，协议版本保持 v1，不要求前端实现兼容分支。
+- 当前完整后端回归为 `1171 passed, 1 warning`，唯一 warning 来自飞书 SDK。
 
 ## 已完成进度
 

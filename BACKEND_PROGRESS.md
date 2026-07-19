@@ -28,6 +28,7 @@
 - 内置外部记忆提供器从 `memory/lumora` 迁移为 `memory/luna`；旧 `external_provider: lumora`、provider options 和 managed Markdown 标记均可读取并迁移。
 - 当前实例继续使用已有 `lumora_memories` Qdrant collection，避免历史向量因品牌改名断链；新配置模板默认使用 `luna_memories`。
 - `config.yaml` 中与仓库位置相关的路径改为相对路径，合并后可以直接把本地目录重命名为 `luna-agent`。
+- 前端接口协议保持 v1：Conversation、Artifact、Delivery、命令与确认 payload 均未变化；仓库内 TUI 仅需同步 Python import 和启动命令。
 - 验证：聚焦回归 `177 passed`，完整回归 `1171 passed, 1 warning`；新旧 CLI 均可启动，Doctor 配置检查通过，`compileall` 与 `git diff --check` 通过。
 
 ## 2026-07-19：Plugin SDK、依赖图与持久提交幂等
