@@ -5,9 +5,9 @@
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-20-7C3AED" alt="20 phases">
-  <img src="https://img.shields.io/badge/Python%20LOC-89%2C197-0A84FF" alt="89197 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1186%20passed-2EA44F" alt="1186 tests passed">
+  <img src="https://img.shields.io/badge/phases-21-7C3AED" alt="21 phases">
+  <img src="https://img.shields.io/badge/Python%20LOC-90%2C887-0A84FF" alt="90887 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
 </p>
 
 <p>
@@ -27,7 +27,21 @@
 
 - 分支：`main`
 - 本次统计基准：v0.20 Agent 插件控制面
-- 最近全量验证：`uv run pytest -q`，结果 `1186 passed, 1 warning`
+- 最近全量验证：`uv run python -m pytest -q`，结果 `1197 passed, 1 warning`
+
+## v0.21 Bash 最小进程文件系统
+
+时间：2026-07-19
+
+目标：让 Shell 保持足够自由，同时把可访问宿主资源从“解析命令字符串”提升为可审批、可审计、不可绕过的进程级边界。
+
+主要变化：
+
+- `bash` 与 `process_start` 通过 `cwd/read_paths/write_paths` 显式声明文件系统资源，工具身份与路径资源分别审批。
+- `ProcessMountPlan` 作为共享中间层构造进程视图；Bash 使用最小 Bubblewrap root，MCP 保留兼容策略。
+- 未声明宿主路径在子进程里不存在，单文件授权不扩大到兄弟文件；blocked 文件/目录在挂载后继续遮蔽。
+- 自动后端缺少 bwrap 时 Bash 失败关闭，显式 legacy 是唯一兼容退出路径；Doctor 区分 Bash 与通用进程后端。
+- 真实回归覆盖 Python 路径拼接、外部单文件审批、blocked mask、后台进程和 MCP 兼容性；完整测试为 `1197 passed, 1 warning`。
 
 ## v0.20 Agent 可操作的插件控制面
 
@@ -492,13 +506,13 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/luna_agent/**/*.py` | 255 | 54,372 |
-| `tests/**/*.py` | 103 | 31,182 |
-| Plugins / Examples / Scripts / SDK | 33 | 3,633 |
+| `src/luna_agent/**/*.py` | 255 | 54,815 |
+| `tests/**/*.py` | 104 | 31,850 |
+| Plugins / Examples / Scripts / SDK | 34 | 4,212 |
 | 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
-| Python 合计 | 400 | 89,197 |
+| Python 合计 | 402 | 90,887 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.44 万行，测试约 3.12 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1186 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.48 万行，测试约 3.19 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1197 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

@@ -5,9 +5,9 @@
 <p><strong>当前主干、协作边界和下一位 Agent 应该先看什么</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/branch-feature%2Fplugin--agent--tools-2EA44F" alt="Plugin agent tools branch">
+  <img src="https://img.shields.io/badge/branch-security%2Fbash--process--sandbox-2EA44F" alt="Bash process sandbox branch">
   <img src="https://img.shields.io/badge/backend-stable-0A84FF" alt="Backend stable">
-  <img src="https://img.shields.io/badge/tests-1186%20passed-2EA44F" alt="1186 tests passed">
+  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
 </p>
 
 <p>
@@ -25,9 +25,9 @@
 
 ## 当前工作分支
 
-- 分支：`feature/plugin-agent-tools`
-- 当前分支已完成 Agent 插件控制工具、action 审批、watcher 收尾，并新增单工具外置插件 `productivity/document-converter`；Plugin SDK 已扩展公开资源声明契约。
-- 最近完整验证：`python -m compileall -q src/luna_agent` 通过；`uv run python -m pytest -q` 为 `1186 passed, 1 warning`。
+- 分支：`security/bash-process-sandbox`
+- 当前分支在插件控制工具与 Document Converter 基线上，新增 Bash/后台进程声明式资源、严格 Bubblewrap mount plan 和 fail-closed 诊断。
+- 最近完整验证：`python -m compileall -q src/luna_agent` 通过；`uv run python -m pytest -q` 为 `1197 passed, 1 warning`。
 - 唯一 warning 来自飞书 SDK 内部弃用 API，不是当前 Runtime 回归。
 - 用户本地未跟踪的联调文件不属于项目提交，后续 Agent 不应擅自删除或纳入 commit。
 
@@ -35,11 +35,11 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| Runtime：`src/luna_agent/**/*.py` | 255 | 54,372 |
-| Tests：`tests/**/*.py` | 103 | 31,182 |
-| Plugins / Examples / Scripts / SDK | 33 | 3,633 |
+| Runtime：`src/luna_agent/**/*.py` | 255 | 54,815 |
+| Tests：`tests/**/*.py` | 104 | 31,850 |
+| Plugins / Examples / Scripts / SDK | 34 | 4,212 |
 | 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
-| Python 合计 | 400 | 89,197 |
+| Python 合计 | 402 | 90,887 |
 
 统计只包含 Git tracked Python 文件，包含注释与空行。
 
@@ -85,7 +85,7 @@ CLI/TUI | Gateway Adapters | Cron | Plugin Submit
 
 - Mode 为 `Read Only`、`Ask First`、`Local Auto`、`Full Auto`。
 - 工具身份和 filesystem/network 资源使用精确 session grant，共享可配置 TTL；Mode 切换或重启清空。
-- Bubblewrap、blocked paths、嵌套 `tool_call`、MCP 与 Hook 均走统一安全边界。
+- Bash/后台进程只挂载 `cwd/read_paths/write_paths` 声明的资源，blocked paths 在进程视图内继续遮蔽；嵌套 `tool_call`、MCP 与 Hook 均走统一安全边界。
 - HookManager 提供 typed context/outcome、matcher、priority 和 failure policy；Gateway、Conversation、Tool 与 Delivery 都有稳定 Hook 点。
 
 ### Memory 与评测修复
@@ -119,7 +119,7 @@ CLI/TUI | Gateway Adapters | Cron | Plugin Submit
 
 1. 完成微信修正后媒体实机复测，以及 QQ/NapCat 登录、私聊/群聊和多媒体端到端联调。
 2. 继续用固定 Benchmark 观察本地 Qdrant、长会话、并发 Memory prefetch、MCP 冷启动和 provider cache。
-3. 插件安装、卸载和热加载需要 `RuntimeSnapshot + lease + drain`、Manager reconcile 和异步资源关闭。
+3. 用真实本地安装包继续验证插件安装、升级、回滚、卸载、数据保留和主动 generation readiness。
 4. 主动决策系统需要候选生成、去重、冷却、静默时间、优先级、预算和用户反馈策略。
 5. 知识 RAG 保持为后续独立通用插件，不重新塞进个人记忆 provider。
 

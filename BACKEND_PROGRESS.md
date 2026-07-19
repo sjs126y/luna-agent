@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1186%20passed-2EA44F" alt="1186 tests passed">
+  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
@@ -20,6 +20,16 @@
 </div>
 
 ---
+
+## 2026-07-19：Bash 声明式资源与严格进程沙箱
+
+- 修复 Ask First 下 Bash 可通过 Python 多行脚本和引号差异读取未声明目录外文件的问题。命令正则降级为前置提示，真正边界改为 Bubblewrap 最小文件系统挂载。
+- 新增 `ProcessMountPlan` 与 `ProcessSandboxPolicy`。Bash 使用 `bash-strict` 策略；stdio MCP 暂时使用 `mcp-compatible`，共享构造抽象但不改变已有 server 的宿主依赖。
+- `bash` / `process_start` 统一支持 `cwd`、`read_paths`、`write_paths`。工具身份使用 `cached`，精确文件路径仍独立进入当前 Mode 的资源审批。
+- 严格子进程只看到系统运行目录、隔离 HOME、工作目录和显式资源；单文件 read 不会暴露同目录兄弟文件，Python 拼接路径也不能访问未挂载宿主路径。
+- blocked 文件在已挂载目录中继续作为不可扩权硬边界；`.git/.venv/node_modules` 等目录在扫描阶段整棵剪枝并在子进程中遮蔽。
+- `process_backend: auto` 缺少 bwrap 时 Bash 失败关闭，只有显式 `legacy` 才关闭严格隔离。Doctor 新增 Bash 实际后端、隔离状态和 fail-closed 字段。
+- 阶段提交：`b4fd8b4`、`e4cb02d`、`f1e5268`。完整回归 `1197 passed, 1 warning`；唯一 warning 来自飞书 SDK 内部弃用 API。
 
 ## 2026-07-19：Agent 可操作的插件控制面
 

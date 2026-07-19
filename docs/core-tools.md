@@ -6,7 +6,7 @@
 
 ![Core](https://img.shields.io/badge/core-19%20tools-2EA44F)
 ![Bridge](https://img.shields.io/badge/tool%20bridge-3%20entries-2563EB)
-![Tests](https://img.shields.io/badge/tests-1186%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-1197%20passed-2EA44F)
 
 [项目首页](../README.md) · [文档中心](README.md) · [架构说明](architecture.md) · [安全边界](capabilities-and-boundaries.md)
 
@@ -66,7 +66,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | `grep` | 共用有界扫描、逐行读取、跳过二进制和大文件、50 匹配上限 |
 | `read` | `offset/limit` 分页、50k 字节窗口、二进制拒绝、线程 I/O |
 | `write/edit` | UTF-8 实际字节限制、同目录原子替换、超大文件编辑拒绝 |
-| `bash` | 异步进程、超时与中断、持续排空输出、64 KiB 捕获上限 |
+| `bash` | `cached` 工具审批、声明式 `cwd/read_paths/write_paths`、Bubblewrap 最小挂载、超时与中断、64 KiB 捕获上限 |
 | `web_fetch` | 每次跳转前 SSRF 校验、5 次跳转上限、2 MiB 响应上限、内容类型约束 |
 | `document_convert` | 只读精确路径、50 MiB 输入上限、30k 字符分页、格式规模上限与可选 LibreOffice 旧格式转换 |
 | 后台进程 | 异步读取，stdout/stderr 各自只保留 4k 字符尾部 |
@@ -77,6 +77,8 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 目录浏览不需要再借助 Bash：`list_directory(path)` 默认只返回当前层；需要按文件名递归查找时再使用 `glob`。`glob(max_depth=1)` 只匹配搜索根目录下的文件，`max_depth=2` 才进入一层子目录。
 
 扫描器会静默跳过与查询无关的受保护项。宽泛的 `*.jpg`、`*.jdg` 或 `*.toml` 搜索不会因为路过 `pyproject.toml` 而终止回合；明确请求受保护文件名时仍返回不可扩权的硬拒绝。
+
+`bash` 与 `process_start` 不再把整个宿主文件系统只读挂入子进程。默认只提供命令运行所需的系统目录、`cwd` 和本次声明的 `read_paths` / `write_paths`；目录外文件必须先作为精确资源进入统一审批。命令字符串扫描只负责提前拦截明显错误，真正边界由 Bubblewrap mount plan 保证，因此 Python 拼接路径、引号差异或脚本内部打开文件都不能看到未声明的宿主路径。
 
 ## 已知边界
 
