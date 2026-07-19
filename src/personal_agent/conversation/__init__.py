@@ -2,6 +2,7 @@
 
 from personal_agent.conversation.command_runtime import ConversationCommandRuntime
 from personal_agent.conversation.coordinator import ConversationCoordinator
+from personal_agent.conversation.ledger import DurableSubmissionLedger
 from personal_agent.conversation.events import (
     ConversationEvent,
     ConversationEventSink,
@@ -36,6 +37,7 @@ from personal_agent.conversation.submission import (
 __all__ = [
     "ConversationCommandRuntime",
     "ConversationCoordinator",
+    "DurableSubmissionLedger",
     "ConversationEvent",
     "ConversationEventSink",
     "ConversationQueryService",

@@ -30,6 +30,7 @@ class PluginConversationPort:
         response_mode: ResponseMode | str = ResponseMode.DELIVER,
         metadata: dict | None = None,
         request_id: str = "",
+        durable: bool | None = None,
         artifact_ids: list[str] | tuple[str, ...] = (),
     ):
         self._authorize(session_key, capability="active")
@@ -41,6 +42,10 @@ class PluginConversationPort:
             chat_id=session_key,
         )
         attachments = await self._artifact_attachments(session_key, artifact_ids)
+        explicit_request_id = str(request_id or "").strip()
+        durable_submission = bool(explicit_request_id) if durable is None else bool(durable)
+        if durable_submission and not explicit_request_id:
+            raise ValueError("durable plugin submissions require a stable request_id")
         request = SubmissionRequest(
             session_key=session_key,
             input=ConversationInput(
@@ -51,8 +56,9 @@ class PluginConversationPort:
             ),
             origin=SubmissionOrigin.PLUGIN,
             response_mode=mode,
-            request_id=str(request_id or f"plugin:{self._plugin.runtime_instance_id}:{uuid4().hex}"),
+            request_id=explicit_request_id or f"plugin:{self._plugin.runtime_instance_id}:{uuid4().hex}",
             owner_id=self._plugin.key,
+            durable=durable_submission,
             metadata={"plugin_id": self._plugin.key, **dict(metadata or {})},
         )
         return await self._coordinator.submit(request)

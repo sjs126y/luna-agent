@@ -144,6 +144,30 @@ CREATE TABLE IF NOT EXISTS delivery_outbox_parts (
 CREATE INDEX IF NOT EXISTS idx_delivery_parts_status
 ON delivery_outbox_parts(delivery_id, status, part_index);
 
+CREATE TABLE IF NOT EXISTS submission_ledger (
+    scope          TEXT NOT NULL,
+    owner_id       TEXT NOT NULL,
+    request_id     TEXT NOT NULL,
+    session_key    TEXT NOT NULL,
+    payload_hash   TEXT NOT NULL,
+    response_mode  TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    kind           TEXT DEFAULT 'conversation',
+    turn_id        TEXT DEFAULT '',
+    delivery_id    TEXT DEFAULT '',
+    response       TEXT DEFAULT '',
+    message_json   TEXT DEFAULT '',
+    error          TEXT DEFAULT '',
+    attempts       INTEGER DEFAULT 1,
+    created_at     REAL NOT NULL,
+    updated_at     REAL NOT NULL,
+    completed_at   REAL DEFAULT 0,
+    PRIMARY KEY (scope, owner_id, request_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submission_ledger_status
+ON submission_ledger(status, updated_at);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id       TEXT PRIMARY KEY,
     session_key       TEXT NOT NULL,
@@ -194,6 +218,10 @@ class Database:
             "UPDATE delivery_outbox_parts SET status = 'retry' "
             "WHERE status = 'sending'"
         )
+        await self._conn.execute(
+            "UPDATE submission_ledger SET status = 'retryable' "
+            "WHERE status IN ('accepted', 'running')"
+        )
         await self._conn.commit()
         logger.info("Database initialized at %s", self._path)
 
@@ -222,6 +250,87 @@ class Database:
         if self._conn:
             await self._conn.close()
             self._conn = None
+
+    # ── durable submissions ───────────────────────
+
+    async def claim_submission(self, values: tuple) -> tuple[dict, bool]:
+        """Insert a submission claim or atomically reclaim an interrupted claim."""
+        scope, owner_id, request_id = values[:3]
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                """INSERT OR IGNORE INTO submission_ledger
+                   (scope, owner_id, request_id, session_key, payload_hash,
+                    response_mode, status, kind, turn_id, delivery_id, response,
+                    message_json, error, attempts, created_at, updated_at, completed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                values,
+            )
+            owned = cursor.rowcount == 1
+            if not owned:
+                reclaim = await self._conn.execute(
+                    """UPDATE submission_ledger
+                       SET status = 'accepted', attempts = attempts + 1, updated_at = ?
+                       WHERE scope = ? AND owner_id = ? AND request_id = ?
+                         AND payload_hash = ? AND status = 'retryable'""",
+                    (time.time(), scope, owner_id, request_id, values[4]),
+                )
+                owned = reclaim.rowcount == 1
+            await self._conn.commit()
+            row_cursor = await self._conn.execute(
+                """SELECT * FROM submission_ledger
+                   WHERE scope = ? AND owner_id = ? AND request_id = ?""",
+                (scope, owner_id, request_id),
+            )
+            row = await row_cursor.fetchone()
+            return dict(row), owned
+
+    async def submission_record(
+        self,
+        scope: str,
+        owner_id: str,
+        request_id: str,
+    ) -> dict | None:
+        cursor = await self._conn.execute(
+            """SELECT * FROM submission_ledger
+               WHERE scope = ? AND owner_id = ? AND request_id = ?""",
+            (scope, owner_id, request_id),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_submission(
+        self,
+        scope: str,
+        owner_id: str,
+        request_id: str,
+        **changes,
+    ) -> None:
+        allowed = {
+            "status", "kind", "turn_id", "delivery_id", "response",
+            "message_json", "error", "updated_at", "completed_at",
+        }
+        values = {key: value for key, value in changes.items() if key in allowed}
+        if not values:
+            return
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        async with self._write_lock:
+            await self._conn.execute(
+                f"UPDATE submission_ledger SET {assignments} "
+                "WHERE scope = ? AND owner_id = ? AND request_id = ?",
+                (*values.values(), scope, owner_id, request_id),
+            )
+            await self._conn.commit()
+
+    async def prune_submissions(self, *, before: float) -> int:
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                """DELETE FROM submission_ledger
+                   WHERE completed_at > 0 AND completed_at < ?
+                     AND status IN ('completed', 'delivery_pending', 'failed', 'cancelled', 'rejected')""",
+                (before,),
+            )
+            await self._conn.commit()
+            return int(cursor.rowcount or 0)
 
     # ── delivery outbox ───────────────────────────────
 
