@@ -9,8 +9,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from personal_agent.hooks import HookEvent, PreToolUseOutcome
-from personal_agent.plugins import CommandEntry
+from lumora_plugin_sdk import CommandEntry, HookEvent, PreToolUseOutcome
 
 
 class BrowserOperatorConfig(BaseModel):

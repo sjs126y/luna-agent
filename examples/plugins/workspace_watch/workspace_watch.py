@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from personal_agent.plugins import ActiveResourceRequest, CommandEntry
+from lumora_plugin_sdk import ActiveResourceRequest, CommandEntry
 
 
 class ActiveConfig(BaseModel):

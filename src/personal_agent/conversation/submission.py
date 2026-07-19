@@ -58,6 +58,7 @@ class SubmissionRequest:
     response_mode: ResponseMode
     request_id: str = field(default_factory=lambda: f"sub_{uuid.uuid4().hex}")
     owner_id: str = ""
+    durable: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
     event_sink: Any = field(default=None, repr=False, compare=False)
     confirm: Any = field(default=None, repr=False, compare=False)
@@ -86,6 +87,7 @@ class SubmissionRequest:
         response_mode: ResponseMode,
         source=None,
         owner_id: str = "",
+        durable: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> "SubmissionRequest":
         return cls(
@@ -94,6 +96,7 @@ class SubmissionRequest:
             origin=origin,
             response_mode=response_mode,
             owner_id=owner_id,
+            durable=durable,
             metadata=dict(metadata or {}),
         )
 

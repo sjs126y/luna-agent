@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from personal_agent.plugins import CommandEntry
+from lumora_plugin_sdk import CommandEntry
 
 
 class DeveloperDocsConfig(BaseModel):

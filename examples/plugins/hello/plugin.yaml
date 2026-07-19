@@ -2,9 +2,12 @@ schema_version: 1
 key: examples/hello
 name: Hello Example Plugin
 version: "0.1.0"
+plugin_api: ">=1,<2"
 description: Minimal example plugin with scoped config, one skill, one command, and one hook.
 kind: general
 entrypoint: hello:register
+requires:
+  sdk: ">=0.1,<1"
 provides: [skill, command, hook]
 tags: [example, greeting]
 enabled_by_default: false

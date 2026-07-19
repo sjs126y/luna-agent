@@ -404,6 +404,9 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 delivery_outbox,
                 artifact_store=artifact_store,
             )
+            from personal_agent.conversation.ledger import DurableSubmissionLedger
+
+            submission_ledger = DurableSubmissionLedger(db)
 
             async def dispatch_command(request):
                 from personal_agent.commands.runtime import CommandResult, handle_slash_command
@@ -419,6 +422,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 capability_store=plugin_manager.capability_store,
                 hook_manager=hook_manager,
                 capability_binder=plugin_manager.bind_capability_view,
+                submission_ledger=submission_ledger,
             )
             plugin_manager.bind_application_ports(
                 conversation_coordinator=conversation_coordinator,

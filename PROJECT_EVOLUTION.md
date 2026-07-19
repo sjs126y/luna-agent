@@ -5,9 +5,9 @@
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-17-7C3AED" alt="17 phases">
+  <img src="https://img.shields.io/badge/phases-18-7C3AED" alt="18 phases">
   <img src="https://img.shields.io/badge/Python%20LOC-86%2C280-0A84FF" alt="86280 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F" alt="1145 tests passed">
+  <img src="https://img.shields.io/badge/tests-1167%20passed-2EA44F" alt="1167 tests passed">
 </p>
 
 <p>
@@ -27,7 +27,21 @@
 
 - 分支：`main`
 - 本次统计基准：v0.17 主动插件与投递稳定性收尾
-- 最近全量验证：`uv run pytest -q`，结果 `1145 passed, 1 warning`
+- 最近全量验证：`uv run pytest -q`，结果 `1167 passed, 1 warning`
+
+## v0.18 外置 Plugin SDK、依赖治理与可恢复提交
+
+时间：2026-07-19
+
+目标：让插件真正脱离宿主源码契约开发，并让主动 runner 的稳定事件在进程重启后仍保持幂等。
+
+主要变化：
+
+- 从宿主实现中拆出 `lumora-plugin-sdk` workspace 包，稳定 Tool、Hook、Command、Active、Manifest 与 Context 协议。
+- 建立 manifest 依赖图、兼容版本检查、拓扑加载、循环阻断和 dependent 卸载保护。
+- 在 ConversationCoordinator 外围增加 SQLite Submission Ledger；普通请求保持轻量，显式 durable 请求可恢复 Conversation/Delivery 边界。
+- 新增面向 AI 的 schema/capability 查询、spec 脚手架、契约测试、隔离集成测试、差异检查与打包工具。
+- 现有外置插件和 examples 迁移为 SDK 的真实兼容样例。
 
 <details>
 <summary><strong>展开早期阶段：v0.1 - v0.7</strong></summary>
@@ -458,7 +472,7 @@
 | Markdown 文档 | 42 | 7,394 |
 | Git 已跟踪文件总数 | 458 | - |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.32 万行，测试约 3.05 万行，测试代码占 Python 总量约 35.3%。当前完整测试套件为 `1145 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.32 万行，测试约 3.05 万行，测试代码占 Python 总量约 35.3%。当前完整测试套件为 `1167 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

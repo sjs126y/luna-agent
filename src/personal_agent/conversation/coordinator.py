@@ -13,6 +13,11 @@ import uuid
 from personal_agent.commands.policy import CommandExecutionPolicy, command_execution_policy
 from personal_agent.commands.runtime import CommandResult
 from personal_agent.conversation.input import ConversationInput
+from personal_agent.conversation.ledger import (
+    DurableSubmissionLedger,
+    SubmissionClaimKind,
+    SubmissionLedgerRecord,
+)
 from personal_agent.conversation.steer import ActiveTurnRegistry
 from personal_agent.delivery import DeliveryKind, DeliveryRequest, DeliveryStatus
 from personal_agent.models.messages import OutboundMessage
@@ -72,6 +77,7 @@ class ConversationCoordinator:
         capability_store=None,
         hook_manager=None,
         capability_binder=None,
+        submission_ledger: DurableSubmissionLedger | None = None,
         idempotency_cache_size: int = 2048,
     ) -> None:
         self.conversation_service = conversation_service
@@ -81,6 +87,7 @@ class ConversationCoordinator:
         self.capability_store = capability_store
         self.hook_manager = hook_manager
         self.capability_binder = capability_binder
+        self.submission_ledger = submission_ledger
         self._queues: dict[str, asyncio.Queue[_QueuedSubmission]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._immediate_tasks: set[asyncio.Task[None]] = set()
@@ -146,6 +153,59 @@ class ConversationCoordinator:
                 )
                 return SubmissionHandle(receipt, previous.future)
 
+            if request.durable:
+                if self.submission_ledger is None:
+                    return self._rejected_handle(
+                        request,
+                        future,
+                        "durable submission ledger is unavailable",
+                    )
+                claim = await self.submission_ledger.claim(request)
+                if claim.kind == SubmissionClaimKind.CONFLICT:
+                    return self._rejected_handle(
+                        request,
+                        future,
+                        "request_id is already used by another durable submission payload",
+                    )
+                if claim.kind == SubmissionClaimKind.CACHED:
+                    future.set_result(claim.record.outcome())
+                    self._submissions[request.request_id] = _SubmissionRecord(identity, future)
+                    self._prune_submissions()
+                    receipt = SubmissionReceipt(
+                        request_id=request.request_id,
+                        session_key=request.session_key,
+                        accepted=True,
+                        status=claim.record.outcome().status,
+                        reason="durable duplicate reused persisted submission",
+                    )
+                    return SubmissionHandle(receipt, future)
+                if claim.kind == SubmissionClaimKind.ACTIVE:
+                    future.set_result(claim.record.outcome())
+                    receipt = SubmissionReceipt(
+                        request_id=request.request_id,
+                        session_key=request.session_key,
+                        accepted=True,
+                        status=SubmissionStatus.ACCEPTED,
+                        reason="durable submission is already active",
+                    )
+                    return SubmissionHandle(receipt, future)
+                if claim.kind == SubmissionClaimKind.RESUME:
+                    self._submissions[request.request_id] = _SubmissionRecord(identity, future)
+                    task = asyncio.create_task(
+                        self._resume_durable(request, claim.record, future),
+                        name=f"submission-resume:{request.request_id}",
+                    )
+                    self._immediate_tasks.add(task)
+                    task.add_done_callback(self._immediate_tasks.discard)
+                    receipt = SubmissionReceipt(
+                        request_id=request.request_id,
+                        session_key=request.session_key,
+                        accepted=True,
+                        status=SubmissionStatus.ACCEPTED,
+                        reason="resuming durable submission delivery",
+                    )
+                    return SubmissionHandle(receipt, future)
+
             self._submissions[request.request_id] = _SubmissionRecord(identity, future)
             self._prune_submissions()
 
@@ -210,6 +270,27 @@ class ConversationCoordinator:
             if record.future.done():
                 self._submissions.pop(request_id, None)
 
+    @staticmethod
+    def _rejected_handle(
+        request: SubmissionRequest,
+        future: asyncio.Future[SubmissionOutcome],
+        reason: str,
+    ) -> SubmissionHandle:
+        receipt = SubmissionReceipt(
+            request_id=request.request_id,
+            session_key=request.session_key,
+            accepted=False,
+            status=SubmissionStatus.REJECTED,
+            reason=reason,
+        )
+        future.set_result(SubmissionOutcome(
+            request_id=request.request_id,
+            session_key=request.session_key,
+            status=SubmissionStatus.REJECTED,
+            error=reason,
+        ))
+        return SubmissionHandle(receipt, future)
+
     async def close(self, *, cancel_pending: bool = False) -> None:
         async with self._lock:
             self._accepting = False
@@ -253,6 +334,7 @@ class ConversationCoordinator:
                     self._active[session_key] = item.request
                     try:
                         outcome = await self._execute(item.request)
+                        await self._persist_conversation(item.request, outcome)
                         outcome = await self._apply_response_mode(item.request, outcome)
                     except Exception as exc:
                         outcome = SubmissionOutcome(
@@ -261,6 +343,7 @@ class ConversationCoordinator:
                             status=SubmissionStatus.FAILED,
                             error=f"{type(exc).__name__}: {exc}",
                         )
+                    outcome = await self._safe_persist_final(item.request, outcome)
                     if not item.future.done():
                         item.future.set_result(outcome)
             finally:
@@ -299,12 +382,16 @@ class ConversationCoordinator:
         capability_view,
     ) -> SubmissionOutcome:
         started_at = datetime.now(UTC)
+        if request.durable and self.submission_ledger is not None:
+            await self.submission_ledger.mark_running(request)
         command_result = await self._dispatch_command(request)
         if command_result is not None and command_result.continue_text is None:
             return self._command_outcome(request, command_result, started_at=started_at)
         if command_result is not None and command_result.continue_text is not None:
             request = self._with_text(request, command_result.continue_text)
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"
+        if request.durable and self.submission_ledger is not None:
+            await self.submission_ledger.mark_running(request, turn_id=turn_id)
         capture_policy = getattr(self.conversation_service, "capture_turn_policy", None)
         policy_snapshot = capture_policy(request.session_key) if capture_policy else None
         self.active_turns.begin_turn(
@@ -394,6 +481,8 @@ class ConversationCoordinator:
     ) -> None:
         started_at = datetime.now(UTC)
         try:
+            if request.durable and self.submission_ledger is not None:
+                await self.submission_ledger.mark_running(request)
             result = await self._dispatch_command(request)
             if result is None:
                 outcome = SubmissionOutcome(
@@ -422,6 +511,7 @@ class ConversationCoordinator:
                     started_at=started_at,
                     policy=policy,
                 )
+            await self._persist_conversation(request, outcome)
             outcome = await self._apply_response_mode(request, outcome)
         except Exception as exc:
             outcome = SubmissionOutcome(
@@ -432,8 +522,83 @@ class ConversationCoordinator:
                 error=f"{type(exc).__name__}: {exc}",
                 started_at=started_at,
             )
+        outcome = await self._safe_persist_final(request, outcome)
         if not future.done():
             future.set_result(outcome)
+
+    async def _resume_durable(
+        self,
+        request: SubmissionRequest,
+        record: SubmissionLedgerRecord,
+        future: asyncio.Future[SubmissionOutcome],
+    ) -> None:
+        try:
+            outcome = await self._apply_response_mode(request, record.outcome())
+        except Exception as exc:
+            outcome = SubmissionOutcome(
+                request_id=request.request_id,
+                session_key=request.session_key,
+                status=SubmissionStatus.FAILED,
+                kind=record.kind,
+                response=record.response,
+                message=record.message,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        outcome = await self._safe_persist_final(request, outcome)
+        if not future.done():
+            future.set_result(outcome)
+
+    async def _persist_conversation(
+        self,
+        request: SubmissionRequest,
+        outcome: SubmissionOutcome,
+    ) -> None:
+        if not request.durable or self.submission_ledger is None:
+            return
+        if (
+            request.response_mode == ResponseMode.DELIVER
+            and outcome.status == SubmissionStatus.COMPLETED
+            and (outcome.response or outcome.message)
+        ):
+            await self.submission_ledger.store_conversation(request, outcome)
+
+    async def _persist_final(
+        self,
+        request: SubmissionRequest,
+        outcome: SubmissionOutcome,
+    ) -> None:
+        if not request.durable or self.submission_ledger is None:
+            return
+        delivery = outcome.payload.get("delivery_result") if outcome.payload else None
+        delivery_id = str(getattr(delivery, "delivery_id", "") or "")
+        pending = getattr(delivery, "status", None) == DeliveryStatus.DEFERRED
+        await self.submission_ledger.store_final(
+            request,
+            outcome,
+            delivery_id=delivery_id,
+            delivery_pending=pending,
+        )
+
+    async def _safe_persist_final(
+        self,
+        request: SubmissionRequest,
+        outcome: SubmissionOutcome,
+    ) -> SubmissionOutcome:
+        try:
+            await self._persist_final(request, outcome)
+            return outcome
+        except Exception as exc:
+            return SubmissionOutcome(
+                request_id=outcome.request_id,
+                session_key=outcome.session_key,
+                status=SubmissionStatus.FAILED,
+                kind=outcome.kind,
+                response=outcome.response,
+                error=f"durable submission persistence failed: {type(exc).__name__}: {exc}",
+                payload=dict(outcome.payload),
+                message=outcome.message,
+                started_at=outcome.started_at,
+            )
 
     async def _apply_response_mode(
         self,
@@ -462,6 +627,11 @@ class ConversationCoordinator:
                 else OutboundMessage.text(outcome.response)
             ),
             kind=kind,
+            delivery_id=(
+                self.submission_ledger.delivery_id(request)
+                if request.durable and self.submission_ledger is not None
+                else f"del_{uuid.uuid4().hex}"
+            ),
             metadata={"submission_id": request.request_id},
         ))
         payload = dict(outcome.payload)
@@ -527,6 +697,7 @@ class ConversationCoordinator:
             response_mode=request.response_mode,
             request_id=request.request_id,
             owner_id=request.owner_id,
+            durable=request.durable,
             metadata=request.metadata,
             event_sink=request.event_sink,
             confirm=request.confirm,

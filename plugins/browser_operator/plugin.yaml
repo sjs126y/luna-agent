@@ -2,9 +2,12 @@ schema_version: 1
 key: integrations/browser-operator
 name: Browser Operator
 version: "0.1.0"
+plugin_api: ">=1,<2"
 description: Controlled browser inspection, testing, and interaction through Playwright MCP.
 kind: integration
 entrypoint: browser_operator:register
+requires:
+  sdk: ">=0.1,<1"
 provides: [mcp, skill, command, hook]
 tags: [browser, playwright, testing, automation]
 enabled_by_default: false

@@ -10,8 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from personal_agent.plugins import ActiveResourceRequest, CommandEntry
-from personal_agent.tools.entry import ToolEntry
+from lumora_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
 from personal_agent.tools.runtime_context import current_tool_agent
 
 

@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from personal_agent.plugins import CommandEntry
-from personal_agent.tools.entry import ToolEntry
+from lumora_plugin_sdk import CommandEntry, ToolEntry
 
 
 PLUGIN_VERSION = "v2"

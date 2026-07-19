@@ -2,9 +2,12 @@ schema_version: 1
 key: integrations/developer-docs
 name: Developer Docs
 version: "0.1.0"
+plugin_api: ">=1,<2"
 description: Current library documentation workflows backed by Context7 MCP.
 kind: integration
 entrypoint: developer_docs:register
+requires:
+  sdk: ">=0.1,<1"
 provides: [mcp, skill, command]
 tags: [documentation, context7, development, mcp]
 enabled_by_default: false

@@ -45,6 +45,7 @@ async def test_plugin_conversation_port_injects_owner_and_origin():
     assert handle == "handle"
     assert request.origin.value == "plugin"
     assert request.owner_id == "user/reminder"
+    assert request.durable is False
     assert request.metadata["plugin_id"] == "user/reminder"
 
 
@@ -169,8 +170,21 @@ async def test_plugin_conversation_port_submits_owned_artifacts_with_stable_requ
 
     request = coordinator.requests[0]
     assert request.request_id == "plugin-event-1"
+    assert request.durable is True
     assert request.input.attachments[0].id == "art_owned"
     assert request.input.attachments[0].local_path.endswith("note.txt")
+
+
+@pytest.mark.asyncio
+async def test_plugin_durable_submission_requires_explicit_stable_id():
+    port = PluginConversationPort(plugin=_plugin(), coordinator=Coordinator())
+
+    with pytest.raises(ValueError, match="stable request_id"):
+        await port.submit(
+            session_key="wechat:c1:u1",
+            text="inspect",
+            durable=True,
+        )
 
 
 @pytest.mark.asyncio

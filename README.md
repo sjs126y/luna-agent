@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F?logo=pytest&logoColor=white" alt="1145 tests passed">
+  <img src="https://img.shields.io/badge/tests-1167%20passed-2EA44F?logo=pytest&logoColor=white" alt="1167 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -117,7 +117,7 @@ flowchart LR
 | 文件、Shell、网络与进程工具 | Ready | 核心工具直接可用，低频能力按需发现，扫描和输出有界 |
 | MCP Client Runtime | Ready | stdio / Streamable HTTP、后台启动、断线恢复 |
 | 长期个人记忆 | Ready | Lumora、Mem0、混合检索和本地 Qdrant |
-| 插件与 Skill | Ready | 安装、升级、回滚、卸载、热重载、主动 runner 与资源端口 |
+| 插件与 Skill | Ready | 独立 SDK、依赖解析、AI 脚手架、安装/回滚/卸载、热重载与主动 runner |
 | 多平台 Gateway | Ready | 微信、QQ、Telegram、飞书 |
 | 入站与出站多模态 | Ready | 图片、文件、音频、视频按平台能力处理 |
 | Workflow 与 Sub-agent | Ready | 并行、流水线、配额、活动状态 |
@@ -153,7 +153,7 @@ uv run personal-agent serve
 
 ## 扩展 Lumora
 
-插件可以组合工具、Skill、MCP Server、Hook、命令和工作流，也可以注册由 Gateway 托管的主动 runner；generation snapshot 支持在运行中安装、更新、回滚或卸载。当前仓库已经包含：
+插件可以组合工具、Skill、MCP Server、Hook、命令和工作流，也可以注册由 Gateway 托管的主动 runner；generation snapshot 支持在运行中安装、更新、回滚或卸载。外置插件只依赖 `lumora-plugin-sdk` 公共契约，manifest 可以声明宿主、SDK、插件、能力和 MCP 工具依赖；稳定 `request_id` 的主动提交在重启后仍保持幂等。当前仓库已经包含：
 
 | 插件 | 提供能力 |
 | --- | --- |
@@ -179,7 +179,7 @@ uv run personal-agent serve
 
 ```bash
 python -m compileall -q src/personal_agent
-uv run pytest -q  # 1145 passed, 1 warning
+uv run pytest -q  # 1167 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。

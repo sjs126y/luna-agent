@@ -2,9 +2,12 @@ schema_version: 1
 key: examples/hot-reload-probe
 name: Hot Reload Probe
 version: "1.0.0"
+plugin_api: ">=1,<2"
 description: Manual probe for plugin generation and snapshot switching.
 kind: development
 entrypoint: hot_reload_probe:register
+requires:
+  sdk: ">=0.1,<1"
 provides: [tool, command]
 tags: [example, hot-reload, test]
 enabled_by_default: true
