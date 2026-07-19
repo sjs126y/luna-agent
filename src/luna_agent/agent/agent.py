@@ -75,6 +75,7 @@ class Agent:
     _max_destructive_per_turn: int = 3
     _security_context: Any = None
     _security_grant_ttl_seconds: int = 60 * 60
+    _approval_reviewer_config: dict[str, Any] = field(default_factory=dict)
     _pending_skill_injection: str | None = None  # set by Gateway, consumed by context
     _last_skill_injection: str = ""
     _last_skill_summaries: str = ""
@@ -103,6 +104,7 @@ def init_agent(
     hook_manager=None,
     plugin_manager=None,
     capability_view=None,
+    approval_reviewer_config: dict[str, Any] | None = None,
 ) -> Agent:
     """Wire an Agent instance. Flat initialization — no 1700-line magic."""
     from concurrent.futures import ThreadPoolExecutor
@@ -120,6 +122,7 @@ def init_agent(
         _hook_manager=hook_manager,
         _plugin_manager=plugin_manager,
         _capability_view=capability_view,
+        _approval_reviewer_config=dict(approval_reviewer_config or {}),
         enabled_toolsets=enabled_toolsets,
         _llm_pool=pool,
         _tool_pool=pool,  # shared pool for MVP, separate later

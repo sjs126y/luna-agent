@@ -56,6 +56,7 @@ async def create_agent_runtime(
         hook_manager=getattr(plugin_manager, "hook_manager", None),
         plugin_manager=plugin_manager,
         capability_view=capability_view,
+        approval_reviewer_config=getattr(settings, "approval_reviewer_config", {}),
     )
 
     if plugin_manager is not None:
