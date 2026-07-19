@@ -458,12 +458,16 @@ def test_config_report_accepts_codex_responses_api_mode(tmp_path):
 
     report = build_config_report(tmp_path)
 
-    assert report["ok"] is True
+    assert report["ok"] is False
     assert report["env"]["llm_context_window"] == "1000000"
     assert report["env"]["llm_reasoning_effort"] == "high"
+    assert report["model_capability"]["api_mode"] == "codex_responses"
+    assert report["model_capability"]["effective_context_window"] == 400_000
+    assert report["model_capability"]["model_context_limit"] == 400_000
+    assert report["model_capability"]["context_clamped"] is True
     assert not any("LLM_API_MODE 不支持" in error for error in report["errors"])
     assert report["errors"] == []
-    assert report["warnings"] == []
+    assert any("模型硬上限" in warning for warning in report["warnings"])
 
 
 def test_config_report_accepts_xai_grok_4_5(tmp_path):

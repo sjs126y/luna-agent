@@ -35,7 +35,10 @@ class TurnLlmReport:
     cache_read_tokens: int = 0
     cache_hit_rate: float = 0.0
     tool_call_count: int = 0
+    provider: str = ""
     model: str = ""
+    api_mode: str = ""
+    model_capability: dict[str, Any] = field(default_factory=dict)
     context_window: int = 0
     context_used_tokens: int = 0
     context_remaining_tokens: int = 0
@@ -138,9 +141,14 @@ class AgentTurnReport:
                 "retained_user_tokens": _as_int(data.get("retained_user_tokens")),
             })
         elif event.type == "llm_start":
+            self.llm.provider = str(data.get("provider") or self.llm.provider)
             model = str(data.get("model") or "")
             if model:
                 self.llm.model = model
+            self.llm.api_mode = str(data.get("api_mode") or self.llm.api_mode)
+            capability = data.get("model_capability")
+            if isinstance(capability, dict):
+                self.llm.model_capability = dict(capability)
         elif event.type == "llm_end":
             self.llm.calls += 1
             self.llm.input_tokens += _as_int(data.get("input_tokens"))
@@ -152,9 +160,14 @@ class AgentTurnReport:
             if self.llm.input_tokens:
                 self.llm.cache_hit_rate = self.llm.cache_hit_tokens / self.llm.input_tokens
             self.llm.tool_call_count += _as_int(data.get("tool_call_count"))
+            self.llm.provider = str(data.get("provider") or self.llm.provider)
             model = str(data.get("model") or "")
             if model:
                 self.llm.model = model
+            self.llm.api_mode = str(data.get("api_mode") or self.llm.api_mode)
+            capability = data.get("model_capability")
+            if isinstance(capability, dict):
+                self.llm.model_capability = dict(capability)
             context_window = _as_int(data.get("context_window"))
             if context_window:
                 self.llm.context_window = context_window

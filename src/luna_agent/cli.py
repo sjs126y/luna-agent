@@ -1632,6 +1632,7 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
         "log_level": settings.log_level,
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
+        "model_capability": config_report.get("model_capability", {}),
         "mcp_enabled": settings.mcp_enabled,
         "config": config_report,
         "effective_config": effective_config_snapshot(settings),
@@ -2057,6 +2058,7 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
     commands = runtime.get("commands", {})
     query = runtime.get("query", {})
     execution_runtime = runtime.get("execution", {})
+    model_capability = report.get("model_capability", {})
     mcp_runtime = report.get("mcp_runtime") or runtime.get("mcp") or {}
     lines = [
         "Luna Agent doctor --verbose",
@@ -2064,6 +2066,12 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
         f"数据目录: {report['data_dir']}",
         f"日志级别: {report['log_level']}",
         f"LLM: {report['llm_provider']} / {report['llm_model']}",
+        (
+            "LLM 协议与窗口: "
+            f"{model_capability.get('api_mode') or '-'} / "
+            f"{int(model_capability.get('effective_context_window') or 0):,} "
+            f"(hard {int(model_capability.get('model_context_limit') or 0):,})"
+        ),
         f"MCP: {_yes(report['mcp_enabled'])}",
         (
             "插件概览: "
@@ -2578,6 +2586,7 @@ def format_config_report(report: dict[str, Any]) -> str:
     registry_schema = report.get("registry_schema", {})
     registry_coverage = report.get("registry_coverage", {})
     registry_source_counts = report.get("registry_source_counts", {})
+    model_capability = report.get("model_capability", {})
     lines = [
         "配置检查",
         f"目录: {report.get('base_dir') or '-'}",
@@ -2593,6 +2602,11 @@ def format_config_report(report: dict[str, Any]) -> str:
         f"  API key: {_yes(env.get('llm_api_key_set', False))}",
         f"  base URL: {_yes(env.get('llm_base_url_set', False))}",
         f"  model: {_yes(env.get('llm_model_set', False))}",
+        f"  resolved API mode: {model_capability.get('api_mode') or '-'} ({model_capability.get('api_mode_source') or '-'})",
+        f"  effective context: {int(model_capability.get('effective_context_window') or 0):,}",
+        f"  model hard context: {int(model_capability.get('model_context_limit') or 0):,}",
+        f"  context source: {model_capability.get('context_source') or '-'}",
+        f"  effective max output: {int(model_capability.get('effective_max_output_tokens') or 0):,}",
         f"  缺失环境变量: {_list_or_none(env.get('missing_llm_env', []))}",
         "",
         "配置字段:",

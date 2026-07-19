@@ -939,13 +939,20 @@ class ConversationService:
                 f"压缩窗口: {int(latest.get('window_number') or 0)} "
                 f"({latest.get('trigger') or 'auto'})\n"
             )
+        provider = getattr(agent, "_provider", None)
+        capability_fn = getattr(provider, "model_capability", None)
+        capability = capability_fn() if callable(capability_fn) else {}
         return (
             f"会话用量\n"
+            f"模型: {getattr(provider, 'name', '-')}/{getattr(provider, 'model', '-')}\n"
+            f"协议: {capability.get('api_mode') or '-'} ({capability.get('api_mode_source') or '-'})\n"
             f"API 调用: {agent.session_api_calls} 次\n"
             f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
             f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
             f"\n上下文窗口 (估算)\n"
             f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
+            f"模型硬上限: {int(capability.get('model_context_limit') or 0):,} tokens\n"
+            f"窗口来源: {capability.get('context_source') or '-'}\n"
             f"  system prompt: {budget.system_prompt:,}\n"
             f"  history messages: {budget.history_messages:,}\n"
             f"  tools schema: {budget.tools_schema:,}\n"

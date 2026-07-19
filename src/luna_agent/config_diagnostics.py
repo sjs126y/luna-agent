@@ -181,6 +181,14 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
     missing_llm_env = [name for name in required_llm_env if not env.get(name)]
     llm_base_url = str(env.get("LLM_BASE_URL") or "")
     llm_model = str(env.get("LLM_MODEL") or "")
+    model_capability = _resolved_llm_capability_report(
+        provider_name=llm_provider,
+        model=llm_model,
+        base_url=llm_base_url,
+        api_mode=llm_api_mode,
+        context_window=llm_context_window,
+        max_output_tokens=llm_max_tokens,
+    )
 
     directories = _directory_report(base, config)
     unknown_keys = [
@@ -225,6 +233,10 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         warnings.append("LLM_BASE_URL 未设置，将依赖 provider 默认值。")
     if not llm_model:
         warnings.append("LLM_MODEL 未设置，将使用默认模型。")
+    if model_capability.get("context_clamped"):
+        warnings.append("LLM_CONTEXT_WINDOW 超出已知模型硬上限，运行时会自动裁剪。")
+    if model_capability.get("output_clamped"):
+        warnings.append("LLM_MAX_TOKENS 超出已知模型输出上限，运行时会自动裁剪。")
     for item in directories:
         if not item["exists"] and item["required"] and item.get("portable", True):
             warnings.append(f"目录不存在: {item['path']} ({item['kind']})")
@@ -302,6 +314,7 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
             "missing_llm_env": missing_llm_env,
             "platforms": platform_env,
         },
+        "model_capability": model_capability,
         "directories": directories,
         "mcp_servers": mcp_servers["servers"],
         "unknown_keys": unknown_keys,
@@ -329,6 +342,50 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
             + mcp_servers["errors"]
         ),
         "next_steps": next_steps,
+    }
+
+
+def _resolved_llm_capability_report(
+    *,
+    provider_name: str,
+    model: str,
+    base_url: str,
+    api_mode: str,
+    context_window: str,
+    max_output_tokens: str,
+) -> dict[str, Any]:
+    from luna_agent.llm.capabilities import resolve_api_mode, resolve_model_capability
+
+    try:
+        configured_context = int(context_window)
+    except (TypeError, ValueError):
+        configured_context = 0
+    try:
+        configured_output = int(max_output_tokens)
+    except (TypeError, ValueError):
+        configured_output = 4096
+    capability = resolve_model_capability(
+        provider_name,
+        model,
+        configured_context_window=max(0, configured_context),
+        configured_max_output_tokens=max(1, configured_output),
+    )
+    protocol = resolve_api_mode(provider_name, base_url, configured_mode=api_mode)
+    return {
+        "provider": provider_name,
+        "model": model,
+        "api_mode": protocol.mode,
+        "api_mode_source": protocol.source,
+        "effective_context_window": capability.effective_context_window,
+        "model_context_limit": capability.model_context_limit,
+        "effective_max_output_tokens": capability.effective_max_output_tokens,
+        "model_max_output_tokens": capability.model_max_output_tokens,
+        "context_source": capability.context_source,
+        "output_source": capability.output_source,
+        "capability_source": capability.capability_source,
+        "capability_verified_at": capability.capability_verified_at,
+        "context_clamped": capability.context_clamped,
+        "output_clamped": capability.output_clamped,
     }
 
 
