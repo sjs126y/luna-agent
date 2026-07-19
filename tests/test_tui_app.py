@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from personal_agent.commands.runtime import CommandResult
-from personal_agent.tui.app import InlineTuiApp
+from luna_agent.commands.runtime import CommandResult
+from luna_agent.tui.app import InlineTuiApp
 
 
 class _Settings:
@@ -121,7 +121,7 @@ def test_slash_menu_offers_argument_choices_from_registry(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "personal_agent.commands.registry.command_specs_as_dict",
+        "luna_agent.commands.registry.command_specs_as_dict",
         command_specs_as_dict,
     )
     app = _app()
@@ -183,11 +183,11 @@ async def test_dynamic_argument_choices_refresh_slash_menu(monkeypatch):
         ]
 
     monkeypatch.setattr(
-        "personal_agent.commands.registry.command_specs_as_dict",
+        "luna_agent.commands.registry.command_specs_as_dict",
         command_specs_as_dict,
     )
     monkeypatch.setattr(
-        "personal_agent.commands.runtime.slash_argument_choices",
+        "luna_agent.commands.runtime.slash_argument_choices",
         slash_argument_choices,
     )
 
@@ -255,7 +255,7 @@ async def test_print_above_serializes_concurrent_callers(monkeypatch):
         func()
         active["n"] -= 1
 
-    monkeypatch.setattr("personal_agent.tui.app.run_in_terminal", fake_run_in_terminal)
+    monkeypatch.setattr("luna_agent.tui.app.run_in_terminal", fake_run_in_terminal)
     app._write_terminal = written.append  # type: ignore[method-assign]
 
     async def one(i: int) -> None:
@@ -279,7 +279,7 @@ async def test_print_above_nowait_uses_same_queue(monkeypatch):
     async def fake_run_in_terminal(func):
         func()
 
-    monkeypatch.setattr("personal_agent.tui.app.run_in_terminal", fake_run_in_terminal)
+    monkeypatch.setattr("luna_agent.tui.app.run_in_terminal", fake_run_in_terminal)
     app._write_terminal = written.append  # type: ignore[method-assign]
 
     app._print_above_nowait("expand")
@@ -373,7 +373,7 @@ async def test_refresh_mode_updates_status_after_command(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "personal_agent.commands.runtime.handle_slash_command",
+        "luna_agent.commands.runtime.handle_slash_command",
         fake_handle_slash_command,
     )
     assert app.state.exec_mode == "Ask First"
@@ -790,7 +790,7 @@ async def test_command_continue_text_routes_through_inline_turn(monkeypatch):
     async def print_above(text):
         printed.append(text)
 
-    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    monkeypatch.setattr("luna_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
     app._print_above = print_above  # type: ignore[method-assign]
 
     await app._submit("/python-expert skill message")
@@ -827,7 +827,7 @@ async def test_tool_runs_recent_payload_formats_structured_output(monkeypatch):
     async def print_above(text):
         printed.append(text)
 
-    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    monkeypatch.setattr("luna_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
     app._print_above = print_above  # type: ignore[method-assign]
 
     await app._submit("/tool-runs")
@@ -884,7 +884,7 @@ async def test_permissions_payload_formats_security_v4_state(monkeypatch):
         printed.append(text)
 
     monkeypatch.setattr(
-        "personal_agent.commands.runtime.handle_slash_command",
+        "luna_agent.commands.runtime.handle_slash_command",
         fake_handle_slash_command,
     )
     app._print_above = print_above  # type: ignore[method-assign]
@@ -934,7 +934,7 @@ async def test_tool_run_detail_payload_sets_expandable_output(monkeypatch):
     async def print_above(text):
         printed.append(text)
 
-    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    monkeypatch.setattr("luna_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
     app._print_above = print_above  # type: ignore[method-assign]
 
     await app._submit("/tool-runs show 7")
@@ -1014,7 +1014,7 @@ async def test_activity_payload_formats_overview_and_updates_badge(monkeypatch):
     async def print_above(text):
         printed.append(text)
 
-    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    monkeypatch.setattr("luna_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
     app._print_above = print_above  # type: ignore[method-assign]
 
     await app._submit("/activity")
@@ -1062,7 +1062,7 @@ async def test_activity_process_detail_sets_expandable_output(monkeypatch):
     async def print_above(text):
         printed.append(text)
 
-    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    monkeypatch.setattr("luna_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
     app._print_above = print_above  # type: ignore[method-assign]
 
     await app._submit("/activity processes 3")
@@ -1103,7 +1103,7 @@ async def test_activity_gateway_detail_shows_steer_state(monkeypatch):
     async def print_above(text):
         printed.append(text)
 
-    monkeypatch.setattr("personal_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
+    monkeypatch.setattr("luna_agent.commands.runtime.handle_slash_command", fake_handle_slash_command)
     app._print_above = print_above  # type: ignore[method-assign]
 
     await app._submit("/activity gateway telegram:c1:u1")

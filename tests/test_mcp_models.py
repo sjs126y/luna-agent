@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.mcp.models import MCPServerConfig, MCPTransport
+from luna_agent.mcp.models import MCPServerConfig, MCPTransport
 
 
 def test_stdio_config_remains_backward_compatible():

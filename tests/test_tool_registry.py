@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.tools.entry import ToolEntry
-from personal_agent.tools.registry import ToolRegistry
+from luna_agent.tools.entry import ToolEntry
+from luna_agent.tools.registry import ToolRegistry
 
 
 @pytest.fixture
@@ -180,7 +180,7 @@ def test_catalog_cache_tracks_generation_and_returns_copies(registry):
 
 @pytest.mark.asyncio
 async def test_bridge_search_and_describe_include_tool_metadata():
-    from personal_agent.tools.registry import (
+    from luna_agent.tools.registry import (
         dispatch_tool_describe,
         dispatch_tool_search,
         tool_registry,
@@ -227,10 +227,10 @@ async def test_bridge_search_and_describe_include_tool_metadata():
 
 @pytest.mark.asyncio
 async def test_bridge_catalog_and_execution_stay_on_pinned_capability_view():
-    from personal_agent.plugins.runtime import CapabilityKind
-    from personal_agent.tools.executor import _resolve_tool_entry
-    from personal_agent.tools.registry import dispatch_tool_search, tool_registry
-    from personal_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
+    from luna_agent.plugins.runtime import CapabilityKind
+    from luna_agent.tools.executor import _resolve_tool_entry
+    from luna_agent.tools.registry import dispatch_tool_search, tool_registry
+    from luna_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
 
     async def dummy(**kwargs):
         return "ok"
@@ -281,11 +281,11 @@ async def test_bridge_catalog_and_execution_stay_on_pinned_capability_view():
 
 @pytest.mark.asyncio
 async def test_bridge_search_aliases_route_chinese_queries_to_expected_tools():
-    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.tools.registry import dispatch_tool_search
+    import luna_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from luna_agent.tools.registry import dispatch_tool_search
 
     cases = {
         "后台跑测试": "process_start",
@@ -301,7 +301,7 @@ async def test_bridge_search_aliases_route_chinese_queries_to_expected_tools():
 
 @pytest.mark.asyncio
 async def test_bridge_search_keeps_unavailable_tools_but_ranks_available_first():
-    from personal_agent.tools.registry import dispatch_tool_search, tool_registry
+    from luna_agent.tools.registry import dispatch_tool_search, tool_registry
 
     async def dummy(**kw):
         return "ok"

@@ -7,15 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.conversation import (
+from luna_agent.conversation import (
     ConversationCoordinator,
     ResponseMode,
     SubmissionOrigin,
     SubmissionRequest,
     SubmissionStatus,
 )
-from personal_agent.commands.runtime import CommandResult
-from personal_agent.delivery import DeliveryResult, DeliveryStatus
+from luna_agent.commands.runtime import CommandResult
+from luna_agent.delivery import DeliveryResult, DeliveryStatus
 
 
 def _request(session_key: str, text: str) -> SubmissionRequest:

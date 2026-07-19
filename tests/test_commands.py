@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.commands.registry import command_specs_as_dict
-from personal_agent.commands.runtime import (
+from luna_agent.commands.registry import command_specs_as_dict
+from luna_agent.commands.runtime import (
     handle_slash_command,
     slash_argument_choices,
 )
-from personal_agent.config import Settings
-from personal_agent.models.messages import SessionSource
-from personal_agent.plugins.models import CommandEntry
+from luna_agent.config import Settings
+from luna_agent.models.messages import SessionSource
+from luna_agent.plugins.models import CommandEntry
 
 
 class Agent:
@@ -83,7 +83,7 @@ class Runtime:
         self._session_key = "cli:default:local"
         self.source = SessionSource(platform="cli", user_id="local", chat_id="default")
         self.agent = Agent()
-        from personal_agent.security.session import SecurityStateStore
+        from luna_agent.security.session import SecurityStateStore
 
         self.security_store = SecurityStateStore(self.settings)
         self.agent._security_context = self.security_store.context(self._session_key)
@@ -259,7 +259,7 @@ class Runtime:
         return f"已收到，会在当前任务下一步应用。（test-steer）"
 
     async def set_mode(self, mode: str) -> str:
-        from personal_agent.security.modes import mode_preset
+        from luna_agent.security.modes import mode_preset
 
         state = self.security_store.set_mode(self.session_key, mode)
         self.agent._security_context = self.security_store.context(self.session_key)
@@ -464,7 +464,7 @@ async def test_shared_command_stop_plugin_skill_and_unhandled(tmp_path, monkeypa
     assert result.payload["version"] == 1
     assert any(item["name"] == "local" for item in result.payload["plugin_commands"])
 
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     original_load = skill_registry.load
     monkeypatch.setattr(skill_registry, "load", lambda name: "skill body")
@@ -506,7 +506,7 @@ async def test_steer_command_delegates_to_runtime(tmp_path):
 
 @pytest.mark.asyncio
 async def test_shared_command_tools_permissions_and_protocol(tmp_path):
-    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
 
     runtime = Runtime(tmp_path)
 
@@ -545,7 +545,7 @@ async def test_shared_command_tools_permissions_and_protocol(tmp_path):
     result = await handle_slash_command(runtime, "/protocol")
     assert "事件协议" in result.response
     assert "version: 1" in result.response
-    assert "完整 schema: personal-agent protocol schema --json" in result.response
+    assert "完整 schema: luna-agent protocol schema --json" in result.response
     assert result.kind == "protocol"
     assert result.payload["protocol_version"] == 1
     assert result.payload["event_count"] >= 1
@@ -643,7 +643,7 @@ def test_command_registry_exports_structured_metadata(tmp_path):
 
 @pytest.mark.asyncio
 async def test_slash_argument_choices_return_dynamic_candidates(tmp_path):
-    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
 
     runtime = Runtime(tmp_path)
 
@@ -678,7 +678,7 @@ async def test_slash_argument_choices_return_dynamic_candidates(tmp_path):
 async def test_shared_command_stop_reports_delegate_agent_count(tmp_path, monkeypatch):
     runtime = Runtime(tmp_path)
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
         lambda: 2,
     )
 
@@ -700,8 +700,8 @@ async def test_shared_command_uses_exact_command_names(tmp_path):
 
 @pytest.mark.asyncio
 async def test_shared_command_lists_shows_and_clears_agent_runs(tmp_path):
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import (
         _delegate_task,
         reset_delegate,
         setup_delegate,

@@ -4,15 +4,15 @@ import asyncio
 
 import pytest
 
-from personal_agent.db.database import Database
-from personal_agent.delivery import (
+from luna_agent.db.database import Database
+from luna_agent.delivery import (
     DeliveryOutbox,
     DeliveryRequest,
     DeliveryResult,
     DeliveryStatus,
     DeliveryWorker,
 )
-from personal_agent.models.messages import OutboundMessage
+from luna_agent.models.messages import OutboundMessage
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_database_recovers_interrupted_sending_record(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_database_recovers_interrupted_sending_part(tmp_path: Path):
-    from personal_agent.delivery import DeliveryOperation
+    from luna_agent.delivery import DeliveryOperation
 
     path = tmp_path / "state.db"
     db = Database(path)

@@ -8,8 +8,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_list_directory_returns_only_immediate_entries(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
+    from luna_agent.tools.sandbox import init_sandbox
 
     (tmp_path / "alpha.txt").write_text("alpha", encoding="utf-8")
     nested = tmp_path / "nested"
@@ -28,8 +28,8 @@ async def test_list_directory_returns_only_immediate_entries(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_list_directory_paginates_sorted_entries(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
+    from luna_agent.tools.sandbox import init_sandbox
 
     for name in ["charlie.txt", "alpha.txt", "bravo.txt"]:
         (tmp_path / name).write_text(name, encoding="utf-8")
@@ -47,8 +47,8 @@ async def test_list_directory_paginates_sorted_entries(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_list_directory_hides_hidden_and_blocked_entries(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
+    from luna_agent.tools.sandbox import init_sandbox
 
     (tmp_path / ".notes.txt").write_text("hidden", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("protected", encoding="utf-8")
@@ -64,8 +64,8 @@ async def test_list_directory_hides_hidden_and_blocked_entries(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_list_directory_rejects_blocked_directory(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_navigation import _list_directory
+    from luna_agent.tools.sandbox import init_sandbox
 
     protected = tmp_path / ".ssh"
     protected.mkdir()
@@ -78,8 +78,8 @@ async def test_list_directory_rejects_blocked_directory(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_file_info_reports_text_metadata_and_write_scope(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_navigation import _file_info
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_navigation import _file_info
+    from luna_agent.tools.sandbox import init_sandbox
 
     workspace = tmp_path / "workspace"
     readonly = tmp_path / "readonly"
@@ -102,8 +102,8 @@ async def test_file_info_reports_text_metadata_and_write_scope(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_file_info_detects_binary_and_rejects_blocked_path(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_navigation import _file_info
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_navigation import _file_info
+    from luna_agent.tools.sandbox import init_sandbox
 
     binary = tmp_path / "payload.bin"
     binary.write_bytes(b"\x00\x01\x02")
@@ -119,9 +119,9 @@ async def test_file_info_detects_binary_and_rejects_blocked_path(tmp_path: Path)
 
 
 def test_navigation_tools_are_registered_as_read_only_core_tools():
-    import personal_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
-    from personal_agent.tools.registry import tool_registry
-    from personal_agent.tools.toolsets import TOOLSETS, is_core_tool
+    import luna_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
+    from luna_agent.tools.registry import tool_registry
+    from luna_agent.tools.toolsets import TOOLSETS, is_core_tool
 
     for name in {"list_directory", "file_info"}:
         entry = tool_registry.get(name)

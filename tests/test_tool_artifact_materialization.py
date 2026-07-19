@@ -5,12 +5,12 @@ import base64
 import pytest
 import pytest_asyncio
 
-from personal_agent.artifacts import ArtifactStore
-from personal_agent.agent.agent import Agent
-from personal_agent.db.database import Database
-from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
-from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
-from personal_agent.tools.registry import tool_registry
+from luna_agent.artifacts import ArtifactStore
+from luna_agent.agent.agent import Agent
+from luna_agent.db.database import Database
+from luna_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
+from luna_agent.tools.executor import execute_tool_call_result, format_tool_result
+from luna_agent.tools.registry import tool_registry
 
 
 @pytest_asyncio.fixture
@@ -25,7 +25,7 @@ async def artifact_runtime(tmp_path):
 
 @pytest.mark.asyncio
 async def test_executor_materializes_artifact_and_exposes_only_reference(artifact_runtime):
-    from personal_agent.conversation.events import EventRecorder
+    from luna_agent.conversation.events import EventRecorder
 
     async def handler():
         return ToolHandlerOutput(
@@ -104,9 +104,9 @@ async def test_mcp_file_resource_becomes_model_visible_artifact_id(
     tmp_path,
     monkeypatch,
 ):
-    from personal_agent.mcp.models import MCPCallResult, MCPContentBlock, MCPToolSpec
-    from personal_agent.mcp.registrar import MCPToolRegistrar
-    from personal_agent.tools import sandbox as sandbox_module
+    from luna_agent.mcp.models import MCPCallResult, MCPContentBlock, MCPToolSpec
+    from luna_agent.mcp.registrar import MCPToolRegistrar
+    from luna_agent.tools import sandbox as sandbox_module
 
     monkeypatch.setattr(
         sandbox_module,
@@ -221,10 +221,10 @@ async def test_artifact_from_file_materializes_and_can_be_attached(
     tmp_path,
     monkeypatch,
 ):
-    from personal_agent.artifacts import TurnResponseDraft
-    from personal_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
-    from personal_agent.plugins.builtin.tools.builtin import response_attach as _response_attach  # noqa: F401
-    from personal_agent.tools import sandbox as sandbox_module
+    from luna_agent.artifacts import TurnResponseDraft
+    from luna_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
+    from luna_agent.plugins.builtin.tools.builtin import response_attach as _response_attach  # noqa: F401
+    from luna_agent.tools import sandbox as sandbox_module
 
     monkeypatch.setattr(
         sandbox_module,
@@ -291,8 +291,8 @@ async def test_artifact_from_file_rejects_unsafe_or_invalid_sources(
     case,
     expected_reason,
 ):
-    from personal_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
-    from personal_agent.tools import sandbox as sandbox_module
+    from luna_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
+    from luna_agent.tools import sandbox as sandbox_module
 
     allowed = tmp_path / "allowed"
     allowed.mkdir()
@@ -342,9 +342,9 @@ async def test_artifact_from_file_rejects_unsafe_or_invalid_sources(
 
 
 def test_artifact_from_file_declares_exact_read_resource(tmp_path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
-    from personal_agent.security.evaluator import prepare_tool_call
-    from personal_agent.tools import sandbox as sandbox_module
+    from luna_agent.plugins.builtin.tools.builtin import artifact_from_file as _module
+    from luna_agent.security.evaluator import prepare_tool_call
+    from luna_agent.tools import sandbox as sandbox_module
 
     monkeypatch.setattr(
         sandbox_module,

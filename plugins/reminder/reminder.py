@@ -10,8 +10,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from lumora_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
-from personal_agent.tools.runtime_context import current_tool_agent
+from luna_agent_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
+from luna_agent.tools.runtime_context import current_tool_agent
 
 
 class ActiveConfig(BaseModel):

@@ -8,7 +8,7 @@ import pytest
 
 
 def test_config_loader_uses_defaults(tmp_path):
-    from personal_agent.config_loader import ConfigLoader
+    from luna_agent.config_loader import ConfigLoader
 
     snapshot = ConfigLoader(base_dir=tmp_path).load()
 
@@ -33,7 +33,7 @@ def test_config_loader_uses_defaults(tmp_path):
 
 
 def test_config_loader_resolves_env_yaml_and_overrides(tmp_path):
-    from personal_agent.config_loader import ConfigLoader
+    from luna_agent.config_loader import ConfigLoader
 
     (tmp_path / ".env").write_text(
         (
@@ -125,7 +125,7 @@ plugins:
 
 
 def test_config_loader_reads_context_window_from_yaml(tmp_path):
-    from personal_agent.config_loader import ConfigLoader
+    from luna_agent.config_loader import ConfigLoader
 
     (tmp_path / "config.yaml").write_text(
         """
@@ -142,7 +142,7 @@ llm:
 
 
 def test_config_loader_merges_profiles_env_over_yaml(tmp_path):
-    from personal_agent.config_loader import ConfigLoader
+    from luna_agent.config_loader import ConfigLoader
 
     (tmp_path / ".env").write_text(
         'PROFILES={"wechat:1":"env-profile","telegram:2":"friend"}\n',
@@ -168,7 +168,7 @@ profiles:
 
 
 def test_config_loader_masks_sensitive_values(tmp_path):
-    from personal_agent.config_loader import ConfigLoader
+    from luna_agent.config_loader import ConfigLoader
 
     (tmp_path / ".env").write_text("LLM_API_KEY=secret\n", encoding="utf-8")
 
@@ -184,10 +184,10 @@ def test_config_loader_masks_sensitive_values(tmp_path):
 
 
 def test_config_loader_masks_unregistered_dynamic_env_values(tmp_path):
-    from personal_agent.config_loader import ConfigLoader
+    from luna_agent.config_loader import ConfigLoader
 
     (tmp_path / ".env").write_text(
-        "GITHUB_MCP_AUTH=Bearer secret\nDISPLAY_NAME=Lumora\n",
+        "GITHUB_MCP_AUTH=Bearer secret\nDISPLAY_NAME=Luna Agent\n",
         encoding="utf-8",
     )
 
@@ -202,7 +202,7 @@ def test_config_loader_masks_unregistered_dynamic_env_values(tmp_path):
 
 
 def test_config_loader_process_environment_overrides_dotenv(tmp_path, monkeypatch):
-    from personal_agent.config_loader import ConfigLoader
+    from luna_agent.config_loader import ConfigLoader
 
     (tmp_path / ".env").write_text(
         "LLM_MODEL=file-model\nDYNAMIC_TOKEN=file-secret\n",
@@ -218,7 +218,7 @@ def test_config_loader_process_environment_overrides_dotenv(tmp_path, monkeypatc
 
 
 def test_config_loader_collects_errors_and_strict_raises(tmp_path):
-    from personal_agent.config_loader import ConfigLoader, ConfigLoaderError
+    from luna_agent.config_loader import ConfigLoader, ConfigLoaderError
 
     (tmp_path / ".env").write_text("LLM_MAX_TOKENS=nope\n", encoding="utf-8")
     (tmp_path / "config.yaml").write_text(
@@ -242,7 +242,7 @@ sandbox:
 
 
 def test_settings_uses_config_loader(tmp_path, monkeypatch):
-    from personal_agent.config import Settings
+    from luna_agent.config import Settings
 
     (tmp_path / ".env").write_text("LLM_PROVIDER=anthropic\n", encoding="utf-8")
     (tmp_path / "config.yaml").write_text(

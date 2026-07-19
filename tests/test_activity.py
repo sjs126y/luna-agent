@@ -7,7 +7,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def clear_tracked_processes():
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _processes
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _processes
 
     _processes.clear()
     yield
@@ -15,9 +15,9 @@ def clear_tracked_processes():
 
 
 def test_activity_snapshot_normalizes_all_activity_sources(monkeypatch):
-    from personal_agent import activity
-    from personal_agent.plugins.builtin.tools.builtin import delegate
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import TrackedProcess, _processes
+    from luna_agent import activity
+    from luna_agent.plugins.builtin.tools.builtin import delegate
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import TrackedProcess, _processes
 
     monkeypatch.setattr(
         delegate,
@@ -114,10 +114,10 @@ def test_activity_snapshot_normalizes_all_activity_sources(monkeypatch):
 
 
 def test_activity_detail_and_choices(monkeypatch):
-    from personal_agent import activity
-    from personal_agent.agents.runtime import AgentRun
-    from personal_agent.plugins.builtin.tools.builtin import delegate
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import TrackedProcess, _processes
+    from luna_agent import activity
+    from luna_agent.agents.runtime import AgentRun
+    from luna_agent.plugins.builtin.tools.builtin import delegate
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import TrackedProcess, _processes
 
     run = AgentRun(
         run_id="agent-1",

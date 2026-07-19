@@ -16,7 +16,7 @@ import pytest
 
 
 def test_shell_allowed_commands():
-    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
+    from luna_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # Safe commands should pass
     for cmd in ["ls -la", "cat file.txt", "grep pattern file", "git status",
@@ -33,7 +33,7 @@ def test_shell_allowed_commands():
 
 def test_shell_command_chaining_bypass():
     """Command chaining (&& || | ;) is now blocked — one command per call."""
-    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
+    from luna_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # All chain operators are blocked
     assert _check_command("whoami && ls") is not None     # blocked
@@ -48,7 +48,7 @@ def test_shell_command_chaining_bypass():
 
 
 def test_shell_network_blocked():
-    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command, _allow_network
+    from luna_agent.plugins.builtin.tools.builtin.bash import _check_command, _allow_network
 
     assert _allow_network is False  # default should be false
 
@@ -60,7 +60,7 @@ def test_shell_network_blocked():
 
 
 def test_shell_dangerous_patterns():
-    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
+    from luna_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     dangerous = [
         "rm -rf /",
@@ -76,7 +76,7 @@ def test_shell_dangerous_patterns():
 
 
 def test_file_write_extension_whitelist():
-    from personal_agent.plugins.builtin.tools.builtin.file_write import _check_extension
+    from luna_agent.plugins.builtin.tools.builtin.file_write import _check_extension
 
     # Allowed extensions
     for ext in [".txt", ".md", ".json", ".py", ".js", ".html", ".css", ".csv",
@@ -90,14 +90,14 @@ def test_file_write_extension_whitelist():
 
 
 def test_file_write_max_size():
-    from personal_agent.plugins.builtin.tools.builtin.file_write import _MAX_WRITE_BYTES
+    from luna_agent.plugins.builtin.tools.builtin.file_write import _MAX_WRITE_BYTES
 
     assert _MAX_WRITE_BYTES == 100_000  # default 100KB
 
 
 @pytest.mark.asyncio
 async def test_file_write_large_content():
-    from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
+    from luna_agent.plugins.builtin.tools.builtin.file_write import _file_write
 
     large = "x" * 200_000
     result = await _file_write("large.txt", large)
@@ -106,8 +106,8 @@ async def test_file_write_large_content():
 
 @pytest.mark.asyncio
 async def test_file_write_path_traversal():
-    from personal_agent.tools.sandbox import init_sandbox
-    from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
+    from luna_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_write import _file_write
 
     init_sandbox([Path("./data")], ["**/.env", "**/.git/**", "**/.ssh/**"])
     result = await _file_write("../../../etc/passwd", "hello")
@@ -119,9 +119,9 @@ async def test_file_write_path_traversal():
 
 @pytest.mark.asyncio
 async def test_bridge_tool_call_routes_destructive_through_security():
-    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
 
-    from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
+    from luna_agent.plugins.builtin.tools.bridge.bridge import _tool_call
 
     result = await _tool_call("write", {"path": "test.txt", "content": "hello"})
     assert "permission profile does not allow" in result.lower()
@@ -129,7 +129,7 @@ async def test_bridge_tool_call_routes_destructive_through_security():
 
 @pytest.mark.asyncio
 async def test_bridge_tool_call_allows_safe():
-    from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
+    from luna_agent.plugins.builtin.tools.bridge.bridge import _tool_call
 
     # tool_search is safe — should work
     result = await _tool_call("tool_search", {"query": "search"})
@@ -147,7 +147,7 @@ class MockAgent:
         self._max_destructive_per_turn: int = 3
         self._interrupt_requested = False
         self._security_grant_ttl_seconds = 3600
-        from personal_agent.security.session import SecurityStateStore
+        from luna_agent.security.session import SecurityStateStore
 
         settings = SimpleNamespace(
             execution_mode="ask-first",
@@ -159,7 +159,7 @@ class MockAgent:
 
 
 def _hook_agent():
-    from personal_agent.hooks import HookManager
+    from luna_agent.hooks import HookManager
 
     agent = MockAgent()
     agent._hook_manager = HookManager()
@@ -172,10 +172,10 @@ def _hook_agent():
 
 @pytest.mark.asyncio
 async def test_typed_pre_tool_hook_blocks_before_handler():
-    from personal_agent.hooks import HookEvent, PreToolUseOutcome
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.hooks import HookEvent, PreToolUseOutcome
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     calls = 0
 
@@ -208,14 +208,14 @@ async def test_typed_pre_tool_hook_blocks_before_handler():
 
 @pytest.mark.asyncio
 async def test_typed_permission_hook_allow_skips_confirmation():
-    from personal_agent.hooks import (
+    from luna_agent.hooks import (
         HookEvent,
         PermissionDecision,
         PermissionRequestOutcome,
     )
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     confirmations = 0
 
@@ -259,10 +259,10 @@ async def test_typed_permission_hook_allow_skips_confirmation():
 
 @pytest.mark.asyncio
 async def test_post_tool_hook_feedback_does_not_replace_audit_content():
-    from personal_agent.hooks import HookEvent, PostToolUseOutcome
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.hooks import HookEvent, PostToolUseOutcome
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from luna_agent.tools.registry import tool_registry
 
     agent = _hook_agent()
     agent._hook_manager.register(
@@ -300,7 +300,7 @@ async def test_post_tool_hook_feedback_does_not_replace_audit_content():
 
 
 def test_tool_entry_permission_category_defaults_to_default():
-    from personal_agent.tools.entry import ToolEntry
+    from luna_agent.tools.entry import ToolEntry
 
     entry = ToolEntry(
         name="demo",
@@ -315,10 +315,10 @@ def test_tool_entry_permission_category_defaults_to_default():
 
 @pytest.mark.asyncio
 async def test_process_start_precheck_runs_before_background_allow(tmp_path: Path):
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_work_dir
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.sandbox import init_sandbox
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_work_dir
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], ["**/.env"])
     set_work_dir(tmp_path)
@@ -356,12 +356,12 @@ async def test_process_start_precheck_runs_before_background_allow(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path):
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.sandbox import init_sandbox
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -417,11 +417,11 @@ async def test_tool_end_event_includes_guard_metadata_for_denial(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_tool_decision_event_includes_confirmation_display_metadata(tmp_path: Path):
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
 
@@ -495,7 +495,7 @@ async def test_tool_decision_event_includes_confirmation_display_metadata(tmp_pa
 
 
 def test_tool_decision_display_includes_network_preview_metadata():
-    from personal_agent.tools.execution_guard import GuardDecision, tool_decision_from_guard
+    from luna_agent.tools.execution_guard import GuardDecision, tool_decision_from_guard
 
     decision = tool_decision_from_guard(
         {
@@ -523,10 +523,10 @@ def test_tool_decision_display_includes_network_preview_metadata():
 
 @pytest.mark.asyncio
 async def test_tool_confirm_deny_keeps_permission_denied_result():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("confirm_write_demo")
     calls = 0
@@ -579,10 +579,10 @@ async def test_tool_confirm_deny_keeps_permission_denied_result():
 
 @pytest.mark.asyncio
 async def test_tool_confirm_allow_executes_once_without_persisting_grant():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("confirm_allow_demo")
     calls = 0
@@ -634,9 +634,9 @@ async def test_tool_confirm_allow_executes_once_without_persisting_grant():
 
 @pytest.mark.asyncio
 async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_calls
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_calls
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("confirm_always_demo")
     calls = 0
@@ -690,9 +690,9 @@ async def test_tool_confirm_always_persists_grant_for_later_tool_calls():
 
 @pytest.mark.asyncio
 async def test_parallel_safe_tools_share_one_batch_confirmation():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_calls
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_calls
+    from luna_agent.tools.registry import tool_registry
 
     original_first = tool_registry.get("confirm_parallel_first")
     original_second = tool_registry.get("confirm_parallel_second")
@@ -771,10 +771,10 @@ async def test_parallel_safe_tools_share_one_batch_confirmation():
 
 @pytest.mark.asyncio
 async def test_batch_allow_once_grants_exact_resources_then_revokes(tmp_path: Path):
-    from personal_agent.security.models import ResourceRequirement
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_calls
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.security.models import ResourceRequirement
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_calls
+    from luna_agent.tools.registry import tool_registry
 
     names = ("batch_resource_first", "batch_resource_second")
     targets = (tmp_path / "first.txt", tmp_path / "second.txt")
@@ -822,7 +822,7 @@ async def test_batch_allow_once_grants_exact_resources_then_revokes(tmp_path: Pa
     assert len(confirmations) == 1
     requested = confirmations[0].requested_resources
     assert {item["resource"] for item in requested} == {str(path.resolve()) for path in targets}
-    from personal_agent.gateway.confirmations import _format_confirmation_prompt
+    from luna_agent.gateway.confirmations import _format_confirmation_prompt
 
     prompt = _format_confirmation_prompt(
         confirmations[0], ttl_seconds=3600, timeout_seconds=120
@@ -836,10 +836,10 @@ async def test_batch_allow_once_grants_exact_resources_then_revokes(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.sandbox import init_sandbox
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -864,10 +864,10 @@ async def test_tool_confirm_not_called_for_hard_precheck_denial(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_tool_confirm_pending_stop_denies_without_executing():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import clear_interrupted, execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import clear_interrupted, execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("confirm_interrupt_demo")
     calls = 0
@@ -933,10 +933,10 @@ async def test_tool_confirm_pending_stop_denies_without_executing():
 
 @pytest.mark.asyncio
 async def test_tool_end_event_includes_guard_metadata_for_success():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("metadata_demo")
     recorder = EventRecorder()
@@ -977,9 +977,9 @@ async def test_tool_end_event_includes_guard_metadata_for_success():
 
 @pytest.mark.asyncio
 async def test_entry_timeout_overrides_executor_default():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     async def slow_handler():
         await asyncio.sleep(0.05)
@@ -1004,11 +1004,11 @@ async def test_entry_timeout_overrides_executor_default():
 
 
 def test_tool_call_inherits_nested_tool_timeout():
-    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+    import luna_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import _resolve_tool_timeout
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import _resolve_tool_timeout
+    from luna_agent.tools.registry import tool_registry
 
     tool_registry.register(ToolEntry(
         name="long_nested_demo",
@@ -1032,13 +1032,13 @@ def test_tool_call_inherits_nested_tool_timeout():
 
 @pytest.mark.asyncio
 async def test_tool_call_wrapper_is_excluded_from_turn_tool_count():
-    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+    import luna_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
 
-    from personal_agent.agent.report import AgentTurnReport
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.agent.report import AgentTurnReport
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     recorder = EventRecorder()
 
@@ -1083,10 +1083,10 @@ async def test_tool_call_wrapper_is_excluded_from_turn_tool_count():
 
 @pytest.mark.asyncio
 async def test_structured_tool_output_keeps_artifacts_in_memory_and_redacts_events():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     recorder = EventRecorder()
 
@@ -1132,7 +1132,7 @@ async def test_structured_tool_output_keeps_artifacts_in_memory_and_redacts_even
 
 @pytest.mark.asyncio
 async def test_exec_one_requires_resource_approval():
-    from personal_agent.tools.executor import _exec_one
+    from luna_agent.tools.executor import _exec_one
 
     agent = MockAgent()
     tc = {"name": "write", "input": {"path": "test.txt", "content": "hello"}}
@@ -1143,7 +1143,7 @@ async def test_exec_one_requires_resource_approval():
 
 @pytest.mark.asyncio
 async def test_exec_one_unknown_tool():
-    from personal_agent.tools.executor import _exec_one
+    from luna_agent.tools.executor import _exec_one
 
     tc = {"name": "nonexistent_tool_xyz", "input": {}}
     result = await _exec_one(tc)
@@ -1152,10 +1152,10 @@ async def test_exec_one_unknown_tool():
 
 @pytest.mark.asyncio
 async def test_execute_tool_call_result_structured_success_and_error():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("structured_demo")
     recorder = EventRecorder()
@@ -1201,10 +1201,10 @@ async def test_execute_tool_call_result_structured_success_and_error():
 
 @pytest.mark.asyncio
 async def test_tool_end_marks_truncated_output():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import MAX_RESULT_CHARS, execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import MAX_RESULT_CHARS, execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("large_output_demo")
     recorder = EventRecorder()
@@ -1240,8 +1240,8 @@ async def test_tool_end_marks_truncated_output():
 
 @pytest.mark.asyncio
 async def test_unknown_tool_emits_tool_decision():
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.executor import execute_tool_call_result
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.executor import execute_tool_call_result
 
     recorder = EventRecorder()
 
@@ -1259,13 +1259,13 @@ async def test_unknown_tool_emits_tool_decision():
 
 @pytest.mark.asyncio
 async def test_execute_tool_call_result_timeout_and_interrupt():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import (
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import (
         clear_interrupted,
         execute_tool_call_result,
         set_interrupted,
     )
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.registry import tool_registry
 
     original = tool_registry.get("slow_demo")
 
@@ -1303,9 +1303,9 @@ async def test_execute_tool_call_result_timeout_and_interrupt():
 
 @pytest.mark.asyncio
 async def test_execute_tool_calls_preserves_order_and_records_agent_summary():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_calls
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_calls
+    from luna_agent.tools.registry import tool_registry
 
     agent = MockAgent()
     original_first = tool_registry.get("parallel_first")
@@ -1366,9 +1366,9 @@ async def test_execute_tool_calls_preserves_order_and_records_agent_summary():
 
 @pytest.mark.asyncio
 async def test_execute_tool_calls_suppresses_duplicate_ids_only():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_calls
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_calls
+    from luna_agent.tools.registry import tool_registry
 
     calls: list[str] = []
     original = tool_registry.get("dedupe_demo")
@@ -1411,8 +1411,8 @@ async def test_execute_tool_calls_suppresses_duplicate_ids_only():
 
 @pytest.mark.asyncio
 async def test_bridge_tool_call_uses_executor_precheck_for_web_fetch():
-    import personal_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
-    from personal_agent.plugins.builtin.tools.bridge.bridge import _tool_call
+    import luna_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
+    from luna_agent.plugins.builtin.tools.bridge.bridge import _tool_call
 
     result = await _tool_call("web_fetch", {"url": "http://127.0.0.1/admin"})
 
@@ -1424,7 +1424,7 @@ async def test_bridge_tool_call_uses_executor_precheck_for_web_fetch():
 
 def test_audit_imports():
     """Verify audit module exists and has expected API."""
-    from personal_agent.tools.audit import audit_log, audit_tool_decision, audit_tool_result, set_audit_path
+    from luna_agent.tools.audit import audit_log, audit_tool_decision, audit_tool_result, set_audit_path
     assert callable(audit_log)
     assert callable(audit_tool_decision)
     assert callable(audit_tool_result)
@@ -1434,7 +1434,7 @@ def test_audit_imports():
 @pytest.mark.asyncio
 async def test_audit_writes_log():
     """Verify audit_log actually writes to the configured path."""
-    from personal_agent.tools.audit import audit_log, set_audit_path
+    from luna_agent.tools.audit import audit_log, set_audit_path
 
     with tempfile.TemporaryDirectory() as tmpdir:
         audit_path = Path(tmpdir) / "audit.log"
@@ -1457,8 +1457,8 @@ async def test_audit_writes_log():
 
 @pytest.mark.asyncio
 async def test_audit_tool_decision_writes_structured_record():
-    from personal_agent.tools.audit import audit_tool_decision, set_audit_path
-    from personal_agent.tools.execution_guard import ToolDecision
+    from luna_agent.tools.audit import audit_tool_decision, set_audit_path
+    from luna_agent.tools.execution_guard import ToolDecision
 
     with tempfile.TemporaryDirectory() as tmpdir:
         audit_path = Path(tmpdir) / "audit.log"
@@ -1497,9 +1497,9 @@ async def test_audit_tool_decision_writes_structured_record():
 
 @pytest.mark.asyncio
 async def test_audit_tool_result_writes_structured_record():
-    from personal_agent.tools.audit import audit_tool_result, set_audit_path
-    from personal_agent.tools.execution_guard import ToolDecision
-    from personal_agent.tools.executor import ToolExecutionResult
+    from luna_agent.tools.audit import audit_tool_result, set_audit_path
+    from luna_agent.tools.execution_guard import ToolDecision
+    from luna_agent.tools.executor import ToolExecutionResult
 
     with tempfile.TemporaryDirectory() as tmpdir:
         audit_path = Path(tmpdir) / "audit.log"
@@ -1552,11 +1552,11 @@ async def test_audit_tool_result_writes_structured_record():
 
 @pytest.mark.asyncio
 async def test_executor_writes_decision_and_result_audit_without_handler_duplicate(tmp_path: Path):
-    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
-    from personal_agent.tools.audit import set_audit_path
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.sandbox import init_sandbox
-    from personal_agent.security.session import SecurityStateStore
+    import luna_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    from luna_agent.tools.audit import set_audit_path
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.sandbox import init_sandbox
+    from luna_agent.security.session import SecurityStateStore
     from types import SimpleNamespace
 
     audit_path = tmp_path / "audit.log"
@@ -1596,12 +1596,12 @@ async def test_executor_writes_decision_and_result_audit_without_handler_duplica
 
 @pytest.mark.asyncio
 async def test_executor_writes_result_audit_for_denied_precheck_and_unknown_tools(tmp_path: Path):
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.audit import set_audit_path
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.sandbox import init_sandbox
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.audit import set_audit_path
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.sandbox import init_sandbox
 
     audit_path = tmp_path / "audit.log"
     set_audit_path(audit_path)
@@ -1662,8 +1662,8 @@ async def test_executor_writes_result_audit_for_denied_precheck_and_unknown_tool
 
 
 def test_checkpoint_creates_backup(tmp_path: Path):
-    from personal_agent.tools.sandbox import init_sandbox
-    from personal_agent.tools.executor import _checkpoint_file_write
+    from luna_agent.tools.sandbox import init_sandbox
+    from luna_agent.tools.executor import _checkpoint_file_write
 
     # Redirect sandbox to tmp_path
     init_sandbox([tmp_path], [])
@@ -1684,8 +1684,8 @@ def test_checkpoint_creates_backup(tmp_path: Path):
 
 
 def test_checkpoint_noop_for_new_file(tmp_path: Path):
-    from personal_agent.tools.sandbox import init_sandbox
-    from personal_agent.tools.executor import _checkpoint_file_write
+    from luna_agent.tools.sandbox import init_sandbox
+    from luna_agent.tools.executor import _checkpoint_file_write
 
     init_sandbox([tmp_path], [])
     tc = {"name": "write", "input": {"path": "new_file.txt", "content": "new"}}
@@ -1697,8 +1697,8 @@ def test_checkpoint_noop_for_new_file(tmp_path: Path):
 
 
 def test_checkpoint_keeps_only_recent_backups_for_each_file(tmp_path: Path):
-    from personal_agent.tools.sandbox import init_sandbox
-    from personal_agent.tools.executor import CHECKPOINTS_PER_FILE, _checkpoint_file_write
+    from luna_agent.tools.sandbox import init_sandbox
+    from luna_agent.tools.executor import CHECKPOINTS_PER_FILE, _checkpoint_file_write
 
     init_sandbox([tmp_path], [])
     target = tmp_path / "test.txt"
@@ -1722,7 +1722,7 @@ def test_checkpoint_keeps_only_recent_backups_for_each_file(tmp_path: Path):
 
 
 def test_bm25_search_returns_schema():
-    from personal_agent.tools.registry import _bm25_search
+    from luna_agent.tools.registry import _bm25_search
 
     catalog = [
         {"name": "weather", "description": "Get weather forecast", "input_schema": {
@@ -1745,7 +1745,7 @@ def test_bm25_search_returns_schema():
 
 def test_bash_hard_blacklist_catastrophic():
     """Hard blacklist blocks catastrophic commands unconditionally."""
-    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
+    from luna_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # These must ALWAYS be blocked, regardless of tool approval.
     catastrophic = [
@@ -1772,7 +1772,7 @@ def test_bash_hard_blacklist_catastrophic():
 
 def test_bash_hard_blacklist_sudo_wrappers():
     """Hard blacklist catches sudo-wrapped catastrophic commands."""
-    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
+    from luna_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     assert _check_command("sudo rm -rf /") is not None
     assert _check_command("sudo shutdown -h now") is not None
@@ -1781,7 +1781,7 @@ def test_bash_hard_blacklist_sudo_wrappers():
 
 def test_bash_normal_rm_not_blocked():
     """Normal rm operations (not targeting root) should pass hard blacklist."""
-    from personal_agent.plugins.builtin.tools.builtin.bash import _check_command
+    from luna_agent.plugins.builtin.tools.builtin.bash import _check_command
 
     # Single file removal — NOT caught by hard blacklist
     result = _check_command("rm file.txt")
@@ -1793,7 +1793,7 @@ def test_bash_normal_rm_not_blocked():
 
 def test_sandbox_blocks_env(tmp_path: Path):
     """Blocked patterns prevent access to .env files."""
-    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
+    from luna_agent.tools.sandbox import init_sandbox, get_sandbox
 
     init_sandbox([tmp_path], ["**/.env", "**/.env.*"])
     sandbox = get_sandbox()
@@ -1803,7 +1803,7 @@ def test_sandbox_blocks_env(tmp_path: Path):
 
 def test_sandbox_blocks_ssh_keys(tmp_path: Path):
     """Blocked patterns prevent access to SSH keys."""
-    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
+    from luna_agent.tools.sandbox import init_sandbox, get_sandbox
 
     init_sandbox([tmp_path], ["**/.ssh/**", "**/id_rsa*", "**/id_ed*"])
     sandbox = get_sandbox()
@@ -1814,7 +1814,7 @@ def test_sandbox_blocks_ssh_keys(tmp_path: Path):
 
 def test_sandbox_blocks_credential_files(tmp_path: Path):
     """Blocked patterns prevent access to credential files."""
-    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
+    from luna_agent.tools.sandbox import init_sandbox, get_sandbox
 
     init_sandbox([tmp_path], ["**/.netrc", "**/.pgpass", "**/.npmrc"])
     sandbox = get_sandbox()
@@ -1825,7 +1825,7 @@ def test_sandbox_blocks_credential_files(tmp_path: Path):
 
 def test_sandbox_allows_normal_files(tmp_path: Path):
     """Normal files pass sandbox check."""
-    from personal_agent.tools.sandbox import init_sandbox, get_sandbox
+    from luna_agent.tools.sandbox import init_sandbox, get_sandbox
 
     init_sandbox([tmp_path], ["**/.env", "**/.git/**", "**/.ssh/**"])
     sandbox = get_sandbox()
@@ -1838,7 +1838,7 @@ def test_sandbox_allows_normal_files(tmp_path: Path):
 
 
 def test_url_safety_blocks_private_ips():
-    from personal_agent.tools.url_safety import check_url
+    from luna_agent.tools.url_safety import check_url
 
     assert check_url("http://127.0.0.1/admin") is not None
     assert check_url("http://localhost/api") is not None
@@ -1848,14 +1848,14 @@ def test_url_safety_blocks_private_ips():
 
 
 def test_url_safety_blocks_metadata_endpoints():
-    from personal_agent.tools.url_safety import check_url
+    from luna_agent.tools.url_safety import check_url
 
     assert check_url("http://169.254.169.254/latest/meta-data") is not None
     assert check_url("http://metadata.google.internal/") is not None
 
 
 def test_url_safety_allows_public_ips():
-    from personal_agent.tools.url_safety import check_url
+    from luna_agent.tools.url_safety import check_url
 
     # Use IPs that are definitely public (not DNS-dependent)
     assert check_url("https://1.1.1.1") is None
@@ -1864,7 +1864,7 @@ def test_url_safety_allows_public_ips():
 
 
 def test_url_safety_blocks_multicast_linklocal():
-    from personal_agent.tools.url_safety import check_url
+    from luna_agent.tools.url_safety import check_url
 
     assert check_url("http://224.0.0.1/") is not None  # multicast
     assert check_url("http://169.254.1.1/") is not None  # link-local
@@ -1875,7 +1875,7 @@ def test_url_safety_blocks_multicast_linklocal():
 
 
 def test_env_filter_blocks_api_keys():
-    from personal_agent.tools.env_filter import filter_env
+    from luna_agent.tools.env_filter import filter_env
 
     env = {
         "PATH": "/usr/bin",
@@ -1907,7 +1907,7 @@ def test_env_filter_blocks_api_keys():
 
 
 def test_env_filter_blocks_anthropic_prefixes():
-    from personal_agent.tools.env_filter import filter_env
+    from luna_agent.tools.env_filter import filter_env
 
     env = {"ANTHROPIC_API_KEY": "sk-ant-secret", "ANTHROPIC_BASE_URL": "https://..."}
     filtered = filter_env(env)
@@ -1919,7 +1919,7 @@ def test_env_filter_blocks_anthropic_prefixes():
 
 
 def test_redact_masks_openai_key():
-    from personal_agent.tools.redact import redact
+    from luna_agent.tools.redact import redact
 
     text = "Using API key: sk-proj-abcdefghijklmnopqrstuvwxyz123456"
     result = redact(text)
@@ -1928,7 +1928,7 @@ def test_redact_masks_openai_key():
 
 
 def test_redact_masks_github_token():
-    from personal_agent.tools.redact import redact
+    from luna_agent.tools.redact import redact
 
     text = "Token: ghp_abcdefghijklmnopqrstuvwxyz1234567890"
     result = redact(text)
@@ -1937,7 +1937,7 @@ def test_redact_masks_github_token():
 
 
 def test_redact_masks_jwt():
-    from personal_agent.tools.redact import redact
+    from luna_agent.tools.redact import redact
 
     jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
     result = redact("Bearer " + jwt)
@@ -1946,7 +1946,7 @@ def test_redact_masks_jwt():
 
 
 def test_redact_masks_auth_header():
-    from personal_agent.tools.redact import redact
+    from luna_agent.tools.redact import redact
 
     text = "Authorization: Bearer sk-ant-api03-secret-key-here-12345"
     result = redact(text)
@@ -1955,14 +1955,14 @@ def test_redact_masks_auth_header():
 
 
 def test_redact_preserves_normal_text():
-    from personal_agent.tools.redact import redact
+    from luna_agent.tools.redact import redact
 
     text = "Hello world! The weather is nice today."
     assert redact(text) == text
 
 
 def test_redact_empty_string():
-    from personal_agent.tools.redact import redact
+    from luna_agent.tools.redact import redact
 
     assert redact("") == ""
     assert redact(None) is None

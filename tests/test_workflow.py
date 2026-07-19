@@ -8,8 +8,8 @@ import json
 import pytest
 
 # Trigger registrations
-from personal_agent.plugins.builtin.workflows.review import register as register_review
-import personal_agent.plugins.builtin.tools.builtin.workflow_tool  # noqa
+from luna_agent.plugins.builtin.workflows.review import register as register_review
+import luna_agent.plugins.builtin.tools.builtin.workflow_tool  # noqa
 
 register_review()
 
@@ -42,7 +42,7 @@ def _make_mock_call(responses: list[str]):
 
 @pytest.mark.asyncio
 async def test_parallel_runs_all():
-    from personal_agent.workflow.primitives import parallel, _reset_context
+    from luna_agent.workflow.primitives import parallel, _reset_context
 
     call_count = [0]
     async def mock_call(messages, system_prompt, tools, max_tokens):
@@ -52,15 +52,15 @@ async def test_parallel_runs_all():
     _reset_context(mock_call, [], 4096)
 
     async def thunk_a():
-        from personal_agent.workflow.primitives import agent
+        from luna_agent.workflow.primitives import agent
         return await agent("task a")
 
     async def thunk_b():
-        from personal_agent.workflow.primitives import agent
+        from luna_agent.workflow.primitives import agent
         return await agent("task b")
 
     async def thunk_c():
-        from personal_agent.workflow.primitives import agent
+        from luna_agent.workflow.primitives import agent
         return await agent("task c")
 
     results = await parallel([thunk_a, thunk_b, thunk_c])
@@ -70,7 +70,7 @@ async def test_parallel_runs_all():
 
 @pytest.mark.asyncio
 async def test_parallel_errors_are_nulled():
-    from personal_agent.workflow.primitives import parallel, _reset_context
+    from luna_agent.workflow.primitives import parallel, _reset_context
 
     async def mock_call(messages, system_prompt, tools, max_tokens):
         return MockResponse("ok")
@@ -93,7 +93,7 @@ async def test_parallel_errors_are_nulled():
 
 @pytest.mark.asyncio
 async def test_pipeline_flows():
-    from personal_agent.workflow.primitives import pipeline, _reset_context
+    from luna_agent.workflow.primitives import pipeline, _reset_context
 
     stage_order = []
 
@@ -124,7 +124,7 @@ async def test_pipeline_flows():
 @pytest.mark.asyncio
 async def test_pipeline_no_barrier():
     """Pipeline should not batch by stage — items flow independently."""
-    from personal_agent.workflow.primitives import pipeline, _reset_context
+    from luna_agent.workflow.primitives import pipeline, _reset_context
     import asyncio as _asyncio
 
     order = []
@@ -159,7 +159,7 @@ async def test_pipeline_no_barrier():
 
 @pytest.mark.asyncio
 async def test_agent_with_schema():
-    from personal_agent.workflow.primitives import agent, _reset_context
+    from luna_agent.workflow.primitives import agent, _reset_context
 
     async def mock_call(messages, system_prompt, tools, max_tokens):
         return MockResponse('{"name": "test", "count": 42}')
@@ -177,7 +177,7 @@ async def test_agent_with_schema():
 
 @pytest.mark.asyncio
 async def test_agent_schema_retry():
-    from personal_agent.workflow.primitives import agent, _reset_context
+    from luna_agent.workflow.primitives import agent, _reset_context
 
     calls = [MockResponse("not json at all"), MockResponse('{"name": "retry_ok", "count": 1}')]
 
@@ -199,7 +199,7 @@ async def test_agent_schema_retry():
 
 
 def test_workflow_registry_has_review():
-    from personal_agent.workflow.registry import workflow_registry
+    from luna_agent.workflow.registry import workflow_registry
 
     wf = workflow_registry.get("review")
     assert wf is not None
@@ -208,7 +208,7 @@ def test_workflow_registry_has_review():
 
 
 def test_workflow_tools_registered():
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.registry import tool_registry
 
     for name in ("workflow_run", "workflow_list"):
         entry = tool_registry.get(name)
@@ -220,7 +220,7 @@ def test_workflow_tools_registered():
 
 @pytest.mark.asyncio
 async def test_engine_run_unknown_workflow():
-    from personal_agent.workflow.engine import run_workflow, setup_engine
+    from luna_agent.workflow.engine import run_workflow, setup_engine
 
     async def mock_call(messages, system_prompt, tools, max_tokens):
         return MockResponse("ok")
@@ -236,7 +236,7 @@ async def test_engine_run_unknown_workflow():
 
 @pytest.mark.asyncio
 async def test_phase_and_log_tracking():
-    from personal_agent.workflow.primitives import phase, log, _reset_context, _phases, _logs
+    from luna_agent.workflow.primitives import phase, log, _reset_context, _phases, _logs
 
     async def mock_call(messages, system_prompt, tools, max_tokens):
         return MockResponse("ok")

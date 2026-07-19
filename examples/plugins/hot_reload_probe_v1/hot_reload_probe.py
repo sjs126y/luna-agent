@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from lumora_plugin_sdk import CommandEntry, ToolEntry
+from luna_agent_plugin_sdk import CommandEntry, ToolEntry
 
 
 PLUGIN_VERSION = "v1"

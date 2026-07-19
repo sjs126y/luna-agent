@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.attachments.store import AttachmentStore, AttachmentStoreError, DownloadedAttachment
-from personal_agent.models.messages import AttachmentRef
-from personal_agent.tools.sandbox import init_sandbox
+from luna_agent.attachments.store import AttachmentStore, AttachmentStoreError, DownloadedAttachment
+from luna_agent.models.messages import AttachmentRef
+from luna_agent.tools.sandbox import init_sandbox
 
 
 def test_attachment_store_caches_local_file_by_hash(tmp_path):

@@ -1,0 +1,1701 @@
+"""Shared slash command service for Gateway and CLI runtimes."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import inspect
+import json
+import shlex
+from typing import Any, Protocol
+
+from luna_agent.commands.registry import (
+    command_specs_as_dict,
+    find_command_spec,
+    format_command_detail,
+    format_commands,
+    suggest_command_names,
+)
+from luna_agent.permissions import (
+    format_expiry,
+    temporary_grant_ttl_seconds,
+)
+from luna_agent.security.modes import mode_preset
+
+
+@dataclass
+class CommandResult:
+    handled: bool
+    response: str | None = None
+    continue_text: str | None = None
+    payload: dict | None = None
+    kind: str = "text"
+    error: str | None = None
+    suggestions: list[str] | None = None
+
+    @classmethod
+    def unhandled(cls) -> "CommandResult":
+        return cls(handled=False)
+
+    @classmethod
+    def reply(
+        cls,
+        response: str,
+        *,
+        payload: dict | None = None,
+        kind: str = "text",
+    ) -> "CommandResult":
+        return cls(handled=True, response=response, payload=payload, kind=kind)
+
+    @classmethod
+    def error_reply(
+        cls,
+        response: str,
+        *,
+        payload: dict | None = None,
+        suggestions: list[str] | None = None,
+        kind: str = "error",
+    ) -> "CommandResult":
+        return cls(
+            handled=True,
+            response=response,
+            payload=payload,
+            kind=kind,
+            error=response,
+            suggestions=list(suggestions or []),
+        )
+
+    @classmethod
+    def structured(cls, response: str, *, kind: str, payload: dict[str, Any]) -> "CommandResult":
+        return cls(handled=True, response=response, kind=kind, payload=payload)
+
+    @classmethod
+    def continue_with(cls, text: str) -> "CommandResult":
+        return cls(handled=True, continue_text=text, kind="continue")
+
+
+class CommandRuntime(Protocol):
+    settings: object
+    plugin_manager: object | None
+
+    @property
+    def session_key(self) -> str: ...
+
+    @property
+    def source(self): ...
+
+    async def get_agent(self): ...
+
+    async def reset_session(self) -> str | None: ...
+
+    async def switch_session(self, name: str) -> str: ...
+
+    async def list_sessions(self) -> str: ...
+
+    async def current_session(self) -> str: ...
+
+    async def rename_session(self, name: str) -> str: ...
+
+    async def delete_session(self, name: str | None = None) -> str: ...
+
+    async def load_history(self) -> list[dict]: ...
+
+    async def export_session(self) -> tuple[int, str]: ...
+
+    async def clear_agent(self) -> None: ...
+
+    async def memory_report(self) -> dict: ...
+
+    async def memory_entries(self, *, target: str = "all") -> list[dict]: ...
+
+    async def memory_search(self, query: str, *, target: str = "all") -> list[dict]: ...
+
+    async def memory_entry(self, identifier: str, *, target: str = "all") -> dict | None: ...
+
+    async def memory_delete(self, identifier: str, *, target: str = "all") -> bool: ...
+
+    async def tool_runs_recent(self, *, limit: int = 10, all_sessions: bool = False) -> dict: ...
+
+    async def tool_run_detail(self, run_id: int) -> dict | None: ...
+
+    async def tool_runs_summary(self, *, limit: int = 50, all_sessions: bool = False) -> dict: ...
+
+    async def activity_snapshot(self, *, limit: int = 20) -> dict: ...
+
+    async def activity_detail(self, kind: str, id_: str) -> dict | None: ...
+
+    async def activity_choices(self, provider: str, *, query: str = "", limit: int = 20) -> list[dict]: ...
+
+    async def is_session_running(self) -> bool: ...
+
+    async def add_steer(self, text: str) -> str: ...
+
+    async def steer_snapshot(self) -> dict: ...
+
+    async def clear_security_grants(self) -> bool: ...
+
+    def plugin_command_kwargs(self, args: str) -> dict: ...
+
+
+@dataclass(frozen=True)
+class ModeChoice:
+    slug: str
+    label: str
+    profile: str
+    approval_policy: str
+
+
+MODE_CHOICES: tuple[ModeChoice, ...] = (
+    ModeChoice("read-only", "Read Only", "read-only", "never"),
+    ModeChoice("ask-first", "Ask First", "read-only", "on-request"),
+    ModeChoice("local-auto", "Local Auto", "workspace", "on-request"),
+    ModeChoice("full-auto", "Full Auto", "trusted", "never"),
+)
+
+_MODE_BY_SLUG = {choice.slug: choice for choice in MODE_CHOICES}
+_MODE_USAGE = "/mode [Read Only|Ask First|Local Auto|Full Auto]"
+_MODE_ALIASES = {
+    "readonly": "read-only",
+    "askfirst": "ask-first",
+    "localauto": "local-auto",
+    "fullauto": "full-auto",
+}
+
+_ACTIVITY_SCOPE_CHOICES = (
+    ("agents", "agents", "Sub-agent runs"),
+    ("processes", "processes", "Background processes"),
+    ("gateway", "gateway", "Gateway agent runs"),
+)
+
+
+async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandResult:
+    text = text.strip()
+    parsed = _parse_command(text)
+    if parsed is None:
+        return CommandResult.unhandled()
+    command_name, args = parsed
+
+    if command_name == "new":
+        response = await runtime.reset_session()
+        await runtime.clear_agent()
+        return CommandResult.reply(response or "会话已重置。开始新的对话吧。")
+
+    if command_name == "session":
+        return CommandResult.reply(await _session(runtime, args))
+
+    if command_name == "usage":
+        return CommandResult.reply(await _usage(runtime, current_user_message=text))
+
+    if command_name == "export":
+        count, path = await runtime.export_session()
+        return CommandResult.reply(f"已导出 {count} 条对话 -> {path}")
+
+    if command_name == "deny":
+        return CommandResult.reply(await _deny(runtime, args))
+
+    if command_name == "mode":
+        text, payload = await _mode(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="mode")
+
+    if command_name == "permissions":
+        text, payload = await _permissions(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="permissions")
+
+    if command_name == "stop":
+        return CommandResult.reply(await _stop(runtime))
+
+    if command_name == "steer":
+        return CommandResult.reply(await _steer(runtime, args))
+
+    if command_name in {"agents", "agent-runs"}:
+        return CommandResult.reply(await _agents(args))
+
+    if command_name == "activity":
+        payload, response = await _activity(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(response, payload=payload, kind="activity_error")
+        return CommandResult.structured(response, kind="activity", payload=payload)
+
+    if command_name == "memory":
+        return CommandResult.reply(await _memory(runtime, args))
+
+    if command_name == "tools":
+        text, payload = await _tools(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="tools")
+
+    if command_name == "tool-runs":
+        text, payload = await _tool_runs(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="tool_runs")
+
+    if command_name == "protocol":
+        text, payload = _protocol(args)
+        return CommandResult.reply(text, payload=payload, kind="protocol")
+
+    if command_name == "plugins":
+        text, payload = await _plugins(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, kind="plugins_error")
+        return CommandResult.reply(text, payload=payload, kind="plugins")
+
+    if command_name == "commands":
+        text, payload = _commands(runtime, args)
+        if payload.get("error"):
+            return CommandResult.error_reply(text, payload=payload, suggestions=payload.get("suggestions"))
+        return CommandResult.reply(text, payload=payload, kind="commands")
+
+    if command_name == "help":
+        return CommandResult.reply(help_text(runtime))
+
+    plugin_manager = runtime.plugin_manager
+    plugin_command = None
+    plugin_scope = "slash"
+    if plugin_manager is not None:
+        plugin_command, plugin_scope = _find_plugin_command(
+            plugin_manager,
+            command_name,
+            _plugin_command_scopes(runtime),
+        )
+    if plugin_command is not None:
+        value = await plugin_manager.execute_command(
+            plugin_command.name,
+            scope=plugin_scope,
+            **runtime.plugin_command_kwargs(args),
+        )
+        return CommandResult.reply(value or "")
+
+    skill_text = await _prepare_skill(runtime, text)
+    if skill_text is not None:
+        return CommandResult.continue_with(skill_text)
+
+    suggestions = suggest_command_names(runtime, command_name)
+    if suggestions:
+        response = f"未找到命令: /{command_name}\n你是不是想用: {', '.join(suggestions)}"
+        return CommandResult.error_reply(
+            response,
+            payload={
+                "command": command_name,
+                "suggestions": suggestions,
+            },
+            suggestions=suggestions,
+            kind="command_error",
+        )
+
+    return CommandResult.unhandled()
+
+
+async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, Any]]:
+    manager = runtime.plugin_manager
+    if manager is None:
+        return "插件运行时不可用。", {"error": "plugin runtime unavailable"}
+    try:
+        parts = shlex.split(args)
+    except ValueError as exc:
+        return f"插件命令参数无效: {exc}", {"error": str(exc)}
+    action = parts[0].lower() if parts else "list"
+    values = parts[1:]
+    try:
+        if action == "list":
+            reports = manager.queries.list_plugins()
+            lines = [
+                f"- {item['key']}: {item['status']} generation={item.get('generation_id') or '-'}"
+                for item in reports
+            ]
+            return "当前插件:\n" + ("\n".join(lines) if lines else "- 无"), {"plugins": reports}
+        if action == "info" and len(values) == 1:
+            report = manager.queries.plugin_info(values[0])
+            return _format_plugin_info(report), report
+        if action == "logs" and len(values) == 1:
+            items = manager.queries.events(values[0])
+            return _format_plugin_events(values[0], items), {
+                "management_schema_version": 1,
+                "plugin_key": values[0],
+                "events": items,
+            }
+        if action == "versions" and len(values) == 1:
+            items = manager.queries.versions(values[0])
+            return _format_plugin_versions(values[0], items), {
+                "management_schema_version": 1,
+                "plugin_key": values[0],
+                "versions": items,
+            }
+        if action == "operations" and len(values) <= 1:
+            key = values[0] if values else ""
+            items = manager.queries.operations(key=key)
+            return _format_plugin_operations(items), {
+                "management_schema_version": 1,
+                "plugin_key": key,
+                "operations": items,
+            }
+        if action == "operation" and len(values) == 1:
+            item = manager.queries.operation(values[0])
+            if item is None:
+                return "未找到插件操作。", {"error": "operation not found"}
+            return _format_plugin_operation(item), {
+                "management_schema_version": 1,
+                "operation": item,
+            }
+        if action == "install" and len(values) == 1:
+            plugin = await manager.install_plugin_runtime(values[0])
+        elif action == "reload" and len(values) == 1:
+            plugin = await manager.reload_plugin_runtime(values[0])
+        elif action == "enable" and len(values) == 1:
+            plugin = await manager.enable_plugin_runtime(values[0])
+        elif action == "disable" and len(values) == 1:
+            plugin = await manager.disable_plugin_runtime(values[0])
+        elif action == "active" and len(values) == 2 and values[1].lower() in {"on", "off", "restart"}:
+            operation = values[1].lower()
+            if operation == "restart":
+                plugin = await manager.restart_active_plugin(values[0])
+            else:
+                plugin = await manager.set_active_enabled(values[0], operation == "on")
+        elif action == "rollback" and len(values) == 2:
+            plugin = await manager.rollback_plugin_runtime(values[0], values[1])
+        elif action == "uninstall" and values:
+            key = values[0]
+            unknown = [value for value in values[1:] if value != "--purge-data"]
+            if unknown:
+                raise ValueError(f"unknown uninstall option: {unknown[0]}")
+            plugin = await manager.uninstall_plugin_runtime(
+                key,
+                purge_data="--purge-data" in values[1:],
+            )
+        else:
+            return (
+                "用法: /plugins [list|info <key>|install <path>|reload <key>|"
+                "enable <key>|disable <key>|rollback <key> <digest>|"
+                "logs <key>|versions <key>|operations [key]|operation <id>|"
+                "active <key> <on|off|restart>|"
+                "uninstall <key> [--purge-data]]",
+                {"error": "invalid plugin command"},
+            )
+    except Exception as exc:
+        return f"插件操作失败: {exc}", {"error": f"{type(exc).__name__}: {exc}"}
+    payload = {
+        "action": action,
+        "plugin_key": plugin.key,
+        "status": plugin.status.value,
+        "generation_id": plugin.generation_id,
+        "runtime_instance_id": plugin.runtime_instance_id,
+        "active_enabled": bool(getattr(plugin, "active_enabled", False)),
+        "active": (
+            plugin.active_runner.control.safe_summary()
+            if getattr(plugin, "active_runner", None) is not None
+            else {}
+        ),
+        "capabilities": manager.queries.runtime_health(),
+    }
+    recent_operations = manager.queries.operations(key=plugin.key, limit=1)
+    payload["operation_id"] = (
+        str(recent_operations[0].get("operation_id") or "")
+        if recent_operations
+        else ""
+    )
+    return (
+        f"插件操作完成: {action} {plugin.key}\n"
+        f"generation={plugin.generation_id or '-'}\n"
+        f"runtime={plugin.runtime_instance_id or '-'}",
+        payload,
+    )
+
+
+def _format_plugin_info(report: dict[str, Any]) -> str:
+    active = report.get("active") or {}
+    active_state = str(active.get("state") or "passive")
+    versions = report.get("installed_versions") or []
+    lines = [
+        str(report.get("name") or report.get("key") or "Plugin"),
+        f"- key: {report.get('key')}",
+        f"- status: {report.get('status')} / runtime={report.get('runtime_state')}",
+        f"- version: {report.get('version')} / source={report.get('source')}",
+        f"- generation: {report.get('generation_id') or '-'}",
+        f"- snapshot: {report.get('snapshot_revision')}",
+        f"- active: {active_state}",
+        f"- registered: {report.get('registered') or {}}",
+        f"- installed versions: {len(versions)}",
+    ]
+    if report.get("error") or report.get("active_error"):
+        lines.append(f"- error: {report.get('active_error') or report.get('error')}")
+    return "\n".join(lines)
+
+
+def _format_plugin_events(key: str, items: list[dict[str, Any]]) -> str:
+    if not items:
+        return f"插件 {key} 暂无运行事件。"
+    lines = [f"插件 {key} 最近事件:"]
+    for item in items:
+        lines.append(
+            f"- {item.get('created_at')} {item.get('event')}"
+            + (f" [{item.get('level')}]" if item.get("level") != "info" else "")
+        )
+    return "\n".join(lines)
+
+
+def _format_plugin_versions(key: str, items: list[dict[str, Any]]) -> str:
+    if not items:
+        return f"插件 {key} 没有已安装的版本。"
+    lines = [f"插件 {key} 已安装版本:"]
+    for item in items:
+        marker = "current" if item.get("active") else "available"
+        lines.append(f"- {item.get('version')} {str(item.get('digest') or '')[:12]} {marker}")
+    return "\n".join(lines)
+
+
+def _format_plugin_operations(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "暂无插件操作记录。"
+    lines = ["最近插件操作:"]
+    for item in items:
+        lines.append(
+            f"- {item.get('operation_id')} {item.get('action')} "
+            f"{item.get('plugin_key')} {item.get('status')}:{item.get('stage')}"
+        )
+    return "\n".join(lines)
+
+
+def _format_plugin_operation(item: dict[str, Any]) -> str:
+    return "\n".join((
+        f"插件操作 {item.get('operation_id')}",
+        f"- plugin: {item.get('plugin_key')}",
+        f"- action: {item.get('action')}",
+        f"- status: {item.get('status')} / stage={item.get('stage')}",
+        f"- started: {item.get('started_at')}",
+        f"- finished: {item.get('finished_at') or '-'}",
+        f"- error: {item.get('error') or '-'}",
+    ))
+
+
+def slash_command_metadata(runtime: CommandRuntime | None = None) -> list[dict[str, Any]]:
+    """Return frontend-consumable slash command registry metadata."""
+    payload = command_specs_as_dict(runtime)
+    entries = list(payload.get("commands") or [])
+    entries.extend(list(payload.get("plugin_commands") or []))
+    return entries
+
+
+def _parse_command(text: str) -> tuple[str, str] | None:
+    if not text.startswith("/") or text == "/":
+        return None
+    body = text[1:].strip()
+    if not body:
+        return None
+    command_name, _, args = body.partition(" ")
+    return command_name, args.strip()
+
+
+def _plugin_command_scopes(runtime: CommandRuntime) -> tuple[str, ...]:
+    scopes = getattr(runtime, "plugin_command_scopes", ("slash",))
+    if isinstance(scopes, str):
+        scopes = (scopes,)
+    cleaned = tuple(scope for scope in scopes if scope in {"slash", "cli", "both"})
+    return cleaned or ("slash",)
+
+
+def _find_plugin_command(plugin_manager, name: str, scopes: tuple[str, ...]):
+    for scope in scopes:
+        command = plugin_manager.get_command(name, scope=scope)
+        if command is not None:
+            return command, scope
+    return None, scopes[0] if scopes else "slash"
+
+
+def _normalize_choice_items(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    choices = []
+    for item in items:
+        value = str(item.get("value") or "")
+        if not value:
+            continue
+        choices.append({
+            "value": value,
+            "label": str(item.get("label") or value),
+            "description": str(item.get("description") or ""),
+            "append_space": bool(item.get("append_space", False)),
+        })
+        if len(choices) >= limit:
+            break
+    return choices
+
+
+async def slash_argument_choices(
+    runtime: CommandRuntime,
+    provider: str,
+    *,
+    command: str,
+    args: tuple[str, ...] = (),
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    """Return frontend-facing slash argument candidates for dynamic providers."""
+    normalized_provider = str(provider or "").strip()
+    if normalized_provider == "tools":
+        return _tool_argument_choices(runtime, query=query, limit=limit)
+    if normalized_provider == "sessions":
+        return await _session_argument_choices(runtime, query=query, limit=limit)
+    if normalized_provider in {"activity_agents", "activity_processes", "activity_gateway"}:
+        custom = await _call_optional(
+            runtime,
+            "activity_choices",
+            normalized_provider,
+            query=query,
+            limit=limit,
+        )
+        if custom is not None:
+            return _normalize_choice_items(custom, limit=limit)
+        from luna_agent.activity import activity_choices
+
+        return _normalize_choice_items(
+            activity_choices(normalized_provider, query=query, limit=limit),
+            limit=limit,
+        )
+    return []
+
+
+async def _call_optional(runtime: CommandRuntime, name: str, *args, **kwargs):
+    handler = getattr(runtime, name, None)
+    if handler is None:
+        return None
+    value = handler(*args, **kwargs)
+    if inspect.isawaitable(value):
+        value = await value
+    return value
+
+
+async def _usage(runtime: CommandRuntime, *, current_user_message: str) -> str:
+    custom = await _call_optional(runtime, "usage", current_user_message=current_user_message)
+    if custom is not None:
+        return str(custom)
+
+    agent = await runtime.get_agent()
+    history = await runtime.load_history()
+
+    from luna_agent.context_budget import build_context_budget
+    from luna_agent.context_budget import compose_context_text
+
+    budget = await build_context_budget(
+        messages=history,
+        agent=agent,
+        settings=runtime.settings,
+        skills_summary=compose_context_text(
+            getattr(agent, "_last_skill_summaries", ""),
+            getattr(agent, "_last_skill_injection", ""),
+        ),
+        memory_injections=getattr(agent, "_last_memory_injections", ""),
+        current_user_message=current_user_message,
+    )
+    threshold_line = ""
+    if budget.compression_threshold:
+        marker = "，已达到" if budget.over_compression_threshold else ""
+        threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
+    recent_tool_calls = len(getattr(agent, "_last_tool_results", []) or [])
+    max_tool_calls = int(getattr(agent, "_max_tool_calls_per_turn", 0) or 0)
+    return (
+        f"会话用量\n"
+        f"API 调用: {agent.session_api_calls} 次\n"
+        f"输入 tokens: {agent.session_prompt_tokens:,} (API 报告)\n"
+        f"输出 tokens: {agent.session_completion_tokens:,} (API 报告)\n"
+        f"\n上下文窗口 (估算)\n"
+        f"已用: {budget.used:,} / {budget.context_limit:,} tokens ({budget.percent}%)\n"
+        f"  system prompt: {budget.system_prompt:,}\n"
+        f"  history messages: {budget.history_messages:,}\n"
+        f"  tools schema: {budget.tools_schema:,}\n"
+        f"  skills: {budget.skills:,}\n"
+        f"  memory injections: {budget.memory_injections:,}\n"
+        f"  MCP tools: {budget.mcp_tools:,}\n"
+        f"剩余: {budget.remaining_context:,} tokens\n"
+        f"{threshold_line}"
+        f"\n最近一轮工具执行: {recent_tool_calls} 次\n"
+        f"单轮工具上限: {max_tool_calls} 次"
+    )
+
+
+async def _session(runtime: CommandRuntime, args: str) -> str:
+    parts = args.split()
+    if not parts or parts[0] == "current":
+        return await runtime.current_session()
+    action = parts[0]
+    if action == "list":
+        return await runtime.list_sessions()
+    if action == "switch":
+        if len(parts) < 2:
+            return "用法: /session switch <name>"
+        return await runtime.switch_session(parts[1])
+    if action == "rename":
+        if len(parts) < 2:
+            return "用法: /session rename <name>"
+        return await runtime.rename_session(parts[1])
+    if action == "delete":
+        target = parts[1] if len(parts) > 1 else None
+        if target == "current":
+            target = None
+        return await runtime.delete_session(target)
+    return await runtime.switch_session(action)
+
+
+async def _deny(runtime: CommandRuntime, args: str) -> str:
+    value = args.strip().lower()
+    if value not in {"", "all"}:
+        return "用法: /deny all"
+    changed = await _call_optional(runtime, "clear_security_grants")
+    if changed is None:
+        agent = _runtime_cached_agent(runtime)
+        context = getattr(agent, "_security_context", None) if agent is not None else None
+        if context is None:
+            return "当前没有可撤销的限时授权。"
+        changed = bool(context.state.tool_grants or context.state.resource_grants)
+        context.state.clear_grants()
+    return "已撤销当前会话的全部限时授权。" if changed else "当前没有可撤销的限时授权。"
+
+
+def _format_ttl(seconds: int) -> str:
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return f"{hours}小时"
+    minutes = max(1, seconds // 60)
+    return f"{minutes}分钟"
+
+
+def _runtime_cached_agent(runtime: CommandRuntime):
+    agent = getattr(runtime, "agent", None)
+    if agent is not None:
+        return agent
+    service = getattr(runtime, "conversation_service", None)
+    if service is not None and hasattr(service, "get_cached_agent"):
+        try:
+            return service.get_cached_agent(runtime.session_key)
+        except Exception:
+            return None
+    return None
+
+
+def current_mode(agent) -> str:
+    """Return the user-facing execution mode label for an agent."""
+    security_context = getattr(agent, "_security_context", None)
+    mode_id = getattr(security_context, "mode_id", "ask-first")
+    return _MODE_BY_SLUG.get(mode_id, _MODE_BY_SLUG["ask-first"]).label
+
+
+async def _mode(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
+    agent = await runtime.get_agent()
+    requested = args.strip()
+    context = getattr(agent, "_security_context", None)
+    current_id = str(getattr(context, "mode_id", "ask-first") or "ask-first")
+    current = _mode_payload(current_id)
+    if not requested or requested == "show":
+        return f"当前模式: {current['current']['label']}。用法: {_MODE_USAGE}", {
+            "action": "show",
+            **current,
+        }
+    if requested == "list":
+        return "执行模式:\n" + "\n".join(f"- {choice.label} ({choice.slug})" for choice in MODE_CHOICES), {
+            "action": "list",
+            **current,
+        }
+    if requested.startswith("set "):
+        requested = requested.split(None, 1)[1].strip()
+    choice = _choice_for_input(requested)
+    if choice is None:
+        suggestions = _mode_suggestions(requested)
+        text = f"用法: {_MODE_USAGE}"
+        if suggestions:
+            text += "\n你是不是想用: " + ", ".join(f"/mode set {item}" for item in suggestions)
+        return text, {
+            "action": "set",
+            "requested": requested,
+            "error": "unknown_mode",
+            "suggestions": [f"/mode set {item}" for item in suggestions],
+            **current,
+        }
+    custom = await _call_optional(runtime, "set_mode", choice.slug)
+    if custom is not None:
+        return str(custom), {
+            "action": "set",
+            "selected": _choice_payload(choice),
+            "custom": True,
+            **_mode_payload(choice.slug),
+        }
+    return "当前入口不支持切换执行模式。", {
+        "action": "set",
+        "selected": _choice_payload(choice),
+        "error": "mode_switch_unavailable",
+        **current,
+    }
+
+
+def _choice_for_input(value: str) -> ModeChoice | None:
+    key = _mode_key(value)
+    slug = _MODE_ALIASES.get(key)
+    if slug:
+        return _MODE_BY_SLUG[slug]
+    return None
+
+
+def _mode_key(value: str) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _mode_payload(mode_id: str) -> dict:
+    choice = _MODE_BY_SLUG.get(mode_id, _MODE_BY_SLUG["ask-first"])
+    return {
+        "current": {
+            **_choice_payload(choice),
+        },
+        "modes": [_choice_payload(choice) for choice in MODE_CHOICES],
+    }
+
+
+def _choice_payload(choice: ModeChoice) -> dict:
+    return {
+        "slug": choice.slug,
+        "label": choice.label,
+        "profile": choice.profile,
+        "approval_policy": choice.approval_policy,
+    }
+
+
+def _mode_suggestions(value: str) -> list[str]:
+    from difflib import get_close_matches
+
+    candidates = [choice.label for choice in MODE_CHOICES]
+    aliases = sorted(_MODE_ALIASES)
+    key = _mode_key(value)
+    alias_matches = get_close_matches(key, aliases, n=2, cutoff=0.72)
+    labels = [choice.label for alias in alias_matches for choice in [_MODE_BY_SLUG[_MODE_ALIASES[alias]]]]
+    label_matches = get_close_matches(str(value or ""), candidates, n=2, cutoff=0.55)
+    result: list[str] = []
+    for item in [*labels, *label_matches]:
+        if item not in result:
+            result.append(item)
+    return result[:3]
+
+
+async def _agents(args: str) -> str:
+    from luna_agent.plugins.builtin.tools.builtin.delegate import (
+        clear_agent_runs,
+        format_agent_run,
+        format_agent_runs,
+    )
+
+    parts = args.split()
+    if not parts or parts[0] == "list":
+        limit = _parse_limit(parts[1] if len(parts) > 1 else "")
+        return format_agent_runs(limit=limit)
+    if parts[0] == "show":
+        if len(parts) < 2:
+            return "用法: /agents show <run_id>"
+        return format_agent_run(parts[1])
+    if parts[0] == "clear":
+        count = clear_agent_runs()
+        return f"已清理 {count} 条子 agent 运行记录。"
+    return "用法: /agents [list [limit]|show <run_id>|clear]"
+
+
+async def _activity(runtime: CommandRuntime, args: str) -> tuple[dict[str, Any], str]:
+    parts = args.split()
+    scope = _activity_scope(parts[0]) if parts else "all"
+    if scope == "":
+        payload = {"error": "usage", "usage": "/activity [agents|processes|gateway] [id]"}
+        return payload, "用法: /activity [agents|processes|gateway] [id]"
+
+    if len(parts) >= 2:
+        detail = await _activity_detail(runtime, scope, parts[1])
+        if detail is None:
+            payload = {
+                "scope": scope,
+                "id": parts[1],
+                "not_found": True,
+            }
+            return payload, f"未找到 activity: {scope} {parts[1]}"
+        return detail, _format_activity_detail(detail)
+
+    snapshot = await _activity_snapshot(runtime)
+    payload = snapshot if scope == "all" else _activity_scope_payload(snapshot, scope)
+    return payload, _format_activity_payload(payload, scope=scope)
+
+
+async def _activity_snapshot(runtime: CommandRuntime) -> dict[str, Any]:
+    custom = await _call_optional(runtime, "activity_snapshot", limit=20)
+    if custom is not None:
+        return dict(custom)
+    from luna_agent.activity import activity_snapshot
+
+    return activity_snapshot()
+
+
+async def _activity_detail(runtime: CommandRuntime, scope: str, id_: str) -> dict[str, Any] | None:
+    kind = {
+        "agents": "sub_agent",
+        "processes": "background_process",
+        "gateway": "gateway_agent",
+    }[scope]
+    custom = await _call_optional(runtime, "activity_detail", kind, id_)
+    if custom is not None:
+        return custom
+    from luna_agent.activity import activity_detail
+
+    return activity_detail(kind, id_)
+
+
+def _activity_scope(raw: str) -> str:
+    value = raw.strip().lower()
+    aliases = {
+        "all": "all",
+        "summary": "all",
+        "list": "all",
+        "agents": "agents",
+        "agent": "agents",
+        "sub_agents": "agents",
+        "sub-agent": "agents",
+        "sub-agents": "agents",
+        "processes": "processes",
+        "process": "processes",
+        "background": "processes",
+        "background_processes": "processes",
+        "gateway": "gateway",
+        "gateways": "gateway",
+        "gateway_agents": "gateway",
+    }
+    return aliases.get(value, "")
+
+
+def _activity_scope_payload(snapshot: dict[str, Any], scope: str) -> dict[str, Any]:
+    key = {
+        "agents": "sub_agents",
+        "processes": "background_processes",
+        "gateway": "gateway_agents",
+    }[scope]
+    return {
+        "scope": scope,
+        "summary": dict(snapshot.get("summary") or {}),
+        key: dict(snapshot.get(key) or {}),
+    }
+
+
+def _format_activity_payload(payload: dict[str, Any], *, scope: str) -> str:
+    if scope == "agents":
+        return _format_activity_agents(payload.get("sub_agents") or {})
+    if scope == "processes":
+        return _format_activity_processes(payload.get("background_processes") or {})
+    if scope == "gateway":
+        return _format_activity_gateway(payload.get("gateway_agents") or {})
+    return "\n".join([
+        _format_activity_summary(payload),
+        "",
+        _format_activity_agents(payload.get("sub_agents") or {}),
+        "",
+        _format_activity_processes(payload.get("background_processes") or {}),
+        "",
+        _format_activity_gateway(payload.get("gateway_agents") or {}),
+    ]).strip()
+
+
+def _format_activity_summary(payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or {}
+    counts = summary.get("counts") or {}
+    sub_agents = counts.get("sub_agents") or {}
+    processes = counts.get("background_processes") or {}
+    gateway = counts.get("gateway_agents") or {}
+    attention = "是" if summary.get("attention_required") else "否"
+    return "\n".join([
+        "运行活动",
+        f"活跃任务: {int(summary.get('active_total') or 0)}",
+        f"需要注意: {attention}",
+        f"最长运行: {float(summary.get('longest_running_seconds') or 0.0):.1f}s",
+        (
+            "子 agent: "
+            f"active={int(sub_agents.get('active') or 0)} "
+            f"recent={int(sub_agents.get('recent') or 0)} "
+            f"failed_recent={int(sub_agents.get('failed_recent') or 0)}"
+        ),
+        (
+            "后台任务: "
+            f"running={int(processes.get('running') or 0)} "
+            f"done={int(processes.get('done') or 0)} "
+            f"killed={int(processes.get('killed') or 0)}"
+        ),
+        f"Gateway agent: running={int(gateway.get('running') or 0)}",
+    ])
+
+
+def _format_activity_agents(payload: dict[str, Any]) -> str:
+    active = payload.get("active_runs") or []
+    recent = payload.get("recent_runs") or []
+    lines = [f"子 agent: active={len(active)} recent={len(recent)}"]
+    for item in active:
+        lines.append(_format_activity_item(item))
+    for item in recent:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无子 agent 活动。")
+    return "\n".join(lines)
+
+
+def _format_activity_processes(payload: dict[str, Any]) -> str:
+    items = payload.get("items") or []
+    counts = payload.get("counts") or {}
+    lines = [
+        (
+            "后台任务: "
+            f"total={int(counts.get('total') or 0)} "
+            f"running={int(counts.get('running') or 0)} "
+            f"done={int(counts.get('done') or 0)} "
+            f"killed={int(counts.get('killed') or 0)}"
+        )
+    ]
+    for item in items:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无后台任务。")
+    return "\n".join(lines)
+
+
+def _format_activity_gateway(payload: dict[str, Any]) -> str:
+    items = payload.get("running_agent_runs") or []
+    counts = payload.get("counts") or {}
+    lines = [
+        (
+            "Gateway agent: "
+            f"running={int(counts.get('running') or 0)} "
+            f"stop_requested={int(counts.get('stop_requested') or 0)}"
+        )
+    ]
+    for item in items:
+        lines.append(_format_activity_item(item))
+    if len(lines) == 1:
+        lines.append("暂无 Gateway agent 活动。")
+    return "\n".join(lines)
+
+
+def _format_activity_item(item: dict[str, Any]) -> str:
+    item_id = item.get("id") or item.get("run_id") or item.get("session_key") or "-"
+    status = item.get("status") or "-"
+    duration = float(item.get("duration_seconds") or 0.0)
+    title = item.get("task_preview") or item.get("task") or item.get("command_preview")
+    title = title or item.get("command") or item.get("platform") or ""
+    suffix = f" - {_short_text(str(title), 90)}" if title else ""
+    extras = []
+    if int(item.get("pending_steers") or 0):
+        extras.append(f"steer={int(item.get('pending_steers') or 0)}")
+    extra = f" ({', '.join(extras)})" if extras else ""
+    return f"- {item_id} [{status}] {duration:.1f}s{extra}{suffix}"
+
+
+def _format_activity_detail(payload: dict[str, Any]) -> str:
+    item = payload.get("run") or payload.get("process") or payload.get("gateway_run") or {}
+    kind = payload.get("kind") or item.get("kind") or "activity"
+    item_id = payload.get("id") or item.get("id") or "-"
+    lines = [
+        f"Activity detail: {kind} {item_id}",
+        f"status: {item.get('status') or '-'}",
+        f"duration: {float(item.get('duration_seconds') or 0.0):.1f}s",
+        f"started_at: {item.get('started_at') or '-'}",
+    ]
+    if item.get("finished_at"):
+        lines.append(f"finished_at: {item.get('finished_at')}")
+    if item.get("error"):
+        lines.append(f"error: {item.get('error')}")
+    title = item.get("task") or item.get("command") or item.get("platform")
+    if title:
+        lines.append(str(title))
+    return "\n".join(lines)
+
+
+async def _memory(runtime: CommandRuntime, args: str) -> str:
+    parts = args.split()
+    action = parts[0] if parts else "list"
+    rest, target = _split_target_args(parts[1:])
+
+    if action == "doctor":
+        custom = await _call_optional(runtime, "format_memory_doctor")
+        if custom is not None:
+            return str(custom)
+        return _format_memory_doctor(await runtime.memory_report())
+
+    if action == "list":
+        custom = await _call_optional(runtime, "format_memory_entries", target=target)
+        if custom is not None:
+            return str(custom)
+        return _format_memory_entries(await runtime.memory_entries(target=target))
+
+    if action == "search":
+        query = " ".join(token for token in rest if not token.startswith("--target=")).strip()
+        if not query:
+            return "用法: /memory search <query> [--target=all|memory|user|external]"
+        custom = await _call_optional(runtime, "format_memory_search", query, target=target)
+        if custom is not None:
+            return str(custom)
+        return _format_memory_entries(
+            await runtime.memory_search(query, target=target),
+            title="记忆搜索结果",
+        )
+
+    if action == "show":
+        if not rest:
+            return "用法: /memory show <id> [--target=all|memory|user|external]"
+        identifier = rest[0]
+        entry = await runtime.memory_entry(identifier, target=target)
+        if entry is None:
+            return f"未找到记忆: {identifier}"
+        custom = await _call_optional(runtime, "format_memory_entry", entry)
+        if custom is not None:
+            return str(custom)
+        return _format_memory_entry(entry)
+
+    if action == "delete":
+        if not rest:
+            return "用法: /memory delete <id> [--target=all|memory|user|external]"
+        identifier = rest[0]
+        deleted = await runtime.memory_delete(identifier, target=target)
+        if not deleted:
+            return f"未找到或无法删除记忆: {identifier}"
+        return f"已删除记忆: {identifier}"
+
+    return "用法: /memory [list|search <query>|show <id>|delete <id>|doctor]"
+
+
+def _commands(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
+    value = args.strip()
+    if value == "json":
+        payload = command_specs_as_dict(runtime)
+        return json.dumps(payload, indent=2, ensure_ascii=False), payload
+    if value:
+        spec = find_command_spec(value)
+        if spec is None:
+            suggestions = suggest_command_names(runtime, value)
+            text = f"未找到命令: {value}"
+            if suggestions:
+                text += "\n你是不是想用: " + ", ".join(suggestions)
+            return text, {
+                "query": value,
+                "error": "unknown_command",
+                "suggestions": suggestions,
+            }
+        return format_command_detail(value, runtime), {
+            "command": spec.as_dict(),
+        }
+    payload = command_specs_as_dict(runtime)
+    return format_commands(runtime), payload
+
+
+async def _tools(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
+    parts = args.split()
+    action = parts[0] if parts else "list"
+    if action == "list":
+        return _tools_list(runtime)
+    if action == "show":
+        if len(parts) < 2:
+            return "用法: /tools show <name>", {
+                "action": "show",
+                "error": "missing_tool_name",
+            }
+        return _tools_show(runtime, parts[1])
+    if action not in {"list", "show"}:
+        suggestions = _tool_command_suggestions(action)
+        if suggestions:
+            return (
+                f"未知 tools 子命令: {action}\n你是不是想用: "
+                + ", ".join(f"/tools {item}" for item in suggestions),
+                {
+                    "action": action,
+                    "error": "unknown_tools_action",
+                    "suggestions": [f"/tools {item}" for item in suggestions],
+                },
+            )
+    # Convenience: /tools bash behaves like /tools show bash.
+    return _tools_show(runtime, action)
+
+
+def _tools_list(runtime: CommandRuntime) -> tuple[str, dict]:
+    from luna_agent.tools.registry import tool_registry
+
+    summary = tool_registry.catalog_summary(_enabled_toolsets(runtime))
+    lines = [
+        "工具总览",
+        f"total: {summary['total']} available: {summary['available']} unavailable: {summary['unavailable']}",
+        f"by toolset: {_format_counts(summary.get('by_toolset'))}",
+        f"by permission: {_format_counts(summary.get('by_permission'))}",
+        f"by risk: {_format_counts(summary.get('by_risk'))}",
+    ]
+    high_risk = summary.get("high_risk") or []
+    if high_risk:
+        lines.append("high risk: " + ", ".join(str(item) for item in high_risk[:20]))
+    lines.append("用法: /tools show <name>")
+    return "\n".join(lines), {
+        "action": "list",
+        "summary": summary,
+    }
+
+
+def _tools_show(runtime: CommandRuntime, name: str) -> tuple[str, dict]:
+    from luna_agent.tools.registry import tool_registry
+
+    target = str(name or "").strip()
+    items = tool_registry.catalog(_enabled_toolsets(runtime))
+    for item in items:
+        if item.get("name") != target:
+            continue
+        return "\n".join([
+            f"工具: {item.get('name')}",
+            f"description: {item.get('description') or '-'}",
+            f"toolset: {item.get('toolset') or '-'}",
+            f"permission: {item.get('permission_category') or '-'}",
+            f"risk: {item.get('risk_level') or '-'}",
+            f"available: {_yes(bool(item.get('available')))}",
+            f"destructive: {_yes(bool(item.get('is_destructive')))}",
+            f"parallel safe: {_yes(bool(item.get('is_parallel_safe')))}",
+            f"usage: {item.get('usage_hint') or '-'}",
+            f"inputs: {', '.join(item.get('input_properties') or []) or '-'}",
+        ]), {
+            "action": "show",
+            "tool": item,
+        }
+    suggestions = _tool_name_suggestions(target, items)
+    text = f"未找到工具: {target}"
+    if suggestions:
+        text += "\n你是不是想用: " + ", ".join(f"/tools show {item}" for item in suggestions)
+    return text, {
+        "action": "show",
+        "query": target,
+        "error": "unknown_tool",
+        "suggestions": [f"/tools show {item}" for item in suggestions],
+    }
+
+
+async def _tool_runs(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
+    parts = args.split()
+    action = parts[0] if parts else "recent"
+    rest = parts[1:] if parts else []
+    if action == "list":
+        action = "recent"
+    if action in {"recent", "summary"}:
+        options = _parse_tool_run_options(rest)
+        if options.get("error"):
+            return str(options["message"]), {
+                "action": action,
+                "error": options["error"],
+            }
+        limit = int(options["limit"])
+        all_sessions = bool(options["all_sessions"])
+        if action == "summary":
+            payload = await runtime.tool_runs_summary(
+                limit=limit,
+                all_sessions=all_sessions,
+            )
+            payload = {"action": "summary", **payload}
+            return _format_tool_runs_summary_text(payload), payload
+        payload = await runtime.tool_runs_recent(
+            limit=limit,
+            all_sessions=all_sessions,
+        )
+        payload = {"action": "recent", **payload}
+        return _format_tool_runs_recent_text(payload), payload
+    if action == "show":
+        if not rest:
+            return "用法: /tool-runs show <id>", {
+                "action": "show",
+                "error": "missing_tool_run_id",
+            }
+        run_id = _parse_int(rest[0])
+        if run_id is None:
+            return f"无效 tool run id: {rest[0]}", {
+                "action": "show",
+                "error": "invalid_tool_run_id",
+                "query": rest[0],
+            }
+        item = await runtime.tool_run_detail(run_id)
+        if item is None:
+            return f"未找到 tool run: {run_id}", {
+                "action": "show",
+                "error": "unknown_tool_run",
+                "id": run_id,
+            }
+        payload = {
+            "action": "show",
+            "tool_run": item,
+        }
+        return _format_tool_run_detail_text(item), payload
+    suggestions = _subcommand_suggestions(action, ["recent", "summary", "show"])
+    text = f"未知 tool-runs 子命令: {action}"
+    if suggestions:
+        text += "\n你是不是想用: " + ", ".join(f"/tool-runs {item}" for item in suggestions)
+    return text, {
+        "action": action,
+        "error": "unknown_tool_runs_action",
+        "suggestions": [f"/tool-runs {item}" for item in suggestions],
+    }
+
+
+async def _permissions(runtime: CommandRuntime, args: str) -> tuple[str, dict]:
+    parts = args.split()
+    action = parts[0] if parts else "list"
+    agent = await runtime.get_agent()
+    security_context = getattr(agent, "_security_context", None)
+    security_tool_grants, security_resource_grants = _security_grants_snapshot(
+        security_context
+    )
+    if action == "grants":
+        if security_context is not None:
+            lines = ["当前会话授权:"]
+            lines.extend(
+                f"- tool: {item['tool_key']} 至 {item['expires_at_iso']}"
+                for item in security_tool_grants
+            )
+            lines.extend(
+                f"- resource: {item['access']} {item['resource']} 至 {item['expires_at_iso']}"
+                for item in security_resource_grants
+            )
+            if len(lines) == 1:
+                lines.append("- 无")
+            return "\n".join(lines), {
+                "action": "grants",
+                "tool_grants": security_tool_grants,
+                "resource_grants": security_resource_grants,
+            }
+        return "当前会话授权:\n- 无", {
+            "action": "grants",
+            "tool_grants": [],
+            "resource_grants": [],
+        }
+    if action not in {"list", "show"}:
+        suggestions = _subcommand_suggestions(action, ["list", "show", "grants"])
+        text = "用法: /permissions [list|grants]"
+        if suggestions:
+            text += "\n你是不是想用: " + ", ".join(f"/permissions {item}" for item in suggestions)
+        return text, {
+            "action": action,
+            "error": "unknown_permissions_action",
+            "suggestions": [f"/permissions {item}" for item in suggestions],
+        }
+    lines = [f"权限策略: {current_mode(agent)}"]
+    if security_context is not None:
+        profile = security_context.profile
+        lines.extend(
+            [
+                f"profile: {profile.name}",
+                f"approval policy: {security_context.approval_policy}",
+                "filesystem:",
+            ]
+        )
+        lines.extend(
+            f"- {rule.access}: {rule.path}" for rule in profile.filesystem
+        )
+        if not profile.filesystem:
+            lines.append("- 无")
+        lines.append(f"network: {'allow' if profile.network_enabled else 'restricted'}")
+        cached_tools_auto = mode_preset(security_context.mode_id).auto_approve_cached_tools
+        lines.append(
+            "tool approval: default_external="
+            f"{security_context.tool_approval_default_external}; "
+            f"cached={'auto' if cached_tools_auto else 'confirm'}"
+        )
+    ttl = int(getattr(agent, "_security_grant_ttl_seconds", 0) or temporary_grant_ttl_seconds(runtime.settings))
+    pending = await _call_optional(runtime, "pending_confirmation_status")
+    lines.append(f"临时授权 TTL: {_format_ttl(ttl)}")
+    if security_context is not None:
+        lines.append(
+            f"当前会话授权: tool={len(security_tool_grants)}, "
+            f"resource={len(security_resource_grants)}"
+        )
+    if pending:
+        lines.append(f"pending confirm: {pending.get('tool_name', '-')} ({pending.get('permission_category', '-')})")
+    return "\n".join(lines), {
+        "action": "list",
+        "execution_mode": current_mode(agent),
+        "temporary_grant_ttl_seconds": ttl,
+        "security": _security_context_snapshot(security_context),
+        "tool_grants": security_tool_grants,
+        "resource_grants": security_resource_grants,
+        "pending_confirmation": pending or None,
+    }
+
+
+def _security_grants_snapshot(context: Any) -> tuple[list[dict], list[dict]]:
+    if context is None:
+        return [], []
+    state = context.state
+    state.prune_expired()
+    tools = [
+        {
+            "tool_key": grant.tool_key,
+            "expires_at": grant.expires_at,
+            "expires_at_iso": format_expiry(grant.expires_at),
+        }
+        for grant in sorted(state.tool_grants.values(), key=lambda item: item.tool_key)
+    ]
+    resources = [
+        {
+            **grant.requirement.as_dict(),
+            "key": grant.requirement.key,
+            "expires_at": grant.expires_at,
+            "expires_at_iso": format_expiry(grant.expires_at),
+        }
+        for grant in sorted(
+            state.resource_grants.values(), key=lambda item: item.requirement.key
+        )
+    ]
+    return tools, resources
+
+
+def _security_context_snapshot(context: Any) -> dict | None:
+    if context is None:
+        return None
+    preset = mode_preset(context.mode_id)
+    return {
+        "mode_id": context.mode_id,
+        "profile": context.profile.name,
+        "approval_policy": context.approval_policy,
+        "filesystem": [
+            {"path": str(rule.path), "access": rule.access}
+            for rule in context.profile.filesystem
+        ],
+        "network_enabled": context.profile.network_enabled,
+        "tool_approval": {
+            "default_external": context.tool_approval_default_external,
+            "cached_tools_auto": preset.auto_approve_cached_tools,
+            "tools": dict(context.tool_approval_tools),
+            "mcp_servers": dict(context.tool_approval_mcp_servers),
+        },
+    }
+
+
+def _protocol(args: str) -> tuple[str, dict]:
+    from luna_agent.conversation import frontend_protocol_schema
+
+    schema = frontend_protocol_schema()
+    events = schema.get("events") or {}
+    lines = [
+        "事件协议",
+        f"version: {schema.get('protocol_version')}",
+        f"events: {len(events)}",
+        "delta events: " + ", ".join(schema.get("delta_event_types") or []),
+        "完整 schema: luna-agent protocol schema --json",
+    ]
+    payload = {
+        "action": "schema" if args.strip() == "schema" else "summary",
+        "protocol_version": schema.get("protocol_version"),
+        "event_count": len(events),
+        "delta_event_types": list(schema.get("delta_event_types") or []),
+        "events": events if args.strip() == "schema" else {},
+    }
+    if args.strip() == "schema":
+        lines.append("event names: " + ", ".join(sorted(events)))
+    return "\n".join(lines), payload
+
+
+def _split_target_args(tokens: list[str]) -> tuple[list[str], str]:
+    target = "all"
+    rest: list[str] = []
+    skip_next = False
+    for index, token in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("--target="):
+            target = token.split("=", 1)[1] or target
+        elif token in {"--target", "-t"} and index + 1 < len(tokens):
+            target = tokens[index + 1]
+            skip_next = True
+        else:
+            rest.append(token)
+    return rest, target
+
+
+def _format_memory_doctor(report: dict) -> str:
+    providers = report.get("providers") or {}
+    builtin = providers.get("builtin") or {}
+    external = providers.get("external") or {}
+    return "\n".join([
+        "Memory 诊断",
+        f"builtin: {builtin.get('provider') or report.get('builtin_provider') or '-'} available={bool(builtin.get('available', report.get('builtin_available', False)))} entries={builtin.get('entries', 0)}",
+        f"external: {external.get('provider') or report.get('external_provider') or '-'} available={bool(external.get('available', report.get('external_available', False)))} entries={external.get('entries', 0)}",
+        f"last_errors: {report.get('last_errors') or {}}",
+    ])
+
+
+def _format_memory_entries(entries: list[dict], *, title: str = "记忆列表") -> str:
+    if not entries:
+        return f"{title}: 无"
+    lines = [f"{title}: {len(entries)} 条"]
+    for entry in entries:
+        label = entry.get("id") or entry.get("index") or "-"
+        provider = entry.get("provider") or "-"
+        target = entry.get("target") or "-"
+        text = _short_text(str(entry.get("text", "")), 120)
+        lines.append(f"- {label} [{provider}/{target}] {text}")
+    return "\n".join(lines)
+
+
+def _format_memory_entry(entry: dict) -> str:
+    return "\n".join([
+        f"记忆: {entry.get('id') or entry.get('index') or '-'}",
+        f"provider: {entry.get('provider') or '-'}",
+        f"target: {entry.get('target') or '-'}",
+        f"created_at: {entry.get('created_at') or '-'}",
+        f"path: {entry.get('path') or '-'}",
+        "",
+        str(entry.get("text", "")),
+    ])
+
+
+def _short_text(text: str, limit: int) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _parse_limit(value: str) -> int | None:
+    if not value:
+        return None
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return None
+
+
+async def _stop(runtime: CommandRuntime) -> str:
+    custom = await _call_optional(runtime, "stop_agents")
+    if custom is not None:
+        return str(custom)
+    agent = await runtime.get_agent()
+    agent._interrupt_requested = True
+    from luna_agent.tools.executor import interrupt_active_tool_executions
+    from luna_agent.plugins.builtin.tools.builtin.delegate import stop_delegate_agents
+
+    interrupt_active_tool_executions()
+    stopped = stop_delegate_agents()
+    if stopped:
+        return f"已停止。已请求停止 {stopped} 个子 agent。"
+    return "已停止。"
+
+
+async def _steer(runtime: CommandRuntime, args: str) -> str:
+    text = str(args or "").strip()
+    if not text:
+        return "用法: /steer <运行中修正内容>"
+    handler = getattr(runtime, "add_steer", None)
+    if handler is None:
+        return "当前入口不支持 /steer。"
+    result = handler(text)
+    if hasattr(result, "__await__"):
+        result = await result
+    return str(result)
+
+
+async def _prepare_skill(runtime: CommandRuntime, text: str) -> str | None:
+    skill_name = text[1:].split()[0]
+    if not skill_name:
+        return None
+    try:
+        from luna_agent.skills.registry import skill_registry
+
+        content = skill_registry.load(skill_name)
+    except Exception:
+        return None
+    if not content:
+        return None
+    agent = await runtime.get_agent()
+    agent._pending_skill_injection = f"[技能: {skill_name}]\n\n{content}"
+    parts = text.split(None, 1)
+    return parts[1] if len(parts) > 1 else "你好"
+
+
+def help_text(runtime: CommandRuntime | None = None) -> str:
+    return format_commands(runtime)
+
+
+def _enabled_toolsets(runtime: CommandRuntime) -> list[str] | None:
+    settings = getattr(runtime, "settings", None)
+    value = getattr(settings, "enabled_toolsets", None)
+    return list(value) if value else None
+
+
+def _format_counts(counts) -> str:
+    if not isinstance(counts, dict) or not counts:
+        return "无"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+
+
+def _yes(value: bool) -> str:
+    return "是" if value else "否"
+
+
+def _parse_tool_run_options(tokens: list[str]) -> dict:
+    result = {
+        "limit": 10,
+        "all_sessions": False,
+    }
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--all":
+            result["all_sessions"] = True
+        elif token.startswith("--limit="):
+            limit = _parse_int(token.split("=", 1)[1])
+            if limit is None:
+                return {"error": "invalid_limit", "message": f"无效 limit: {token}"}
+            result["limit"] = limit
+        elif token == "--limit":
+            if index + 1 >= len(tokens):
+                return {"error": "missing_limit", "message": "用法: --limit <number>"}
+            limit = _parse_int(tokens[index + 1])
+            if limit is None:
+                return {"error": "invalid_limit", "message": f"无效 limit: {tokens[index + 1]}"}
+            result["limit"] = limit
+            index += 1
+        else:
+            return {"error": "unknown_option", "message": f"未知参数: {token}"}
+        index += 1
+    result["limit"] = max(0, int(result["limit"]))
+    return result
+
+
+def _format_tool_runs_recent_text(payload: dict) -> str:
+    items = payload.get("items") or []
+    scope = "全局" if payload.get("scope") == "all" else f"当前会话 {payload.get('session_key') or '-'}"
+    if not items:
+        return f"工具运行记录: 无（{scope}）"
+    lines = [f"工具运行记录: {len(items)} 条（{scope}）"]
+    for item in items:
+        lines.append(
+            f"- #{item.get('id')} {item.get('tool_name') or '-'} "
+            f"{item.get('status') or '-'} {float(item.get('duration') or 0.0):.2f}s "
+            f"{_short_text(str(item.get('output_summary') or item.get('error') or ''), 80)}"
+        )
+    lines.append("用法: /tool-runs show <id>")
+    return "\n".join(lines)
+
+
+def _format_tool_runs_summary_text(payload: dict) -> str:
+    scope = "全局" if payload.get("scope") == "all" else f"当前会话 {payload.get('session_key') or '-'}"
+    return "\n".join([
+        f"工具运行摘要（{scope}）",
+        f"inspected: {payload.get('inspected', 0)}",
+        f"denied: {payload.get('denied', 0)} failed: {payload.get('failed', 0)} timeouts: {payload.get('timeouts', 0)} truncated: {payload.get('truncated', 0)}",
+        f"tool counts: {_format_counts(payload.get('tool_counts'))}",
+        f"status counts: {_format_counts(payload.get('status_counts'))}",
+        f"category counts: {_format_counts(payload.get('category_counts'))}",
+    ])
+
+
+def _format_tool_run_detail_text(item: dict) -> str:
+    output = str(item.get("full_output") or item.get("output_summary") or "")
+    return "\n".join([
+        f"Tool Run #{item.get('id')}",
+        f"tool: {item.get('tool_name') or '-'}",
+        f"status: {item.get('status') or '-'}",
+        f"category: {item.get('category') or '-'}",
+        f"duration: {float(item.get('duration') or 0.0):.2f}s",
+        f"session: {item.get('session_key') or '-'}",
+        f"turn: {item.get('turn_id') or '-'}",
+        f"permission: {item.get('permission_category') or '-'} / {item.get('permission_decision') or '-'}",
+        f"mode: {item.get('execution_mode') or '-'}",
+        f"input: {_short_text(str(item.get('input_summary') or ''), 160) or '-'}",
+        f"output: {_short_text(output, 300) or '-'}",
+        f"error: {item.get('error') or '-'}",
+    ])
+
+
+def _parse_int(value: str) -> int | None:
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _subcommand_suggestions(value: str, candidates: list[str]) -> list[str]:
+    from difflib import get_close_matches
+
+    return get_close_matches(str(value or ""), candidates, n=3, cutoff=0.65)
+
+
+def _tool_command_suggestions(value: str) -> list[str]:
+    return _subcommand_suggestions(value, ["list", "show"])
+
+
+def _tool_name_suggestions(value: str, items: list[dict]) -> list[str]:
+    from difflib import get_close_matches
+
+    names = sorted(str(item.get("name") or "") for item in items)
+    return get_close_matches(str(value or ""), names, n=3, cutoff=0.65)
+
+
+def _tool_argument_choices(
+    runtime: CommandRuntime,
+    *,
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    from luna_agent.tools.registry import tool_registry
+
+    needle = str(query or "").strip().lower()
+    result: list[dict] = []
+    for item in tool_registry.catalog(_enabled_toolsets(runtime)):
+        name = str(item.get("name") or "")
+        if needle and needle not in name.lower():
+            continue
+        description_parts = [
+            str(item.get("permission_category") or "").strip(),
+            str(item.get("risk_level") or "").strip(),
+        ]
+        description = " · ".join(part for part in description_parts if part)
+        result.append({
+            "value": name,
+            "label": name,
+            "description": description,
+            "append_space": False,
+        })
+        if len(result) >= max(0, int(limit)):
+            break
+    return result
+
+
+async def _session_argument_choices(
+    runtime: CommandRuntime,
+    *,
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    query_service = getattr(getattr(runtime, "conversation_service", None), "queries", None)
+    if query_service is None:
+        return []
+    source = getattr(runtime, "source", None)
+    platform = str(getattr(source, "platform", "") or "")
+    user_id = str(getattr(source, "user_id", "") or "")
+    current_key = str(getattr(runtime, "session_key", "") or "")
+    if not platform or not user_id:
+        return []
+    data = await query_service.list_sessions(
+        platform=platform,
+        user_id=user_id,
+        current_key=current_key,
+        limit=max(0, int(limit)),
+    )
+    needle = str(query or "").strip().lower()
+    result: list[dict] = []
+    for item in data.get("items") or []:
+        session_key = str(item.get("session_key") or "")
+        name = _session_name_from_key(session_key, platform=platform, user_id=user_id)
+        if needle and needle not in name.lower() and needle not in session_key.lower():
+            continue
+        message_count = int(item.get("message_count") or 0)
+        result.append({
+            "value": name,
+            "label": name,
+            "description": f"{message_count} messages",
+            "append_space": False,
+        })
+    return result
+
+
+def _session_name_from_key(session_key: str, *, platform: str, user_id: str) -> str:
+    prefix = f"{platform}:"
+    suffix = f":{user_id}"
+    if session_key.startswith(prefix) and session_key.endswith(suffix):
+        return session_key[len(prefix):-len(suffix)]
+    return session_key

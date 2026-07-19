@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.text_safety import clean_payload, clean_text
+from luna_agent.text_safety import clean_payload, clean_text
 
 
 def test_clean_text_replaces_unpaired_surrogates():
@@ -21,7 +21,7 @@ def test_clean_payload_recursively_replaces_bad_strings():
 
 @pytest.mark.asyncio
 async def test_llm_call_sanitizes_body_before_httpx_json_encoding(monkeypatch):
-    from personal_agent.llm import client as llm_client
+    from luna_agent.llm import client as llm_client
 
     captured = {}
 

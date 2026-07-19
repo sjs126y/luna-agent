@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.llm.provider import ProviderProfile
-from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
-from personal_agent.plugins.builtin.llm.builtin.chat_completions import (
+from luna_agent.llm.provider import ProviderProfile
+from luna_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+from luna_agent.plugins.builtin.llm.builtin.chat_completions import (
     ChatCompletionsTransport,
 )
 
@@ -190,7 +190,7 @@ async def test_chat_completions_call_streams_when_delta_callback_is_present(monk
         deltas.append((kind, chunk))
 
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.llm.builtin.chat_completions.call_chat_completions",
+        "luna_agent.plugins.builtin.llm.builtin.chat_completions.call_chat_completions",
         fake_call_chat_completions,
     )
 

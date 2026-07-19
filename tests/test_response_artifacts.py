@@ -3,12 +3,12 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from personal_agent.agent.agent import Agent
-from personal_agent.artifacts import ArtifactStore, TurnResponseDraft
-from personal_agent.conversation.service import _outbound_message_for_turn
-from personal_agent.db.database import Database
-from personal_agent.plugins.builtin.tools.builtin.response_attach import response_attach
-from personal_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
+from luna_agent.agent.agent import Agent
+from luna_agent.artifacts import ArtifactStore, TurnResponseDraft
+from luna_agent.conversation.service import _outbound_message_for_turn
+from luna_agent.db.database import Database
+from luna_agent.plugins.builtin.tools.builtin.response_attach import response_attach
+from luna_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
 
 
 @pytest_asyncio.fixture
@@ -86,8 +86,8 @@ def test_stopped_turn_does_not_include_selected_artifacts():
 
 @pytest.mark.asyncio
 async def test_response_attach_through_executor_emits_selection_event(response_runtime):
-    from personal_agent.conversation.events import EventRecorder
-    from personal_agent.tools.executor import execute_tool_call_result
+    from luna_agent.conversation.events import EventRecorder
+    from luna_agent.tools.executor import execute_tool_call_result
 
     ref = await response_runtime.create(
         b"report",

@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from personal_agent.agents.runtime import AgentRuntime, AgentSpec
-from personal_agent.models.messages import NormalizedResponse
+from luna_agent.agents.runtime import AgentRuntime, AgentSpec
+from luna_agent.models.messages import NormalizedResponse
 
 
 @pytest.mark.asyncio
@@ -242,8 +242,8 @@ async def test_agent_runtime_denies_ungranted_tool_call_and_continues():
 
 @pytest.mark.asyncio
 async def test_agent_runtime_denies_tool_calls_over_quota_and_continues():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     calls = 0
     original_calculator = tool_registry.get("calculator")

@@ -4,18 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.artifacts import ArtifactStore
-from personal_agent.db.database import Database
-from personal_agent.plugins import PluginManager, PluginStatus
-from personal_agent.plugins.active import (
+from luna_agent.config import Settings
+from luna_agent.artifacts import ArtifactStore
+from luna_agent.db.database import Database
+from luna_agent.plugins import PluginManager, PluginStatus
+from luna_agent.plugins.active import (
     ActiveResourceRequest,
     ActiveRunnerState,
     PluginGenerationScope,
 )
-from personal_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
-from personal_agent.tools.registry import tool_registry
-from personal_agent.plugins.runtime import CapabilityKind
+from luna_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
+from luna_agent.tools.registry import tool_registry
+from luna_agent.plugins.runtime import CapabilityKind
 
 
 def _write_active_plugin(root: Path, *, provides: str = "[active]", duplicate: bool = False) -> None:
@@ -94,8 +94,8 @@ def _write_reload_active_plugin(
     (root / "active_reload.py").write_text(
         "\n".join((
             "import asyncio",
-            "from personal_agent.plugins import ActiveResourceRequest",
-            "from personal_agent.tools.entry import ToolEntry",
+            "from luna_agent.plugins import ActiveResourceRequest",
+            "from luna_agent.tools.entry import ToolEntry",
             f"VERSION = {version!r}",
             f"FAIL = {fail_before_ready!r}",
             f"CRASH_ONCE = {crash_once_after_ready!r}",

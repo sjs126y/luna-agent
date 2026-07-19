@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from personal_agent.config_diagnostics import build_config_report, ensure_config_dirs
+from luna_agent.config_diagnostics import build_config_report, ensure_config_dirs
 
 
 def test_config_report_detects_missing_env_dirs_and_unknown_keys(tmp_path):
@@ -65,7 +65,7 @@ sandbox:
 
     report = build_config_report(tmp_path)
 
-    assert "personal-agent init --copy-env" in report["recommended_commands"]
+    assert "luna-agent init --copy-env" in report["recommended_commands"]
     assert "cp .env.example .env" in report["recommended_commands"]
 
 
@@ -365,7 +365,7 @@ sandbox:
     assert any("plugins.enabled 必须是字符串列表" in error for error in report["errors"])
 
 
-def test_config_report_accepts_gateway_and_lumora_memory_settings(tmp_path):
+def test_config_report_accepts_legacy_lumora_memory_alias(tmp_path):
     (tmp_path / "data" / "system").mkdir(parents=True)
     (tmp_path / ".env").write_text(
         "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\nLLM_BASE_URL=https://api.deepseek.com\nLLM_MODEL=deepseek-chat\n",
@@ -395,7 +395,7 @@ memory:
     dimensions: 0
   qdrant:
     url: http://localhost:6333
-    collection: lumora_memories
+    collection: luna_memories
 sandbox:
   roots: [./data]
   bash_work_dir: ./data
@@ -511,7 +511,7 @@ mcp:
     - name: missing-command
       enabled: true
     - name: missing-binary
-      command: definitely_missing_personal_agent_mcp
+      command: definitely_missing_luna_agent_mcp
       extra: ignored
 """.strip(),
         encoding="utf-8",

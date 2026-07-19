@@ -1,14 +1,14 @@
 from types import SimpleNamespace
 
-from personal_agent.memory.config import resolve_memory_context
+from luna_agent.memory.config import resolve_memory_context
 
 
 def test_memory_context_inherits_llm_and_resolves_selected_backend_keys() -> None:
     settings = SimpleNamespace(
-        memory_external_provider="lumora", memory_llm_provider="inherit",
+        memory_external_provider="luna", memory_llm_provider="inherit",
         llm_provider="deepseek", llm_model="deepseek-chat", llm_base_url="https://llm",
         llm_api_key="llm-secret", llm_api_mode="chat_completions",
-        memory_provider_options={"lumora": {
+        memory_provider_options={"luna": {
             "embedding": {"provider": "openai_compatible", "api_key_env": "DASHSCOPE_API_KEY"},
             "vector": {"provider": "qdrant", "api_key_env": "QDRANT_API_KEY"},
         }},
@@ -28,10 +28,10 @@ def test_memory_context_inherits_llm_and_resolves_selected_backend_keys() -> Non
 def test_memory_context_does_not_read_process_environment(monkeypatch) -> None:
     monkeypatch.setenv("DASHSCOPE_API_KEY", "process-secret")
     settings = SimpleNamespace(
-        memory_external_provider="lumora", memory_llm_provider="inherit",
+        memory_external_provider="luna", memory_llm_provider="inherit",
         llm_provider="deepseek", llm_model="deepseek-chat", llm_base_url="https://llm",
         llm_api_key="llm-secret", llm_api_mode="chat_completions",
-        memory_provider_options={"lumora": {
+        memory_provider_options={"luna": {
             "embedding": {"api_key_env": "DASHSCOPE_API_KEY"},
         }},
     )
@@ -39,3 +39,19 @@ def test_memory_context_does_not_read_process_environment(monkeypatch) -> None:
     context = resolve_memory_context(settings)
 
     assert context.get_env("DASHSCOPE_API_KEY") == ""
+
+
+def test_memory_context_maps_legacy_lumora_provider_to_luna() -> None:
+    settings = SimpleNamespace(
+        memory_external_provider="lumora", memory_llm_provider="inherit",
+        llm_provider="openai", llm_model="test", llm_base_url="https://llm",
+        llm_api_key="secret", llm_api_mode="responses",
+        memory_provider_options={"lumora": {
+            "vector": {"provider": "qdrant", "location": ":memory:"},
+        }},
+    )
+
+    context = resolve_memory_context(settings)
+
+    assert context.requested_provider == "luna"
+    assert context.provider_options["vector"]["provider"] == "qdrant"

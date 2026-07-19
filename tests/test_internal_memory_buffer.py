@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.memory.archive import MemoryArchive
-from personal_agent.memory.internal import InternalMemoryService, InternalMemoryStore
-from personal_agent.memory.models import (
+from luna_agent.memory.archive import MemoryArchive
+from luna_agent.memory.internal import InternalMemoryService, InternalMemoryStore
+from luna_agent.memory.models import (
     InternalPatchAction,
     InternalPatchOperation,
     MemoryScope,
@@ -30,7 +30,7 @@ class SensitiveConsolidator:
             observation_id=observations[0].id,
             target_file="SOUL.md",
             entry_id="identity-name",
-            content="The assistant is named Lumora.",
+            content="The assistant is named Luna.",
             reason="identity change requires confirmation",
         )]
 
@@ -72,7 +72,7 @@ async def test_internal_buffer_persists_sensitive_patch_until_manual_apply(tmp_p
     item = await archive.get_buffer_item(scope, observation.id)
 
     assert result["conflict"] == 1
-    assert item["proposed_content"] == "The assistant is named Lumora."
+    assert item["proposed_content"] == "The assistant is named Luna."
     assert await service.apply_buffer_item(scope, observation.id) is True
-    assert "The assistant is named Lumora." in (tmp_path / "system" / "SOUL.md").read_text(encoding="utf-8")
+    assert "The assistant is named Luna." in (tmp_path / "system" / "SOUL.md").read_text(encoding="utf-8")
     await archive.close()

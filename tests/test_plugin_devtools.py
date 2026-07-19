@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import zipfile
 
-from personal_agent.plugins.devtools import (
+from luna_agent.plugins.devtools import (
     capability_catalog,
     contract_test,
     create_plugin,

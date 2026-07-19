@@ -3,7 +3,7 @@ key: automation/feed-watch
 name: Feed Watch
 version: "0.1.0"
 plugin_api: ">=1,<2"
-description: Watches RSS and Atom feeds and submits new entries to Lumora.
+description: Watches RSS and Atom feeds and submits new entries to Luna Agent.
 kind: automation
 entrypoint: feed_watch:register
 requires:

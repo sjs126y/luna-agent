@@ -6,9 +6,9 @@ import sys
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.hooks import HookEnvelope, HookEvent, HookScope
-from personal_agent.plugins import PluginManager
+from luna_agent.config import Settings
+from luna_agent.hooks import HookEnvelope, HookEvent, HookScope
+from luna_agent.plugins import PluginManager
 
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1] / "plugins"

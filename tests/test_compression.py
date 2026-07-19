@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personal_agent.compression import compression_registry
-from personal_agent.compression.base import ContextEngine
-from personal_agent.compression.simple import (
+from luna_agent.compression import compression_registry
+from luna_agent.compression.base import ContextEngine
+from luna_agent.compression.simple import (
     ContextCompressor,
     _format_messages_for_summary,
 )
-from personal_agent.agent.context import _check_and_compress
-from personal_agent.models.messages import NormalizedResponse
+from luna_agent.agent.context import _check_and_compress
+from luna_agent.models.messages import NormalizedResponse
 
 
 # ── helpers ──────────────────────────────────────────────
@@ -54,7 +54,7 @@ def _make_long_history(n: int) -> list[dict]:
 
 @pytest.mark.asyncio
 async def test_pre_compact_hook_can_defer_compression_and_add_context():
-    from personal_agent.hooks import ContextHookOutcome, HookEvent, HookManager
+    from luna_agent.hooks import ContextHookOutcome, HookEvent, HookManager
 
     hook_manager = HookManager()
 
@@ -457,8 +457,8 @@ async def test_compress_full_summary():
 
 @pytest.mark.asyncio
 async def test_compress_summary_is_safe_for_anthropic_messages():
-    from personal_agent.llm.provider import ProviderProfile
-    from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+    from luna_agent.llm.provider import ProviderProfile
+    from luna_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
 
     mock_transport = AsyncMock()
     mock_transport.call.return_value = NormalizedResponse(

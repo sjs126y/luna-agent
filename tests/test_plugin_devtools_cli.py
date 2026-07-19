@@ -6,7 +6,7 @@ import zipfile
 
 from typer.testing import CliRunner
 
-from personal_agent.cli import app
+from luna_agent.cli import app
 
 
 runner = CliRunner()

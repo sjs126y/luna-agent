@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from lumora_plugin_sdk import ActiveResourceRequest
+from luna_agent_plugin_sdk import ActiveResourceRequest
 
 
 async def run(ctx) -> None:

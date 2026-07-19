@@ -10,10 +10,10 @@ import re
 
 import pytest
 
-from personal_agent.conversation.events import ConversationEvent
-from personal_agent.tui.renderer import InlineRenderer
-from personal_agent.tui.renderer_base import Renderer
-from personal_agent.tui.state import UIState
+from luna_agent.conversation.events import ConversationEvent
+from luna_agent.tui.renderer import InlineRenderer
+from luna_agent.tui.renderer_base import Renderer
+from luna_agent.tui.state import UIState
 
 
 def _make():

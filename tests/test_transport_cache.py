@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from personal_agent.llm.base import LLMRequestPlan
-from personal_agent.llm.provider import ProviderProfile, provider_registry
-from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
-from personal_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
+from luna_agent.llm.base import LLMRequestPlan
+from luna_agent.llm.provider import ProviderProfile, provider_registry
+from luna_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+from luna_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
 
 
 def _settings(provider: str, model: str = "m"):

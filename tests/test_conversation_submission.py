@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from personal_agent.conversation import (
+from luna_agent.conversation import (
     ResponseMode,
     SubmissionHandle,
     SubmissionOrigin,
@@ -15,7 +15,7 @@ from personal_agent.conversation import (
     SubmissionRequest,
     SubmissionStatus,
 )
-from personal_agent.models.messages import SessionSource
+from luna_agent.models.messages import SessionSource
 
 
 def test_submission_request_normalizes_identity_and_copies_metadata():

@@ -7,14 +7,14 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 
-from personal_agent.config import Settings
-from personal_agent.conversation import ConversationService
-from personal_agent.conversation.service import TURN_REPORT_HISTORY_LIMIT
-from personal_agent.db.database import Database
-from personal_agent.gateway.compression_chain import CompressionChain
-from personal_agent.gateway.session_store import SessionStore
-from personal_agent.models.messages import SessionSource
-from personal_agent.tools.registry import tool_registry
+from luna_agent.config import Settings
+from luna_agent.conversation import ConversationService
+from luna_agent.conversation.service import TURN_REPORT_HISTORY_LIMIT
+from luna_agent.db.database import Database
+from luna_agent.gateway.compression_chain import CompressionChain
+from luna_agent.gateway.session_store import SessionStore
+from luna_agent.models.messages import SessionSource
+from luna_agent.tools.registry import tool_registry
 
 
 class PluginManager:
@@ -123,8 +123,8 @@ async def test_turn_policy_snapshot_keeps_running_agent_mode_until_next_turn(ser
 
 @pytest.mark.asyncio
 async def test_conversation_hooks_emit_session_start_once_and_prompt_context(service):
-    from personal_agent.conversation.input import ConversationInput
-    from personal_agent.hooks import ContextHookOutcome, HookEvent, HookManager
+    from luna_agent.conversation.input import ConversationInput
+    from luna_agent.hooks import ContextHookOutcome, HookEvent, HookManager
 
     svc, _manager, _db = service
     hook_manager = HookManager()
@@ -168,7 +168,7 @@ async def test_conversation_hooks_emit_session_start_once_and_prompt_context(ser
 
 @pytest.mark.asyncio
 async def test_prompt_hook_can_stop_before_agent_loop(service, monkeypatch):
-    from personal_agent.hooks import ContextHookOutcome, HookEvent, HookManager
+    from luna_agent.hooks import ContextHookOutcome, HookEvent, HookManager
 
     svc, _manager, _db = service
     hook_manager = HookManager()
@@ -188,7 +188,7 @@ async def test_prompt_hook_can_stop_before_agent_loop(service, monkeypatch):
         event=HookEvent.USER_PROMPT_SUBMIT,
         callback=stop_prompt,
     )
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "blocked input")
 
@@ -266,8 +266,8 @@ async def test_run_turn_persists_history_and_invokes_session_hook(service, monke
             "should_review_memory": True,
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "hello")
 
@@ -282,7 +282,7 @@ async def test_run_turn_persists_history_and_invokes_session_hook(service, monke
 
 @pytest.mark.asyncio
 async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch):
-    from personal_agent.conversation.events import emit_event
+    from luna_agent.conversation.events import emit_event
 
     svc, _manager, _db = service
     forwarded = []
@@ -304,8 +304,8 @@ async def test_run_turn_events_collects_and_forwards_events(service, monkeypatch
             "turn_report": _turn_report(llm_calls=1, tool_calls=0),
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn_events("cli:default:local", _source(), "hello", event_sink=Sink())
 
@@ -366,8 +366,8 @@ async def test_run_turn_events_forwards_steer_manager_and_records_summary(servic
             "turn_report": _turn_report(llm_calls=1, tool_calls=0),
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn_events("cli:default:local", _source(), "hello")
 
@@ -397,8 +397,8 @@ async def test_run_turn_events_forwards_confirm_callback(service, monkeypatch):
             "turn_report": _turn_report(llm_calls=1, tool_calls=0),
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn_events(
         "cli:default:local",
@@ -430,8 +430,8 @@ async def test_run_turn_events_keeps_legacy_loop_without_confirm(service, monkey
             "completed": True,
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn_events(
         "cli:default:local",
@@ -446,7 +446,7 @@ async def test_run_turn_events_keeps_legacy_loop_without_confirm(service, monkey
 
 @pytest.mark.asyncio
 async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
-    from personal_agent.conversation.events import emit_event
+    from luna_agent.conversation.events import emit_event
 
     svc, _manager, _db = service
 
@@ -510,8 +510,8 @@ async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
             ) | {"turn_id": "turn-tool"},
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "run pwd")
     runs = await svc.recent_tool_runs(limit=5)
@@ -547,7 +547,7 @@ async def test_run_turn_persists_tool_runs_from_events(service, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_query_service_exposes_tool_runs_and_summaries(service, monkeypatch):
-    from personal_agent.conversation.events import emit_event
+    from luna_agent.conversation.events import emit_event
 
     svc, _manager, _db = service
 
@@ -595,8 +595,8 @@ async def test_query_service_exposes_tool_runs_and_summaries(service, monkeypatc
             "completed": True,
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     await svc.run_turn("cli:default:local", _source(), "inspect")
 
@@ -631,8 +631,8 @@ async def test_run_turn_keeps_empty_turn_report_for_legacy_loop(service, monkeyp
             "completed": True,
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "hello")
 
@@ -666,8 +666,8 @@ async def test_run_turn_records_failed_stopped_and_context_reports(service, monk
             "turn_report": report,
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     failed = await svc.run_turn("cli:default:local", _source(), "failed")
     stopped = await svc.run_turn("cli:default:local", _source(), "stopped")
@@ -842,8 +842,8 @@ async def test_run_turn_persists_minimal_context_overflow_turn(service, monkeypa
             "context_overflow": True,
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "hello")
 
@@ -869,8 +869,8 @@ async def test_run_turn_persists_minimal_failed_turn(service, monkeypatch):
             "error": "RuntimeError: boom",
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "hello")
 
@@ -896,8 +896,8 @@ async def test_run_turn_persists_completed_assistant_text_before_stop(service, m
             "status": "stopped",
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "hello")
 
@@ -934,8 +934,8 @@ async def test_run_turn_persists_completed_tools_before_stop(service, monkeypatc
             "turn_report": _turn_report(status="stopped", llm_calls=1, tool_calls=1),
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     result = await svc.run_turn("cli:default:local", _source(), "write it")
 
@@ -953,7 +953,7 @@ async def test_run_turn_converts_unhandled_exception_to_failed_turn(service, mon
     async def build_turn_context(agent, text, history):
         raise RuntimeError("context boom")
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
 
     result = await svc.run_turn("cli:default:local", _source(), "hello")
 
@@ -983,8 +983,8 @@ async def test_run_turn_creates_compressed_session_when_context_was_compressed(s
         calls.append((session_key, source, messages))
         return "compressed-id"
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
     monkeypatch.setattr(svc.session_store, "create_compressed_session", create_compressed_session)
 
     result = await svc.run_turn("cli:default:local", _source(), "hello")
@@ -1004,7 +1004,7 @@ async def test_agent_cache_reuses_and_refreshes_stale_agent(service, monkeypatch
         created.append(agent)
         return SimpleNamespace(agent=agent)
 
-    monkeypatch.setattr("personal_agent.agent.factory.create_agent_runtime", create_agent_runtime)
+    monkeypatch.setattr("luna_agent.agent.factory.create_agent_runtime", create_agent_runtime)
 
     first = await svc.get_or_create_agent("cli:new:local")
     second = await svc.get_or_create_agent("cli:new:local")
@@ -1019,7 +1019,7 @@ async def test_agent_cache_reuses_and_refreshes_stale_agent(service, monkeypatch
 def test_agent_cache_operations_and_stop(service, monkeypatch):
     svc, _manager, _db = service
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
         lambda: 0,
     )
     svc.agent_cache.clear()
@@ -1042,7 +1042,7 @@ def test_agent_cache_operations_and_stop(service, monkeypatch):
 def test_agent_cache_compat_methods_delegate_to_new_api(service, monkeypatch):
     svc, _manager, _db = service
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
         lambda: 0,
     )
     svc.agent_cache.clear()
@@ -1063,7 +1063,7 @@ def test_agent_cache_compat_methods_delegate_to_new_api(service, monkeypatch):
 def test_request_stop_can_target_one_cached_agent(service, monkeypatch):
     svc, _manager, _db = service
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
         lambda: 0,
     )
     svc.agent_cache.clear()

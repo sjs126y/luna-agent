@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.plugins.control_state import PluginControlStateStore
-from personal_agent.plugins.core.manager import PluginManager
-from personal_agent.plugins.events import PluginEventJournal
-from personal_agent.plugins.operations import PluginOperationTracker
+from luna_agent.config import Settings
+from luna_agent.plugins.control_state import PluginControlStateStore
+from luna_agent.plugins.core.manager import PluginManager
+from luna_agent.plugins.events import PluginEventJournal
+from luna_agent.plugins.operations import PluginOperationTracker
 
 
 @pytest.mark.asyncio

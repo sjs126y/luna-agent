@@ -16,9 +16,9 @@ from xml.etree import ElementTree
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from lumora_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
-from personal_agent.tools.runtime_context import current_tool_agent
-from personal_agent.tools.url_safety import check_url
+from luna_agent_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
+from luna_agent.tools.runtime_context import current_tool_agent
+from luna_agent.tools.url_safety import check_url
 
 _MAX_FEED_BYTES = 2 * 1024 * 1024
 _MAX_REDIRECTS = 5
@@ -242,7 +242,7 @@ async def _feed_fetch(
     current = str(url or "").strip()
     if not current:
         raise ValueError("feed URL must not be empty")
-    headers = {"User-Agent": "Lumora-Feed-Watch/1.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml"}
+    headers = {"User-Agent": "Luna Agent-Feed-Watch/1.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml"}
     if if_none_match:
         headers["If-None-Match"] = str(if_none_match)
     if if_modified_since:

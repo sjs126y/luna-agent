@@ -1,6 +1,6 @@
-from personal_agent.agent.agent import _maybe_refresh_memory_snapshot, init_agent
-from personal_agent.llm.provider import ProviderProfile
-from personal_agent.memory.models import InternalMemorySnapshot
+from luna_agent.agent.agent import _maybe_refresh_memory_snapshot, init_agent
+from luna_agent.llm.provider import ProviderProfile
+from luna_agent.memory.models import InternalMemorySnapshot
 
 
 class Manager:

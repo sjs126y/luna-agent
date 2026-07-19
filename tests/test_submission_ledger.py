@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.conversation import (
+from luna_agent.conversation import (
     ConversationCoordinator,
     DurableSubmissionLedger,
     ResponseMode,
@@ -14,8 +14,8 @@ from personal_agent.conversation import (
     SubmissionRequest,
     SubmissionStatus,
 )
-from personal_agent.db.database import Database
-from personal_agent.delivery import DeliveryResult, DeliveryStatus
+from luna_agent.db.database import Database
+from luna_agent.delivery import DeliveryResult, DeliveryStatus
 
 
 class RecordingService:

@@ -14,7 +14,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_clarify_question_only():
-    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
+    from luna_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([{
@@ -29,7 +29,7 @@ async def test_clarify_question_only():
 
 @pytest.mark.asyncio
 async def test_clarify_with_choices():
-    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
+    from luna_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([{
@@ -47,7 +47,7 @@ async def test_clarify_with_choices():
 
 @pytest.mark.asyncio
 async def test_clarify_multi_question():
-    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
+    from luna_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([
@@ -62,7 +62,7 @@ async def test_clarify_multi_question():
 
 @pytest.mark.asyncio
 async def test_clarify_multi_select():
-    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
+    from luna_agent.plugins.builtin.tools.builtin.clarify import _clarify
     import json
 
     q = json.dumps([{
@@ -77,7 +77,7 @@ async def test_clarify_multi_select():
 
 @pytest.mark.asyncio
 async def test_clarify_invalid_json():
-    from personal_agent.plugins.builtin.tools.builtin.clarify import _clarify
+    from luna_agent.plugins.builtin.tools.builtin.clarify import _clarify
 
     result = await _clarify("not json")
     assert "Error" in result
@@ -89,7 +89,7 @@ async def test_clarify_invalid_json():
 
 @pytest.mark.asyncio
 async def test_process_list_empty():
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_list
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_list
 
     result = await _process_list()
     assert "No background processes" in result or "running" not in result.lower()
@@ -97,7 +97,7 @@ async def test_process_list_empty():
 
 @pytest.mark.asyncio
 async def test_process_kill_nonexistent():
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_kill
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_kill
 
     result = await _process_kill(99999)
     assert "no process" in result.lower()
@@ -105,7 +105,7 @@ async def test_process_kill_nonexistent():
 
 @pytest.mark.asyncio
 async def test_process_wait_nonexistent():
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_wait
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_wait
 
     result = await _process_wait(99999)
     assert "no process" in result.lower()
@@ -113,13 +113,13 @@ async def test_process_wait_nonexistent():
 
 @pytest.mark.asyncio
 async def test_process_start_read_wait(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import (
         _process_read,
         _process_start,
         _process_wait,
     )
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -144,9 +144,9 @@ async def test_process_start_read_wait(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_process_start_reuses_bash_sandbox_precheck(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_start
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_start
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -157,9 +157,9 @@ async def test_process_start_reuses_bash_sandbox_precheck(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_process_start_blocks_sandbox_patterns_and_bad_cwd(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_start
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_start
+    from luna_agent.tools.sandbox import init_sandbox
 
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside"
@@ -179,9 +179,9 @@ async def test_process_start_blocks_sandbox_patterns_and_bad_cwd(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_process_start_blocks_network_when_policy_denies(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_work_dir
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_start
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_allow_network, set_work_dir
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_start
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -194,7 +194,7 @@ async def test_process_start_blocks_network_when_policy_denies(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_process_read_invalid_stream():
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_read
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_read
 
     result = await _process_read(99999, stream="wat")
     assert "no process" in result.lower()
@@ -202,13 +202,13 @@ async def test_process_read_invalid_stream():
 
 @pytest.mark.asyncio
 async def test_process_read_since_last_and_tail_modes(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import (
         _process_read,
         _process_start,
         _process_wait,
     )
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -234,7 +234,7 @@ async def test_process_read_since_last_and_tail_modes(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_process_read_invalid_mode():
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import TrackedProcess, _process_read, _processes
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import TrackedProcess, _process_read, _processes
 
     _processes[98765] = TrackedProcess(pid=98765, command="demo", proc=None)  # type: ignore[arg-type]
     try:
@@ -245,7 +245,7 @@ async def test_process_read_invalid_mode():
 
 
 def test_process_read_truncation_flags():
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import (
         TrackedProcess,
         _append_output,
         _format_output,
@@ -261,15 +261,15 @@ def test_process_read_truncation_flags():
 
 @pytest.mark.asyncio
 async def test_process_list_filter_and_limit(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import (
         _process_clear,
         _process_kill,
         _process_list,
         _process_start,
         _process_wait,
     )
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -294,14 +294,14 @@ async def test_process_list_filter_and_limit(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_process_clear_finished_and_refuses_running(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+    from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import (
         _process_clear,
         _process_list,
         _process_start,
         _process_wait,
     )
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -322,7 +322,7 @@ async def test_process_clear_finished_and_refuses_running(tmp_path: Path):
     assert f"[{done_pid}]" not in remaining
     assert f"[{running_pid}]" in remaining
 
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import _process_kill
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_kill
 
     await _process_kill(running_pid)
     await _process_clear(pid=running_pid)
@@ -331,7 +331,7 @@ async def test_process_clear_finished_and_refuses_running(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_process_lifecycle():
     """Spawn a real background process, list it, wait for it, verify."""
-    from personal_agent.plugins.builtin.tools.builtin.process_tool import (
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import (
         _process_list, _process_wait, _process_kill, _register,
     )
 
@@ -362,8 +362,8 @@ async def test_process_lifecycle():
 
 @pytest.mark.asyncio
 async def test_bash_structured_output(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -380,8 +380,8 @@ async def test_bash_structured_output(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_bash_timeout_suggests_background(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -395,8 +395,8 @@ async def test_bash_timeout_suggests_background(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_bash_drains_large_output_with_bounded_capture(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     set_work_dir(tmp_path)
@@ -414,8 +414,8 @@ async def test_bash_drains_large_output_with_bounded_capture(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_file_edit_rejects_empty_append(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
 
@@ -426,8 +426,8 @@ async def test_file_edit_rejects_empty_append(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_file_edit_replace_reports_occurrences(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+    from luna_agent.tools.sandbox import init_sandbox
 
     path = tmp_path / "notes.md"
     path.write_text("alpha beta beta", encoding="utf-8")
@@ -446,8 +446,8 @@ async def test_file_edit_replace_reports_occurrences(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_file_edit_replace_all_updates_every_occurrence(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+    from luna_agent.tools.sandbox import init_sandbox
 
     path = tmp_path / "notes.md"
     path.write_text("alpha beta beta", encoding="utf-8")
@@ -461,8 +461,8 @@ async def test_file_edit_replace_all_updates_every_occurrence(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_file_edit_size_limit_and_sandbox_block(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import file_edit
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin import file_edit
+    from luna_agent.tools.sandbox import init_sandbox
 
     path = tmp_path / "notes.md"
     path.write_text("12345", encoding="utf-8")
@@ -478,8 +478,8 @@ async def test_file_edit_size_limit_and_sandbox_block(tmp_path: Path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_file_edit_rejects_existing_file_above_edit_limit(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import file_edit
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin import file_edit
+    from luna_agent.tools.sandbox import init_sandbox
 
     path = tmp_path / "large.txt"
     path.write_text("0123456789", encoding="utf-8")
@@ -494,8 +494,8 @@ async def test_file_edit_rejects_existing_file_above_edit_limit(tmp_path: Path, 
 
 @pytest.mark.asyncio
 async def test_file_write_limit_uses_utf8_bytes(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import file_write
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin import file_write
+    from luna_agent.tools.sandbox import init_sandbox
 
     init_sandbox([tmp_path], [])
     monkeypatch.setattr(file_write, "_MAX_WRITE_BYTES", 5)
@@ -508,8 +508,8 @@ async def test_file_write_limit_uses_utf8_bytes(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_grep_literal_treats_pattern_as_plain_text(tmp_path: Path):
-    from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
-    from personal_agent.tools.sandbox import init_sandbox
+    from luna_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+    from luna_agent.tools.sandbox import init_sandbox
 
     path = tmp_path / "app.py"
     path.write_text("foo.bar()\nfooXbar()\n", encoding="utf-8")
@@ -525,7 +525,7 @@ async def test_grep_literal_treats_pattern_as_plain_text(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_task_list_search_filters_title_and_description(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import task as task_tool
+    from luna_agent.plugins.builtin.tools.builtin import task as task_tool
 
     monkeypatch.setattr(task_tool, "_db_path", tmp_path / "tasks.db")
 
@@ -545,7 +545,7 @@ async def test_task_list_search_filters_title_and_description(tmp_path: Path, mo
 
 @pytest.mark.asyncio
 async def test_execute_code_basic():
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("print('hello world')")
     assert "hello world" in result
@@ -553,7 +553,7 @@ async def test_execute_code_basic():
 
 @pytest.mark.asyncio
 async def test_execute_code_math():
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("print(2 ** 10)")
     assert "1024" in result
@@ -561,7 +561,7 @@ async def test_execute_code_math():
 
 @pytest.mark.asyncio
 async def test_execute_code_stderr():
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("import sys; print('ok', file=sys.stderr)")
     assert "[stderr]" in result
@@ -570,7 +570,7 @@ async def test_execute_code_stderr():
 
 @pytest.mark.asyncio
 async def test_execute_code_exception():
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("raise RuntimeError('boom')")
     assert "RuntimeError" in result
@@ -579,7 +579,7 @@ async def test_execute_code_exception():
 
 @pytest.mark.asyncio
 async def test_execute_code_imports():
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code(
         "import json, math, datetime, collections; "
@@ -590,7 +590,7 @@ async def test_execute_code_imports():
 
 @pytest.mark.asyncio
 async def test_execute_code_timeout():
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("import time; time.sleep(120)", timeout=5)
     assert "timed out" in result.lower()
@@ -599,7 +599,7 @@ async def test_execute_code_timeout():
 @pytest.mark.asyncio
 async def test_execute_code_sandbox_env():
     """API keys should NOT be available in the sandbox."""
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code(
         "import os; print('LLM_API_KEY' in os.environ)"
@@ -610,17 +610,17 @@ async def test_execute_code_sandbox_env():
 @pytest.mark.asyncio
 async def test_execute_code_isolated_cwd():
     """Sandbox should run in a temp directory, not the agent's directory."""
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("import os; print(os.getcwd())")
     # Should be a temp dir, not the project dir
-    assert "Personal Agent" not in result
+    assert "Luna Agent" not in result
     assert "Temp" in result or "tmp" in result.lower()
 
 
 @pytest.mark.asyncio
 async def test_execute_code_no_output():
-    from personal_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
+    from luna_agent.plugins.builtin.tools.builtin.execute_code import _execute_code
 
     result = await _execute_code("x = 1 + 1")
     assert "no output" in result.lower()
@@ -632,7 +632,7 @@ async def test_execute_code_no_output():
 @pytest.mark.asyncio
 async def test_sub_agent_not_initialized():
     """Without setup, sub_agent should return a clear error."""
-    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, reset_delegate
+    from luna_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, reset_delegate
 
     reset_delegate()
     result = await _sub_agent("test prompt")
@@ -641,7 +641,7 @@ async def test_sub_agent_not_initialized():
 
 @pytest.mark.asyncio
 async def test_sub_parallel_bad_json():
-    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_parallel
+    from luna_agent.plugins.builtin.tools.builtin.delegate import _sub_parallel
 
     result = await _sub_parallel("not json")
     assert "invalid" in result.lower()
@@ -649,8 +649,8 @@ async def test_sub_parallel_bad_json():
 
 @pytest.mark.asyncio
 async def test_sub_agent_uses_runtime_after_setup():
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, setup_delegate
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import _sub_agent, setup_delegate
 
     seen = {}
 
@@ -675,8 +675,8 @@ async def test_sub_agent_uses_runtime_after_setup():
 
 @pytest.mark.asyncio
 async def test_sub_agent_accepts_allowed_tools_json_string():
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import (
         _sub_agent,
         list_agent_runs,
         setup_delegate,
@@ -706,8 +706,8 @@ async def test_sub_agent_accepts_allowed_tools_json_string():
 
 @pytest.mark.asyncio
 async def test_delegate_task_allowlist_only_grants_named_tools():
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import _delegate_task, setup_delegate
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import _delegate_task, setup_delegate
 
     seen = {}
 
@@ -737,8 +737,8 @@ async def test_delegate_task_allowlist_only_grants_named_tools():
 
 @pytest.mark.asyncio
 async def test_delegate_records_denied_tool_calls_in_detail():
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import (
         _delegate_task,
         format_agent_run,
         list_agent_runs,
@@ -793,8 +793,8 @@ async def test_delegate_records_denied_tool_calls_in_detail():
 
 @pytest.mark.asyncio
 async def test_delegate_lists_agent_run_summaries():
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import (
         _delegate_task,
         clear_agent_runs,
         format_agent_run,
@@ -830,8 +830,8 @@ async def test_delegate_lists_agent_run_summaries():
 
 @pytest.mark.asyncio
 async def test_delegate_persists_agent_runs(tmp_path):
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import (
         _delegate_task,
         format_agent_runs,
         load_agent_runs,
@@ -854,8 +854,8 @@ async def test_delegate_persists_agent_runs(tmp_path):
 
 @pytest.mark.asyncio
 async def test_delegate_stop_cancels_running_agent():
-    from personal_agent.models.messages import NormalizedResponse
-    from personal_agent.plugins.builtin.tools.builtin.delegate import (
+    from luna_agent.models.messages import NormalizedResponse
+    from luna_agent.plugins.builtin.tools.builtin.delegate import (
         _delegate_task,
         list_agent_runs,
         setup_delegate,
@@ -887,7 +887,7 @@ async def test_delegate_stop_cancels_running_agent():
 
 
 def test_all_new_tools_registered():
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.registry import tool_registry
 
     expected = [
         "clarify", "execute_code",
@@ -901,12 +901,12 @@ def test_all_new_tools_registered():
 
 
 def test_tool_descriptions_guide_model_usage():
-    import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    from personal_agent.tools.registry import tool_registry
+    import luna_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    from luna_agent.tools.registry import tool_registry
 
     assert "process_start" in tool_registry.get("bash").description
     assert "long-running" in tool_registry.get("process_start").description
@@ -917,16 +917,16 @@ def test_tool_descriptions_guide_model_usage():
 
 
 def test_builtin_tools_declare_permission_categories():
-    import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
-    from personal_agent.tools.registry import tool_registry
+    import luna_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
+    from luna_agent.tools.registry import tool_registry
 
     expected = {
         "read": "read",
@@ -952,18 +952,18 @@ def test_builtin_tools_declare_permission_categories():
 
 
 def test_key_builtin_tools_declare_usage_metadata():
-    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
-    import personal_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
-    from personal_agent.tools.registry import tool_registry
+    import luna_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.bash  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_edit  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_navigation  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_read  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.file_write  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
+    import luna_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
+    from luna_agent.tools.registry import tool_registry
 
     expected = {
         "read": ("low", "file"),
@@ -992,7 +992,7 @@ def test_key_builtin_tools_declare_usage_metadata():
 
 
 def test_only_everyday_process_tools_are_core_and_all_remain_discoverable():
-    from personal_agent.tools.toolsets import TOOLSETS, is_core_tool
+    from luna_agent.tools.toolsets import TOOLSETS, is_core_tool
 
     core = {"process_start", "process_read", "process_kill", "process_wait"}
     deferred = {"process_list", "process_clear"}
@@ -1003,7 +1003,7 @@ def test_only_everyday_process_tools_are_core_and_all_remain_discoverable():
 
 
 def test_convenience_tools_are_deferred_behind_tool_search():
-    from personal_agent.tools.toolsets import get_core_tools
+    from luna_agent.tools.toolsets import get_core_tools
 
     core = get_core_tools()
 
@@ -1014,8 +1014,8 @@ def test_convenience_tools_are_deferred_behind_tool_search():
 
 
 def test_worktree_tools_declare_permission_metadata():
-    import personal_agent.plugins.builtin.tools.builtin.worktree_tool  # noqa: F401
-    from personal_agent.tools.registry import tool_registry
+    import luna_agent.plugins.builtin.tools.builtin.worktree_tool  # noqa: F401
+    from luna_agent.tools.registry import tool_registry
 
     expected = {
         "worktree_create": ("write", "medium", False),
@@ -1033,7 +1033,7 @@ def test_worktree_tools_declare_permission_metadata():
 
 @pytest.mark.asyncio
 async def test_worktree_cleanup_refuses_dirty_worktree_without_force(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import worktree_tool
+    from luna_agent.plugins.builtin.tools.builtin import worktree_tool
 
     worktree_root = tmp_path / "worktrees"
     dirty_tree = worktree_root / "demo"
@@ -1058,7 +1058,7 @@ async def test_worktree_cleanup_refuses_dirty_worktree_without_force(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_worktree_cleanup_force_removes_with_force_flag(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import worktree_tool
+    from luna_agent.plugins.builtin.tools.builtin import worktree_tool
 
     worktree_root = tmp_path / "worktrees"
     dirty_tree = worktree_root / "demo"
@@ -1082,7 +1082,7 @@ async def test_worktree_cleanup_force_removes_with_force_flag(tmp_path: Path, mo
 
 @pytest.mark.asyncio
 async def test_web_fetch_rechecks_redirect_target(monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import web_fetch
+    from luna_agent.plugins.builtin.tools.builtin import web_fetch
 
     class FakeResponse:
         status_code = 302
@@ -1112,7 +1112,7 @@ async def test_web_fetch_rechecks_redirect_target(monkeypatch):
 
     monkeypatch.setattr(web_fetch.httpx, "AsyncClient", FakeClient)
     monkeypatch.setattr(
-        "personal_agent.tools.url_safety.check_url",
+        "luna_agent.tools.url_safety.check_url",
         lambda url: "Error: access to loopback blocked" if "127.0.0.1" in url else None,
     )
 
@@ -1124,7 +1124,7 @@ async def test_web_fetch_rechecks_redirect_target(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_web_fetch_rejects_oversized_response(monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import web_fetch
+    from luna_agent.plugins.builtin.tools.builtin import web_fetch
 
     class FakeResponse:
         status_code = 200

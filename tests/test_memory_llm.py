@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.memory.config import MemoryLLMConfig
-from personal_agent.memory.llm import MemoryLLMFacade
-from personal_agent.memory.models import ObservationKind
+from luna_agent.memory.config import MemoryLLMConfig
+from luna_agent.memory.llm import MemoryLLMFacade
+from luna_agent.memory.models import ObservationKind
 
 
 class Transport:

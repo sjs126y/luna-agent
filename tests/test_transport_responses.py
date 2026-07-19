@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.llm.provider import ProviderProfile
-from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport, OpenAIResponsesTransport
+from luna_agent.llm.provider import ProviderProfile
+from luna_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport, OpenAIResponsesTransport
 
 
 def _provider(reasoning_effort: str = "") -> ProviderProfile:
@@ -170,8 +170,8 @@ def test_codex_responses_transport_textualizes_tool_call_chain_for_middle_statio
 
 
 def test_codex_responses_transport_alias_is_registered():
-    from personal_agent.llm.transport_registry import transport_registry
-    from personal_agent.plugins.builtin.llm.builtin import register
+    from luna_agent.llm.transport_registry import transport_registry
+    from luna_agent.plugins.builtin.llm.builtin import register
 
     register(None)
 
@@ -216,7 +216,7 @@ async def test_codex_responses_returns_empty_when_final_channel_has_no_text():
 
 @pytest.mark.asyncio
 async def test_codex_responses_always_uses_sse_for_middle_station(monkeypatch):
-    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+    import luna_agent.plugins.builtin.llm.builtin.responses as responses_module
 
     calls: list[bool] = []
 
@@ -252,7 +252,7 @@ async def test_codex_responses_always_uses_sse_for_middle_station(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_codex_responses_retries_stream_rate_limit_before_output(monkeypatch):
-    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+    import luna_agent.plugins.builtin.llm.builtin.responses as responses_module
 
     calls = 0
     delays: list[float] = []
@@ -292,7 +292,7 @@ async def test_codex_responses_retries_stream_rate_limit_before_output(monkeypat
 
 @pytest.mark.asyncio
 async def test_responses_stream_rate_limit_stops_after_retry_budget(monkeypatch):
-    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+    import luna_agent.plugins.builtin.llm.builtin.responses as responses_module
 
     calls = 0
 
@@ -320,7 +320,7 @@ async def test_responses_stream_rate_limit_stops_after_retry_budget(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_responses_does_not_retry_failure_after_output(monkeypatch):
-    import personal_agent.plugins.builtin.llm.builtin.responses as responses_module
+    import luna_agent.plugins.builtin.llm.builtin.responses as responses_module
 
     calls = 0
 
@@ -471,7 +471,7 @@ async def test_responses_call_streams_when_delta_callback_is_present(monkeypatch
         deltas.append((kind, chunk))
 
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.llm.builtin.responses.call_openai_responses",
+        "luna_agent.plugins.builtin.llm.builtin.responses.call_openai_responses",
         fake_call_openai_responses,
     )
 

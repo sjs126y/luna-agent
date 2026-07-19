@@ -1,8 +1,8 @@
-"""Minimal plugin example for Personal Agent."""
+"""Minimal plugin example for Luna Agent."""
 
 from __future__ import annotations
 
-from lumora_plugin_sdk import CommandEntry
+from luna_agent_plugin_sdk import CommandEntry
 
 _GREETING = "hello"
 

@@ -2,16 +2,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.conversation import SessionDirectory
-from personal_agent.delivery import (
+from luna_agent.conversation import SessionDirectory
+from luna_agent.delivery import (
     DeliveryKind,
     DeliveryRequest,
     DeliveryService,
     DeliveryStatus,
     PlatformDirectory,
 )
-from personal_agent.hooks import HookEvent, HookManager, PreDeliveryOutcome
-from personal_agent.models.messages import OutboundMessage, SessionSource
+from luna_agent.hooks import HookEvent, HookManager, PreDeliveryOutcome
+from luna_agent.models.messages import OutboundMessage, SessionSource
 
 
 class Adapter:

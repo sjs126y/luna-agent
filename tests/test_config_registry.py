@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_config_registry_paths_are_unique():
-    from personal_agent.config_registry import CONFIG_FIELDS, CONFIG_REGISTRY
+    from luna_agent.config_registry import CONFIG_FIELDS, CONFIG_REGISTRY
 
     paths = [field.path for field in CONFIG_FIELDS]
 
@@ -22,7 +22,7 @@ def test_config_registry_paths_are_unique():
 
 
 def test_config_registry_keeps_field_order_and_metadata():
-    from personal_agent.config_registry import CONFIG_FIELDS
+    from luna_agent.config_registry import CONFIG_FIELDS
 
     paths = [field.path for field in CONFIG_FIELDS]
     fields = {field.path: field for field in CONFIG_FIELDS}
@@ -44,7 +44,7 @@ def test_config_registry_keeps_field_order_and_metadata():
 def test_config_registry_rejects_duplicate_path_and_attr():
     import pytest
 
-    from personal_agent.config_registry import ConfigField, ConfigRegistry
+    from luna_agent.config_registry import ConfigField, ConfigRegistry
 
     registry = ConfigRegistry((
         ConfigField("demo.enabled", "demo_enabled", "config.yaml", False, "bool", "demo", "Demo."),
@@ -61,7 +61,7 @@ def test_config_registry_rejects_duplicate_path_and_attr():
 
 
 def test_config_registry_supports_plugin_namespaced_fields():
-    from personal_agent.config_registry import ConfigField, ConfigRegistry
+    from luna_agent.config_registry import ConfigField, ConfigRegistry
 
     field = ConfigField(
         "plugin_config.platforms/telegram.poll_interval",
@@ -89,7 +89,7 @@ def test_config_registry_supports_plugin_namespaced_fields():
 
 
 def test_config_registry_exposes_known_yaml_sections_and_keys():
-    from personal_agent.config_registry import (
+    from luna_agent.config_registry import (
         CONFIG_REGISTRY,
         config_yaml_known_keys_by_section,
         config_yaml_known_sections,
@@ -113,7 +113,7 @@ def test_config_registry_exposes_known_yaml_sections_and_keys():
 
 
 def test_config_registry_validates_basic_values():
-    from personal_agent.config_registry import config_field_by_path, validate_registry_value
+    from luna_agent.config_registry import config_field_by_path, validate_registry_value
 
     retries = config_field_by_path("gateway.delivery_max_attempts")
     mode = config_field_by_path("execution.mode")
@@ -138,7 +138,7 @@ def test_config_registry_validates_basic_values():
 
 
 def test_config_registry_schema_is_stable():
-    from personal_agent.config_registry import registry_schema
+    from luna_agent.config_registry import registry_schema
 
     schema = registry_schema()
     fields = {item["path"]: item for item in schema["fields"]}
@@ -189,8 +189,8 @@ def test_config_registry_schema_is_stable():
 
 
 def test_config_registry_attrs_exist_on_settings(tmp_path):
-    from personal_agent.config import Settings
-    from personal_agent.config_registry import CONFIG_FIELDS
+    from luna_agent.config import Settings
+    from luna_agent.config_registry import CONFIG_FIELDS
 
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
 
@@ -200,8 +200,8 @@ def test_config_registry_attrs_exist_on_settings(tmp_path):
 
 
 def test_effective_config_snapshot_masks_sensitive_values(tmp_path):
-    from personal_agent.config import Settings
-    from personal_agent.config_registry import CONFIG_REGISTRY, effective_config_snapshot
+    from luna_agent.config import Settings
+    from luna_agent.config_registry import CONFIG_REGISTRY, effective_config_snapshot
 
     settings = Settings(
         agent_data_dir=tmp_path / "data",

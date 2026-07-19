@@ -9,10 +9,10 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
-from personal_agent.agent.agent import init_agent
-from personal_agent.cli import app
-from personal_agent.llm.provider import ProviderProfile
-from personal_agent.models.messages import NormalizedResponse
+from luna_agent.agent.agent import init_agent
+from luna_agent.cli import app
+from luna_agent.llm.provider import ProviderProfile
+from luna_agent.models.messages import NormalizedResponse
 
 
 runner = CliRunner()
@@ -58,7 +58,7 @@ def _install_echo_agent(monkeypatch) -> None:
         return SimpleNamespace(agent=agent, provider=provider, transport=transport)
 
     monkeypatch.setattr(
-        "personal_agent.agent.factory.create_agent_runtime",
+        "luna_agent.agent.factory.create_agent_runtime",
         fake_create_agent_runtime,
     )
 
@@ -113,14 +113,14 @@ def test_doctor_default_summary_and_verbose_output(tmp_path, monkeypatch):
     verbose = runner.invoke(app, ["doctor", "--verbose"])
 
     assert summary.exit_code == 0, summary.output
-    assert "Lumora doctor" in summary.output
+    assert "Luna Agent doctor" in summary.output
     assert "更多:" in summary.output
     assert "doctor --verbose" in summary.output
     assert "Effective Config:" not in summary.output
     assert "MCP 服务器:" not in summary.output
 
     assert verbose.exit_code == 0, verbose.output
-    assert "Lumora doctor --verbose" in verbose.output
+    assert "Luna Agent doctor --verbose" in verbose.output
     assert "Effective Config:" in verbose.output
     assert "MCP 服务器:" in verbose.output
 
@@ -132,7 +132,7 @@ def test_doctor_execution_section_reports_profile(tmp_path, monkeypatch):
     json_result = runner.invoke(app, ["doctor", "--json", "--section", "execution"])
 
     assert text_result.exit_code == 0, text_result.output
-    assert "Lumora doctor: execution" in text_result.output
+    assert "Luna Agent doctor: execution" in text_result.output
     assert "label: Ask First" in text_result.output
     assert "filesystem profile: read-only" in text_result.output
     assert "approval policy: on-request" in text_result.output
@@ -152,7 +152,7 @@ def test_doctor_section_text_filters_output(tmp_path, monkeypatch):
     result = runner.invoke(app, ["doctor", "--section", "platforms"])
 
     assert result.exit_code == 0, result.output
-    assert "Lumora doctor: platforms" in result.output
+    assert "Luna Agent doctor: platforms" in result.output
     assert "platforms/qq" in result.output
     assert "Memory:" not in result.output
 
@@ -181,7 +181,7 @@ def test_chat_default_entrypoint_starts_inline_tui(tmp_path, monkeypatch):
     def fake_inline(*, session_name="default"):
         calls.append(session_name)
 
-    monkeypatch.setattr("personal_agent.tui.app.run_inline_tui_sync", fake_inline)
+    monkeypatch.setattr("luna_agent.tui.app.run_inline_tui_sync", fake_inline)
     result = runner.invoke(app, ["chat", "--session", "work"])
 
     assert result.exit_code == 0, result.output
@@ -271,7 +271,7 @@ def test_doctor_json_reports_runtime_failure_without_traceback(tmp_path, monkeyp
     _init_local_project(tmp_path, monkeypatch)
 
     async def broken_runtime(settings):
-        from personal_agent.runtime import BootReport
+        from luna_agent.runtime import BootReport
 
         boot_report = BootReport.bootstrap()
         boot_report.error("memory", "RuntimeError: broken bootstrap")
@@ -279,7 +279,7 @@ def test_doctor_json_reports_runtime_failure_without_traceback(tmp_path, monkeyp
         boot_report.attach_to_exception(exc)
         raise exc
 
-    monkeypatch.setattr("personal_agent.runtime.create_app_runtime", broken_runtime)
+    monkeypatch.setattr("luna_agent.runtime.create_app_runtime", broken_runtime)
 
     result = runner.invoke(app, ["doctor", "--json"])
 
@@ -296,7 +296,7 @@ def test_serve_dry_run_json_reports_runtime_failure_boot(tmp_path, monkeypatch):
     _init_local_project(tmp_path, monkeypatch)
 
     async def broken_runtime(settings):
-        from personal_agent.runtime import BootReport
+        from luna_agent.runtime import BootReport
 
         boot_report = BootReport.bootstrap()
         boot_report.error("database", "RuntimeError: db broken")
@@ -304,7 +304,7 @@ def test_serve_dry_run_json_reports_runtime_failure_boot(tmp_path, monkeypatch):
         boot_report.attach_to_exception(exc)
         raise exc
 
-    monkeypatch.setattr("personal_agent.runtime.create_app_runtime", broken_runtime)
+    monkeypatch.setattr("luna_agent.runtime.create_app_runtime", broken_runtime)
 
     result = runner.invoke(app, ["serve", "--dry-run", "--json"])
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from personal_agent.plugins.builtin.memory.lumora.embedding import (
+from luna_agent.plugins.builtin.memory.luna.embedding import (
     OpenAICompatibleEmbeddingBackend,
     OpenAICompatibleEmbeddingConfig,
 )

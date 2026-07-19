@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from prompt_toolkit.formatted_text import ANSI, to_plain_text
 
-from personal_agent.tui.layout import (
+from luna_agent.tui.layout import (
     _MAX_ACTIVE_TOOLS,
     _SLASH_MENU_LINES,
     _STREAM_TAIL_CHARS,
     _slash_menu,
     build_layout,
 )
-from personal_agent.tui.state import (
+from luna_agent.tui.state import (
     ConfirmPrompt,
     ConfirmResource,
     SlashMenuItem,
@@ -306,14 +306,14 @@ def test_active_region_shows_ctrl_c_exit_notice():
 
 
 def test_hint_bar_shows_expand_key():
-    from personal_agent.tui.layout import _hint_bar
+    from luna_agent.tui.layout import _hint_bar
 
     bar = _hint_bar(UIState())
     assert "展开" in bar  # Ctrl+O expand is always advertised in the hint bar
 
 
 def test_meter_bar_shows_model_and_usage():
-    from personal_agent.tui.layout import _meter_bar
+    from luna_agent.tui.layout import _meter_bar
 
     state = UIState()
     state.model = "deepseek-v4-flash"
@@ -330,7 +330,7 @@ def test_meter_bar_shows_model_and_usage():
 
 
 def test_meter_bar_without_context_does_not_fake_usage():
-    from personal_agent.tui.layout import _meter_bar
+    from luna_agent.tui.layout import _meter_bar
 
     state = UIState()
     state.model = "deepseek-v4-flash"
@@ -343,7 +343,7 @@ def test_meter_bar_without_context_does_not_fake_usage():
 
 
 def test_meter_bar_does_not_show_cache_summary():
-    from personal_agent.tui.layout import _meter_bar
+    from luna_agent.tui.layout import _meter_bar
 
     state = UIState()
     state.model = "deepseek-v4-flash"
@@ -357,7 +357,7 @@ def test_meter_bar_does_not_show_cache_summary():
 
 
 def test_meter_bar_does_not_show_activity_badge():
-    from personal_agent.tui.layout import _meter_bar
+    from luna_agent.tui.layout import _meter_bar
 
     state = UIState()
     state.model = "deepseek-v4-flash"
@@ -368,7 +368,7 @@ def test_meter_bar_does_not_show_activity_badge():
 
 
 def test_meter_bar_prefers_context_usage():
-    from personal_agent.tui.layout import _meter_bar
+    from luna_agent.tui.layout import _meter_bar
 
     state = UIState()
     state.model = "deepseek-v4-flash"
@@ -383,8 +383,8 @@ def test_meter_bar_prefers_context_usage():
 
 
 def test_hint_bar_uses_distinct_mode_colors():
-    from personal_agent.tui import theme
-    from personal_agent.tui.layout import _hint_bar
+    from luna_agent.tui import theme
+    from luna_agent.tui.layout import _hint_bar
 
     seen = set()
     for mode in ("Read Only", "Ask First", "Local Auto", "Full Auto"):
@@ -399,7 +399,7 @@ def test_hint_bar_uses_distinct_mode_colors():
 
 
 def test_keyhint_bar_below_input_lists_shortcuts():
-    from personal_agent.tui.layout import _hint_bar
+    from luna_agent.tui.layout import _hint_bar
 
     bar = _hint_bar(UIState())
     for token in (
@@ -420,7 +420,7 @@ def test_keyhint_bar_below_input_lists_shortcuts():
 
 
 def test_humanize_compacts_counts():
-    from personal_agent.tui import theme
+    from luna_agent.tui import theme
 
     assert theme.humanize(999) == "999"
     assert theme.humanize(1659) == "1.7k"

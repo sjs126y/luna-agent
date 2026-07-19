@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.runtime import boot_report_from_exception, create_app_runtime, start_mcp_manager
+from luna_agent.config import Settings
+from luna_agent.runtime import boot_report_from_exception, create_app_runtime, start_mcp_manager
 
 
 def _write_mcp_plugin(plugin_dir):
@@ -198,7 +198,7 @@ async def test_create_app_runtime_attaches_boot_report_on_failure(tmp_path, monk
     async def fail_memory(*args, **kwargs):
         raise RuntimeError("memory bootstrap failed")
 
-    monkeypatch.setattr("personal_agent.runtime.create_memory_manager", fail_memory)
+    monkeypatch.setattr("luna_agent.runtime.create_memory_manager", fail_memory)
     with pytest.raises(RuntimeError, match="memory bootstrap failed") as exc_info:
         await create_app_runtime(settings)
 
@@ -230,11 +230,11 @@ async def test_create_app_runtime_cleans_up_on_start_failure(tmp_path, monkeypat
         async def stop(self):
             stopped.append(True)
 
-    monkeypatch.setattr("personal_agent.mcp.manager.MCPManager", FakeMCPManager)
+    monkeypatch.setattr("luna_agent.mcp.manager.MCPManager", FakeMCPManager)
     async def fail_memory(*args, **kwargs):
         raise RuntimeError("memory bootstrap failed")
 
-    monkeypatch.setattr("personal_agent.runtime.create_memory_manager", fail_memory)
+    monkeypatch.setattr("luna_agent.runtime.create_memory_manager", fail_memory)
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
@@ -276,7 +276,7 @@ async def test_create_app_runtime_reports_mcp_boot_step(tmp_path, monkeypatch):
                 "servers": [],
             }
 
-    monkeypatch.setattr("personal_agent.mcp.manager.MCPManager", FakeMCPManager)
+    monkeypatch.setattr("luna_agent.mcp.manager.MCPManager", FakeMCPManager)
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[plugins_dir],
@@ -316,8 +316,8 @@ async def test_app_runtime_gateway_lifecycle(tmp_path, monkeypatch):
     async def stop(self):
         stopped.append(self)
 
-    monkeypatch.setattr("personal_agent.gateway.gateway.Gateway.start", start)
-    monkeypatch.setattr("personal_agent.gateway.gateway.Gateway.stop", stop)
+    monkeypatch.setattr("luna_agent.gateway.gateway.Gateway.start", start)
+    monkeypatch.setattr("luna_agent.gateway.gateway.Gateway.stop", stop)
 
     runtime = await create_app_runtime(settings)
     try:
@@ -363,7 +363,7 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
         }],
     )
 
-    from personal_agent.plugins.core.manager import PluginManager
+    from luna_agent.plugins.core.manager import PluginManager
 
     plugin_manager = PluginManager(settings)
     plugin_manager.discover()
@@ -380,7 +380,7 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
         async def start(self):
             self.started = True
 
-    monkeypatch.setattr("personal_agent.mcp.manager.MCPManager", FakeMCPManager)
+    monkeypatch.setattr("luna_agent.mcp.manager.MCPManager", FakeMCPManager)
 
     manager = await start_mcp_manager(settings, plugin_manager)
 

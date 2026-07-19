@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.memory.internal import InternalMemoryStore
-from personal_agent.memory.manager import MemoryManager
-from personal_agent.memory.models import MemoryRecord, MemoryReviewResult
+from luna_agent.memory.internal import InternalMemoryStore
+from luna_agent.memory.manager import MemoryManager
+from luna_agent.memory.models import MemoryRecord, MemoryReviewResult
 
 
 class Router:
-    requested_provider = "lumora"
+    requested_provider = "luna"
     effective_provider = "fallback"
     fallback_reason = "qdrant unavailable"
 
@@ -68,7 +68,7 @@ async def test_memory_manager_uses_profile_snapshot_and_external_router(tmp_path
     records = await manager.search_entries("language", session_key="cli:work:u1")
     assert records[0]["source_provider"] == "fallback"
     assert records[0]["effective_provider"] == "fallback"
-    assert health["requested_provider"] == "lumora"
+    assert health["requested_provider"] == "luna"
     assert health["effective_provider"] == "fallback"
     assert health["fallback_reason"] == "qdrant unavailable"
 

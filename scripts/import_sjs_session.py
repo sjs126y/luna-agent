@@ -1,6 +1,6 @@
-"""Import SJS-AGENT session (JSONL) → Personal Agent session (SQLite).
+"""Import SJS-AGENT session (JSONL) → Luna Agent session (SQLite).
 
-Reads SJS-AGENT's JSONL session file and converts it to the Personal Agent's
+Reads SJS-AGENT's JSONL session file and converts it to the Luna Agent's
 SQLite session store. Messages are wrapped in Anthropic content-block format.
 
 Usage:
@@ -24,13 +24,13 @@ from pathlib import Path
 
 
 def convert_messages(source_path: Path) -> list[dict]:
-    """Read SJS-AGENT JSONL and convert to Personal Agent message format.
+    """Read SJS-AGENT JSONL and convert to Luna Agent message format.
 
     SJS-AGENT format:
       {"role": "user", "content": "text string"}
       {"role": "assistant", "content": "text string"}
 
-    Personal Agent format:
+    Luna Agent format:
       {"role": "user", "content": [{"type": "text", "text": "..."}]}
       {"role": "assistant", "content": [{"type": "text", "text": "..."}]}
     """
@@ -70,7 +70,7 @@ async def import_session(
     messages: list[dict],
     dry_run: bool = False,
 ) -> None:
-    """Import converted messages into Personal Agent's SQLite session store."""
+    """Import converted messages into Luna Agent's SQLite session store."""
     import aiosqlite
 
     if dry_run:
@@ -171,12 +171,12 @@ async def import_session(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Import SJS-AGENT session to Personal Agent")
+    parser = argparse.ArgumentParser(description="Import SJS-AGENT session to Luna Agent")
     parser.add_argument("--source", required=True, help="Path to SJS-AGENT .jsonl session file")
     parser.add_argument("--session-key", required=True,
                         help="Target session key (format: platform:chat_id:user_id)")
     parser.add_argument("--db", default="./data/state.db",
-                        help="Path to Personal Agent SQLite database")
+                        help="Path to Luna Agent SQLite database")
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview without writing")
 

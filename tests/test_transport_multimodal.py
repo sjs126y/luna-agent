@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from personal_agent.llm.provider import ProviderProfile, provider_registry
-from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
-from personal_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
+from luna_agent.llm.provider import ProviderProfile, provider_registry
+from luna_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+from luna_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
 
 
 def test_chat_completions_preserves_image_url_content():

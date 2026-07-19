@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from lumora_plugin_sdk import CommandEntry, HookEvent, PreToolUseOutcome
+from luna_agent_plugin_sdk import CommandEntry, HookEvent, PreToolUseOutcome
 
 
 class BrowserOperatorConfig(BaseModel):

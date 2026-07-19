@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from lumora_plugin_sdk import HookEvent, PreToolUseOutcome
+from luna_agent_plugin_sdk import HookEvent, PreToolUseOutcome
 
 
 class CodexBridgeConfig(BaseModel):

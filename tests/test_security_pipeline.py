@@ -7,7 +7,7 @@ import pytest
 
 
 def _agent(tmp_path: Path, *, mode: str = "ask-first"):
-    from personal_agent.security.session import SecurityStateStore
+    from luna_agent.security.session import SecurityStateStore
 
     settings = SimpleNamespace(
         execution_mode=mode,
@@ -28,9 +28,9 @@ def _agent(tmp_path: Path, *, mode: str = "ask-first"):
 
 @pytest.mark.asyncio
 async def test_cached_tool_approval_uses_session_ttl(tmp_path):
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     calls: list[str] = []
     confirmations = 0
@@ -64,9 +64,9 @@ async def test_cached_tool_approval_uses_session_ttl(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_auto_runs_cached_tool_without_confirmation(tmp_path):
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     calls = 0
 
@@ -95,9 +95,9 @@ async def test_local_auto_runs_cached_tool_without_confirmation(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_auto_preserves_explicit_prompt_override(tmp_path):
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     confirmations = 0
 
@@ -126,11 +126,11 @@ async def test_local_auto_preserves_explicit_prompt_override(tmp_path):
 
 @pytest.mark.asyncio
 async def test_nested_tool_call_inherits_confirm_and_cached_grant(tmp_path):
-    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+    import luna_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     calls = 0
     confirmations = 0
@@ -186,11 +186,11 @@ async def test_nested_tool_call_inherits_confirm_and_cached_grant(tmp_path):
 
 @pytest.mark.asyncio
 async def test_nested_tool_call_preserves_authorization_denial(tmp_path):
-    import personal_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
+    import luna_agent.plugins.builtin.tools.bridge.bridge  # noqa: F401
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     called = False
 
@@ -233,9 +233,9 @@ async def test_nested_tool_call_preserves_authorization_denial(tmp_path):
 
 @pytest.mark.asyncio
 async def test_prompt_tool_approval_never_persists(tmp_path):
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     confirmations = 0
 
@@ -265,9 +265,9 @@ async def test_prompt_tool_approval_never_persists(tmp_path):
 
 
 def test_tool_and_mcp_server_approval_overrides(tmp_path):
-    from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.entry import ToolEntry
+    from luna_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.entry import ToolEntry
 
     settings = SimpleNamespace(
         execution_mode="ask-first",
@@ -294,9 +294,9 @@ def test_tool_and_mcp_server_approval_overrides(tmp_path):
 
 
 def test_local_auto_keeps_explicit_cached_override(tmp_path):
-    from personal_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.entry import ToolEntry
+    from luna_agent.security.evaluator import evaluate_tool_security, prepare_tool_call
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.entry import ToolEntry
 
     settings = SimpleNamespace(
         execution_mode="local-auto",
@@ -317,7 +317,7 @@ def test_local_auto_keeps_explicit_cached_override(tmp_path):
 
 
 def test_bash_declares_working_directory_and_network_resources(tmp_path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import bash
+    from luna_agent.plugins.builtin.tools.builtin import bash
 
     monkeypatch.setattr(bash, "_work_dir", tmp_path.resolve())
 
@@ -340,9 +340,9 @@ def test_bash_declares_working_directory_and_network_resources(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_unscoped_external_tool_fails_closed():
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     async def handler():
         return "should not run"
@@ -362,11 +362,11 @@ async def test_unscoped_external_tool_fails_closed():
 
 @pytest.mark.asyncio
 async def test_resource_approval_is_enforced_by_file_boundary(tmp_path):
-    from personal_agent.security.models import ResourceRequirement
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
-    from personal_agent.tools.sandbox import get_sandbox, init_sandbox
+    from luna_agent.security.models import ResourceRequirement
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
+    from luna_agent.tools.sandbox import get_sandbox, init_sandbox
 
     init_sandbox([tmp_path], [])
     target = tmp_path.parent / f"{tmp_path.name}-approved.txt"
@@ -408,11 +408,11 @@ async def test_resource_approval_is_enforced_by_file_boundary(tmp_path):
 
 @pytest.mark.asyncio
 async def test_hook_arguments_are_evaluated_after_modification(tmp_path):
-    from personal_agent.hooks import HookEvent, HookManager, PreToolUseOutcome
-    from personal_agent.security.models import ResourceRequirement
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.hooks import HookEvent, HookManager, PreToolUseOutcome
+    from luna_agent.security.models import ResourceRequirement
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     original = tmp_path / "original.txt"
     modified = tmp_path / "modified.txt"

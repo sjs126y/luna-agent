@@ -3,7 +3,7 @@ key: automation/reminder
 name: Reminder
 version: "0.1.0"
 plugin_api: ">=1,<2"
-description: Persistent reminders delivered through Lumora's conversation runtime.
+description: Persistent reminders delivered through Luna Agent's conversation runtime.
 kind: automation
 entrypoint: reminder:register
 requires:

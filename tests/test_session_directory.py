@@ -1,6 +1,6 @@
-from personal_agent.conversation import SessionDirectory
-from personal_agent.models.messages import SessionSource
-from personal_agent.models.session import SessionEntry
+from luna_agent.conversation import SessionDirectory
+from luna_agent.models.messages import SessionSource
+from luna_agent.models.session import SessionEntry
 
 
 def _source(chat_id: str = "c1") -> SessionSource:

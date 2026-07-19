@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.conversation import ConversationCommandRuntime
-from personal_agent.commands.runtime import handle_slash_command
+from luna_agent.conversation import ConversationCommandRuntime
+from luna_agent.commands.runtime import handle_slash_command
 
 
 class Service:
@@ -18,7 +18,7 @@ class Service:
             "cli:other:local": SimpleNamespace(),
         }
         self.usage_kwargs = None
-        from personal_agent.security.session import SecurityStateStore
+        from luna_agent.security.session import SecurityStateStore
 
         self.security_states = SecurityStateStore(SimpleNamespace(
             execution_mode="ask-first",

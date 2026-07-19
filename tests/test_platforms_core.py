@@ -9,7 +9,7 @@ import pytest
 
 
 def test_platform_core_is_public_import_path():
-    from personal_agent.platforms.core import (
+    from luna_agent.platforms.core import (
         BasePlatformAdapter,
         PlatformCapabilities,
         PlatformEntry,
@@ -23,7 +23,7 @@ def test_platform_core_is_public_import_path():
 
 
 def test_message_event_to_envelope_preserves_text_and_attachments():
-    from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
+    from luna_agent.models.messages import MessageEvent, MessagePart, SessionSource
 
     event = MessageEvent(
         text="see [image: https://example.test/a.png]",
@@ -52,7 +52,7 @@ def test_message_event_to_envelope_preserves_text_and_attachments():
 
 
 def test_response_envelope_renders_text_fallback():
-    from personal_agent.models.messages import MessagePart, ResponseEnvelope
+    from luna_agent.models.messages import MessagePart, ResponseEnvelope
 
     response = ResponseEnvelope(parts=[
         MessagePart(type="text", text="file "),
@@ -65,8 +65,8 @@ def test_response_envelope_renders_text_fallback():
 
 @pytest.mark.asyncio
 async def test_base_adapter_send_message_falls_back_to_text():
-    from personal_agent.models.messages import MessagePart, OutboundMessage
-    from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+    from luna_agent.models.messages import MessagePart, OutboundMessage
+    from luna_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
 
     class Adapter(BasePlatformAdapter):
         def __init__(self):
@@ -102,8 +102,8 @@ async def test_base_adapter_send_message_falls_back_to_text():
 
 @pytest.mark.asyncio
 async def test_adapter_forwards_messages_without_owning_session_order():
-    from personal_agent.models.messages import MessageEvent, SessionSource
-    from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+    from luna_agent.models.messages import MessageEvent, SessionSource
+    from luna_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
 
     class Adapter(BasePlatformAdapter):
         async def connect(self): pass
@@ -132,9 +132,9 @@ async def test_adapter_forwards_messages_without_owning_session_order():
 
 @pytest.mark.asyncio
 async def test_base_adapter_prepare_inbound_attachment_downloads_to_store(tmp_path):
-    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
-    from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
-    from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+    from luna_agent.attachments import AttachmentStore, DownloadedAttachment
+    from luna_agent.models.messages import MessageEvent, MessagePart, SessionSource
+    from luna_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
 
     class Adapter(BasePlatformAdapter):
         async def connect(self) -> None:
@@ -180,9 +180,9 @@ async def test_base_adapter_prepare_inbound_attachment_downloads_to_store(tmp_pa
 
 @pytest.mark.asyncio
 async def test_base_adapter_prepare_inbound_attachment_respects_off_mode(tmp_path):
-    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
-    from personal_agent.models.messages import MessageEvent, MessagePart, SessionSource
-    from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
+    from luna_agent.attachments import AttachmentStore, DownloadedAttachment
+    from luna_agent.models.messages import MessageEvent, MessagePart, SessionSource
+    from luna_agent.platforms.core import BasePlatformAdapter, ChatInfo, SendResult
 
     class Adapter(BasePlatformAdapter):
         def __init__(self):

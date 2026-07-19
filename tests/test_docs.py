@@ -24,7 +24,7 @@ def test_readme_links_to_existing_docs():
 def test_readme_uses_current_cli_commands():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "uv run personal-agent chat" in readme
-    assert "uv run personal-agent serve" in readme
-    assert "uv run personal-agent doctor" in readme
-    assert "python -m personal_agent --cli" not in readme
+    assert "uv run luna-agent chat" in readme
+    assert "uv run luna-agent serve" in readme
+    assert "uv run luna-agent doctor" in readme
+    assert "python -m luna_agent --cli" not in readme

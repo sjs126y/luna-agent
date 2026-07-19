@@ -1,0 +1,10 @@
+key: builtin/bridge
+name: Tool Bridge
+version: "0.1.0"
+description: Deferred tool search/describe/call bridge.
+kind: builtin
+entrypoint: luna_agent.plugins.builtin.tools.bridge:register
+provides: [tools]
+enabled_by_default: true
+source: builtin
+record_import_delta: false

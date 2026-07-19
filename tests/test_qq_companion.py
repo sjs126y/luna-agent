@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from personal_agent.plugins.builtin.platforms.qq.companion import NapCatCompanion
-from personal_agent.plugins.builtin.platforms.qq.config import QQPluginConfig, QQRuntimeConfig
+from luna_agent.plugins.builtin.platforms.qq.companion import NapCatCompanion
+from luna_agent.plugins.builtin.platforms.qq.config import QQPluginConfig, QQRuntimeConfig
 
 
 class FakeProcess:
@@ -41,7 +41,7 @@ def test_qq_plugin_config_requires_command_for_managed_mode():
 
 
 def test_qq_plugin_registers_shared_managed_companion(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.qq import register
+    from luna_agent.plugins.builtin.platforms.qq import register
 
     executable = tmp_path / "NapCatWinBootMain.exe"
     executable.write_bytes(b"placeholder")
@@ -163,7 +163,7 @@ async def test_napcat_companion_restart_grace_prevents_duplicate_launch(tmp_path
 
 @pytest.mark.asyncio
 async def test_qq_adapter_launches_managed_companion_after_failed_probe(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     class FakeCompanion:
         enabled = True
@@ -213,7 +213,7 @@ async def test_qq_adapter_launches_managed_companion_after_failed_probe(tmp_path
 
 @pytest.mark.asyncio
 async def test_qq_adapter_reuses_ready_websocket_without_starting_companion(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     class FakeCompanion:
         enabled = True
