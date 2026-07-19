@@ -326,6 +326,12 @@ def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, ob
         effective = "unavailable"
     else:
         effective = "legacy"
+    if requested == "legacy":
+        bash_effective = "legacy"
+    elif capabilities["bwrap_available"]:
+        bash_effective = "bwrap"
+    else:
+        bash_effective = "unavailable"
     warnings: list[str] = []
     if requested == "bwrap" and effective == "unavailable":
         warnings.append("bwrap requested but unavailable")
@@ -333,10 +339,17 @@ def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, ob
         warnings.append("process filesystem isolation is unavailable")
     elif not capabilities["network_namespace_available"]:
         warnings.append("bwrap network namespace is unavailable")
+    if bash_effective == "unavailable":
+        warnings.append("strict Bash execution is unavailable without bwrap")
+    elif bash_effective == "legacy":
+        warnings.append("strict Bash filesystem isolation is explicitly disabled")
     return {
         "requested_backend": requested,
         "effective_backend": effective,
         "filesystem_isolated": effective == "bwrap",
+        "bash_effective_backend": bash_effective,
+        "bash_filesystem_isolated": bash_effective == "bwrap",
+        "bash_fail_closed": requested != "legacy",
         "network_namespace_available": bool(
             capabilities["network_namespace_available"]
         ),

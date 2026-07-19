@@ -117,8 +117,32 @@ def test_process_sandbox_snapshot_reports_degraded_network(monkeypatch):
 
     assert snapshot["effective_backend"] == "bwrap"
     assert snapshot["filesystem_isolated"] is True
+    assert snapshot["bash_effective_backend"] == "bwrap"
+    assert snapshot["bash_filesystem_isolated"] is True
+    assert snapshot["bash_fail_closed"] is True
     assert snapshot["network_namespace_available"] is False
     assert snapshot["warnings"] == ["bwrap network namespace is unavailable"]
+
+
+def test_process_sandbox_snapshot_reports_strict_bash_unavailable(monkeypatch):
+    from luna_agent.tools import process_sandbox
+
+    monkeypatch.setattr(
+        process_sandbox,
+        "process_sandbox_capabilities",
+        lambda: {
+            "bwrap_available": False,
+            "bwrap_path": "",
+            "network_namespace_available": False,
+        },
+    )
+
+    snapshot = process_sandbox.process_sandbox_snapshot("auto")
+
+    assert snapshot["effective_backend"] == "legacy"
+    assert snapshot["bash_effective_backend"] == "unavailable"
+    assert snapshot["bash_fail_closed"] is True
+    assert "strict Bash execution is unavailable without bwrap" in snapshot["warnings"]
 
 
 def test_strict_policy_fails_closed_in_auto_mode_without_bwrap(tmp_path, monkeypatch):

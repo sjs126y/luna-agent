@@ -667,16 +667,25 @@ def _collect_blocked_mounts(paths: Iterable[Path]) -> tuple[Path, ...]:
             visible_dirs: list[str] = []
             for name in dirs:
                 candidate = current_path / name
-                if sandbox.check_blocked_path(candidate):
+                if _mount_path_is_blocked(sandbox, candidate, directory=True):
                     masked.add(candidate.absolute())
                 else:
                     visible_dirs.append(name)
             dirs[:] = visible_dirs
             for name in files:
                 candidate = current_path / name
-                if sandbox.check_blocked_path(candidate):
+                if _mount_path_is_blocked(sandbox, candidate):
                     masked.add(candidate.absolute())
     return tuple(sorted(masked, key=str))
+
+
+def _mount_path_is_blocked(sandbox, path: Path, *, directory: bool = False) -> bool:
+    if sandbox.check_blocked_path(path):
+        return True
+    return bool(
+        directory
+        and sandbox.check_blocked_path(path / "__luna_blocked_path_probe__")
+    )
 
 
 tool_registry.register(ToolEntry(

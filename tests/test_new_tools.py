@@ -491,6 +491,19 @@ async def test_bash_strict_sandbox_masks_blocked_files_inside_cwd(tmp_path: Path
     assert "PermissionError" in result or "hidden" in result
 
 
+def test_bash_blocked_mount_scan_prunes_protected_directories(tmp_path: Path):
+    from luna_agent.plugins.builtin.tools.builtin.bash import _collect_blocked_mounts
+    from luna_agent.tools.sandbox import init_sandbox
+
+    workspace = tmp_path / "workspace"
+    protected = workspace / ".git"
+    protected.mkdir(parents=True)
+    (protected / "config").write_text("secret", encoding="utf-8")
+    init_sandbox([workspace], ["**/.git/**"])
+
+    assert _collect_blocked_mounts([workspace]) == (protected.absolute(),)
+
+
 # ── file edit/write reliability ────────────────────────
 
 
