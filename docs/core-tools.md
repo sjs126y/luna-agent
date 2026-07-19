@@ -6,7 +6,7 @@
 
 ![Core](https://img.shields.io/badge/core-19%20tools-2EA44F)
 ![Bridge](https://img.shields.io/badge/tool%20bridge-3%20entries-2563EB)
-![Tests](https://img.shields.io/badge/tests-1171%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-1176%20passed-2EA44F)
 
 [项目首页](../README.md) · [文档中心](README.md) · [架构说明](architecture.md) · [安全边界](capabilities-and-boundaries.md)
 
@@ -53,7 +53,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | 多 Agent 组合 | sub_parallel、sub_pipeline、delegate_task、run_review | 保留能力，避免多个近义入口常驻 |
 | Workflow / Worktree | workflow_*、worktree_* | 专项且部分操作风险较高 |
 | 交互与附件 | clarify、confirm、artifact_from_file、response_attach | 由明确任务或系统提示触发搜索 |
-| MCP / 插件 | 动态注册工具 | 数量不稳定，统一按需发现 |
+| MCP / 插件 | 动态 MCP 工具；`plugin_inspect`、`plugin_build`、`plugin_manage` | 数量不稳定或操作低频，统一按需发现 |
 
 ## 可靠性边界
 
@@ -68,6 +68,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | `bash` | 异步进程、超时与中断、持续排空输出、64 KiB 捕获上限 |
 | `web_fetch` | 每次跳转前 SSRF 校验、5 次跳转上限、2 MiB 响应上限、内容类型约束 |
 | 后台进程 | 异步读取，stdout/stderr 各自只保留 4k 字符尾部 |
+| 插件工具 | 查询绑定 live manager；构建路径经过 sandbox；管理操作逐次审批且卸载保留数据 |
 
 实际事故中的 `/home/sujinsheng` 全目录 `glob('*')` 从约 379 秒降至约 0.02 秒，并在找到 100 个结果后立即停止。
 

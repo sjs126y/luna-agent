@@ -5,9 +5,9 @@
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-19-7C3AED" alt="19 phases">
-  <img src="https://img.shields.io/badge/Python%20LOC-88%2C606-0A84FF" alt="88606 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F" alt="1171 tests passed">
+  <img src="https://img.shields.io/badge/phases-20-7C3AED" alt="20 phases">
+  <img src="https://img.shields.io/badge/Python%20LOC-89%2C197-0A84FF" alt="89197 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1176%20passed-2EA44F" alt="1176 tests passed">
 </p>
 
 <p>
@@ -26,8 +26,22 @@
 当前主分支状态：
 
 - 分支：`main`
-- 本次统计基准：v0.19 Luna Agent 命名迁移
-- 最近全量验证：`uv run pytest -q`，结果 `1171 passed, 1 warning`
+- 本次统计基准：v0.20 Agent 插件控制面
+- 最近全量验证：`uv run pytest -q`，结果 `1176 passed, 1 warning`
+
+## v0.20 Agent 可操作的插件控制面
+
+时间：2026-07-19
+
+目标：让主 Agent 不依赖 Bash 或 CLI 文本解析，直接使用现有插件控制面完成插件查询、构建与热管理。
+
+主要变化：
+
+- `plugin_inspect`、`plugin_build`、`plugin_manage` 作为低频工具进入 Capability Snapshot，通过 `tool_search` 按需发现。
+- 查询直接复用 `PluginQueryService`；安装、启停、重载、回滚和卸载直接调用当前 live `PluginManager`。
+- 插件源码仍由普通文件工具编辑，插件构建工具只承担静态校验、SDK contract test 和确定性打包。
+- 管理操作逐次审批、拒绝内置插件、限制本地安装源，普通卸载始终保留插件数据。
+- 路径继续经过 sandbox/resource 审批，打包拒绝符号链接；热更新后当前 Turn 保持旧 lease，新快照从下一轮生效。
 
 ## v0.19 Luna Agent 命名迁移
 
@@ -476,13 +490,13 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/luna_agent/**/*.py` | 254 | 53,937 |
-| `tests/**/*.py` | 102 | 31,026 |
+| `src/luna_agent/**/*.py` | 255 | 54,372 |
+| `tests/**/*.py` | 103 | 31,182 |
 | Plugins / Examples / Scripts / SDK | 33 | 3,633 |
 | 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
-| Python 合计 | 398 | 88,606 |
+| Python 合计 | 400 | 89,197 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.39 万行，测试约 3.10 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1171 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.44 万行，测试约 3.12 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1176 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

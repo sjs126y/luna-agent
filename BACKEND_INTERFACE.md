@@ -63,6 +63,8 @@
 
 新增 Skill 命令名为 `/repo-summary`、`/review-pr`、`/triage-issues`、`/release-notes`、`/library-docs`、`/upgrade-library`、`/compare-library-api`、`/inspect-web-page`、`/test-web-page`、`/operate-web-page`。Skill 执行仍表现为普通 conversation turn，不新增前端事件类型。
 
+低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`plugin_build` 和 `plugin_manage` 的 `tool_approval_mode` 固定为 `prompt`。
+
 ## 1. Conversation Event Stream
 
 所有实时前端消费同一种事件模型：

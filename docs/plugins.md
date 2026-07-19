@@ -160,6 +160,31 @@ uv run luna-agent plugins package ./my-plugin
 
 `create --spec` 支持 `tool`、`skill`、`mcp`、`hook`、`command`、`active` 特性，并生成 `plugin.yaml`、入口模块、`AGENTS.md`、README 和契约测试。`--contract` 使用 SDK 的 `FakePluginRuntimeContext`，不启动宿主；`--integration` 使用临时数据目录中的真实 `PluginManager`，会执行注册、依赖解析和候选能力构建，但不污染正式插件状态。`plugins diff <v1> <v2>` 会比较版本、依赖/能力声明和内容哈希；`plugins package` 生成排除缓存文件的确定性 ZIP。
 
+## Agent 插件工具
+
+小鹿可以通过 `tool_search` 按需发现三个插件控制面工具，它们不常驻每轮 Prompt：
+
+| 工具 | Action | 职责 |
+| --- | --- | --- |
+| `plugin_inspect` | `list/info/versions/operations/operation/capabilities` | 只读查询当前 live PluginManager |
+| `plugin_build` | `validate/test/package` | 静态校验、SDK contract test 与确定性 ZIP 打包，不编辑源码 |
+| `plugin_manage` | `install/enable/disable/reload/rollback/uninstall` | 操作当前 Gateway 使用的同一个 PluginManager 和 Capability Snapshot |
+
+推荐链路：
+
+```text
+tool_search("plugin package install")
+  -> plugin_inspect(action="capabilities")
+  -> 使用 read/write/edit 编写插件
+  -> plugin_build(action="validate")
+  -> plugin_build(action="test")
+  -> plugin_build(action="package")
+  -> plugin_manage(action="install")
+  -> plugin_inspect(action="info")
+```
+
+构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。两者都使用 `approval_mode=prompt`，不会复用 TTL 工具授权。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
+
 ## plugin.yaml
 
 每个插件包必须有 `plugin.yaml`、`plugin.yml` 或 `plugin.json`。内置插件由 `PluginManager` 递归扫描 `src/luna_agent/plugins/builtin/**/plugin.yaml` 发现；用户插件从配置里的插件目录发现。
