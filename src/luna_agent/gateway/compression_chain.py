@@ -38,8 +38,10 @@ class CompressionChain:
 
     def link(self, old_session_id: str, new_session_id: str) -> None:
         """Record that old_session was compressed into new_session."""
-        self._chain[old_session_id] = new_session_id
-        self.save()
+        updated = dict(self._chain)
+        updated[old_session_id] = new_session_id
+        write_json_atomic(self._path, updated)
+        self._chain = updated
         logger.info("Compression chain: %s → %s", old_session_id[:8], new_session_id[:8])
 
     def resolve(self, session_id: str) -> str:

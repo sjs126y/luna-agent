@@ -12,6 +12,7 @@ from luna_agent.llm.token_counter import count_messages_tokens, count_tools_toke
 from luna_agent.text_safety import clean_text
 
 if TYPE_CHECKING:
+    from luna_agent.compression import CompactionResult
     from luna_agent.multimodal.processor import ResolvedConversationInput
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class TurnContext:
     should_review_memory: bool = False
     was_compressed: bool = False            # True if compression ran this turn
     pre_compress_message_count: int = 0     # message count before compression
+    compaction_result: "CompactionResult | None" = None
     skill_injection: str | None = None      # from /skill-name, injected to api_messages
     skill_summaries: str = ""               # ephemeral, injected to api_messages
     memory_prefetch_messages: list[dict] = field(default_factory=list)  # ephemeral
@@ -101,11 +103,10 @@ async def build_turn_context(
     conversation_history = list(history or [])
     messages = copy.deepcopy(conversation_history)
 
-    # Append current user message
-    messages.append({
+    current_user_message = {
         "role": "user",
         "content": content_blocks,
-    })
+    }
     # Consume pending skill injection (set by Gateway /skill-name)
     skill_injection = None
     if agent._pending_skill_injection:
@@ -120,10 +121,11 @@ async def build_turn_context(
 
     # Token check + compression. Ephemeral injections count toward the request
     # budget but are not persisted into compressed history.
-    pre_count = len(messages)
-    pre_compress_messages = copy.deepcopy(messages)
-    messages = await _check_and_compress(
+    candidate_messages = messages + [current_user_message]
+    pre_count = len(candidate_messages)
+    compaction_result = await _check_and_build_compaction(
         agent,
+        candidate_messages,
         messages,
         extra_context_text=compose_context_text(
             skill_summaries,
@@ -133,7 +135,10 @@ async def build_turn_context(
     )
     compression_hook_contexts = list(agent._hook_additional_contexts)
     agent._hook_additional_contexts.clear()
-    was_compressed = messages != pre_compress_messages
+    if compaction_result is not None:
+        messages = copy.deepcopy(compaction_result.replacement_history)
+    messages.append(current_user_message)
+    was_compressed = compaction_result is not None
     user_idx = max(0, len(messages) - 1)
 
     return TurnContext(
@@ -146,6 +151,7 @@ async def build_turn_context(
         current_turn_user_idx=user_idx,
         was_compressed=was_compressed,
         pre_compress_message_count=pre_count,
+        compaction_result=compaction_result,
         skill_injection=skill_injection,
         skill_summaries=skill_summaries,
         memory_prefetch_messages=memory_prefetch_messages,
@@ -164,13 +170,30 @@ async def _check_and_compress(
     *,
     extra_context_text: str = "",
 ) -> list[dict]:
-    """If estimated tokens exceed threshold, compress via ContextEngine."""
+    """Compatibility wrapper returning only replacement history."""
+    compaction = await _check_and_build_compaction(
+        agent,
+        messages,
+        messages,
+        extra_context_text=extra_context_text,
+    )
+    return compaction.replacement_history if compaction is not None else messages
+
+
+async def _check_and_build_compaction(
+    agent,
+    measured_messages: list[dict],
+    completed_messages: list[dict],
+    *,
+    extra_context_text: str = "",
+):
+    """Build a checkpoint for completed history when the candidate request is full."""
     if agent._compressor is None:
-        return messages
+        return None
 
     model = agent._provider.model if agent._provider else ""
     total = (
-        count_messages_tokens(messages, model=model)
+        count_messages_tokens(measured_messages, model=model)
         + count_messages_tokens([], agent._cached_system_prompt or "", model=model)
         + count_tools_tokens(agent.tools, model=model)
         + count_messages_tokens([{
@@ -179,8 +202,8 @@ async def _check_and_compress(
         }], model=model)
     )
 
-    if not agent._compressor.should_compress(total, messages):
-        return messages
+    if not agent._compressor.should_compress(total, completed_messages):
+        return None
 
     hook_manager = getattr(agent, "_hook_manager", None)
     if hook_manager is not None:
@@ -209,7 +232,7 @@ async def _check_and_compress(
             event_name=HookEvent.PRE_COMPACT,
             payload={
                 "trigger": "auto",
-                "message_count": len(messages),
+                "message_count": len(completed_messages),
                 "estimated_tokens": total,
             },
             **common,
@@ -219,50 +242,60 @@ async def _check_and_compress(
                 f"[PreCompact hook context]\n{pre_outcome.additional_context.strip()}"
             )
         if pre_outcome.stop:
-            return messages
+            return None
 
     logger.info("Compressing: %d tokens > %d limit", total, agent._compressor.threshold_tokens)
     try:
         compaction = await agent._compressor.compress(
-            messages,
+            completed_messages,
             agent._cached_system_prompt or "",
             agent._transport,
         )
         # Third-party engines written against the original contract may still
         # return the replacement list directly. Keep that shape readable while
         # built-ins expose checkpoint metadata through CompactionResult.
-        result = (
-            compaction.replacement_history
-            if hasattr(compaction, "replacement_history")
-            else compaction
-        )
+        if not hasattr(compaction, "replacement_history"):
+            from luna_agent.compression import CompactionMetadata, CompactionResult
+
+            replacement = list(compaction or [])
+            compaction = CompactionResult(
+                replacement_history=replacement,
+                summary="",
+                metadata=CompactionMetadata(
+                    pre_message_count=len(completed_messages),
+                    post_message_count=len(replacement),
+                    model=model,
+                    details={"legacy_engine": True},
+                ),
+            )
+        result = compaction.replacement_history
         if hook_manager is not None:
             await hook_manager.dispatch(HookEnvelope(
                 event_name=HookEvent.POST_COMPACT,
                 payload={
                     "trigger": "auto",
-                    "pre_message_count": len(messages),
+                    "pre_message_count": len(completed_messages),
                     "post_message_count": len(result),
                     "fallback": False,
                 },
                 **common,
             ))
-        return result
+        return compaction
     except Exception:
         logger.exception("Compression failed; preserving original context")
-        result = messages
+        result = completed_messages
         if hook_manager is not None:
             await hook_manager.dispatch(HookEnvelope(
                 event_name=HookEvent.POST_COMPACT,
                 payload={
                     "trigger": "auto",
-                    "pre_message_count": len(messages),
+                    "pre_message_count": len(completed_messages),
                     "post_message_count": len(result),
                     "fallback": True,
                 },
                 **common,
             ))
-        return result
+        return None
 
 
 def _truncate(messages: list[dict], head: int = 2, tail: int = 6) -> list[dict]:

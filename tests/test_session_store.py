@@ -89,6 +89,30 @@ async def test_multiple_compressions_preserve_full_chain(store):
 
 
 @pytest.mark.asyncio
+async def test_commit_compaction_rolls_back_database_when_chain_write_fails(store, monkeypatch):
+    session_store, db, chain = store
+    entry = await session_store.get_or_create("cli:default:local", _source())
+    before_cursor = await db._conn.execute("SELECT COUNT(*) AS count FROM sessions")
+    before = await before_cursor.fetchone()
+
+    def fail_link(old_session_id, new_session_id):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(chain, "link", fail_link)
+    with pytest.raises(OSError, match="disk full"):
+        await session_store.commit_compaction(
+            "cli:default:local",
+            _source(),
+            [{"role": "user", "content": [{"type": "text", "text": "summary"}]}],
+        )
+
+    after_cursor = await db._conn.execute("SELECT COUNT(*) AS count FROM sessions")
+    after = await after_cursor.fetchone()
+    assert before["count"] == after["count"]
+    assert chain.get_chain(entry.session_id) == [entry.session_id]
+
+
+@pytest.mark.asyncio
 async def test_expire_sessions_removes_compression_descendants(store):
     session_store, db, chain = store
     entry = await session_store.get_or_create("cli:old:local", _source("old"))

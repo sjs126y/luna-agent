@@ -125,6 +125,15 @@ class SessionStore:
     async def create_compressed_session(self, session_key: str, source,
                                          compressed_messages: list[dict]) -> str:
         """Create a new session holding compressed messages, link to old via chain."""
+        return await self.commit_compaction(session_key, source, compressed_messages)
+
+    async def commit_compaction(
+        self,
+        session_key: str,
+        source,
+        replacement_history: list[dict],
+    ) -> str:
+        """Persist a replacement window before the active turn continues."""
         old_entry = self._index.get(session_key)
         if old_entry is None:
             return ""
@@ -139,22 +148,26 @@ class SessionStore:
             user_name=old_entry.user_name,
             chat_id=old_entry.chat_id,
             chat_type=old_entry.chat_type,
-            message_count=len(compressed_messages),
+            message_count=len(replacement_history),
         )
-        await self._db.create_session(entry)
+        try:
+            await self._db.create_session(entry)
 
-        # Persist compressed messages to new session
-        from luna_agent.agent.finalize import unpack_message
-        for msg in compressed_messages:
-            role, content, tool_calls, tool_name, tool_call_id = unpack_message(msg)
-            await self._db.save_message(new_id, role, content, tool_calls, tool_name, tool_call_id)
+            from luna_agent.agent.finalize import unpack_message
+            for msg in replacement_history:
+                role, content, tool_calls, tool_name, tool_call_id = unpack_message(msg)
+                await self._db.save_message(
+                    new_id, role, content, tool_calls, tool_name, tool_call_id
+                )
 
-        # Link chain
-        if self._chain:
-            self._chain.link(current_id, new_id)
+            if self._chain:
+                self._chain.link(current_id, new_id)
+        except Exception:
+            await self._db.delete_session(new_id)
+            raise
 
         logger.info("Compressed session: %s → %s (%d messages)",
-                     current_id[:8], new_id[:8], len(compressed_messages))
+                     current_id[:8], new_id[:8], len(replacement_history))
         return new_id
 
     def get(self, session_key: str) -> SessionEntry | None:

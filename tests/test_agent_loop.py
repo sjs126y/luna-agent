@@ -348,6 +348,8 @@ async def test_build_turn_context_detects_same_length_compression(provider):
     assert len(ctx.messages) == 2
     assert ctx.was_compressed is True
     assert ctx.current_turn_user_idx == 1
+    assert ctx.compaction_result is not None
+    assert "current" not in str(ctx.compaction_result.replacement_history)
 
 
 @pytest.mark.asyncio

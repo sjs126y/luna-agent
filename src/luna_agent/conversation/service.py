@@ -189,6 +189,18 @@ class ConversationService:
                 ctx = await build_turn_context(agent, ctx_input, history)
                 if not str(getattr(ctx, "turn_id", "") or ""):
                     setattr(ctx, "turn_id", turn_id)
+            compaction_result = getattr(ctx, "compaction_result", None)
+            if compaction_result is not None:
+                checkpoint_id = await self.session_store.commit_compaction(
+                    session_key,
+                    source,
+                    compaction_result.replacement_history,
+                )
+                if not checkpoint_id:
+                    raise RuntimeError("failed to persist compaction checkpoint")
+                current_id = checkpoint_id
+                history = list(compaction_result.replacement_history)
+                previous_count = len(history)
             context_items = getattr(ctx, "hook_contexts", None)
             if context_items is None:
                 context_items = []
@@ -269,7 +281,7 @@ class ConversationService:
 
         persistence_summary: dict[str, Any] = {"partial": False}
         if status == "completed" and completed and not context_overflow:
-            if was_compressed:
+            if was_compressed and getattr(ctx, "compaction_result", None) is None:
                 stored_session_id = await self.session_store.create_compressed_session(
                     session_key, source, result["messages"]
                 )

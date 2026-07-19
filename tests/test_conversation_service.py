@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 
 from luna_agent.config import Settings
+from luna_agent.compression import CompactionMetadata, CompactionResult
 from luna_agent.conversation import ConversationService
 from luna_agent.conversation.service import TURN_REPORT_HISTORY_LIMIT
 from luna_agent.db.database import Database
@@ -59,11 +60,13 @@ class Ctx:
         was_compressed=False,
         should_review_memory=False,
         current_turn_user_idx=0,
+        compaction_result=None,
     ):
         self.messages = messages
         self.was_compressed = was_compressed
         self.should_review_memory = should_review_memory
         self.current_turn_user_idx = current_turn_user_idx
+        self.compaction_result = compaction_result
 
 
 @pytest_asyncio.fixture
@@ -992,6 +995,50 @@ async def test_run_turn_creates_compressed_session_when_context_was_compressed(s
     assert result.was_compressed is True
     assert calls and calls[0][0] == "cli:default:local"
     assert calls[0][2] == _messages()
+
+
+@pytest.mark.asyncio
+async def test_compaction_checkpoint_is_persisted_before_failed_turn(service, monkeypatch):
+    svc, _manager, _db = service
+    source = _source()
+    original = await svc.session_store.get_or_create("cli:default:local", source)
+    await svc.session_store.save_transcript(original.session_id, _messages("old", "answer"), 0)
+    replacement = [{
+        "role": "user",
+        "content": [{"type": "text", "text": "[Context checkpoint summary]\nstate"}],
+    }]
+    checkpoint = CompactionResult(
+        replacement_history=replacement,
+        summary="state",
+        metadata=CompactionMetadata(pre_tokens=900, post_tokens=100),
+    )
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(
+            replacement + [{"role": "user", "content": [{"type": "text", "text": text}]}],
+            was_compressed=True,
+            current_turn_user_idx=1,
+            compaction_result=checkpoint,
+        )
+
+    async def run_conversation(agent, ctx):
+        raise RuntimeError("model down after checkpoint")
+
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", source, "current request")
+
+    current_id = svc.session_store.resolve_session_id("cli:default:local")
+    assert current_id != original.session_id
+    assert svc.compression_chain.get_chain(original.session_id) == [original.session_id, current_id]
+    assert result.status == "failed"
+    old_history = await svc.session_store.load_history(original.session_id)
+    new_history = await svc.session_store.load_history(current_id)
+    assert any("old" in str(message) for message in old_history)
+    assert any("state" in str(message) for message in new_history)
+    assert any("current request" in str(message) for message in new_history)
+    assert sum("current request" in str(message) for message in new_history) == 1
 
 
 @pytest.mark.asyncio
