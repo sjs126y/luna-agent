@@ -546,7 +546,7 @@ Transport registry 按 API mode 选择 transport。
 - `responses`。
 - `codex_responses`。
 
-`LLM_API_MODE=auto` 优先采用 provider 默认协议，未知 provider 才使用明确的 base URL 线索。主 Agent、Memory LLM、插件 LLM port 和视觉 LLM 共用同一解析结果；特殊中转协议仍建议显式配置。
+`LLM_API_MODE=auto` 优先采用 provider 默认协议：OpenAI 使用 Responses，Anthropic/DeepSeek 使用 Anthropic Messages，OpenRouter/xAI 使用 Chat Completions；未知 provider 才使用明确的 base URL 线索。主 Agent、Memory LLM、插件 LLM port 和视觉 LLM 共用同一解析结果；特殊中转协议仍建议显式配置。
 
 ### Anthropic Messages
 

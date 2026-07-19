@@ -145,6 +145,20 @@ def _configured_reasoning_effort(config) -> str:
     return str(getattr(config, "llm_reasoning_effort", "") or "").strip()
 
 
+def _deepseek_base_url(config) -> str:
+    base_url = str(getattr(config, "llm_base_url", "") or "").strip().rstrip("/")
+    api_mode = str(getattr(config, "llm_api_mode", "auto") or "auto").strip()
+    official_root = "https://api.deepseek.com"
+    if not base_url:
+        return f"{official_root}/anthropic"
+    if base_url in {official_root, f"{official_root}/anthropic"}:
+        if api_mode in {"", "auto", "anthropic_messages"}:
+            return f"{official_root}/anthropic"
+        if api_mode == "chat_completions":
+            return official_root
+    return base_url
+
+
 # ── Provider Registry ──────────────────────────────────
 
 class ProviderRegistry:
@@ -188,7 +202,7 @@ provider_registry = ProviderRegistry()
 
 def _deepseek_factory(config) -> ProviderProfile:
     return ProviderProfile(
-        name="deepseek", base_url=config.llm_base_url, api_key=config.llm_api_key,
+        name="deepseek", base_url=_deepseek_base_url(config), api_key=config.llm_api_key,
         model=config.llm_model,
         **_capability_fields(config, "deepseek"),
         reasoning_effort=_configured_reasoning_effort(config),

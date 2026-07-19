@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F?logo=pytest&logoColor=white" alt="1197 tests passed">
+  <img src="https://img.shields.io/badge/tests-1201%20passed-2EA44F?logo=pytest&logoColor=white" alt="1201 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -181,7 +181,7 @@ uv run luna-agent serve
 
 ```bash
 python -m compileall -q src/luna_agent
-uv run pytest -q  # 1197 passed, 1 warning
+uv run pytest -q  # 1201 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。
