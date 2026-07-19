@@ -184,9 +184,20 @@ class ConversationService:
             )
             ctx_input = resolved_input if user_input.attachments else resolved_input.text
             if _accepts_turn_id(build_turn_context):
-                ctx = await build_turn_context(agent, ctx_input, history, turn_id=turn_id)
+                ctx = await build_turn_context(
+                    agent,
+                    ctx_input,
+                    history,
+                    turn_id=turn_id,
+                    active_intent=user_input.active_intent,
+                )
             else:
-                ctx = await build_turn_context(agent, ctx_input, history)
+                ctx = await build_turn_context(
+                    agent,
+                    ctx_input,
+                    history,
+                    active_intent=user_input.active_intent,
+                )
                 if not str(getattr(ctx, "turn_id", "") or ""):
                     setattr(ctx, "turn_id", turn_id)
             compaction_result = getattr(ctx, "compaction_result", None)
@@ -310,7 +321,9 @@ class ConversationService:
                     stored_session_id = current_id
             else:
                 await self.session_store.save_transcript(
-                    current_id, result["messages"], previous_count
+                    current_id,
+                    _strip_internal_active_messages(result["messages"]),
+                    previous_count,
                 )
                 stored_session_id = current_id
         elif status == "stopped" and ctx is not None:
@@ -321,14 +334,20 @@ class ConversationService:
                 stop_text=final_response,
             )
             await self.session_store.save_transcript(
-                current_id, history + partial.messages, previous_count
+                current_id,
+                _strip_internal_active_messages(history + partial.messages),
+                previous_count,
             )
             stored_session_id = current_id
             persistence_summary = partial.summary
         else:
             minimal_messages = (
                 [{"role": "assistant", "content": [{"type": "text", "text": final_response}]}]
-                if "checkpoint_contains_current_turn" in locals() and checkpoint_contains_current_turn
+                if (
+                    user_input.active_intent is not None
+                    or "checkpoint_contains_current_turn" in locals()
+                    and checkpoint_contains_current_turn
+                )
                 else _minimal_turn_messages(user_input.text, final_response)
             )
             await self.session_store.save_transcript(
@@ -741,6 +760,27 @@ class ConversationService:
     async def ensure_session(self, session_key: str, source) -> None:
         await self.session_store.get_or_create(session_key, source)
 
+    async def session_status(self, session_key: str) -> dict[str, Any]:
+        session_id = self.session_store.resolve_session_id(str(session_key or "").strip())
+        if not session_id:
+            return {}
+        activity = await self.session_store.message_activity(
+            session_id,
+            recent_user_limit=3,
+        )
+        from datetime import UTC, datetime
+
+        def iso(value) -> str:
+            if not value:
+                return ""
+            return datetime.fromtimestamp(float(value), tz=UTC).isoformat()
+
+        return {
+            "last_user_at": iso(activity.get("last_user_at")),
+            "last_assistant_at": iso(activity.get("last_assistant_at")),
+            "recent_user_messages": list(activity.get("recent_user_messages") or ()),
+        }
+
     async def reset_session(self, session_key: str, source) -> str:
         new_id = await self.session_store.reset_session(session_key, source)
         self._pending_session_start_sources[session_key] = "clear"
@@ -1022,6 +1062,17 @@ def _minimal_turn_messages(user_text: str, assistant_text: str) -> list[dict]:
     return [
         {"role": "user", "content": [{"type": "text", "text": user_text}]},
         {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+    ]
+
+
+def _strip_internal_active_messages(messages: list[dict]) -> list[dict]:
+    """Remove the ephemeral active-intent marker before transcript persistence."""
+    return [
+        message
+        for message in messages
+        if not isinstance(message, dict)
+        or not isinstance(message.get("metadata"), dict)
+        or not message["metadata"].get("internal_active_intent")
     ]
 
 

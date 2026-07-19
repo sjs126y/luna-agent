@@ -734,6 +734,41 @@ class Database:
 
         return messages
 
+    async def message_activity(
+        self,
+        session_id: str,
+        *,
+        recent_user_limit: int = 3,
+    ) -> dict[str, Any]:
+        """Return bounded timestamps and user text for active-plugin decisions."""
+        rows = await self._conn.execute(
+            """SELECT role, content, timestamp FROM messages
+               WHERE session_id = ? AND tool_name IS NULL AND tool_call_id IS NULL
+               ORDER BY id DESC""",
+            (session_id,),
+        )
+        latest_user = None
+        latest_assistant = None
+        recent_users: list[str] = []
+        async for row in rows:
+            role = str(row["role"] or "")
+            timestamp = float(row["timestamp"] or 0)
+            if role == "user" and latest_user is None:
+                latest_user = timestamp
+            elif role == "assistant" and latest_assistant is None:
+                latest_assistant = timestamp
+            if role == "user" and len(recent_users) < max(0, int(recent_user_limit)):
+                text = clean_text(str(row["content"] or "")).strip()
+                if text:
+                    recent_users.append(text)
+            if latest_user is not None and latest_assistant is not None and len(recent_users) >= recent_user_limit:
+                break
+        return {
+            "last_user_at": latest_user,
+            "last_assistant_at": latest_assistant,
+            "recent_user_messages": list(reversed(recent_users)),
+        }
+
     async def get_message_count(self, session_id: str) -> int:
         row = await self._conn.execute(
             "SELECT COUNT(*) as cnt FROM messages WHERE session_id = ?", (session_id,)

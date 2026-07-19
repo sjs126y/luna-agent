@@ -60,6 +60,17 @@ class SessionStore:
     async def load_history(self, session_id: str) -> list[dict]:
         return await self._db.load_history(session_id)
 
+    async def message_activity(
+        self,
+        session_id: str,
+        *,
+        recent_user_limit: int = 3,
+    ) -> dict[str, Any]:
+        return await self._db.message_activity(
+            session_id,
+            recent_user_limit=recent_user_limit,
+        )
+
     async def save_transcript(self, session_id: str, messages: list[dict],
                               previous_count: int = 0) -> None:
         """Save new messages only (those after previous_count)."""

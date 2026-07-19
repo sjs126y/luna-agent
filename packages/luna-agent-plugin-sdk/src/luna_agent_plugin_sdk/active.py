@@ -12,6 +12,43 @@ ActiveRun = Callable[[Any], Awaitable[None]]
 ActiveLifecycleCallback = Callable[[Any], Awaitable[None] | None]
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveConversationIntent:
+    """Internal initiative handed to the host conversation runtime."""
+
+    intent_id: str
+    session_key: str
+    kind: str
+    instruction: str
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+    request_id: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in ("intent_id", "session_key", "kind", "instruction"):
+            if not str(getattr(self, name) or "").strip():
+                raise ValueError(f"active conversation intent {name} is required")
+        object.__setattr__(self, "intent_id", str(self.intent_id).strip())
+        object.__setattr__(self, "session_key", str(self.session_key).strip())
+        object.__setattr__(self, "kind", str(self.kind).strip())
+        object.__setattr__(self, "instruction", str(self.instruction).strip())
+        object.__setattr__(self, "request_id", str(self.request_id or "").strip())
+        object.__setattr__(self, "evidence", dict(self.evidence or {}))
+        object.__setattr__(self, "metadata", dict(self.metadata or {}))
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationStatus:
+    """Bounded read-only session activity exposed to active plugins."""
+
+    session_key: str
+    busy: bool = False
+    queued_count: int = 0
+    last_user_at: str = ""
+    last_assistant_at: str = ""
+    recent_user_messages: tuple[str, ...] = ()
+
+
 class ActiveRestartPolicy(StrEnum):
     NEVER = "never"
     ON_FAILURE = "on_failure"

@@ -1,8 +1,10 @@
 from luna_agent.plugins.active.contracts import (
+    ActiveConversationIntent,
     ActiveRegistration,
     ActiveResourceRequest,
     ActiveRestartPolicy,
     ActiveRunnerState,
+    ConversationStatus,
 )
 from luna_agent.plugins.active.runtime import (
     ActivePluginRunner,
@@ -15,12 +17,14 @@ from luna_agent.plugins.active.scope import CleanupFailure, PluginGenerationScop
 
 __all__ = [
     "ActivePluginRunner",
+    "ActiveConversationIntent",
     "ActiveRegistration",
     "ActiveResourceRequest",
     "ActiveRestartPolicy",
     "ActiveRunnerState",
     "ActiveRuntimeControl",
     "ActiveWakeReason",
+    "ConversationStatus",
     "CleanupFailure",
     "PluginGenerationScope",
     "PluginResourceFacade",
