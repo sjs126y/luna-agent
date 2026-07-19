@@ -118,6 +118,8 @@ class SecurityStateStore:
 
 
 def security_settings_snapshot(settings: Any) -> dict[str, Any]:
+    from luna_agent.security.config import normalize_approval_reviewer_config
+
     store = SecurityStateStore(settings)
     context = store.context("__diagnostics__")
     preset = mode_preset(context.mode_id)
@@ -137,6 +139,9 @@ def security_settings_snapshot(settings: Any) -> dict[str, Any]:
             "tools": dict(context.tool_approval_tools),
             "mcp_servers": dict(context.tool_approval_mcp_servers),
         },
+        "approval_reviewer": normalize_approval_reviewer_config(
+            getattr(settings, "approval_reviewer_config", {})
+        ),
         "grant_ttl_seconds": store.grant_ttl_seconds,
     }
 

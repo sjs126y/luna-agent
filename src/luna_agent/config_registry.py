@@ -338,6 +338,14 @@ def _permission_fields() -> tuple[ConfigField, ...]:
             "Tool approval defaults and exact tool or MCP server overrides.",
         ),
         _yaml_field(
+            "permissions.approval_reviewer",
+            "approval_reviewer_config",
+            {},
+            "dict",
+            "permissions",
+            "Optional model-backed approval reviewer; disabled by default.",
+        ),
+        _yaml_field(
             "permissions.confirm_timeout_seconds",
             "permission_confirm_timeout_seconds",
             120,

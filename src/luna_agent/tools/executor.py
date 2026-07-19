@@ -166,6 +166,7 @@ async def execute_tool_calls(
                             agent=agent,
                             event_sink=event_sink,
                             confirm=effective_confirm,
+                            approval_context=_latest_user_context(messages),
                         )
                         for _, tc in batch
                     ],
@@ -191,6 +192,7 @@ async def execute_tool_calls(
                     agent=agent,
                     event_sink=event_sink,
                     confirm=effective_confirm,
+                    approval_context=_latest_user_context(messages),
                 )
                 i += 1
     finally:
@@ -276,6 +278,10 @@ async def _prepare_batch_confirmation(
         return _BatchConfirmation(confirm=confirm)
     security_context = getattr(agent, "_security_context", None)
     if security_context is None:
+        return _BatchConfirmation(confirm=confirm)
+    # Review each request independently; an aggregate decision could grant a
+    # broader resource set than the model actually examined.
+    if _approval_reviewer_enabled(agent):
         return _BatchConfirmation(confirm=confirm)
 
     from luna_agent.security.evaluator import grant_prepared_call, prepare_tool_call
@@ -388,6 +394,7 @@ async def execute_tool_call_result(
     event_sink: Any = None,
     confirm: Any = None,
     timeout: float | None = None,
+    approval_context: str = "",
 ) -> ToolExecutionResult:
     """Execute a single tool call through the security pipeline.
 
@@ -589,14 +596,23 @@ async def execute_tool_call_result(
                 error=getattr(permission_outcome, "reason", "") or "permission denied by hook",
                 started=started,
             ))
-    if _needs_tool_confirm(tool_decision) and (
-        hook_permission == PermissionDecision.ALLOW or confirm is not None
-    ):
-        answer = (
-            "allow"
-            if hook_permission == PermissionDecision.ALLOW
-            else await _confirm_tool_decision(confirm, tool_decision, agent=agent)
+    if _needs_tool_confirm(tool_decision):
+        answer: str | None = None
+        reviewer_decision = await _review_permission_request(
+            agent,
+            tc,
+            tool_decision,
+            event_sink=event_sink,
+            user_context=approval_context,
         )
+        if hook_permission == PermissionDecision.ALLOW:
+            answer = "allow"
+        elif reviewer_decision == "allow_once":
+            answer = "allow"
+        elif reviewer_decision == "deny":
+            answer = "deny"
+        elif confirm is not None:
+            answer = await _confirm_tool_decision(confirm, tool_decision, agent=agent)
         if answer == "interrupted":
             await _emit_tool_decision(event_sink, tool_decision)
             return await _finish(_result(
@@ -848,6 +864,78 @@ def _needs_tool_confirm(decision: ToolDecision) -> bool:
         and decision.permission_decision == "ask"
         and not decision.allowed
     )
+
+
+def _approval_reviewer_enabled(agent: Any) -> bool:
+    config = getattr(agent, "_approval_reviewer_config", {}) if agent is not None else {}
+    return bool(isinstance(config, dict) and config.get("enabled"))
+
+
+async def _review_permission_request(
+    agent: Any,
+    tc: dict,
+    decision: ToolDecision,
+    *,
+    event_sink: Any = None,
+    user_context: str = "",
+) -> str | None:
+    """Return a reviewer decision, or None when human confirmation is needed."""
+    if not _approval_reviewer_enabled(agent):
+        return None
+    from luna_agent.security.reviewer import ApprovalRequest, ApprovalReviewer
+
+    reviewer = ApprovalReviewer(agent, getattr(agent, "_approval_reviewer_config", {}))
+    if not reviewer.eligible(decision.risk_level):
+        return None
+    entry = _resolve_tool_entry(agent, decision.tool_name)
+    review = await reviewer.review(
+        ApprovalRequest(
+            tool_name=decision.tool_name,
+            source=str(getattr(entry, "_plugin_key", "") or "core"),
+            risk_level=decision.risk_level,
+            mode=decision.execution_mode,
+            reason=decision.message or decision.risk_summary or decision.reason_code,
+            input_summary=decision.input_summary or decision.input_preview,
+            resources=tuple(decision.requested_resources),
+            user_context=user_context,
+        )
+    )
+    await emit_event(
+        event_sink,
+        "approval_review",
+        "审批审查完成",
+        tool_name=decision.tool_name,
+        tool_use_id=decision.tool_use_id,
+        decision=review.decision,
+        reviewer_model=review.model,
+        reviewer_latency_ms=review.latency_ms,
+        reviewer_error=review.error,
+        fallback="human" if review.decision == "ask_human" else "",
+    )
+    if (
+        review.decision == "ask_human"
+        and review.error
+        and str(getattr(reviewer, "config", {}).get("fallback") or "human") == "deny"
+    ):
+        return "deny"
+    return review.decision
+
+
+def _latest_user_context(messages: list[dict] | None) -> str:
+    for message in reversed(messages or []):
+        if str(message.get("role") or "") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content[-2000:]
+        if isinstance(content, list):
+            parts = [
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") in {"text", "input_text"}
+            ]
+            return "\n".join(parts)[-2000:]
+    return ""
 
 
 def _can_run_in_parallel(tc: dict, entry: Any, agent: Any = None, *, confirm: Any = None) -> bool:

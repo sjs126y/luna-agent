@@ -26,6 +26,13 @@ permissions:
       worktree_merge: "prompt"
       worktree_cleanup: "prompt"
     mcp_servers: {}
+  approval_reviewer:
+    enabled: false               # model review is opt-in
+    model: ""                    # empty = current provider/model
+    timeout_seconds: 12
+    fallback: "human"            # human | deny
+    allow_ttl_grant: false       # TTL grants remain user-only
+    max_risk: "medium"           # low | medium
 
 agents:
   max_concurrent_runs: 4          # 最多同时运行的委派子代理数

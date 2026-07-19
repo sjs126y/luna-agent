@@ -86,6 +86,7 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
         "grant_ttl_minutes",
         "confirm_timeout_seconds",
         "tool_approval",
+        "approval_reviewer",
     },
     "plugins": {"dirs", "enabled", "disabled", "config"},
     "profiles": None,
@@ -569,6 +570,10 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         from luna_agent.security.config import tool_approval_config_errors
 
         errors.extend(tool_approval_config_errors(permissions["tool_approval"]))
+    if "approval_reviewer" in permissions:
+        from luna_agent.security.config import approval_reviewer_config_errors
+
+        errors.extend(approval_reviewer_config_errors(permissions["approval_reviewer"]))
 
     sandbox = sections["sandbox"]
     _string_list_or_csv(sandbox, "roots", "sandbox.roots", errors)

@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-07-20：Approval Reviewer
+
+- 新增可选 `permissions.approval_reviewer`，默认关闭，不配置时保持原人工确认链路。
+- 启用后跟随当前 Agent 的 provider、模型和 transport；只审查通过硬安全检查的低/中风险确认请求。
+- 高风险操作、blocked 路径、`deny` 策略和危险命令不会交给模型；模型失败或超时回退人工确认。
+- 模型只能返回 `allow_once`、`deny` 或 `ask_human`，TTL 授权仍只能由用户授予。
+- 新增 `approval_review` Conversation Event，并同步配置示例、接口文档和诊断快照。
+
 ## 2026-07-20：Fetch MCP 路由与 stdio 生命周期修复
 
 - 删除本地 `web_fetch` handler、内置注册、核心 toolset、延迟检索别名、主/子 Agent 策略和对应安全特例。模型 schema、Tool Catalog 与 `tool_search` 不再暴露该能力；直接调用返回 unknown tool。
