@@ -18,6 +18,7 @@ from luna_agent.plugins.builtin.tools.builtin.plugin_tools import (
     plugin_manage,
     plugin_manage_entry,
 )
+from luna_agent.security.evaluator import prepare_tool_call
 from luna_agent.tools.registry import dispatch_tool_search
 from luna_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
 from luna_agent.tools.sandbox import get_sandbox, init_sandbox
@@ -75,8 +76,26 @@ async def test_plugin_tools_are_discoverable_but_not_core() -> None:
 
     assert {"plugin_inspect", "plugin_build", "plugin_manage"} <= names
     assert plugin_inspect_entry.toolset == "plugin"
-    assert plugin_build_entry.approval_mode == "prompt"
-    assert plugin_manage_entry.approval_mode == "prompt"
+    assert prepare_tool_call(
+        {"name": "plugin_build", "input": {"action": "validate"}},
+        plugin_build_entry,
+    ).approval_mode == "auto"
+    assert prepare_tool_call(
+        {"name": "plugin_build", "input": {"action": "package"}},
+        plugin_build_entry,
+    ).approval_mode == "cached"
+    assert prepare_tool_call(
+        {"name": "plugin_build", "input": {"action": "test"}},
+        plugin_build_entry,
+    ).approval_mode == "prompt"
+    assert prepare_tool_call(
+        {"name": "plugin_manage", "input": {"action": "reload"}},
+        plugin_manage_entry,
+    ).approval_mode == "cached"
+    assert prepare_tool_call(
+        {"name": "plugin_manage", "input": {"action": "install"}},
+        plugin_manage_entry,
+    ).approval_mode == "prompt"
     assert plugin_manage_entry.is_destructive is True
 
 
@@ -142,6 +161,39 @@ async def test_plugin_manage_uses_live_manager_and_preserves_data(plugin_sandbox
     assert enabled["status"] == "LOADED"
     assert uninstalled["plugin_key"] == "user/agent-tool-demo"
     assert (data_path / "state.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_plugin_list_is_compact_and_honors_limit(plugin_sandbox: Path) -> None:
+    manager = _manager(plugin_sandbox)
+    source = _plugin_source(plugin_sandbox / "source")
+    token = set_current_tool_agent(SimpleNamespace(_plugin_manager=manager))
+    try:
+        await plugin_manage("install", source=str(source))
+        listed = _decode(await plugin_inspect("list", limit=1))
+    finally:
+        reset_current_tool_agent(token)
+
+    assert listed["total"] == 1
+    assert listed["returned"] == 1
+    assert listed["plugins"][0]["plugin_key"] == "user/agent-tool-demo"
+    assert "registered_items" not in listed["plugins"][0]
+    assert "error_traceback" not in listed["plugins"][0]
+
+
+@pytest.mark.asyncio
+async def test_plugin_install_missing_package_explains_build_step(plugin_sandbox: Path) -> None:
+    manager = _manager(plugin_sandbox)
+    missing = plugin_sandbox / "dist" / "missing.zip"
+    token = set_current_tool_agent(SimpleNamespace(_plugin_manager=manager))
+    try:
+        result = await plugin_manage("install", source=str(missing))
+    finally:
+        reset_current_tool_agent(token)
+
+    assert result.is_error is True
+    payload = json.loads(result.text)
+    assert "plugin_build(action='package'" in payload["error"]
 
 
 def test_plugin_package_rejects_symlinks(plugin_sandbox: Path) -> None:

@@ -57,7 +57,7 @@ def prepare_tool_call(tc: dict[str, Any], entry: Any) -> PreparedToolCall:
     if not isinstance(inp, dict):
         inp = {}
     source = str(getattr(entry, "_plugin_key", "") or "core")
-    approval_mode, approval_inherited = _approval_mode(entry, source)
+    approval_mode, approval_inherited = _approval_mode(entry, source, inp)
     resolver = getattr(entry, "resource_resolver", None)
     if callable(resolver):
         resources = tuple(resolver(deepcopy(inp)) or ())
@@ -179,7 +179,18 @@ def revoke_grants(
         context.state.resource_grants.pop(key, None)
 
 
-def _approval_mode(entry: Any, source: str) -> tuple[str, bool]:
+def _approval_mode(
+    entry: Any,
+    source: str,
+    input_: dict[str, Any],
+) -> tuple[str, bool]:
+    resolver = getattr(entry, "approval_mode_resolver", None)
+    if callable(resolver):
+        try:
+            resolved = str(resolver(deepcopy(input_)) or "").strip().lower()
+        except Exception:
+            return "prompt", False
+        return (resolved, False) if resolved in TOOL_APPROVAL_MODES else ("prompt", False)
     configured = str(getattr(entry, "approval_mode", "inherit") or "inherit").strip().lower()
     if configured in TOOL_APPROVAL_MODES:
         return configured, False

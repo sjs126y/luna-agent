@@ -88,19 +88,27 @@ class InboxWatcher:
                 self._record_failure(path, f"file size {size} is outside configured limits")
                 continue
             signature = _signature(info)
-            failure = dict(self.state["failures"].get(path) or {})
+            legacy_signature = _legacy_signature(info)
+            state_key = _state_key(path)
+            failure_key, failure = self._state_entry("failures", path, state_key)
             if (
-                failure.get("signature") == signature
+                failure.get("signature") in {signature, legacy_signature}
                 and int(failure.get("attempts") or 0) >= self.config.max_submission_attempts
             ):
                 self.pending.pop(path, None)
                 continue
-            previous = dict(self.state["processed"].get(path) or {})
-            if previous.get("signature") == signature:
+            previous_key, previous = self._state_entry("processed", path, state_key)
+            if previous.get("signature") in {signature, legacy_signature}:
+                if previous_key != state_key or previous.get("signature") != signature:
+                    previous["signature"] = signature
+                    self.state["processed"][state_key] = previous
+                    if previous_key and previous_key != state_key:
+                        self.state["processed"].pop(previous_key, None)
+                    self._save_state()
                 self.pending.pop(path, None)
                 continue
             if not previous and not self.config.process_existing:
-                self.state["processed"][path] = {
+                self.state["processed"][state_key] = {
                     "signature": signature,
                     "processed_at": "",
                     "baseline_only": True,
@@ -116,12 +124,14 @@ class InboxWatcher:
             if current_time - candidate.first_seen < self.config.settle_seconds:
                 continue
             if await self._submit_file(path, signature):
-                self.state["processed"][path] = {
+                self.state["processed"][state_key] = {
                     "signature": signature,
                     "processed_at": datetime.now(UTC).isoformat(),
                     "baseline_only": False,
                 }
-                self.state["failures"].pop(path, None)
+                self.state["failures"].pop(state_key, None)
+                if failure_key and failure_key != state_key:
+                    self.state["failures"].pop(failure_key, None)
                 self.pending.pop(path, None)
                 self._save_state()
                 processed_now.append(path)
@@ -194,19 +204,38 @@ class InboxWatcher:
                 return False
         return bool(self.config.active.sessions)
 
+    def _state_entry(
+        self,
+        bucket: str,
+        path: str,
+        state_key: str,
+    ) -> tuple[str, dict[str, Any]]:
+        values = self.state[bucket]
+        for key in (state_key, path):
+            value = values.get(key)
+            if isinstance(value, dict):
+                return key, dict(value)
+        for key, value in values.items():
+            if _state_key(key) == state_key and isinstance(value, dict):
+                return key, dict(value)
+        return "", {}
+
     def _record_failure(self, path: str, error: str, *, signature: str = "") -> None:
-        current = dict(self.state["failures"].get(path) or {})
+        state_key = _state_key(path)
+        previous_key, current = self._state_entry("failures", path, state_key)
         attempts = (
             int(current.get("attempts") or 0) + 1
             if not signature or current.get("signature") in {None, "", signature}
             else 1
         )
-        self.state["failures"][path] = {
+        self.state["failures"][state_key] = {
             "attempts": attempts,
             "signature": signature,
             "error": str(error)[:1000],
             "updated_at": datetime.now(UTC).isoformat(),
         }
+        if previous_key and previous_key != state_key:
+            self.state["failures"].pop(previous_key, None)
         self._save_state()
 
     def _save_state(self) -> None:
@@ -260,11 +289,23 @@ def _tool_json(result) -> dict[str, Any]:
 
 def _signature(info: dict[str, Any]) -> str:
     payload = {
+        "size_bytes": int(info.get("size_bytes") or 0),
+        "modified_at": str(info.get("modified_at") or ""),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _legacy_signature(info: dict[str, Any]) -> str:
+    payload = {
         "path": str(info.get("path") or ""),
         "size_bytes": int(info.get("size_bytes") or 0),
         "modified_at": str(info.get("modified_at") or ""),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _state_key(path: str) -> str:
+    return Path(path).name
 
 
 def _status(ctx, config: InboxWatchConfig) -> str:

@@ -109,6 +109,26 @@ def _plugin_summary(manager, plugin, *, removed: bool = False) -> dict[str, Any]
     }
 
 
+def _compact_plugin(report: dict[str, Any]) -> dict[str, Any]:
+    dependencies = report.get("dependency_report", {})
+    return {
+        "plugin_key": report.get("key", ""),
+        "name": report.get("name", ""),
+        "version": report.get("version", ""),
+        "kind": report.get("kind", ""),
+        "source": report.get("source", ""),
+        "enabled": report.get("enabled", False),
+        "status": report.get("status", ""),
+        "runtime_state": report.get("runtime_state", ""),
+        "active_enabled": report.get("active_enabled", False),
+        "generation_id": report.get("generation_id", ""),
+        "dependencies_ok": (
+            dependencies.get("ok", True) if isinstance(dependencies, dict) else True
+        ),
+        "error": report.get("error", ""),
+    }
+
+
 async def plugin_inspect(
     action: str,
     plugin_key: str = "",
@@ -119,7 +139,14 @@ async def plugin_inspect(
         manager = _live_manager()
         action = str(action or "").strip().lower()
         if action == "list":
-            return _result({"ok": True, "plugins": manager.queries.list_plugins()})
+            reports = manager.queries.list_plugins()
+            bounded = max(1, min(limit, 100))
+            return _result({
+                "ok": True,
+                "total": len(reports),
+                "returned": min(len(reports), bounded),
+                "plugins": [_compact_plugin(report) for report in reports[:bounded]],
+            })
         if action == "info":
             if not plugin_key:
                 raise ValueError("plugin_key is required for info")
@@ -206,7 +233,16 @@ async def plugin_manage(
         action = str(action or "").strip().lower()
         removed = False
         if action == "install":
-            source_path = _allowed_path(source, access="read", must_exist=True)
+            try:
+                source_path = _allowed_path(source, access="read", must_exist=True)
+            except ValueError as exc:
+                if "Path does not exist:" not in str(exc):
+                    raise
+                raise ValueError(
+                    f"{exc}. Create the package first with "
+                    "plugin_build(action='package', source='<plugin-directory>', "
+                    f"output='{source}'), or provide an existing local directory/ZIP/TAR."
+                ) from exc
             plugin = await manager.install_plugin_runtime(source_path, enable=enable)
         elif action == "enable":
             _external_plugin(manager, plugin_key)
@@ -297,6 +333,25 @@ def _manage_resources(input_: dict[str, Any]) -> list:
     return [ResourceRequirement("filesystem", str(source), "read", "plugin install source")]
 
 
+def _build_approval(input_: dict[str, Any]) -> str:
+    return {
+        "validate": "auto",
+        "package": "cached",
+        "test": "prompt",
+    }.get(str(input_.get("action") or "").strip().lower(), "prompt")
+
+
+def _manage_approval(input_: dict[str, Any]) -> str:
+    return {
+        "enable": "cached",
+        "disable": "cached",
+        "reload": "cached",
+        "install": "prompt",
+        "rollback": "prompt",
+        "uninstall": "prompt",
+    }.get(str(input_.get("action") or "").strip().lower(), "prompt")
+
+
 plugin_inspect_entry = ToolEntry(
     name="plugin_inspect",
     description=(
@@ -347,7 +402,8 @@ plugin_build_entry = ToolEntry(
     permission_category="write",
     tags=["plugin", "validate", "test", "package", "build"],
     risk_level="high",
-    approval_mode="prompt",
+    approval_mode="inherit",
+    approval_mode_resolver=_build_approval,
     precheck=_build_precheck,
     resource_resolver=_build_resources,
     idempotent=False,
@@ -380,7 +436,8 @@ plugin_manage_entry = ToolEntry(
     permission_category="destructive",
     tags=["plugin", "install", "reload", "rollback", "uninstall", "hot-reload"],
     risk_level="high",
-    approval_mode="prompt",
+    approval_mode="inherit",
+    approval_mode_resolver=_manage_approval,
     precheck=_manage_precheck,
     resource_resolver=_manage_resources,
     idempotent=False,

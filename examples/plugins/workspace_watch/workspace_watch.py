@@ -29,6 +29,7 @@ class WorkspaceWatchConfig(BaseModel):
     paths: list[str] = Field(default_factory=list)
     session_key: str = ""
     poll_interval_seconds: float = Field(default=30.0, ge=1.0)
+    missing_poll_interval_seconds: float = Field(default=30.0, ge=1.0)
     settle_seconds: float = Field(default=10.0, ge=0.0)
     prompt: str = (
         "工作区里这些文件刚刚发生了稳定变化。请查看变化涉及的文件，判断是否有需要提醒我的事项；"
@@ -50,6 +51,7 @@ class WorkspaceWatcher:
         self.storage = ctx.resources.storage
         self.signatures = self._load_signatures()
         self.pending: dict[str, PendingChange] = {}
+        self.missing_until: dict[str, float] = {}
 
     async def run(self) -> None:
         self._write_status("starting")
@@ -73,9 +75,16 @@ class WorkspaceWatcher:
         changed: list[str] = []
         signatures_changed = False
         for path in self.config.paths:
+            if current_time < self.missing_until.get(path, 0):
+                continue
             signature = await self._signature(path)
             if not signature:
+                self.missing_until[path] = current_time + max(
+                    self.config.poll_interval_seconds,
+                    self.config.missing_poll_interval_seconds,
+                )
                 continue
+            self.missing_until.pop(path, None)
             previous = self.signatures.get(path)
             if previous is None:
                 self.signatures[path] = signature
@@ -201,5 +210,6 @@ def _status(ctx, config: WorkspaceWatchConfig) -> str:
         f"- session: {config.session_key or 'not configured'}\n"
         f"- paths: {paths}\n"
         f"- interval: {config.poll_interval_seconds:g}s\n"
+        f"- missing interval: {config.missing_poll_interval_seconds:g}s\n"
         f"- settle: {config.settle_seconds:g}s"
     )

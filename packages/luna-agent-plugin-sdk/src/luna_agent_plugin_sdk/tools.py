@@ -52,6 +52,7 @@ class ToolEntry:
     availability_reason_fn: Callable[[], str] | None = None
     precheck: Callable[[dict[str, Any]], str | None] | None = None
     approval_mode: str = "inherit"
+    approval_mode_resolver: Callable[[dict[str, Any]], str] | None = None
     resource_resolver: Callable[[dict[str, Any]], list[Any]] | None = None
     idempotent: bool | None = None
     is_parallel_safe: bool = True

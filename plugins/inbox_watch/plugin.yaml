@@ -1,7 +1,7 @@
 schema_version: 1
 key: automation/inbox-watch
 name: Inbox Watch
-version: "0.1.0"
+version: "0.1.1"
 plugin_api: ">=1,<2"
 description: Promotes stable files from a controlled inbox into agent artifacts.
 kind: automation

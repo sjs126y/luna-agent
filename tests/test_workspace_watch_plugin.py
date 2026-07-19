@@ -135,6 +135,32 @@ async def test_workspace_watch_baselines_settles_and_notifies_once(tmp_path):
     assert "TODO.md" in persisted
 
 
+@pytest.mark.asyncio
+async def test_workspace_watch_backs_off_missing_paths(tmp_path):
+    manager = _manager(tmp_path, {
+        "paths": ["missing.txt"],
+        "active": {"enabled": False},
+    })
+    module = manager.list_plugins()[0].module
+    tool = _MissingTool()
+    ctx = SimpleNamespace(resources=SimpleNamespace(
+        storage=_Storage(),
+        tool=tool,
+        conversation=_Conversation(),
+    ))
+    watcher = module.WorkspaceWatcher(ctx, module.WorkspaceWatchConfig.model_validate({
+        "paths": ["missing.txt"],
+        "poll_interval_seconds": 2,
+        "missing_poll_interval_seconds": 30,
+    }))
+
+    assert await watcher.poll_once(now=0) == []
+    assert await watcher.poll_once(now=2) == []
+    assert await watcher.poll_once(now=29) == []
+    assert await watcher.poll_once(now=30) == []
+    assert tool.calls == 2
+
+
 def _file_info(modified_at: str, size: int) -> dict:
     return {
         "path": str(Path.cwd() / "TODO.md"),
@@ -164,6 +190,15 @@ class _Tool:
         assert arguments == {"path": "TODO.md"}
         payload = self.payloads.pop(0)
         return SimpleNamespace(status="success", content=json.dumps(payload))
+
+
+class _MissingTool:
+    def __init__(self):
+        self.calls = 0
+
+    async def call(self, name, arguments):
+        self.calls += 1
+        return SimpleNamespace(status="error", content="", error="file not found")
 
 
 class _Conversation:

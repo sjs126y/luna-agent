@@ -26,6 +26,33 @@ def _agent(tmp_path: Path, *, mode: str = "ask-first"):
     )
 
 
+def test_tool_approval_resolver_uses_call_input_and_fails_closed():
+    from luna_agent.security.evaluator import prepare_tool_call
+    from luna_agent.tools.entry import ToolEntry
+
+    async def handler():
+        return "ok"
+
+    entry = ToolEntry(
+        "dynamic_approval",
+        "demo",
+        {},
+        handler,
+        approval_mode="auto",
+        approval_mode_resolver=lambda input_: input_["mode"],
+    )
+
+    assert prepare_tool_call(
+        {"name": entry.name, "input": {"mode": "cached"}}, entry
+    ).approval_mode == "cached"
+    assert prepare_tool_call(
+        {"name": entry.name, "input": {"mode": "invalid"}}, entry
+    ).approval_mode == "prompt"
+    assert prepare_tool_call(
+        {"name": entry.name, "input": {}}, entry
+    ).approval_mode == "prompt"
+
+
 @pytest.mark.asyncio
 async def test_cached_tool_approval_uses_session_ttl(tmp_path):
     from luna_agent.tools.entry import ToolEntry
