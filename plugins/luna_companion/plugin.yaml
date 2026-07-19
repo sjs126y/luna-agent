@@ -1,0 +1,14 @@
+schema_version: 1
+key: automation/luna-companion
+name: Luna Companion
+version: "0.1.0"
+plugin_api: ">=1,<2"
+description: A small active companion that chooses when a useful check-in or follow-up is worth sending.
+kind: automation
+entrypoint: luna_companion:register
+requires:
+  sdk: ">=0.2,<1"
+provides: [active, command]
+tags: [active, companion, conversation]
+enabled_by_default: false
+source: local

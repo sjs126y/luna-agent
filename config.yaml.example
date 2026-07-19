@@ -188,6 +188,23 @@ plugins:
   enabled: []
   disabled: []
   config:
+    automation/luna-companion:
+      active:
+        enabled: false
+        sessions: []                 # 精确允许主动交流的 session_key
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+      quiet_hours:
+        - ["23:00", "08:00"]
+      max_daily_messages: 3
+      min_gap_seconds: 7200
+      review_threshold: 0.75
+      expire_after_seconds: 86400
+      check_in:
+        enabled: true
+        min_silence_seconds: 28800
+      follow_up:
+        enabled: true
+        max_recent_messages: 3
     examples/active-heartbeat:
       interval_seconds: 30
       active:
