@@ -266,6 +266,18 @@ async def plugin_manage(
                 force=False,
             )
             removed = True
+        elif action == "active_on":
+            _external_plugin(manager, plugin_key)
+            plugin = await manager.set_active_enabled(plugin_key, True)
+        elif action == "active_off":
+            _external_plugin(manager, plugin_key)
+            plugin = await manager.set_active_enabled(plugin_key, False)
+        elif action == "active_restart":
+            _external_plugin(manager, plugin_key)
+            plugin = await manager.restart_active_plugin(plugin_key)
+        elif action == "active_run":
+            _external_plugin(manager, plugin_key)
+            plugin = await manager.trigger_active_plugin(plugin_key, reason="manual")
         else:
             raise ValueError(f"Unsupported plugin_manage action: {action}")
         return _result(_plugin_summary(manager, plugin, removed=removed))
@@ -299,7 +311,10 @@ def _build_precheck(input_: dict[str, Any]) -> str | None:
 
 def _manage_precheck(input_: dict[str, Any]) -> str | None:
     action = str(input_.get("action") or "")
-    if action not in {"install", "enable", "disable", "reload", "rollback", "uninstall"}:
+    if action not in {
+        "install", "enable", "disable", "reload", "rollback", "uninstall",
+        "active_on", "active_off", "active_restart", "active_run",
+    }:
         return "Unsupported plugin_manage action."
     if action == "install" and not str(input_.get("source") or "").strip():
         return "A local plugin source path is required for install."
@@ -349,6 +364,10 @@ def _manage_approval(input_: dict[str, Any]) -> str:
         "install": "prompt",
         "rollback": "prompt",
         "uninstall": "prompt",
+        "active_on": "cached",
+        "active_off": "cached",
+        "active_restart": "cached",
+        "active_run": "cached",
     }.get(str(input_.get("action") or "").strip().lower(), "prompt")
 
 
@@ -414,7 +433,8 @@ plugin_manage_entry = ToolEntry(
     name="plugin_manage",
     description=(
         "Install, enable, disable, reload, roll back, or uninstall an external Luna Agent "
-        "plugin through the live PluginManager. Install accepts local directories, ZIP, or TAR only. "
+        "plugin through the live PluginManager. It can also turn an active runner on or off, restart it, "
+        "or wake it once. Install accepts local directories, ZIP, or TAR only. "
         "Uninstall always preserves plugin data."
     ),
     schema={
@@ -422,6 +442,7 @@ plugin_manage_entry = ToolEntry(
         "properties": {
             "action": {"type": "string", "enum": [
                 "install", "enable", "disable", "reload", "rollback", "uninstall",
+                "active_on", "active_off", "active_restart", "active_run",
             ]},
             "plugin_key": {"type": "string"},
             "source": {"type": "string", "description": "Local directory, ZIP, or TAR for install."},
@@ -434,7 +455,7 @@ plugin_manage_entry = ToolEntry(
     handler=plugin_manage,
     toolset="plugin",
     permission_category="destructive",
-    tags=["plugin", "install", "reload", "rollback", "uninstall", "hot-reload"],
+    tags=["plugin", "install", "reload", "rollback", "uninstall", "active", "hot-reload"],
     risk_level="high",
     approval_mode="inherit",
     approval_mode_resolver=_manage_approval,

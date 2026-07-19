@@ -183,7 +183,7 @@ uv run luna-agent plugins package ./my-plugin
 | --- | --- | --- |
 | `plugin_inspect` | `list/info/versions/operations/operation/capabilities` | 只读查询当前 live PluginManager |
 | `plugin_build` | `validate/test/package` | 静态校验、SDK contract test 与确定性 ZIP 打包，不编辑源码 |
-| `plugin_manage` | `install/enable/disable/reload/rollback/uninstall` | 操作当前 Gateway 使用的同一个 PluginManager 和 Capability Snapshot |
+| `plugin_manage` | `install/enable/disable/reload/rollback/uninstall/active_on/active_off/active_restart/active_run` | 操作当前 Gateway 使用的同一个 PluginManager、active runner 和 Capability Snapshot |
 
 推荐链路：
 
@@ -198,7 +198,7 @@ tool_search("plugin package install")
   -> plugin_inspect(action="info")
 ```
 
-构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。审批按 action 决定：`validate` 自动执行；`package`、`enable`、`disable`、`reload` 使用 `cached`（Local Auto 直接执行，Ask First 首次确认并复用 TTL）；`test`、`install`、`rollback`、`uninstall` 每次确认。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装源不存在时会提示先执行 `plugin_build(package)`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
+构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。审批按 action 决定：`validate` 自动执行；`package`、`enable`、`disable`、`reload`、`active_on`、`active_off`、`active_restart`、`active_run` 使用 `cached`（Local Auto 直接执行，Ask First 首次确认并复用 TTL）；`test`、`install`、`rollback`、`uninstall` 每次确认。当前 `approval_reviewer` 默认关闭，因此需要人工确认的操作不会自动交给模型审核；开启后仍受风险上限和 fallback 约束。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装源不存在时会提示先执行 `plugin_build(package)`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
 
 ## plugin.yaml
 

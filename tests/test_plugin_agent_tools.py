@@ -17,6 +17,8 @@ from luna_agent.plugins.builtin.tools.builtin.plugin_tools import (
     plugin_inspect_entry,
     plugin_manage,
     plugin_manage_entry,
+    _manage_approval,
+    _manage_precheck,
 )
 from luna_agent.security.evaluator import prepare_tool_call
 from luna_agent.tools.registry import dispatch_tool_search
@@ -75,6 +77,10 @@ async def test_plugin_tools_are_discoverable_but_not_core() -> None:
     names = {item["name"] for item in result["hits"]}
 
     assert {"plugin_inspect", "plugin_build", "plugin_manage"} <= names
+    actions = plugin_manage_entry.schema["properties"]["action"]["enum"]
+    assert {"active_on", "active_off", "active_restart", "active_run"} <= set(actions)
+    assert _manage_precheck({"action": "active_run", "plugin_key": "automation/luna-companion"}) is None
+    assert _manage_approval({"action": "active_run"}) == "cached"
     assert plugin_inspect_entry.toolset == "plugin"
     assert prepare_tool_call(
         {"name": "plugin_build", "input": {"action": "validate"}},

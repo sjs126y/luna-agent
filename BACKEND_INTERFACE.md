@@ -63,7 +63,7 @@
 
 新增 Skill 命令名为 `/repo-summary`、`/review-pr`、`/triage-issues`、`/release-notes`、`/library-docs`、`/upgrade-library`、`/compare-library-api`、`/inspect-web-page`、`/test-web-page`、`/operate-web-page`。Skill 执行仍表现为普通 conversation turn，不新增前端事件类型。
 
-低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`tool_approval_mode` 由 action 解析：`validate=auto`，`package/enable/disable/reload=cached`，`test/install/rollback/uninstall=prompt`。前端仍只需展示后端事件给出的最终模式。
+低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`tool_approval_mode` 由 action 解析：`validate=auto`，`package/enable/disable/reload/active_on/active_off/active_restart/active_run=cached`，`test/install/rollback/uninstall=prompt`。当前 `approval_reviewer` 默认关闭；开启后只对符合风险上限的人工确认请求进行模型审核，失败回退既定策略。前端仍只需展示后端事件给出的最终模式。
 
 ## 1. Conversation Event Stream
 
