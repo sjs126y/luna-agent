@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/registration-transactional-2EA44F" alt="Transactional registration">
   <img src="https://img.shields.io/badge/hot%20reload-snapshot%20leased-0A84FF" alt="Snapshot leased hot reload">
   <img src="https://img.shields.io/badge/config-isolated-0A84FF" alt="Isolated config">
+  <img src="https://img.shields.io/badge/SDK-0.1.0-7C3AED" alt="Plugin SDK 0.1.0">
   <img src="https://img.shields.io/badge/core-lightweight-555555" alt="Lightweight core">
 </p>
 
@@ -142,6 +143,23 @@ examples/plugins/hello/
 
 它演示了用户插件最常见的包式结构：插件目录本身是 Python package，`plugin.yaml` 的 `entrypoint` 写成 `hello:register`。
 
+## SDK 与 AI 开发入口
+
+外置插件的稳定数据契约位于独立 workspace 包 `packages/lumora-plugin-sdk`。插件应从 `lumora_plugin_sdk` 导入 `PluginRuntimeContext`、`ToolEntry`、`CommandEntry`、`HookEvent`、Hook outcome 和主动资源声明；`personal_agent.*` 保留给宿主实现与暂未稳定的运行服务。旧宿主导入路径暂时重导出同一类型，不代表新插件应继续依赖它们。
+
+面向 AI 编写插件时，先获取机器可读边界，再生成与验证：
+
+```bash
+uv run personal-agent plugins capabilities --json
+uv run personal-agent plugins schema manifest
+uv run personal-agent plugins schema scaffold
+uv run personal-agent plugins create ./my-plugin --spec ./plugin-spec.yaml
+uv run personal-agent plugins test ./my-plugin --contract --integration
+uv run personal-agent plugins package ./my-plugin
+```
+
+`create --spec` 支持 `tool`、`skill`、`mcp`、`hook`、`command`、`active` 特性，并生成 `plugin.yaml`、入口模块、`AGENTS.md`、README 和契约测试。`--contract` 使用 SDK 的 `FakePluginRuntimeContext`，不启动宿主；`--integration` 使用临时数据目录中的真实 `PluginManager`，会执行注册、依赖解析和候选能力构建，但不污染正式插件状态。`plugins diff <v1> <v2>` 会比较版本、依赖/能力声明和内容哈希；`plugins package` 生成排除缓存文件的确定性 ZIP。
+
 ## plugin.yaml
 
 每个插件包必须有 `plugin.yaml`、`plugin.yml` 或 `plugin.json`。内置插件由 `PluginManager` 递归扫描 `src/personal_agent/plugins/builtin/**/plugin.yaml` 发现；用户插件从配置里的插件目录发现。
@@ -153,7 +171,10 @@ schema_version: 1
 key: memory/lumora
 name: Lumora Memory Provider
 version: "1.0.0"
+plugin_api: ">=1,<2"
 entrypoint: personal_agent.plugins.builtin.memory.lumora:register
+requires:
+  sdk: ">=0.1,<1"
 ```
 
 常用可选字段：
@@ -176,11 +197,28 @@ manifest 会做严格校验：
 - `key` 必须是小写分段格式，例如 `builtin/tools`、`platforms/telegram`、`examples/hello`。
 - `entrypoint` 必须是 `module` 或 `module:function`，模块名和函数名都要是合法 Python 标识符。
 - `schema_version` 目前固定为 `1`。
+- `plugin_api` 声明插件兼容的宿主注册协议；外置插件应显式填写。
 - `kind` 表示主要分类，支持平台、记忆、集成、开发、自动化等现有枚举。
 - `source` 由扫描边界确定为 `builtin`、`local` 或 `installed`，不信任插件自己的声明。
 - `requires_env`、`provides`、`tags` 必须是字符串或字符串列表。
 - `enabled_by_default`、`deferred`、`record_import_delta` 必须是布尔值。
 - `deferred: true` 只允许用于 `kind: platform`。
+
+依赖统一放在 `requires`：
+
+```yaml
+requires:
+  lumora: ">=0.1,<1"
+  sdk: ">=0.1,<1"
+  plugins:
+    - key: integrations/github-assistant
+      version: ">=0.2,<1"
+  capabilities: [conversation.submit, storage.read_write]
+  mcp_tools:
+    github: [list_issues]
+```
+
+宿主与 SDK、Plugin API、插件版本和 capability 缺失是加载阻塞错误；MCP 工具可能在后台连接后才出现，因此启动检查先给 warning，真正调用仍由 MCP Runtime 判定。插件按依赖拓扑加载，循环依赖会阻止环内插件激活。卸载有启用中的 dependent 时默认拒绝；`--force` 会先禁用 dependent，但不删除它们的 package 或数据。
 
 manifest 有错时插件不会消失，会以 `invalid/<目录名>` 留在插件列表里，方便 `plugins doctor` 或 `plugins validate` 给出具体错误。
 
@@ -243,7 +281,7 @@ plugins/hello/
 主动插件仍是普通 generation，只额外注册一个长期根运行器；它不是 Job/Cron，也不拥有第二套 Capability Snapshot。插件内部可以用 `asyncio.TaskGroup` 组织自己的短期或长期任务，宿主只管理根任务和 generation 生命周期。
 
 ```python
-from personal_agent.plugins import ActiveResourceRequest
+from lumora_plugin_sdk import ActiveResourceRequest
 
 async def run(ctx):
     storage = ctx.resources.storage
@@ -340,7 +378,7 @@ plugins:
 `automation/inbox-watch` 对同一文件版本默认最多提交 3 次；达到
 `max_submission_attempts` 后保持失败记录，只有文件签名变化才会重新尝试。
 
-这些插件第一次观察外部状态时只建立基线；没有变化时不会调用 LLM。Reminder 和 Inbox 使用稳定 request id，Feed 与 GitHub 使用事件集合摘要生成 request id。Coordinator 会复用同一 `request_id` 的进行中或已完成结果，载荷、owner 或 session 冲突则拒绝；这保证 runner 重试不会重复运行同一个 Agent turn。主动功能默认关闭，并要求目标 session 同时出现在 `active.sessions`。
+这些插件第一次观察外部状态时只建立基线；没有变化时不会调用 LLM。Reminder 和 Inbox 使用稳定 request id，Feed 与 GitHub 使用事件集合摘要生成 request id。显式稳定 ID 的插件提交默认写入 SQLite Submission Ledger：同一 owner/origin/id 的相同载荷在进程重启后复用结果，冲突载荷拒绝；Conversation 已完成但 Delivery 尚未完成时只恢复确定性 `delivery_id` 的 Outbox 投递，不重跑模型。未提供稳定 ID 的普通提交仍只使用有界内存去重。主动功能默认关闭，并要求目标 session 同时出现在 `active.sessions`。
 
 Feed Watch 默认拒绝解析到私网或回环地址的订阅源。若 Watt Toolkit 等本地加速器有意将公网域名映射到本地，可通过 `trusted_private_hosts` 精确声明主机名。该配置不会放行其他域名，云元数据地址仍始终禁止：
 
@@ -388,7 +426,7 @@ plugins:
 正式运行时 Hook 由独立的 `HookManager` 管理，`PluginManager` 只负责注册转发、插件归属和卸载清理。回调接收只读的 `HookEnvelope`，并返回事件对应的 outcome：
 
 ```python
-from personal_agent.hooks import HookEvent, PreToolUseOutcome
+from lumora_plugin_sdk import HookEvent, PreToolUseOutcome
 
 async def protect_write(event):
     path = str(event.payload.get("input", {}).get("path") or "")
@@ -512,6 +550,10 @@ uv run python -m personal_agent plugins versions integrations/github-assistant
 uv run python -m personal_agent plugins operations
 uv run python -m personal_agent plugins doctor memory/mem0 --json
 uv run python -m personal_agent plugins validate examples/plugins/hello
+uv run personal-agent plugins capabilities --json
+uv run personal-agent plugins test examples/plugins/hello --contract --integration
+uv run personal-agent plugins diff examples/plugins/hot_reload_probe_v1 examples/plugins/hot_reload_probe_v2
+uv run personal-agent plugins package examples/plugins/hello
 uv run python -m personal_agent plugins install ./plugins/my_plugin
 uv run python -m personal_agent plugins install ./plugins/my_plugin --no-enable
 uv run python -m personal_agent plugins reload integrations/github-assistant

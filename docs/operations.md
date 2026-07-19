@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/first%20step-doctor-0A84FF" alt="Run doctor first">
   <img src="https://img.shields.io/badge/logs-data%2Flogs-555555" alt="Logs directory">
-  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F" alt="1145 tests passed">
+  <img src="https://img.shields.io/badge/tests-1167%20passed-2EA44F" alt="1167 tests passed">
 </p>
 
 <p>

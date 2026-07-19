@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1145%20passed-2EA44F" alt="1145 tests passed">
+  <img src="https://img.shields.io/badge/tests-1167%20passed-2EA44F" alt="1167 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
@@ -20,6 +20,15 @@
 </div>
 
 ---
+
+## 2026-07-19：Plugin SDK、依赖图与持久提交幂等
+
+- 新增独立 workspace 包 `lumora-plugin-sdk`，承载 Plugin API 版本、manifest/dependency、Tool、Hook、Command、Active 与 RuntimeContext 公共契约；宿主旧路径只保留兼容重导出。
+- manifest 新增 `plugin_api` 与 `requires`：支持 Lumora/SDK 版本、插件版本、宿主 capability 和 MCP tool 依赖；插件按拓扑加载，缺失/禁用/版本冲突/循环进入 `BLOCKED`，卸载会保护启用中的 dependents。
+- 主动插件显式稳定 `request_id` 时默认启用 SQLite Submission Ledger；重启后复用最终结果，Conversation checkpoint 与确定性 `delivery_id` 保证发送中断只续 Outbox，不重复运行 Agent。
+- 新增 AI-first 开发控制面：机器可读 capability/schema、结构化 spec 脚手架、SDK contract harness、临时真实宿主 integration test、插件 diff 与确定性 package；脚手架包含 `AGENTS.md` 并覆盖 Tool/Skill/MCP/Hook/Command/Active。
+- 根目录插件与 examples 已迁移到 SDK 公共 import，并声明 Plugin API/SDK 兼容范围。
+- 验证：插件改造聚焦回归 `153 passed`；完整回归 `1167 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的弃用 API；`compileall` 与 `git diff --check` 通过。
 
 ## 2026-07-19：主动投递、提交幂等与上下文识别修复
 

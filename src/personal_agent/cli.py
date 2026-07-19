@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import shutil
 import tempfile
@@ -776,11 +777,16 @@ def plugins_rollback(key: str, digest: str) -> None:
 def plugins_uninstall(
     key: str,
     purge_data: bool = typer.Option(False, "--purge-data", help="同时删除插件运行数据。"),
+    force: bool = typer.Option(False, "--force", help="禁用依赖当前插件的插件后继续卸载。"),
 ) -> None:
     manager = _plugin_manager()
     manager.load_plugin(key)
     try:
-        plugin = asyncio.run(manager.uninstall_plugin_runtime(key, purge_data=purge_data))
+        plugin = asyncio.run(manager.uninstall_plugin_runtime(
+            key,
+            purge_data=purge_data,
+            force=force,
+        ))
     except Exception as exc:
         _exit_error(f"插件卸载失败: {exc}")
     typer.echo(f"已卸载插件: {plugin.key}")
@@ -819,6 +825,130 @@ def plugins_validate(
         typer.echo(format_plugin_validation_report(report, include_traceback=True))
     if not report["validation_ok"]:
         raise typer.Exit(1)
+
+
+@plugins_app.command("capabilities")
+def plugins_capabilities(
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """List public registration, resource, hook, and scaffold capabilities."""
+    from personal_agent.plugins.devtools import capability_catalog
+
+    report = capability_catalog()
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+    typer.echo(f"Plugin API: {report['plugin_api_version']} / SDK: {report['sdk_version']}")
+    typer.echo("注册能力: " + ", ".join(report["registration"]))
+    typer.echo("宿主资源: " + ", ".join(report["host_resources"]))
+    typer.echo("Hook: " + ", ".join(report["hook_events"]))
+
+
+@plugins_app.command("schema")
+def plugins_schema(
+    kind: str = typer.Argument(..., help="manifest|scaffold|capabilities|hooks"),
+) -> None:
+    """Print a machine-readable plugin development schema."""
+    from personal_agent.plugins.devtools import schema_document
+
+    try:
+        report = schema_document(kind)
+    except KeyError as exc:
+        _exit_error(str(exc))
+    typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+
+
+@plugins_app.command("create")
+def plugins_create(
+    target: Path,
+    spec: Path = typer.Option(..., "--spec", help="JSON/YAML 插件脚手架规格。"),
+    force: bool = typer.Option(False, "--force", help="覆盖已存在的脚手架文件。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """Generate an AI-oriented external plugin package from a structured spec."""
+    from personal_agent.plugins.devtools import create_plugin, load_scaffold_spec
+
+    try:
+        paths = create_plugin(target, load_scaffold_spec(spec), force=force)
+    except Exception as exc:
+        _exit_error(f"插件脚手架创建失败: {exc}")
+    report = {"ok": True, "target": str(target.resolve()), "files": [str(path) for path in paths]}
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        typer.echo(f"已创建插件脚手架: {target}")
+        for path in paths:
+            typer.echo(f"  - {path}")
+
+
+@plugins_app.command("test")
+def plugins_test(
+    path: Path,
+    contract_mode: bool = typer.Option(False, "--contract", help="运行无宿主机注册契约测试。"),
+    integration_mode: bool = typer.Option(False, "--integration", help="运行临时真实宿主加载测试。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """Run host-free contract and/or ephemeral-host integration checks."""
+    from personal_agent.plugins.devtools import contract_test
+
+    if not contract_mode and not integration_mode:
+        contract_mode = integration_mode = True
+    reports = []
+    try:
+        if contract_mode:
+            reports.append(contract_test(path))
+        if integration_mode:
+            manager = _plugin_validation_manager(path)
+            integration = manager.validate_plugin_path(path, load=True)
+            reports.append({
+                "ok": bool(integration["validation_ok"]),
+                "mode": "integration",
+                "plugin_key": integration["key"],
+                "status": integration["status"],
+                "dependency_report": integration.get("dependency_report", {}),
+                "error": integration.get("error") or "",
+            })
+    except Exception as exc:
+        _exit_error(f"插件测试失败: {type(exc).__name__}: {exc}")
+    ok = all(bool(item.get("ok")) for item in reports)
+    result = {"ok": ok, "checks": reports}
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        for item in reports:
+            typer.echo(
+                f"{item['mode']}: {'PASS' if item.get('ok') else 'FAIL'} "
+                f"plugin={item.get('plugin_key')}"
+            )
+    if not ok:
+        raise typer.Exit(1)
+
+
+@plugins_app.command("diff")
+def plugins_diff(before: Path, after: Path) -> None:
+    """Compare two plugin packages using manifests and content hashes."""
+    from personal_agent.plugins.devtools import diff_plugins
+
+    try:
+        report = diff_plugins(before, after)
+    except Exception as exc:
+        _exit_error(f"插件差异检查失败: {exc}")
+    typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+
+
+@plugins_app.command("package")
+def plugins_package(
+    path: Path,
+    output: Path | None = typer.Option(None, "--output", "-o", help="输出 zip 路径。"),
+) -> None:
+    """Build a deterministic installable plugin archive."""
+    from personal_agent.plugins.devtools import package_plugin
+
+    try:
+        artifact = package_plugin(path, output)
+    except Exception as exc:
+        _exit_error(f"插件打包失败: {exc}")
+    typer.echo(str(artifact))
 
 
 @tokens_app.command("estimate")
@@ -1094,9 +1224,12 @@ def _plugin_manager(settings: Settings | None = None) -> PluginManager:
 
 
 def _plugin_validation_manager(path: Path, settings: Settings | None = None) -> PluginManager:
-    settings = settings or Settings()
+    settings = copy.copy(settings or Settings())
     plugin_root = path.parent if path.name in {"plugin.yaml", "plugin.yml", "plugin.json"} else path
-    validation_state = Path(tempfile.gettempdir()) / "personal-agent-plugin-validate-state.json"
+    validation_root = Path(tempfile.mkdtemp(prefix="lumora-plugin-integration-"))
+    settings.agent_data_dir = validation_root
+    settings.plugins_dirs = []
+    validation_state = validation_root / "plugin-state.json"
     manager = PluginManager(
         settings,
         plugin_dirs=[plugin_root],
@@ -1935,7 +2068,8 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
             f"已加载={plugin_summary['loaded']} "
             f"延迟={plugin_summary['deferred']} "
             f"禁用={plugin_summary['disabled']} "
-            f"错误={plugin_summary['error']}"
+            f"错误={plugin_summary['error']} "
+            f"阻塞={plugin_summary['blocked']}"
         ),
         "",
         "Runtime:",
@@ -2116,6 +2250,7 @@ def _format_doctor_summary_report(report: dict[str, Any]) -> str:
             "插件: "
             f"{plugin_summary['loaded']} 已加载, "
             f"{plugin_summary['deferred']} 延迟, "
+            f"{plugin_summary['blocked']} 阻塞, "
             f"{plugin_summary['error']} 错误"
         ),
         "",
@@ -2660,7 +2795,8 @@ def format_plugin_list(reports: list[dict[str, Any]], *, include_summary: bool =
             f"已加载={summary['loaded']} "
             f"延迟={summary['deferred']} "
             f"禁用={summary['disabled']} "
-            f"错误={summary['error']}"
+            f"错误={summary['error']} "
+            f"阻塞={summary['blocked']}"
         )
     for group, grouped_reports in _group_plugins(reports).items():
         if lines:
@@ -2839,6 +2975,7 @@ def _plugin_status_summary(reports: list[dict[str, Any]]) -> dict[str, int]:
         "loaded": sum(1 for report in reports if report["status"] == "LOADED"),
         "deferred": sum(1 for report in reports if report["status"] == "DEFERRED"),
         "disabled": sum(1 for report in reports if not report["enabled"] or report["status"] == "DISABLED"),
+        "blocked": sum(1 for report in reports if report["status"] == "BLOCKED"),
         "error": sum(1 for report in reports if report["status"] == "ERROR"),
     }
 
@@ -3116,6 +3253,10 @@ def _plugin_diagnostics(report: dict[str, Any]) -> list[str]:
         diagnostics.append(f"加载错误: {report['error']}")
     if report.get("status") == "ERROR" and not report.get("error") and report.get("entrypoint_error"):
         diagnostics.append(f"加载错误: {report['entrypoint_error']}")
+    dependency_report = report.get("dependency_report") or {}
+    for issue in dependency_report.get("issues") or []:
+        prefix = "依赖错误" if issue.get("severity") == "error" else "依赖警告"
+        diagnostics.append(f"{prefix}: {issue.get('message') or issue.get('code')}")
     for warning in report.get("manifest_warnings") or []:
         diagnostics.append(f"Manifest 警告: {warning}")
     for warning in report.get("boundary_warnings") or []:
