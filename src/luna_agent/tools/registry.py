@@ -33,7 +33,7 @@ _QUERY_ALIASES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("写文件", "覆盖文件"), "write file"),
     (("修改文件", "替换文本", "追加"), "edit file replace append"),
     (("网页", "搜索互联网", "最新"), "web_search network web"),
-    (("打开网页", "抓页面", "fetch url"), "web_fetch network web"),
+    (("打开网页", "抓页面", "fetch url"), "mcp fetch url page network web"),
 )
 
 

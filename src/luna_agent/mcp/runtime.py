@@ -18,7 +18,11 @@ from luna_agent.mcp.registrar import MCPToolRegistrar
 logger = logging.getLogger(__name__)
 
 DEFAULT_RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
-MCP_STOP_TIMEOUT_SECONDS = 5.0
+# The SDK stdio transport closes stdin, waits up to two seconds, and then
+# terminates the process tree with a second two-second budget. Leave room for
+# task-group and platform scheduling overhead before interrupting that cleanup.
+MCP_STOP_TIMEOUT_SECONDS = 10.0
+MCP_STOP_CANCELLATION_TIMEOUT_SECONDS = 2.0
 ConnectionFactory = Callable[[MCPServerConfig, Callable[[str], Any]], MCPConnection]
 
 
@@ -81,6 +85,8 @@ class MCPServerRuntime:
         self._stderr_tail: list[str] = []
         self._initial_attempt_started_at = 0.0
         self._initial_attempt_duration_seconds = 0.0
+        self._last_shutdown_error = ""
+        self._shutdown_timeout_count = 0
 
     @property
     def ready(self) -> bool:
@@ -134,17 +140,51 @@ class MCPServerRuntime:
                 await self._notify_tools_changed()
             self.state = MCPRuntimeState.DISABLED if not self.config.enabled else MCPRuntimeState.STOPPED
             return
+        was_connecting = self.state in {
+            MCPRuntimeState.CONNECTING,
+            MCPRuntimeState.RECONNECTING,
+        }
         self.state = MCPRuntimeState.STOPPING
         self._registrar.set_available(False)
         self._stop_event.set()
         self._reconnect_event.set()
-        task.cancel()
+        self._last_shutdown_error = ""
+        if was_connecting:
+            # An in-flight connect has no stop-event protocol. Cancel it so
+            # shutdown does not wait for the configured connect timeout.
+            task.cancel()
         try:
-            await asyncio.wait_for(task, timeout=MCP_STOP_TIMEOUT_SECONDS)
+            timeout = (
+                MCP_STOP_CANCELLATION_TIMEOUT_SECONDS
+                if was_connecting
+                else MCP_STOP_TIMEOUT_SECONDS
+            )
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except asyncio.CancelledError:
             pass
         except asyncio.TimeoutError:
-            logger.warning("Timed out stopping MCP server '%s'", self.config.name)
+            self._shutdown_timeout_count += 1
+            self._last_shutdown_error = (
+                f"graceful shutdown exceeded {MCP_STOP_TIMEOUT_SECONDS:g}s; "
+                "cancelling MCP runtime task"
+            )
+            logger.warning("Timed out stopping MCP server '%s'; cancelling runtime task", self.config.name)
+            task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=MCP_STOP_CANCELLATION_TIMEOUT_SECONDS,
+                )
+            except asyncio.CancelledError:
+                pass
+            except asyncio.TimeoutError:
+                self._last_shutdown_error = (
+                    f"{self._last_shutdown_error}; cancellation did not finish within "
+                    f"{MCP_STOP_CANCELLATION_TIMEOUT_SECONDS:g}s"
+                )
+                logger.error(
+                    "MCP server '%s' did not finish cancellation cleanup", self.config.name
+                )
         finally:
             self._mark_initial_attempt_done()
             self._owner_task = None
@@ -217,6 +257,8 @@ class MCPServerRuntime:
             "notification_count": self._notification_count,
             "initial_attempt_done": self._initial_attempt_done.is_set(),
             "initial_attempt_duration_seconds": self._initial_attempt_duration_seconds,
+            "last_shutdown_error": self._last_shutdown_error,
+            "shutdown_timeout_count": self._shutdown_timeout_count,
             "stderr_tail": stderr_tail,
         }
 
@@ -301,7 +343,9 @@ class MCPServerRuntime:
         self._reconnect_event.clear()
         while not self._stop_event.is_set():
             signal = await self._wait_for_signal()
-            if signal == "stop":
+            # stop and reconnect can be set together by shutdown. Stopping
+            # wins so a normal close is never recorded as a recovery error.
+            if signal == "stop" or self._stop_event.is_set():
                 return "stop"
             if signal == "reconnect":
                 self._reconnect_event.clear()

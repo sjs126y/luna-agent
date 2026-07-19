@@ -177,7 +177,7 @@ def format_agent_run(run_id: str) -> str:
 
 # Default: read-only tools a sub-agent always gets
 _READONLY_TOOLS = {
-    "read", "list_directory", "file_info", "grep", "glob", "web_search", "web_fetch",
+    "read", "list_directory", "file_info", "grep", "glob", "web_search",
     "calculator", "datetime", "weather", "random", "json",
     "todo", "task", "process_list",
 }
@@ -323,7 +323,7 @@ async def _run_research(question: str, max_tokens: int = 2048) -> str:
             "You are a focused research sub-agent. Gather relevant facts with read-only tools "
             "and return a concise sourced summary when tools provide sources."
         ),
-        tool_policy=["web_search", "web_fetch", "read", "list_directory", "file_info", "grep", "glob", "calculator", "datetime"],
+        tool_policy=["web_search", "read", "list_directory", "file_info", "grep", "glob", "calculator", "datetime"],
         max_tokens=max_tokens,
     )
     run = await _agent_runtime.run(question, spec)

@@ -35,6 +35,16 @@ from luna_agent.tools.env_filter import filter_env
 NotificationCallback = Callable[[str], Awaitable[None] | None]
 HTTPClientFactory = Callable[[dict[str, str], float, float], httpx.AsyncClient]
 
+# npx/npm launchers must keep stdout reserved for JSON-RPC. These defaults only
+# silence launcher chatter; an explicitly configured server environment wins.
+_NPM_STDIO_ENV_DEFAULTS = {
+    "npm_config_loglevel": "silent",
+    "npm_config_update_notifier": "false",
+    "NO_UPDATE_NOTIFIER": "1",
+    "NPM_CONFIG_FUND": "false",
+    "NPM_CONFIG_AUDIT": "false",
+}
+
 
 class MCPConnection(Protocol):
     async def connect(self) -> MCPServerInfo: ...
@@ -107,9 +117,10 @@ class SDKMCPConnection:
                 stdio_client(params, errlog=self._stderr_file)
             )
         else:
+            headers = _http_headers(self.config.headers_env, self._env_values)
             _validate_http_target(self.config)
             http_client = self._http_client_factory(
-                _http_headers(self.config.headers_env, self._env_values),
+                headers,
                 self.config.connect_timeout_seconds,
                 self.config.call_timeout_seconds,
             )
@@ -261,6 +272,8 @@ def _stdio_env(configured: dict[str, str]) -> dict[str, str]:
     }
     base = filter_env()
     result = {key: value for key, value in base.items() if key in safe_keys or key in configured}
+    for key, value in _NPM_STDIO_ENV_DEFAULTS.items():
+        result.setdefault(key, value)
     result.update(configured)
     return result
 

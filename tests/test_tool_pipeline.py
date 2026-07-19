@@ -500,7 +500,7 @@ def test_tool_decision_display_includes_network_preview_metadata():
     decision = tool_decision_from_guard(
         {
             "id": "net1",
-            "name": "web_fetch",
+            "name": "mcp__fetch__fetch",
             "input": {"url": "https://example.com/path", "method": "post", "timeout": "12.5"},
         },
         GuardDecision(
@@ -1442,13 +1442,57 @@ async def test_execute_tool_calls_suppresses_duplicate_ids_only():
 
 
 @pytest.mark.asyncio
-async def test_bridge_tool_call_uses_executor_precheck_for_web_fetch():
-    import luna_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
+async def test_web_fetch_is_removed_and_fetch_mcp_remains_discoverable():
     from luna_agent.plugins.builtin.tools.bridge.bridge import _tool_call
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from luna_agent.tools.registry import (
+        dispatch_tool_describe,
+        dispatch_tool_search,
+        tool_registry,
+    )
 
-    result = await _tool_call("web_fetch", {"url": "http://127.0.0.1/admin"})
+    async def fetch(url: str):
+        return url
 
-    assert "private" in result.lower() or "blocked" in result.lower() or "unsafe" in result.lower()
+    fetch_name = "mcp__fetch__fetch"
+    previous = tool_registry.get(fetch_name)
+    tool_registry.register(ToolEntry(
+        name=fetch_name,
+        description="Fetch a URL and return page content through the Fetch MCP server.",
+        schema={
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+        handler=fetch,
+        toolset="mcp",
+        permission_category="network",
+        tags=["mcp", "fetch", "web"],
+    ))
+    try:
+        schemas = tool_registry.get_definitions(skip_bridge=True)
+        search = json.loads(await dispatch_tool_search("fetch url"))
+        describe = json.loads(await dispatch_tool_describe("web_fetch"))
+        nested = await _tool_call("web_fetch", {"url": "https://example.com"})
+        direct = await execute_tool_call_result({
+            "id": "removed-fetch",
+            "name": "web_fetch",
+            "input": {"url": "https://example.com"},
+        })
+    finally:
+        if previous is None:
+            tool_registry.unregister(fetch_name)
+        else:
+            tool_registry.register(previous)
+
+    assert tool_registry.get("web_fetch") is None
+    assert "web_fetch" not in {item["name"] for item in schemas}
+    assert fetch_name in {item["name"] for item in search["hits"]}
+    assert describe == {"error": "Tool not found: web_fetch"}
+    assert "unknown tool 'web_fetch'" in nested
+    assert direct.category == "unknown_tool"
+    assert "unknown tool 'web_fetch'" in format_tool_result(direct)
 
 
 # ── Audit module ───────────────────────────────────────

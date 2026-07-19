@@ -209,7 +209,6 @@ def fallback_tool_category(name: str) -> str:
         "process_clear": "background",
         "process_wait": "background",
         "process_kill": "background",
-        "web_fetch": "network",
         "web_search": "network",
     }
     if name in {"read", "list_directory", "file_info", "grep", "glob"}:
@@ -341,15 +340,6 @@ def run_precheck(tc: dict, entry: Any) -> str | None:
             if sandbox_err:
                 return sandbox_err
 
-    elif name == "web_fetch":
-        url = inp.get("url", "")
-        if url:
-            from luna_agent.tools.url_safety import check_url
-
-            ssrf_err = check_url(url)
-            if ssrf_err:
-                return ssrf_err
-
     return None
 
 
@@ -462,7 +452,6 @@ def _display_name(name: str) -> str:
         "bash": "Shell command",
         "process_start": "Start background process",
         "process_kill": "Stop background process",
-        "web_fetch": "Fetch URL",
         "web_search": "Web search",
     }
     return labels.get(name, name.replace("_", " ").strip().title() or "Tool")

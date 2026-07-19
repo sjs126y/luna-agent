@@ -80,6 +80,16 @@ class BlockingCallConnection(FakeConnection):
         return MCPCallResult(text="late")
 
 
+class BlockingCloseConnection(FakeConnection):
+    def __init__(self, config, callback):
+        super().__init__(config, callback, tools=[tool("close")])
+        self.close_started = asyncio.Event()
+
+    async def close(self):
+        self.close_started.set()
+        await asyncio.Event().wait()
+
+
 async def wait_until(predicate, timeout: float = 1.0):
     end = asyncio.get_running_loop().time() + timeout
     while not predicate():
@@ -162,6 +172,35 @@ async def test_runtime_stop_cancels_initial_connection():
     assert created[0].closed is True
     assert runtime.state == MCPRuntimeState.STOPPED
     assert runtime.health_snapshot()["initial_attempt_done"] is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_stop_records_shutdown_timeout_without_poisoning_connection_error(monkeypatch):
+    created = []
+
+    def factory(config, callback):
+        connection = BlockingCloseConnection(config, callback)
+        created.append(connection)
+        return connection
+
+    monkeypatch.setattr("luna_agent.mcp.runtime.MCP_STOP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("luna_agent.mcp.runtime.MCP_STOP_CANCELLATION_TIMEOUT_SECONDS", 0.1)
+    runtime = MCPServerRuntime(
+        MCPServerConfig(name="slow-close", command="python"),
+        connection_factory=factory,
+        health_interval_seconds=60,
+    )
+    await runtime.start()
+    await runtime.wait_initial_attempt()
+
+    await asyncio.wait_for(runtime.stop(), timeout=1)
+
+    snapshot = runtime.health_snapshot()
+    assert created[0].close_started.is_set()
+    assert snapshot["shutdown_timeout_count"] == 1
+    assert "graceful shutdown exceeded" in snapshot["last_shutdown_error"]
+    assert snapshot["last_error"] == ""
+    assert runtime.state == MCPRuntimeState.STOPPED
 
 
 @pytest.mark.asyncio

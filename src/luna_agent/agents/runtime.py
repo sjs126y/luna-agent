@@ -22,7 +22,6 @@ READONLY_TOOLS = {
     "grep",
     "glob",
     "web_search",
-    "web_fetch",
     "calculator",
     "datetime",
     "weather",

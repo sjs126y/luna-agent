@@ -1,4 +1,4 @@
-"""URL safety — SSRF prevention for web_fetch and web_search.
+"""URL safety for outbound HTTP clients and MCP endpoints.
 
 Blocks requests to private/internal IPs, cloud metadata endpoints,
 and other SSRF targets. Modeled after Hermes url_safety.py.

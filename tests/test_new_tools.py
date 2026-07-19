@@ -1019,7 +1019,6 @@ def test_builtin_tools_declare_permission_categories():
     import luna_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
     import luna_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
     import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    import luna_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
     import luna_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
     from luna_agent.tools.registry import tool_registry
 
@@ -1038,7 +1037,6 @@ def test_builtin_tools_declare_permission_categories():
         "process_clear": "background",
         "process_kill": "background",
         "process_wait": "background",
-        "web_fetch": "network",
         "web_search": "network",
     }
 
@@ -1056,7 +1054,6 @@ def test_key_builtin_tools_declare_usage_metadata():
     import luna_agent.plugins.builtin.tools.builtin.glob_tool  # noqa: F401
     import luna_agent.plugins.builtin.tools.builtin.grep_tool  # noqa: F401
     import luna_agent.plugins.builtin.tools.builtin.process_tool  # noqa: F401
-    import luna_agent.plugins.builtin.tools.builtin.web_fetch  # noqa: F401
     import luna_agent.plugins.builtin.tools.builtin.web_search  # noqa: F401
     from luna_agent.tools.registry import tool_registry
 
@@ -1073,7 +1070,6 @@ def test_key_builtin_tools_declare_usage_metadata():
         "process_read": ("medium", "process"),
         "process_kill": ("high", "process"),
         "web_search": ("medium", "network"),
-        "web_fetch": ("medium", "network"),
         "tool_search": ("low", "tooling"),
         "tool_call": ("medium", "dispatch"),
     }
@@ -1173,90 +1169,3 @@ async def test_worktree_cleanup_force_removes_with_force_flag(tmp_path: Path, mo
     assert "removed" in result
     assert any(args == ("worktree", "remove", str(dirty_tree), "--force") for args, _ in calls)
     assert any(args == ("branch", "-D", "worktree/demo") for args, _ in calls)
-
-
-@pytest.mark.asyncio
-async def test_web_fetch_rechecks_redirect_target(monkeypatch):
-    from luna_agent.plugins.builtin.tools.builtin import web_fetch
-
-    class FakeResponse:
-        status_code = 302
-        headers = {"location": "http://127.0.0.1/admin"}
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        def raise_for_status(self):
-            return None
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        def stream(self, *args, **kwargs):
-            return FakeResponse()
-
-    monkeypatch.setattr(web_fetch.httpx, "AsyncClient", FakeClient)
-    monkeypatch.setattr(
-        "luna_agent.tools.url_safety.check_url",
-        lambda url: "Error: access to loopback blocked" if "127.0.0.1" in url else None,
-    )
-
-    result = await web_fetch._web_fetch("https://example.com")
-
-    assert "redirected URL blocked" in result
-    assert "loopback" in result
-
-
-@pytest.mark.asyncio
-async def test_web_fetch_rejects_oversized_response(monkeypatch):
-    from luna_agent.plugins.builtin.tools.builtin import web_fetch
-
-    class FakeResponse:
-        status_code = 200
-        headers = {"content-type": "text/plain; charset=utf-8"}
-        encoding = "utf-8"
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        def raise_for_status(self):
-            return None
-
-        async def aiter_bytes(self):
-            yield b"x" * (web_fetch._MAX_RESPONSE_BYTES + 1)
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        def stream(self, *args, **kwargs):
-            return FakeResponse()
-
-    async def checked_url(_url):
-        return None
-
-    monkeypatch.setattr(web_fetch.httpx, "AsyncClient", FakeClient)
-    monkeypatch.setattr(web_fetch, "_checked_url", checked_url)
-
-    result = await web_fetch._web_fetch("https://example.com")
-
-    assert "response exceeds maximum size" in result

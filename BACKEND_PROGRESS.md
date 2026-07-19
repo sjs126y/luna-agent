@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
+  <img src="https://img.shields.io/badge/tests-1201%20passed-2EA44F" alt="1201 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
@@ -20,6 +20,16 @@
 </div>
 
 ---
+
+## 2026-07-20：Fetch MCP 路由与 stdio 生命周期修复
+
+- 删除本地 `web_fetch` handler、内置注册、核心 toolset、延迟检索别名、主/子 Agent 策略和对应安全特例。模型 schema、Tool Catalog 与 `tool_search` 不再暴露该能力；直接调用返回 unknown tool。
+- 网页抓取现在只依赖动态 `mcp__fetch__fetch`。Fetch MCP 未 ready 时保留 MCP unavailable 语义，不会回退到本地 HTTP 抓取。
+- 所有 stdio MCP 子进程默认设置 npm 静默环境，避免 npx/npm 更新、fund 或 audit 日志污染 JSON-RPC stdout；显式 server `env` 保持最高优先级，stderr 诊断仍完整保留。
+- MCP Runtime 关闭区分连接中的 server 与 ready server：连接中立即取消；ready server 先给 SDK 完成 stdin close、terminate 和 kill 升级流程的时间。stop/reconnect 同时到达时 stop 具备优先级，避免将正常关闭记为 reconnect 错误。
+- MCP health 的 server diagnostics 新增 `last_shutdown_error` 和 `shutdown_timeout_count`，关闭超时与下一轮连接错误分离。HTTP MCP 同时改为先验证必需 header 环境变量，再进行网络/DNS 安全校验。
+- `BACKEND_DEFERRED_FIXES.md` 新增 read-only additional roots 的独立延后事项；本轮没有修改 Memory、session key 或用户身份模型。
+- 聚焦验证：`tests/test_mcp_connection.py` 12 passed、`tests/test_mcp_runtime.py` 10 passed、工具聚焦回归通过；`python -m compileall -q src/luna_agent` 与 `git diff --check` 通过。
 
 ## 2026-07-19：Bash 声明式资源与严格进程沙箱
 

@@ -8,7 +8,7 @@ list decides which tools get full schemas vs get deferred via bridge tools.
 # capabilities remain registered and are discovered through tool_search.
 _CORE_TOOLS: set[str] = {
     "read", "write", "edit", "list_directory", "file_info", "grep", "glob", "bash",
-    "web_search", "web_fetch",
+    "web_search",
     "memory", "memory_buffer",
     "skill_search", "skill_load",
     "sub_agent",
@@ -18,7 +18,7 @@ _CORE_TOOLS: set[str] = {
 # Toolset groups — name → list of tool names
 # "all" is special: includes every registered tool
 TOOLSETS: dict[str, set[str]] = {
-    "web":      {"web_search", "web_fetch"},
+    "web":      {"web_search"},
     "terminal": {"bash"},
     "file":     {"read", "write", "edit", "list_directory", "file_info", "grep", "glob"},
     "utility":  {"calculator", "datetime", "random", "timer", "json"},

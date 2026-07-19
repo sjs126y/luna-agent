@@ -45,7 +45,6 @@ _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
     ("luna_agent.plugins.builtin.tools.builtin.timer", ("timer",)),
     ("luna_agent.plugins.builtin.tools.builtin.todo", ("todo",)),
     ("luna_agent.plugins.builtin.tools.builtin.weather", ("weather",)),
-    ("luna_agent.plugins.builtin.tools.builtin.web_fetch", ("web_fetch",)),
     ("luna_agent.plugins.builtin.tools.builtin.web_search", ("web_search",)),
     ("luna_agent.plugins.builtin.tools.builtin.workflow_tool", ("workflow_run", "workflow_list")),
     ("luna_agent.plugins.builtin.tools.builtin.worktree_tool", (

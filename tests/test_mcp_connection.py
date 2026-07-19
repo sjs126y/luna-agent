@@ -208,6 +208,22 @@ def test_stdio_connection_uses_process_sandbox(tmp_path, monkeypatch):
     assert params.env["HOME"] == str(tmp_path.resolve())
 
 
+def test_stdio_environment_silences_npm_launchers_without_overriding_server_config():
+    from luna_agent.mcp.connection import _stdio_env
+
+    env = _stdio_env({
+        "npm_config_loglevel": "verbose",
+        "CUSTOM_SERVER_OPTION": "enabled",
+    })
+
+    assert env["npm_config_loglevel"] == "verbose"
+    assert env["npm_config_update_notifier"] == "false"
+    assert env["NO_UPDATE_NOTIFIER"] == "1"
+    assert env["NPM_CONFIG_FUND"] == "false"
+    assert env["NPM_CONFIG_AUDIT"] == "false"
+    assert env["CUSTOM_SERVER_OPTION"] == "enabled"
+
+
 def test_mcp_result_payloads_are_bounded():
     from luna_agent.mcp.connection import _normalize_call_result
 

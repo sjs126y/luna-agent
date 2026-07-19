@@ -33,7 +33,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | --- | --- | --- |
 | 文件 | `read`、`write`、`edit`、`list_directory`、`file_info`、`grep`、`glob` | 浏览、检查、搜索和修改文件的基础动作 |
 | Shell | `bash` | 短时、受限命令入口 |
-| Web | `web_search`、`web_fetch` | 外部信息的基础入口 |
+| Web | `web_search` | 外部信息搜索入口；读取具体网页使用 Fetch MCP |
 | Memory | `memory`、`memory_buffer` | 长期信息和内部缓冲 |
 | Skill | `skill_search`、`skill_load` | 按任务加载专业指导 |
 | Agent | `sub_agent` | 单一、通用的委派原语 |
@@ -67,7 +67,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | `read` | `offset/limit` 分页、50k 字节窗口、二进制拒绝、线程 I/O |
 | `write/edit` | UTF-8 实际字节限制、同目录原子替换、超大文件编辑拒绝 |
 | `bash` | `cached` 工具审批、声明式 `cwd/read_paths/write_paths`、Bubblewrap 最小挂载、超时与中断、64 KiB 捕获上限 |
-| `web_fetch` | 每次跳转前 SSRF 校验、5 次跳转上限、2 MiB 响应上限、内容类型约束 |
+| `mcp__fetch__fetch` | 由 Fetch MCP 动态提供；服务不可用时明确返回 MCP unavailable，不回退到本地抓取工具 |
 | `document_convert` | 只读精确路径、50 MiB 输入上限、30k 字符分页、格式规模上限与可选 LibreOffice 旧格式转换 |
 | 后台进程 | 异步读取，stdout/stderr 各自只保留 4k 字符尾部 |
 | 插件工具 | 查询绑定 live manager；列表返回有界摘要；构建路径经过 sandbox；审批按 action 分级且卸载保留数据 |

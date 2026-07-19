@@ -1184,7 +1184,7 @@ Review worker payload 提供：
 - `retired_runtime_count: integer`
 - `servers: list[object]`
 
-`servers[]` 提供 `runtime_instance_id`、`initial_attempt_done` 和 `initial_attempt_duration_seconds`。MCP 工具断线后仍可出现在 Tool Catalog，但 `available=false`，`unavailable_reason` 会说明 server 正在 starting、reconnecting、failed 或 stopped，并可附带最近错误。MCP 权威工具列表变化会发布 Capability Snapshot，Agent 在下一轮按投影 fingerprint 刷新；前端不要假定 `core_ready=true` 等于所有 MCP 已连接。
+`servers[]` 提供 `runtime_instance_id`、`initial_attempt_done`、`initial_attempt_duration_seconds`、`last_shutdown_error` 和 `shutdown_timeout_count`。后两个字段只描述当前进程的关闭诊断，不表示下一轮连接失败。MCP 工具断线后仍可出现在 Tool Catalog，但 `available=false`，`unavailable_reason` 会说明 server 正在 starting、reconnecting、failed 或 stopped，并可附带最近错误。MCP 权威工具列表变化会发布 Capability Snapshot，Agent 在下一轮按投影 fingerprint 刷新；前端不要假定 `core_ready=true` 等于所有 MCP 已连接。
 
 ## 15. QQ Runtime Diagnostics
 

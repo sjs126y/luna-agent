@@ -234,9 +234,6 @@ def _builtin_resources(name: str, inp: dict[str, Any]) -> list[ResourceRequireme
     if name in {"write", "edit"}:
         path = str(inp.get("path") or "")
         return [_filesystem_requirement(path, "write", name)] if path else []
-    if name == "web_fetch":
-        requirement = _network_requirement(str(inp.get("url") or ""), name)
-        return [requirement] if requirement else []
     if name == "web_search":
         return [ResourceRequirement("network", "web-search", "connect", "web_search")]
     return []
