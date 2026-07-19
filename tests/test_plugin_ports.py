@@ -10,6 +10,7 @@ from luna_agent.plugins.core.ports import (
     PluginStoragePort,
     PluginTaskPort,
 )
+from luna_agent.plugins.active import ActiveConversationIntent, ConversationStatus
 from luna_agent.plugins.runtime import PluginRuntimeState
 
 
@@ -33,6 +34,14 @@ class Coordinator:
         self.requests.append(request)
         return "handle"
 
+    async def status(self, session_key):
+        return ConversationStatus(
+            session_key=session_key,
+            busy=True,
+            queued_count=2,
+            recent_user_messages=("hello",),
+        )
+
 
 @pytest.mark.asyncio
 async def test_plugin_conversation_port_injects_owner_and_origin():
@@ -47,6 +56,39 @@ async def test_plugin_conversation_port_injects_owner_and_origin():
     assert request.owner_id == "user/reminder"
     assert request.durable is False
     assert request.metadata["plugin_id"] == "user/reminder"
+
+
+@pytest.mark.asyncio
+async def test_plugin_conversation_port_submits_ephemeral_active_intent():
+    coordinator = Coordinator()
+    port = PluginConversationPort(plugin=_plugin(), coordinator=coordinator)
+
+    intent = ActiveConversationIntent(
+        intent_id="follow-up-1",
+        session_key="wechat:c1:u1",
+        kind="follow_up",
+        instruction="判断是否跟进用户昨天提到的考试",
+        evidence={"topic": "exam"},
+    )
+    await port.submit_intent(intent)
+
+    request = coordinator.requests[0]
+    assert request.origin.value == "active_plugin"
+    assert request.input.active_intent == intent
+    assert request.input.text == ""
+    assert request.durable is True
+    assert request.request_id == "intent:follow-up-1"
+
+
+@pytest.mark.asyncio
+async def test_plugin_conversation_port_reads_bounded_status():
+    port = PluginConversationPort(plugin=_plugin(), coordinator=Coordinator())
+
+    status = await port.status("wechat:c1:u1")
+
+    assert status.busy is True
+    assert status.queued_count == 2
+    assert status.recent_user_messages == ("hello",)
 
 
 @pytest.mark.asyncio

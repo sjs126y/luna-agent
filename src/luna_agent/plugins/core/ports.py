@@ -14,6 +14,7 @@ from luna_agent.delivery import DeliveryKind, DeliveryRequest
 from luna_agent.models.messages import AttachmentRef, OutboundMessage, SessionSource
 from luna_agent.persistence.json_store import write_json_atomic
 from luna_agent.plugins.runtime import PluginRuntimeState
+from luna_agent.plugins.active.contracts import ActiveConversationIntent
 
 
 class PluginConversationPort:
@@ -62,6 +63,39 @@ class PluginConversationPort:
             metadata={"plugin_id": self._plugin.key, **dict(metadata or {})},
         )
         return await self._coordinator.submit(request)
+
+    async def submit_intent(self, intent: ActiveConversationIntent):
+        self._authorize(intent.session_key, capability="active")
+        if not isinstance(intent, ActiveConversationIntent):
+            raise TypeError("active conversation intent has an invalid type")
+        request_id = str(intent.request_id or f"intent:{intent.intent_id}").strip()
+        request = SubmissionRequest(
+            session_key=intent.session_key,
+            input=ConversationInput(
+                source=SessionSource(
+                    platform="plugin",
+                    user_id=self._plugin.key,
+                    user_name=self._plugin.manifest.name,
+                    chat_id=intent.session_key,
+                ),
+                active_intent=intent,
+                metadata={"plugin_id": self._plugin.key, "active_intent": intent.intent_id},
+            ),
+            origin=SubmissionOrigin.ACTIVE_PLUGIN,
+            response_mode=ResponseMode.DELIVER,
+            request_id=request_id,
+            owner_id=self._plugin.key,
+            durable=True,
+            metadata={"plugin_id": self._plugin.key, "active_intent": intent.intent_id},
+        )
+        return await self._coordinator.submit(request)
+
+    async def status(self, session_key: str):
+        self._authorize(session_key, capability="active")
+        status = getattr(self._coordinator, "status", None)
+        if status is None:
+            raise RuntimeError("conversation status is unavailable")
+        return await status(session_key)
 
     async def _artifact_attachments(
         self,

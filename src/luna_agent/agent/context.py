@@ -44,6 +44,7 @@ class TurnContext:
     processed_attachments: list = field(default_factory=list)
     multimodal_diagnostics: dict = field(default_factory=dict)
     hook_contexts: list[str] = field(default_factory=list)  # ephemeral model context
+    active_intent_context: str = ""          # ephemeral active-plugin context
 
 
 async def build_turn_context(
@@ -52,6 +53,7 @@ async def build_turn_context(
     history: list[dict] | None = None,
     *,
     turn_id: str | None = None,
+    active_intent=None,
 ) -> TurnContext:
     """Prepare messages for a conversation turn.
     Does NOT build api_messages — that happens inside the while loop.
@@ -103,10 +105,19 @@ async def build_turn_context(
     conversation_history = list(history or [])
     messages = copy.deepcopy(conversation_history)
 
-    current_user_message = {
-        "role": "user",
-        "content": content_blocks,
-    }
+    if active_intent is None:
+        current_user_message = {
+            "role": "user",
+            "content": content_blocks,
+        }
+    else:
+        current_user_message = {
+            "role": "user",
+            "content": [],
+            "metadata": {
+                "internal_active_intent": str(active_intent.intent_id),
+            },
+        }
     # Consume pending skill injection (set by Gateway /skill-name)
     skill_injection = None
     if agent._pending_skill_injection:
@@ -114,7 +125,12 @@ async def build_turn_context(
         agent._pending_skill_injection = None  # consumed, won't leak to next turn
 
     skill_summaries = _load_skill_summaries()
-    memory_prefetch_messages, memory_injections_text = await _prefetch_memory(agent, text_message)
+    memory_prefetch_messages, memory_injections_text = (
+        ([], "")
+        if active_intent is not None
+        else await _prefetch_memory(agent, text_message)
+    )
+    active_intent_context = _render_active_intent(active_intent)
     agent._last_skill_summaries = skill_summaries or ""
     agent._last_skill_injection = skill_injection or ""
     agent._last_memory_injections = memory_injections_text or ""
@@ -131,6 +147,7 @@ async def build_turn_context(
             skill_summaries,
             skill_injection or "",
             memory_injections_text,
+            active_intent_context,
         ),
     )
     compression_hook_contexts = list(agent._hook_additional_contexts)
@@ -161,6 +178,24 @@ async def build_turn_context(
         processed_attachments=list(resolved_input.attachments) if resolved_input is not None else [],
         multimodal_diagnostics=dict(resolved_input.diagnostics) if resolved_input is not None else {},
         hook_contexts=compression_hook_contexts,
+        active_intent_context=active_intent_context,
+    )
+
+
+def _render_active_intent(intent) -> str:
+    if intent is None:
+        return ""
+    import json
+
+    evidence = json.dumps(dict(intent.evidence), ensure_ascii=False, sort_keys=True)
+    return (
+        "[Internal active initiative]\n"
+        f"kind: {intent.kind}\n"
+        f"intent_id: {intent.intent_id}\n"
+        f"instruction: {intent.instruction}\n"
+        f"evidence: {evidence}\n"
+        "This is an internal initiative, not a user message. "
+        "Decide whether and how to respond naturally."
     )
 
 

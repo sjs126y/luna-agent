@@ -9,8 +9,10 @@ from luna_agent.artifacts import ArtifactStore
 from luna_agent.db.database import Database
 from luna_agent.plugins import PluginManager, PluginStatus
 from luna_agent.plugins.active import (
+    ActiveRuntimeControl,
     ActiveResourceRequest,
     ActiveRunnerState,
+    ActiveWakeReason,
     PluginGenerationScope,
 )
 from luna_agent.tools.entry import ToolArtifact, ToolEntry, ToolHandlerOutput
@@ -70,6 +72,35 @@ def _manager(
         state_path=tmp_path / "state.json",
         include_builtin=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_active_runtime_wakeup_supports_timeout_manual_and_stop():
+    control = ActiveRuntimeControl(
+        plugin=object(),
+        scope=PluginGenerationScope(),
+    )
+
+    assert await control.wait_for_wakeup(timeout=0) is ActiveWakeReason.TIMER
+
+    control.wake("manual")
+    assert await control.wait_for_wakeup(timeout=1) is ActiveWakeReason.MANUAL
+
+    control.request_stop()
+    assert await control.wait_for_wakeup(timeout=1) is ActiveWakeReason.STOP
+
+
+@pytest.mark.asyncio
+async def test_active_runtime_wakeup_coalesces_pending_signals():
+    control = ActiveRuntimeControl(
+        plugin=object(),
+        scope=PluginGenerationScope(),
+    )
+
+    control.wake("internal")
+    control.wake("manual")
+    assert await control.wait_for_wakeup(timeout=1) is ActiveWakeReason.INTERNAL
+    assert await control.wait_for_wakeup(timeout=0) is ActiveWakeReason.TIMER
 
 
 def _write_reload_active_plugin(

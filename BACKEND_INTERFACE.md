@@ -63,7 +63,7 @@
 
 新增 Skill 命令名为 `/repo-summary`、`/review-pr`、`/triage-issues`、`/release-notes`、`/library-docs`、`/upgrade-library`、`/compare-library-api`、`/inspect-web-page`、`/test-web-page`、`/operate-web-page`。Skill 执行仍表现为普通 conversation turn，不新增前端事件类型。
 
-低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`tool_approval_mode` 由 action 解析：`validate=auto`，`package/enable/disable/reload=cached`，`test/install/rollback/uninstall=prompt`。前端仍只需展示后端事件给出的最终模式。
+低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`tool_approval_mode` 由 action 解析：`validate=auto`，`package/enable/disable/reload/active_on/active_off/active_restart/active_run=cached`，`test/install/rollback/uninstall=prompt`。当前 `approval_reviewer` 默认关闭；开启后只对符合风险上限的人工确认请求进行模型审核，失败回退既定策略。前端仍只需展示后端事件给出的最终模式。
 
 ## 1. Conversation Event Stream
 
@@ -1129,6 +1129,12 @@ Review worker payload 提供：
 - `active_error: string`
 - `active_circuit_open: boolean`
 - `active_resources: object`，主动 generation 声明的 Tool、MCP 和应用端口安全摘要
+- 主动会话端口使用 SDK 的 `ActiveConversationIntent` 和 `ConversationStatus` 契约：
+  - `ActiveConversationIntent`：`intent_id`、`session_key`、`kind`、`instruction`、`evidence`、`request_id`、`metadata`。
+  - `ConversationStatus`：`session_key`、`busy`、`queued_count`、`last_user_at`、`last_assistant_at`、`recent_user_messages`（有界列表）。
+  - `conversation.status(session_key)` 只读查询；`conversation.submit_intent(intent)` 进入 Coordinator，使用 `SubmissionOrigin.ACTIVE_PLUGIN`，不会创建伪造用户消息。
+  - `intent_id`/`request_id` 应由插件稳定生成；相同 owner、origin 和请求身份在 SQLite Submission Ledger 中保持幂等。
+- active runner 使用 `wait_for_wakeup(timeout)` 等待 timer、manual 或 internal 唤醒；`/plugins active <key> run` 只产生一次 manual 唤醒，不改变启用状态。
 - `mcp: list[object]`，该插件注册的 MCP server 运行状态
 - `installed_versions: list[object]`，字段为 `digest`、`version`、`source`、`path`、`active`、`status`
 - `latest_operation: object`、`latest_event: object`
@@ -1159,7 +1165,7 @@ Review worker payload 提供：
 - `active_owner_running: boolean`
 - `active_plugins: list[object]`，稳定字段为 `key`、`enabled`、`state`、`ready`、`restart_count`、`circuit_open`、`error`
 
-核心 slash command registry 提供 `/plugins` 及 `list/info/logs/versions/operations/operation/install/reload/enable/disable/active/rollback/uninstall` 子命令。`active` 用法为 `/plugins active <key> <on|off|restart>`。
+核心 slash command registry 提供 `/plugins` 及 `list/info/logs/versions/operations/operation/install/reload/enable/disable/active/rollback/uninstall` 子命令。`active` 用法为 `/plugins active <key> <on|off|restart|run>`；`run` 只发送一次 manual 唤醒。
 
 - `logs <key>` payload：`management_schema_version`、`plugin_key`、`events[]`
 - `versions <key>` payload：`management_schema_version`、`plugin_key`、`versions[]`

@@ -23,6 +23,7 @@ from luna_agent.delivery import DeliveryKind, DeliveryRequest, DeliveryStatus
 from luna_agent.models.messages import OutboundMessage
 
 from luna_agent.conversation.submission import (
+    ConversationStatus,
     SubmissionHandle,
     SubmissionKind,
     SubmissionOutcome,
@@ -50,6 +51,26 @@ class ConversationTurnRunner(Protocol):
 
 class CoordinatorCommandDispatcher(Protocol):
     async def __call__(self, request: SubmissionRequest) -> CommandResult: ...
+
+
+def _active_intent_identity(intent) -> str:
+    if intent is None:
+        return ""
+    import json
+
+    return json.dumps(
+        {
+            "intent_id": intent.intent_id,
+            "session_key": intent.session_key,
+            "kind": intent.kind,
+            "instruction": intent.instruction,
+            "evidence": dict(intent.evidence),
+            "metadata": dict(intent.metadata),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 @dataclass(slots=True)
@@ -244,6 +265,24 @@ class ConversationCoordinator:
         )
         return SubmissionHandle(receipt, future)
 
+    async def status(self, session_key: str) -> ConversationStatus:
+        normalized = str(session_key or "").strip()
+        if not normalized:
+            raise ValueError("session_key is required")
+        queue = self._queues.get(normalized)
+        activity = {}
+        provider = getattr(self.conversation_service, "session_status", None)
+        if provider is not None:
+            activity = dict(await provider(normalized) or {})
+        return ConversationStatus(
+            session_key=normalized,
+            busy=normalized in self._active,
+            queued_count=queue.qsize() if queue is not None else 0,
+            last_user_at=str(activity.get("last_user_at") or ""),
+            last_assistant_at=str(activity.get("last_assistant_at") or ""),
+            recent_user_messages=tuple(activity.get("recent_user_messages") or ()),
+        )
+
     @staticmethod
     def _submission_identity(request: SubmissionRequest) -> tuple[str, str, str, str, str]:
         attachment_ids = "\0".join(
@@ -251,7 +290,8 @@ class ConversationCoordinator:
             for item in request.input.attachments
         )
         content_hash = hashlib.sha256(
-            f"{request.input.text}\0{attachment_ids}".encode("utf-8")
+            f"{request.input.text}\0{attachment_ids}\0"
+            f"{_active_intent_identity(request.input.active_intent)}".encode("utf-8")
         ).hexdigest()
         return (
             request.session_key,

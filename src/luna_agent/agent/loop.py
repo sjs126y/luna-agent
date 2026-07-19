@@ -946,6 +946,12 @@ def _build_request_plan(
             "role": "user",
             "content": [{"type": "text", "text": hook_context}],
         })
+    active_intent_context = str(getattr(ctx, "active_intent_context", "") or "").strip()
+    if active_intent_context:
+        turn_tail.append({
+            "role": "user",
+            "content": [{"type": "text", "text": active_intent_context}],
+        })
     if finalization_instruction:
         turn_tail.append({
             "role": "user",

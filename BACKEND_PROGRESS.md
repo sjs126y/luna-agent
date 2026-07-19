@@ -6,8 +6,8 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1201%20passed-2EA44F" alt="1201 tests passed">
-  <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
+  <img src="https://img.shields.io/badge/tests-1215%20passed-2EA44F" alt="1215 tests passed">
+  <img src="https://img.shields.io/badge/updated-2026--07--20-555555" alt="Updated 2026-07-20">
 </p>
 
 <p>
@@ -20,6 +20,13 @@
 </div>
 
 ---
+
+## 2026-07-20：主动插件唤醒与 Luna Companion
+
+- 新增 `ActiveWakeReason` 和 `wait_for_wakeup(timeout)`：主动 runner 可等待定时器、手动命令或内部事件，不需要固定轮询；`/plugins active <key> run` 可触发一次 manual 唤醒。
+- 新增 `ActiveConversationIntent`、`ConversationStatus` 与 `conversation.submit_intent()`；主动插件内部 LLM 评估后再提交结构化意图，进入 Coordinator/Agent/Delivery 正常链路，不伪造用户消息。
+- 新增 `plugins/luna_companion` 示例主动插件：支持 check-in/follow-up 候选、LLM 评估、激活分数、衰减、复评退避、过期、候选竞争、quiet hours、最小间隔、每日上限和插件自有持久化状态。
+- 更新 `docs/plugins.md` 和 `BACKEND_INTERFACE.md`，明确主动资源、会话状态、意图字段和生命周期语义。
 
 ## 2026-07-20：Approval Reviewer
 
@@ -54,6 +61,7 @@
 - 新增轻量外置插件 `productivity/document-converter`：单个 `document_convert` 工具按页返回 PDF、DOCX、PPTX、XLSX、HTML、CSV、TXT 或 Markdown 内容，不产生 Artifact、不调用 LLM；旧 Office 格式可选使用 LibreOffice。
 - Plugin SDK 升级至 `0.2.0` 并公开 `ResourceRequirement`，外置文件工具无需导入宿主内部安全类型即可声明精确 filesystem/network 资源。
 - 新增三个通过 `tool_search` 延迟发现的内置工具：`plugin_inspect` 统一查询插件/版本/操作/capability，`plugin_build` 负责静态校验、SDK contract test 和确定性打包，`plugin_manage` 负责安装、启停、热重载、回滚与卸载。
+- `plugin_manage` 现在同时提供 `active_on`、`active_off`、`active_restart` 和 `active_run`，小鹿可以通过 `tool_search` 控制或单次唤醒主动 runner；沿用 `cached` 审批模式，实际是否自动放行仍由当前 mode 决定。
 - 管理工具直接取得当前 Agent 绑定的 live `PluginManager`，不会启动 CLI 子进程或创建第二个 manager；Snapshot 变更遵守 Turn lease，新能力从下一轮可见。
 - 构建/安装路径进入现有 filesystem resource 与 blocked-path 校验；审批按 action 分为 auto/cached/prompt，安装仅接受本地目录/ZIP/TAR，内置插件不可管理，卸载固定保留数据且不开放 force/purge。
 - 插件列表改为有界摘要，安装源缺失会指向 `plugin_build(package)`；Inbox Watch 状态不再绑定项目绝对路径，Workspace Watch 对缺失目标采用独立退避，减少重复投递与轮询审计噪音。

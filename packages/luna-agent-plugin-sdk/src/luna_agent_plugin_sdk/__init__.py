@@ -1,8 +1,10 @@
 from luna_agent_plugin_sdk.active import (
+    ActiveConversationIntent,
     ActiveRegistration,
     ActiveResourceRequest,
     ActiveRestartPolicy,
     ActiveRunnerState,
+    ConversationStatus,
 )
 from luna_agent_plugin_sdk.context import PluginRuntimeContext, RegistrationPort
 from luna_agent_plugin_sdk.hooks import (

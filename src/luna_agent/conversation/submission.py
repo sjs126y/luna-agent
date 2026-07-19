@@ -12,6 +12,7 @@ from luna_agent.models.messages import OutboundMessage
 import uuid
 
 from luna_agent.conversation.input import ConversationInput
+from luna_agent.plugins.active.contracts import ActiveConversationIntent, ConversationStatus
 
 
 class SubmissionOrigin(StrEnum):
@@ -22,6 +23,7 @@ class SubmissionOrigin(StrEnum):
     CLI = "cli"
     CRON = "cron"
     PLUGIN = "plugin"
+    ACTIVE_PLUGIN = "active_plugin"
     SYSTEM = "system"
 
 

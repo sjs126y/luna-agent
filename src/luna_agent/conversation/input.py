@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from luna_agent.models.messages import AttachmentRef, MessageEnvelope, MessagePart, SessionSource
+from luna_agent.plugins.active.contracts import ActiveConversationIntent
 
 
 @dataclass
@@ -18,6 +19,7 @@ class ConversationInput:
     attachments: list[AttachmentRef] = field(default_factory=list)
     envelope: MessageEnvelope | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    active_intent: ActiveConversationIntent | None = None
 
     @classmethod
     def text_only(cls, text: str, *, source: SessionSource | None = None) -> "ConversationInput":
