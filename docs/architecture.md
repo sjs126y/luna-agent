@@ -851,9 +851,13 @@ SQLite 是本地状态库，默认在 `data/state.db`。
 
 ### Messages
 
-Messages 是会话历史来源。
+Messages 是会话历史来源。Agent 每轮读取当前物理 Session，完成后增量保存 transcript。
 
-Agent 每轮会读取历史，完成后保存 transcript。压缩发生时会创建压缩后的 session 链路。
+上下文达到阈值时，压缩器保留 token 预算内的真实用户原话和近期完整消息，生成一份
+不设独立输出上限的 Handoff Summary。ConversationService 在继续当前 turn 前先持久化
+replacement history，形成 `session-v1 -> session-v2` 物理链；工具循环中也可以在安全边界
+创建 mid-turn checkpoint。旧物理 Session 不改写，窗口编号和压缩前后 token 单独记录在
+SQLite `compression_checkpoints` 中。
 
 ### Tool runs
 

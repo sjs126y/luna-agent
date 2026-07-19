@@ -113,6 +113,22 @@ class ConversationCommandRuntime:
             empty_message=self.usage_empty_message,
         )
 
+    async def compact_session(self) -> str:
+        if await self.is_session_running():
+            return "当前会话正在运行，请等待本轮结束后再压缩。"
+        checkpoint = await self.conversation_service.compact_session(
+            self.session_key,
+            self.source,
+        )
+        if checkpoint is None:
+            return "当前会话没有足够的历史可压缩，或压缩模型未返回有效交接摘要。"
+        metadata = checkpoint["metadata"]
+        return (
+            f"上下文已压缩到窗口 {checkpoint['window_number']}。\n"
+            f"tokens: {metadata.pre_tokens:,} -> {metadata.post_tokens:,}\n"
+            f"保留用户原话: {metadata.retained_user_tokens:,} tokens"
+        )
+
     async def tool_runs_recent(
         self,
         *,

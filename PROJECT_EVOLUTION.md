@@ -501,6 +501,14 @@
 - `tool_search`、`tool_describe`、嵌套 `tool_call` 固定到当前 Turn lease，旧 generation 不会发现或执行新快照工具。
 - 模型上下文识别更新，未知模型 fallback 从 64K 提升至 256K，显式配置仍优先。
 
+## 2026-07-19 - Codex 风格上下文 Checkpoint
+
+- 旧 Hermes 式 300 字滚动摘要替换为面向下一模型的完整 Handoff Summary，不再设置压缩专属输出上限。
+- replacement history 按 token 保留真实用户原话、近期完整消息和唯一一份最新摘要；旧摘要不会误识别为用户输入。
+- 压缩 checkpoint 在当前 turn 执行前独立持久化，模型失败不会导致同一历史反复压缩。
+- Agent 工具循环支持 mid-turn 压缩和一次 context-overflow 恢复，物理 Session 链继续负责历史审计和恢复。
+- SQLite 新增窗口 lineage 与 token 诊断；`/compact` 支持手动 checkpoint，`/usage` 显示当前窗口。
+
 ## 当前代码规模
 
 统计口径：v0.19 完成时 Git 已跟踪 Python 文件的物理行数；包含空行和注释，不等同于有效代码行。
@@ -513,7 +521,7 @@
 | 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
 | Python 合计 | 402 | 90,887 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.48 万行，测试约 3.19 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1197 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.48 万行，测试约 3.19 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1185 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

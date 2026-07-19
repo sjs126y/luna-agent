@@ -13,6 +13,7 @@ from luna_agent.compression.simple import (
     SUMMARY_PREFIX,
     ContextCompressor,
     _format_messages_for_summary,
+    _fit_handoff_input,
     is_summary_message,
 )
 from luna_agent.models.messages import NormalizedResponse
@@ -92,6 +93,26 @@ def test_formatter_preserves_long_text_and_complete_tool_results():
     assert long_text in formatted
     assert "web_search" in formatted
     assert "y" * 1000 in formatted
+
+
+def test_overflow_recovery_reduces_old_tool_blob_but_preserves_user_text():
+    user_text = "critical architecture decision"
+    messages = [
+        _text("user", user_text),
+        _tool_call("large"),
+        _tool_result("large", "BEGIN-" + "x" * 20_000 + "-END"),
+        _text("assistant", "continue"),
+    ]
+
+    fitted, reduced = _fit_handoff_input(messages, token_budget=1000, model="test")
+
+    serialized = str(fitted)
+    assert reduced == 1
+    assert user_text in serialized
+    assert "omitted during context recovery" in serialized
+    assert "BEGIN-" in serialized
+    assert "-END" in serialized
+    assert "omitted during context recovery" not in str(messages)
 
 
 @pytest.mark.asyncio

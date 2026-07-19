@@ -235,6 +235,21 @@ uv run luna-agent memory reindex --index all
 | `session` | 会话过期和会话 override |
 | `auth` | 平台用户认证和白名单 |
 
+### 上下文压缩
+
+```yaml
+compression:
+  engine: compressor
+  model: ""                    # 空值表示使用当前 Agent 模型
+  threshold_ratio: 0.6
+  retained_user_tokens: 20000  # 原样保留的真实用户消息预算
+  tail_token_budget: 20000     # 最近完整消息预算
+```
+
+内置压缩器生成面向下一模型的完整 Handoff Summary，并创建新的物理 Session
+checkpoint。摘要没有独立的字数或 token 上限；旧配置 `compression.max_tokens`
+已废弃并忽略。`/compact` 可以手动创建 checkpoint，`/usage` 会显示当前窗口编号。
+
 ## MCP Server
 
 MCP server 支持显式 transport。现有只包含 `command` 的配置继续按 `stdio` 处理：

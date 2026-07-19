@@ -852,6 +852,42 @@ class ConversationService:
         current_id = self.resolve_session_id(session.session_id)
         return await self.session_store.export(current_id, str(export_path))
 
+    async def compact_session(self, session_key: str, source) -> dict[str, Any] | None:
+        """Create a manual checkpoint through the same path as auto compaction."""
+        session = await self.session_store.get_or_create(session_key, source)
+        current_id = self.resolve_session_id(session.session_id)
+        history = await self.session_store.load_history(current_id)
+        if len(history) <= 1:
+            return None
+        agent = await self.get_or_create_agent(session_key)
+        agent._hook_source = source
+        from luna_agent.agent.context import _check_and_build_compaction
+
+        compaction = await _check_and_build_compaction(
+            agent,
+            history,
+            history,
+            trigger="manual",
+            force=True,
+        )
+        if compaction is None:
+            return None
+        checkpoint_id = await self.session_store.commit_compaction(
+            session_key,
+            source,
+            compaction.replacement_history,
+            compaction.metadata,
+        )
+        checkpoints = await self.session_store.recent_compression_checkpoints(
+            session_key=session_key,
+            limit=1,
+        )
+        return {
+            "session_id": checkpoint_id,
+            "window_number": int((checkpoints[-1] if checkpoints else {}).get("window_number") or 0),
+            "metadata": compaction.metadata,
+        }
+
     def default_export_path(self, session_key: str) -> Path:
         return self.settings.agent_data_dir / "exports" / f"{session_key.replace(':', '_')}.jsonl"
 
@@ -892,6 +928,17 @@ class ConversationService:
             threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
         recent_tool_calls = len(getattr(agent, "_last_tool_results", []) or [])
         max_tool_calls = int(getattr(agent, "_max_tool_calls_per_turn", 0) or 0)
+        checkpoints = await self.session_store.recent_compression_checkpoints(
+            session_key=session_key,
+            limit=1,
+        )
+        checkpoint_line = ""
+        if checkpoints:
+            latest = checkpoints[-1]
+            checkpoint_line = (
+                f"压缩窗口: {int(latest.get('window_number') or 0)} "
+                f"({latest.get('trigger') or 'auto'})\n"
+            )
         return (
             f"会话用量\n"
             f"API 调用: {agent.session_api_calls} 次\n"
@@ -907,6 +954,7 @@ class ConversationService:
             f"  MCP tools: {budget.mcp_tools:,}\n"
             f"剩余: {budget.remaining_context:,} tokens\n"
             f"{threshold_line}"
+            f"{checkpoint_line}"
             f"\n最近一轮工具执行: {recent_tool_calls} 次\n"
             f"单轮工具上限: {max_tool_calls} 次"
         )

@@ -10,7 +10,7 @@ from typing import Any
 from luna_agent.compression.base import CompactionMetadata, CompactionResult, ContextEngine
 from luna_agent.compression.registry import compression_registry
 from luna_agent.llm.provider import ProviderProfile
-from luna_agent.llm.token_counter import count_messages_tokens
+from luna_agent.llm.token_counter import count_messages_tokens, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,12 @@ class ContextCompressor(ContextEngine):
         before_tokens = self._estimate_tokens(messages, system_prompt)
         self.last_prompt_tokens = before_tokens
 
-        summary = await self._generate_summary(messages, transport)
+        handoff_messages, reduced_tool_results = _fit_handoff_input(
+            messages,
+            token_budget=self.threshold_tokens,
+            model=self.model,
+        )
+        summary = await self._generate_summary(handoff_messages, transport)
         if not summary:
             raise RuntimeError("compaction model returned an empty handoff summary")
 
@@ -87,6 +92,7 @@ class ContextCompressor(ContextEngine):
             pre_message_count=len(messages),
             post_message_count=len(replacement),
             model=self.model,
+            details={"reduced_tool_results": reduced_tool_results},
         )
         logger.info(
             "Compacted context checkpoint: %d -> %d tokens (%d user tokens retained)",
@@ -302,6 +308,56 @@ def _stringify_tool_result(value: Any) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _fit_handoff_input(
+    messages: list[dict],
+    *,
+    token_budget: int,
+    model: str,
+) -> tuple[list[dict], int]:
+    """Reduce oldest oversized tool blobs only when compaction input cannot fit."""
+    if token_budget <= 0 or count_messages_tokens(messages, model=model) <= token_budget:
+        return messages, 0
+
+    fitted = copy.deepcopy(messages)
+    reduced = 0
+    for message in fitted:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            current_tokens = count_messages_tokens(fitted, model=model)
+            if current_tokens <= token_budget:
+                return fitted, reduced
+            raw = _stringify_tool_result(block.get("content"))
+            raw_tokens = estimate_tokens(raw, model)
+            if raw_tokens <= 0:
+                continue
+            excess = current_tokens - token_budget
+            keep_tokens = max(0, raw_tokens - excess)
+            block["content"] = _condense_tool_result(raw, keep_tokens, raw_tokens)
+            reduced += 1
+    return fitted, reduced
+
+
+def _condense_tool_result(text: str, keep_tokens: int, original_tokens: int) -> str:
+    if keep_tokens <= 0:
+        return f"[tool result omitted during context recovery: {original_tokens} tokens]"
+    keep_chars = min(len(text), max(0, int(len(text) * keep_tokens / max(original_tokens, 1))))
+    if keep_chars >= len(text):
+        return text
+    head_chars = (keep_chars + 1) // 2
+    tail_chars = keep_chars // 2
+    omitted = len(text) - keep_chars
+    tail = text[-tail_chars:] if tail_chars else ""
+    return (
+        text[:head_chars]
+        + f"\n[... {omitted} characters omitted during context recovery ...]\n"
+        + tail
+    )
 
 
 def build_simple_compressor(

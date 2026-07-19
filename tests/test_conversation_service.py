@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -15,6 +16,7 @@ from luna_agent.db.database import Database
 from luna_agent.gateway.compression_chain import CompressionChain
 from luna_agent.gateway.session_store import SessionStore
 from luna_agent.models.messages import SessionSource
+from luna_agent.models.messages import NormalizedResponse
 from luna_agent.tools.registry import tool_registry
 
 
@@ -1084,6 +1086,40 @@ async def test_mid_turn_checkpoint_sink_rebases_final_transcript(service, monkey
     assert current_id != original.session_id
     assert sum("current request" in str(message) for message in history) == 1
     assert sum("finished" in str(message) for message in history) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_compaction_uses_shared_checkpoint_path(service):
+    from luna_agent.compression.simple import ContextCompressor
+
+    svc, _manager, _db = service
+    source = _source()
+    session = await svc.session_store.get_or_create("cli:default:local", source)
+    await svc.session_store.save_transcript(
+        session.session_id,
+        _messages("detailed requirement", "detailed answer"),
+        0,
+    )
+    agent = await svc.get_or_create_agent("cli:default:local")
+    agent._compressor = ContextCompressor(output_tokens=8192)
+    agent._transport = AsyncMock()
+    agent._transport.call.return_value = NormalizedResponse(
+        text="complete manual handoff",
+        tool_calls=[],
+        usage={"input_tokens": 100, "output_tokens": 20},
+        finish_reason="end_turn",
+        stop_reason="end_turn",
+        model="test",
+    )
+
+    checkpoint = await svc.compact_session("cli:default:local", source)
+
+    assert checkpoint is not None
+    assert checkpoint["window_number"] == 1
+    assert checkpoint["metadata"].trigger == "manual"
+    current_id = svc.session_store.resolve_session_id("cli:default:local")
+    history = await svc.session_store.load_history(current_id)
+    assert any("complete manual handoff" in str(message) for message in history)
 
 
 @pytest.mark.asyncio
