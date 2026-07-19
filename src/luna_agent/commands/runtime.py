@@ -354,9 +354,11 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
             plugin = await manager.enable_plugin_runtime(values[0])
         elif action == "disable" and len(values) == 1:
             plugin = await manager.disable_plugin_runtime(values[0])
-        elif action == "active" and len(values) == 2 and values[1].lower() in {"on", "off", "restart"}:
+        elif action == "active" and len(values) == 2 and values[1].lower() in {"on", "off", "restart", "run"}:
             operation = values[1].lower()
-            if operation == "restart":
+            if operation == "run":
+                plugin = await manager.trigger_active_plugin(values[0], reason="manual")
+            elif operation == "restart":
                 plugin = await manager.restart_active_plugin(values[0])
             else:
                 plugin = await manager.set_active_enabled(values[0], operation == "on")
@@ -376,7 +378,7 @@ async def _plugins(runtime: CommandRuntime, args: str) -> tuple[str, dict[str, A
                 "用法: /plugins [list|info <key>|install <path>|reload <key>|"
                 "enable <key>|disable <key>|rollback <key> <digest>|"
                 "logs <key>|versions <key>|operations [key]|operation <id>|"
-                "active <key> <on|off|restart>|"
+                "active <key> <on|off|restart|run>|"
                 "uninstall <key> [--purge-data]]",
                 {"error": "invalid plugin command"},
             )

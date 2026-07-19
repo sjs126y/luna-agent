@@ -678,6 +678,30 @@ class PluginManager:
         async with self.operations.track(key, "active_restart"):
             return await self._restart_active_plugin(key)
 
+    async def trigger_active_plugin(
+        self,
+        key: str,
+        *,
+        reason: str = "manual",
+    ) -> LoadedPlugin:
+        """Wake the current active generation without reloading it."""
+        plugin = self._plugins.get(key)
+        if plugin is None:
+            raise KeyError(f"unknown plugin: {key}")
+        if plugin.active_registration is None or plugin.active_runner is None:
+            raise ValueError(f"plugin does not register an active runner: {key}")
+        if not plugin.active_enabled:
+            raise ValueError(f"active plugin is disabled: {key}")
+        if not self._active_owner_running:
+            raise RuntimeError("active plugin owner is not running")
+        plugin.active_runner.control.wake(reason)
+        self.events.record(
+            key,
+            "active_wakeup_requested",
+            details={"reason": str(reason or "manual")},
+        )
+        return plugin
+
     async def _restart_active_plugin(self, key: str) -> LoadedPlugin:
         self.operations.stage("draining")
         plugin = self._plugins[key]

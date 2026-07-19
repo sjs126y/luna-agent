@@ -335,7 +335,7 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
             CommandSpec(
                 "active",
                 "控制主动运行器",
-                "/plugins active <key> <on|off|restart>",
+                "/plugins active <key> <on|off|restart|run>",
                 category="runtime",
                 mutates_state=True,
             ),

@@ -5,9 +5,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from luna_agent.plugins.active.contracts import ActiveRegistration, ActiveRunnerState
+
+
+class ActiveWakeReason(StrEnum):
+    """Reason returned when an active runner is released from its wait."""
+
+    TIMER = "timer"
+    MANUAL = "manual"
+    INTERNAL = "internal"
+    STOP = "stop"
+    QUIESCE = "quiesce"
 
 
 class ActiveRuntimeControl:
@@ -25,6 +36,8 @@ class ActiveRuntimeControl:
         self._resume = asyncio.Event()
         self._resume.set()
         self._stop = asyncio.Event()
+        self._wake = asyncio.Event()
+        self._wake_reason = ActiveWakeReason.INTERNAL
         self._aborted = False
 
     @property
@@ -59,10 +72,12 @@ class ActiveRuntimeControl:
         self._stop.set()
         self._committed.set()
         self._resume.set()
+        self.wake(ActiveWakeReason.STOP)
 
     def request_quiesce(self) -> None:
         self.state = ActiveRunnerState.QUIESCING
         self._resume.clear()
+        self.wake(ActiveWakeReason.QUIESCE)
 
     def resume(self) -> None:
         self.state = ActiveRunnerState.ACTIVE
@@ -74,11 +89,55 @@ class ActiveRuntimeControl:
     async def wait_until_stopped(self) -> None:
         await self._stop.wait()
 
+    def wake(self, reason: str = ActiveWakeReason.INTERNAL) -> None:
+        """Release one pending wait without creating an unbounded queue."""
+        try:
+            normalized = ActiveWakeReason(reason)
+        except ValueError:
+            normalized = ActiveWakeReason.INTERNAL
+        if self._stop.is_set():
+            normalized = ActiveWakeReason.STOP
+        if not self._wake.is_set() or normalized == ActiveWakeReason.STOP:
+            self._wake_reason = normalized
+        self._wake.set()
+
+    async def wait_for_wakeup(self, timeout: float | None = None) -> str:
+        """Wait for a plugin-owned timer or an explicit runtime wake signal."""
+        if self._stop.is_set():
+            return ActiveWakeReason.STOP
+        if self._wake.is_set():
+            reason = self._wake_reason
+            self._wake.clear()
+            return reason
+
+        stop_wait = asyncio.create_task(self._stop.wait(), name="active-wake-stop")
+        wake_wait = asyncio.create_task(self._wake.wait(), name="active-wake-signal")
+        waiters = {stop_wait, wake_wait}
+        try:
+            done, _ = await asyncio.wait(
+                waiters,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                return ActiveWakeReason.TIMER
+            if stop_wait in done or self._stop.is_set():
+                return ActiveWakeReason.STOP
+            reason = self._wake_reason
+            self._wake.clear()
+            return reason
+        finally:
+            for task in waiters:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*waiters, return_exceptions=True)
+
     def request_stop(self) -> None:
         self.state = ActiveRunnerState.STOPPING
         self._stop.set()
         self._resume.set()
         self._committed.set()
+        self.wake(ActiveWakeReason.STOP)
 
     def defer(self, *, name: str, cleanup) -> None:
         self.scope.defer(name, cleanup)
@@ -97,6 +156,8 @@ class ActiveRuntimeControl:
             "restart_count": self.restart_count,
             "quiescing": self.quiescing,
             "stop_requested": self.stop_requested,
+            "wake_pending": self._wake.is_set(),
+            "wake_reason": self._wake_reason if self._wake.is_set() else "",
         }
 
 
