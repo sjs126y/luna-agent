@@ -183,21 +183,18 @@ class ConversationService:
                 provider=getattr(agent, "_provider", None),
             )
             ctx_input = resolved_input if user_input.attachments else resolved_input.text
+            context_kwargs: dict[str, Any] = {}
             if _accepts_turn_id(build_turn_context):
-                ctx = await build_turn_context(
-                    agent,
-                    ctx_input,
-                    history,
-                    turn_id=turn_id,
-                    active_intent=user_input.active_intent,
-                )
-            else:
-                ctx = await build_turn_context(
-                    agent,
-                    ctx_input,
-                    history,
-                    active_intent=user_input.active_intent,
-                )
+                context_kwargs["turn_id"] = turn_id
+            if _accepts_parameter(build_turn_context, "active_intent"):
+                context_kwargs["active_intent"] = user_input.active_intent
+            ctx = await build_turn_context(
+                agent,
+                ctx_input,
+                history,
+                **context_kwargs,
+            )
+            if not _accepts_turn_id(build_turn_context):
                 if not str(getattr(ctx, "turn_id", "") or ""):
                     setattr(ctx, "turn_id", turn_id)
             compaction_result = getattr(ctx, "compaction_result", None)
