@@ -180,6 +180,7 @@ plugins:
     - "automation/reminder"
     - "automation/feed-watch"
     - "automation/inbox-watch"
+    - "productivity/document-converter"
   disabled: []
   config:
     integrations/workspace-watch:

@@ -2,7 +2,24 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from luna_agent_plugin_sdk import ActiveResourceRequest, HookEvent, PluginRuntimeContext
+from luna_agent_plugin_sdk import (
+    ActiveResourceRequest,
+    HookEvent,
+    PluginRuntimeContext,
+    ResourceRequirement,
+)
+
+
+def test_resource_requirement_is_a_public_tool_contract() -> None:
+    requirement = ResourceRequirement(
+        "filesystem",
+        "/workspace/report.pdf",
+        "read",
+        "document source",
+    )
+
+    assert requirement.key == "filesystem:read:/workspace/report.pdf"
+    assert requirement.as_dict()["reason"] == "document source"
 
 
 def test_active_resource_request_normalizes_mcp_contract() -> None:

@@ -4,7 +4,30 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+
+ResourceKind = Literal["filesystem", "network"]
+
+
+@dataclass(frozen=True)
+class ResourceRequirement:
+    kind: ResourceKind
+    resource: str
+    access: str = "read"
+    reason: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"{self.kind}:{self.access}:{self.resource}"
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "kind": self.kind,
+            "resource": self.resource,
+            "access": self.access,
+            "reason": self.reason,
+        }
 
 
 @dataclass

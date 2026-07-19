@@ -1,0 +1,14 @@
+schema_version: 1
+key: productivity/document-converter
+name: Document Converter
+version: "0.1.0"
+plugin_api: ">=1,<2"
+description: Converts common local document formats into paged plain text or Markdown.
+kind: productivity
+entrypoint: document_converter:register
+requires:
+  sdk: ">=0.2,<1"
+provides: [tools]
+tags: [document, converter, pdf, docx, pptx, xlsx, markdown]
+enabled_by_default: false
+source: local
