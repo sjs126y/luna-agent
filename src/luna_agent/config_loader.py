@@ -216,6 +216,10 @@ def _validate_converted_value(field: ConfigField, value: Any) -> list[str]:
         from luna_agent.security.config import tool_approval_config_errors
 
         errors.extend(tool_approval_config_errors(value))
+    if field.path == "permissions.approval_reviewer":
+        from luna_agent.security.config import approval_reviewer_config_errors
+
+        errors.extend(approval_reviewer_config_errors(value))
     if field.value_type == "str" and field.choices and value not in field.choices:
         errors.append(f"{field.path} 不支持: {value}，可选: {', '.join(str(item) for item in field.choices)}")
     if field.value_type in {"int", "float"}:
