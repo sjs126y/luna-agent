@@ -21,6 +21,13 @@
 
 ---
 
+## 2026-07-20：主动插件唤醒与 Luna Companion
+
+- 新增 `ActiveWakeReason` 和 `wait_for_wakeup(timeout)`：主动 runner 可等待定时器、手动命令或内部事件，不需要固定轮询；`/plugins active <key> run` 可触发一次 manual 唤醒。
+- 新增 `ActiveConversationIntent`、`ConversationStatus` 与 `conversation.submit_intent()`；主动插件内部 LLM 评估后再提交结构化意图，进入 Coordinator/Agent/Delivery 正常链路，不伪造用户消息。
+- 新增 `plugins/luna_companion` 示例主动插件：支持 check-in/follow-up 候选、LLM 评估、激活分数、衰减、复评退避、过期、候选竞争、quiet hours、最小间隔、每日上限和插件自有持久化状态。
+- 更新 `docs/plugins.md` 和 `BACKEND_INTERFACE.md`，明确主动资源、会话状态、意图字段和生命周期语义。
+
 ## 2026-07-20：Approval Reviewer
 
 - 新增可选 `permissions.approval_reviewer`，默认关闭，不配置时保持原人工确认链路。

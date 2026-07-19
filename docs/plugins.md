@@ -347,6 +347,30 @@ def register(ctx):
     )
 ```
 
+主动 runner 不应通过固定间隔不断轮询。`ctx.runtime.wait_for_wakeup(timeout)` 同时等待定时器和宿主唤醒：插件可以在完成一次检查后设置自己的下一次检查时间，也可以被手动命令或插件内部事件立即唤醒。唤醒原因包括 `timer`、`manual` 和 `internal`；停止或热更新会唤醒等待者，使 runner 能够及时退出。
+
+主动插件的首次 LLM 调用属于插件自己的决策，不会伪装成用户消息。插件可以使用已声明的 `llm=True` 资源评估候选、打分和选择；只有决定值得交流时，才构造 `ActiveConversationIntent` 交给主会话协调器：
+
+```python
+from luna_agent_plugin_sdk import ActiveConversationIntent
+
+status = await ctx.resources.conversation.status(session_key)
+if not status.busy and status.recent_user_messages:
+    intent = ActiveConversationIntent(
+        intent_id="follow-up:wechat:demo:abc123",
+        session_key=session_key,
+        kind="follow_up",
+        instruction="自然跟进用户最近提到的话题，不要声称知道未提供的事实。",
+        evidence={"recent_user_messages": list(status.recent_user_messages)},
+        request_id="luna-companion:follow-up:wechat:demo:abc123",
+        metadata={"plugin": "luna-companion"},
+    )
+    handle = await ctx.resources.conversation.submit_intent(intent)
+    outcome = await handle.outcome()
+```
+
+`status()` 返回当前会话是否忙碌、最近用户消息和最近活动时间；插件应据此决定是否推迟。`submit_intent()` 进入普通 Coordinator、Agent Loop 和 Delivery 链路，使用 `SubmissionOrigin.ACTIVE_PLUGIN`，不会写入一条假的用户消息，也不会绕过工具、Hook、权限或发送审计。`intent_id` 和 `request_id` 应由插件稳定生成，便于重启后幂等和追踪。
+
 运行语义：
 
 1. `register()` 只收集能力和 runner，不会启动任务。
@@ -360,6 +384,7 @@ def register(ctx):
 /plugins active examples/active-heartbeat on
 /plugins active examples/active-heartbeat off
 /plugins active examples/active-heartbeat restart
+/plugins active examples/active-heartbeat run
 ```
 
 `ctx.resources` 是 generation-bound facade：
@@ -369,7 +394,8 @@ def register(ctx):
 | `tool.call(name, input)` | 必须精确声明；写入、Shell、后台进程、代码执行和 destructive 工具硬拒绝 |
 | `mcp.call(server, tool, input)` | server 与 remote tool 都必须精确声明；仍经过 Tool Executor、Hook 与审计 |
 | `llm.complete(...)` | 必须声明 `llm=True`，默认复用宿主当前 LLM 配置 |
-| `conversation.submit(...)` | 必须声明并受 active session allowlist 约束，进入 Coordinator |
+| `conversation.status(session_key)` | 必须声明并受 active session allowlist 约束，只返回有界会话状态 |
+| `conversation.submit_intent(intent)` | 必须声明并受 active session allowlist 约束，进入 Coordinator；不会伪造用户消息 |
 | `delivery.send(...)` | 必须声明并受 session allowlist 约束，进入 DeliveryService |
 | `artifacts.create/get` | 必须声明；只能读取该插件自己创建的 Artifact |
 | `storage` | 始终限定在当前插件的数据 revision |
@@ -404,6 +430,26 @@ plugins:
 ```
 
 `session_key` 必须同时出现在 `active.sessions` 精确 allowlist 中。启动 Gateway 后可用 `/workspace-watch-status` 查看配置与 runner 状态；也可以用 `/plugins active integrations/workspace-watch off|on|restart` 临时控制。没有配置 session 时插件仍可观察并更新基线，但不会向任何会话投递。
+
+### Luna Companion 示例
+
+`plugins/luna_companion` 是一个最小的主动交流示例。它只接收精确配置的 session，先读取会话状态，再由插件自己的 LLM 评估 `check_in` 和 `follow_up` 候选。候选分数会累积、随时间衰减，并记录复评时间、过期时间和发送历史；低于阈值的候选采用退避，不会在每次唤醒时重复调用模型。一次 cycle 最多为每个 session 提交一个意图，且遵守 quiet hours、最小间隔和每日上限。
+
+它默认关闭，启用时需要同时打开插件配置和 Gateway active runner：
+
+```yaml
+plugins:
+  enabled: [automation/luna-companion]
+  config:
+    automation/luna-companion:
+      active:
+        enabled: true
+        sessions: ["wechat:<chat_id>:<user_id>"]
+      review_threshold: 0.75
+      quiet_hours: [["23:00", "08:00"]]
+```
+
+启动后可用 `/plugins active automation/luna-companion run` 立即触发一次检查，或用 `/luna-companion-status` 查看候选与发送计数。示例插件不会注册 MCP，也不会获得写入、Shell、后台进程或 destructive 工具。
 
 ### 正式主动插件
 
