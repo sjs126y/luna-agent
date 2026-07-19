@@ -190,6 +190,7 @@ plugins:
       paths: ["TODO.md", "BACKEND_PROGRESS.md"]
       session_key: ""               # 例如 wechat:<chat_id>:<user_id>
       poll_interval_seconds: 30
+      missing_poll_interval_seconds: 30 # 目标不存在时降低探测频率
       settle_seconds: 10
       active:
         enabled: false

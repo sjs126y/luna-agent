@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/first%20step-doctor-0A84FF" alt="Run doctor first">
   <img src="https://img.shields.io/badge/logs-data%2Flogs-555555" alt="Logs directory">
-  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F" alt="1171 tests passed">
+  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
 </p>
 
 <p>
@@ -146,6 +146,13 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 
 - `ERROR`：manifest、env 或 entrypoint 有问题。
 - `DEFERRED`：延迟加载，平台/MCP 触发时才 import，通常不是错误。
+
+`Bash / process_start`：
+
+- `bash-strict requires bwrap`：当前系统不能建立严格进程文件系统；安装 Bubblewrap，或明确接受风险后把 `sandbox.process_backend` 设为 `legacy`。
+- `read access is not granted` / `Approval required for read ...`：把具体文件或目录放入 `read_paths`，不要依赖命令文本中的绝对路径。
+- `strict sandbox mount scan exceeded its safety budget`：`cwd` 过宽；切换到更小的工作目录并只声明任务需要的路径。
+- `doctor.sandbox.process.bash_effective_backend` 为 Bash 实际后端；`effective_backend` 保留通用/MCP 兼容后端含义。
 
 `Delivery`：
 

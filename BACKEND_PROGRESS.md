@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F" alt="1171 tests passed">
+  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
@@ -20,6 +20,28 @@
 </div>
 
 ---
+
+## 2026-07-19：Bash 声明式资源与严格进程沙箱
+
+- 修复 Ask First 下 Bash 可通过 Python 多行脚本和引号差异读取未声明目录外文件的问题。命令正则降级为前置提示，真正边界改为 Bubblewrap 最小文件系统挂载。
+- 新增 `ProcessMountPlan` 与 `ProcessSandboxPolicy`。Bash 使用 `bash-strict` 策略；stdio MCP 暂时使用 `mcp-compatible`，共享构造抽象但不改变已有 server 的宿主依赖。
+- `bash` / `process_start` 统一支持 `cwd`、`read_paths`、`write_paths`。工具身份使用 `cached`，精确文件路径仍独立进入当前 Mode 的资源审批。
+- 严格子进程只看到系统运行目录、隔离 HOME、工作目录和显式资源；单文件 read 不会暴露同目录兄弟文件，Python 拼接路径也不能访问未挂载宿主路径。
+- blocked 文件在已挂载目录中继续作为不可扩权硬边界；`.git/.venv/node_modules` 等目录在扫描阶段整棵剪枝并在子进程中遮蔽。
+- `process_backend: auto` 缺少 bwrap 时 Bash 失败关闭，只有显式 `legacy` 才关闭严格隔离。Doctor 新增 Bash 实际后端、隔离状态和 fail-closed 字段。
+- 阶段提交：`b4fd8b4`、`e4cb02d`、`f1e5268`。完整回归 `1197 passed, 1 warning`；唯一 warning 来自飞书 SDK 内部弃用 API。
+
+## 2026-07-19：Agent 可操作的插件控制面
+
+- 新增轻量外置插件 `productivity/document-converter`：单个 `document_convert` 工具按页返回 PDF、DOCX、PPTX、XLSX、HTML、CSV、TXT 或 Markdown 内容，不产生 Artifact、不调用 LLM；旧 Office 格式可选使用 LibreOffice。
+- Plugin SDK 升级至 `0.2.0` 并公开 `ResourceRequirement`，外置文件工具无需导入宿主内部安全类型即可声明精确 filesystem/network 资源。
+- 新增三个通过 `tool_search` 延迟发现的内置工具：`plugin_inspect` 统一查询插件/版本/操作/capability，`plugin_build` 负责静态校验、SDK contract test 和确定性打包，`plugin_manage` 负责安装、启停、热重载、回滚与卸载。
+- 管理工具直接取得当前 Agent 绑定的 live `PluginManager`，不会启动 CLI 子进程或创建第二个 manager；Snapshot 变更遵守 Turn lease，新能力从下一轮可见。
+- 构建/安装路径进入现有 filesystem resource 与 blocked-path 校验；审批按 action 分为 auto/cached/prompt，安装仅接受本地目录/ZIP/TAR，内置插件不可管理，卸载固定保留数据且不开放 force/purge。
+- 插件列表改为有界摘要，安装源缺失会指向 `plugin_build(package)`；Inbox Watch 状态不再绑定项目绝对路径，Workspace Watch 对缺失目标采用独立退避，减少重复投递与轮询审计噪音。
+- Plugin package 增加符号链接拒绝，避免打包阶段跟随链接读取包目录外内容。
+- 已安装 active package 现在会按明确优先级遮蔽同 key 的本地开发源，避免安装后重启被误判为重复插件；两个本地目录、内置与安装包等真实 key 冲突仍保持硬错误。
+- 新增 Agent 工具、watcher 与 Document Converter 回归测试；文档转换聚焦 `4 passed`，SDK/安全聚焦 `26 passed`，完整回归 `1186 passed, 1 warning`。
 
 ## 2026-07-19：项目正式更名为 Luna Agent
 

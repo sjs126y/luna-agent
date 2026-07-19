@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F?logo=pytest&logoColor=white" alt="1171 tests passed">
+  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F?logo=pytest&logoColor=white" alt="1197 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -153,7 +153,7 @@ uv run luna-agent serve
 
 ## 扩展 Luna Agent
 
-插件可以组合工具、Skill、MCP Server、Hook、命令和工作流，也可以注册由 Gateway 托管的主动 runner；generation snapshot 支持在运行中安装、更新、回滚或卸载。外置插件只依赖 `luna-agent-plugin-sdk` 公共契约，manifest 可以声明宿主、SDK、插件、能力和 MCP 工具依赖；稳定 `request_id` 的主动提交在重启后仍保持幂等。当前仓库已经包含：
+插件可以组合工具、Skill、MCP Server、Hook、命令和工作流，也可以注册由 Gateway 托管的主动 runner；generation snapshot 支持在运行中安装、更新、回滚或卸载。小鹿能够通过 `tool_search` 按需查询、验证、测试、打包和管理外置插件，操作继续经过 sandbox、按 action 风险分级的审批和审计。外置插件只依赖 `luna-agent-plugin-sdk` 公共契约，manifest 可以声明宿主、SDK、插件、能力和 MCP 工具依赖；稳定 `request_id` 的主动提交在重启后仍保持幂等。当前仓库已经包含：
 
 | 插件 | 提供能力 |
 | --- | --- |
@@ -165,21 +165,22 @@ uv run luna-agent serve
 | **Reminder** | 持久提醒、重启恢复、取消和到期后通过正式会话链路提醒 |
 | **Feed Watch** | RSS/Atom 条件抓取、关键词过滤、更新去重和批量摘要 |
 | **Inbox Watch** | 监视受控收件箱目录，将稳定文件物化为 Artifact 后交给主 Agent |
+| **Document Converter** | 将 PDF、DOCX、PPTX、XLSX、HTML 等本地文档按页转换成文本或 Markdown |
 
 [查看插件格式与注册能力](docs/plugins.md)
 
 ## 项目状态
 
 <p>
-  <img src="https://img.shields.io/badge/Python%20files-398-3776AB" alt="398 Python files">
-  <img src="https://img.shields.io/badge/Python%20LOC-88%2C606-555555" alt="88606 Python lines">
-  <img src="https://img.shields.io/badge/runtime%20LOC-53%2C937-0A84FF" alt="53937 runtime lines">
-  <img src="https://img.shields.io/badge/test%20LOC-31%2C026-2EA44F" alt="31026 test lines">
+  <img src="https://img.shields.io/badge/Python%20files-402-3776AB" alt="402 Python files">
+  <img src="https://img.shields.io/badge/Python%20LOC-90%2C887-555555" alt="90887 Python lines">
+  <img src="https://img.shields.io/badge/runtime%20LOC-54%2C815-0A84FF" alt="54815 runtime lines">
+  <img src="https://img.shields.io/badge/test%20LOC-31%2C850-2EA44F" alt="31850 test lines">
 </p>
 
 ```bash
 python -m compileall -q src/luna_agent
-uv run pytest -q  # 1171 passed, 1 warning
+uv run pytest -q  # 1197 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。

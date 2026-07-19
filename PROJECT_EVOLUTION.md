@@ -5,9 +5,9 @@
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-19-7C3AED" alt="19 phases">
-  <img src="https://img.shields.io/badge/Python%20LOC-88%2C606-0A84FF" alt="88606 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F" alt="1171 tests passed">
+  <img src="https://img.shields.io/badge/phases-21-7C3AED" alt="21 phases">
+  <img src="https://img.shields.io/badge/Python%20LOC-90%2C887-0A84FF" alt="90887 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1197%20passed-2EA44F" alt="1197 tests passed">
 </p>
 
 <p>
@@ -26,8 +26,39 @@
 当前主分支状态：
 
 - 分支：`main`
-- 本次统计基准：v0.19 Luna Agent 命名迁移
-- 最近全量验证：`uv run pytest -q`，结果 `1171 passed, 1 warning`
+- 本次统计基准：v0.20 Agent 插件控制面
+- 最近全量验证：`uv run python -m pytest -q`，结果 `1197 passed, 1 warning`
+
+## v0.21 Bash 最小进程文件系统
+
+时间：2026-07-19
+
+目标：让 Shell 保持足够自由，同时把可访问宿主资源从“解析命令字符串”提升为可审批、可审计、不可绕过的进程级边界。
+
+主要变化：
+
+- `bash` 与 `process_start` 通过 `cwd/read_paths/write_paths` 显式声明文件系统资源，工具身份与路径资源分别审批。
+- `ProcessMountPlan` 作为共享中间层构造进程视图；Bash 使用最小 Bubblewrap root，MCP 保留兼容策略。
+- 未声明宿主路径在子进程里不存在，单文件授权不扩大到兄弟文件；blocked 文件/目录在挂载后继续遮蔽。
+- 自动后端缺少 bwrap 时 Bash 失败关闭，显式 legacy 是唯一兼容退出路径；Doctor 区分 Bash 与通用进程后端。
+- 真实回归覆盖 Python 路径拼接、外部单文件审批、blocked mask、后台进程和 MCP 兼容性；完整测试为 `1197 passed, 1 warning`。
+
+## v0.20 Agent 可操作的插件控制面
+
+时间：2026-07-19
+
+目标：让主 Agent 不依赖 Bash 或 CLI 文本解析，直接使用现有插件控制面完成插件查询、构建与热管理。
+
+主要变化：
+
+- 增加 `productivity/document-converter`，用单一延迟发现工具将常见本地文档转换为分页文本或 Markdown。
+- Plugin SDK `0.2.0` 公开资源声明契约，外置文件工具继续进入宿主统一安全管道。
+- `plugin_inspect`、`plugin_build`、`plugin_manage` 作为低频工具进入 Capability Snapshot，通过 `tool_search` 按需发现。
+- 查询直接复用 `PluginQueryService`；安装、启停、重载、回滚和卸载直接调用当前 live `PluginManager`。
+- 插件源码仍由普通文件工具编辑，插件构建工具只承担静态校验、SDK contract test 和确定性打包。
+- 插件工具按 action 分级审批，拒绝内置插件、限制本地安装源，普通卸载始终保留插件数据。
+- 路径继续经过 sandbox/resource 审批，打包拒绝符号链接；热更新后当前 Turn 保持旧 lease，新快照从下一轮生效。
+- install-state 指向的 active digest 对同 key 本地开发源具有明确优先级；真正的同边界重复 key 仍拒绝加载。
 
 ## v0.19 Luna Agent 命名迁移
 
@@ -476,13 +507,13 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/luna_agent/**/*.py` | 254 | 53,937 |
-| `tests/**/*.py` | 102 | 31,026 |
-| Plugins / Examples / Scripts / SDK | 33 | 3,633 |
+| `src/luna_agent/**/*.py` | 255 | 54,815 |
+| `tests/**/*.py` | 104 | 31,850 |
+| Plugins / Examples / Scripts / SDK | 34 | 4,212 |
 | 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
-| Python 合计 | 398 | 88,606 |
+| Python 合计 | 402 | 90,887 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.39 万行，测试约 3.10 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1171 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.48 万行，测试约 3.19 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1197 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

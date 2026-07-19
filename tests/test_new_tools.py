@@ -156,9 +156,9 @@ async def test_process_start_reuses_bash_sandbox_precheck(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_process_start_blocks_sandbox_patterns_and_bad_cwd(tmp_path: Path):
+async def test_process_start_blocks_sandbox_patterns_and_mounts_declared_cwd(tmp_path: Path):
     from luna_agent.plugins.builtin.tools.builtin.bash import set_work_dir
-    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_start
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import _process_start, _process_wait
     from luna_agent.tools.sandbox import init_sandbox
 
     workspace = tmp_path / "workspace"
@@ -171,10 +171,12 @@ async def test_process_start_blocks_sandbox_patterns_and_bad_cwd(tmp_path: Path)
     set_work_dir(workspace)
 
     blocked_path = await _process_start("cat .env", cwd=str(workspace))
-    bad_cwd = await _process_start("pwd", cwd=str(outside))
+    declared_cwd = await _process_start("pwd", cwd=str(outside))
+    declared_pid = int(declared_cwd.split("Process [", 1)[1].split("]", 1)[0])
+    await _process_wait(declared_pid, timeout=5)
 
     assert "sandbox blocked" in blocked_path.lower() or "path blocked" in blocked_path.lower()
-    assert "outside sandbox roots" in bad_cwd.lower()
+    assert f"cwd: {outside}" in declared_cwd
 
 
 @pytest.mark.asyncio
@@ -407,6 +409,99 @@ async def test_bash_drains_large_output_with_bounded_capture(tmp_path: Path):
     assert "truncated: true" in result
     assert "more bytes" in result
     assert len(result) < 10_000
+
+
+@pytest.mark.asyncio
+async def test_bash_strict_sandbox_blocks_obfuscated_undeclared_host_read(tmp_path: Path):
+    from luna_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from luna_agent.tools import process_sandbox
+    from luna_agent.tools.sandbox import init_sandbox
+
+    if not process_sandbox.process_sandbox_capabilities()["bwrap_available"]:
+        pytest.skip("bubblewrap unavailable")
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside.txt"
+    workspace.mkdir()
+    outside.write_text("secret", encoding="utf-8")
+    init_sandbox([workspace], [])
+    set_work_dir(workspace)
+
+    command = (
+        "python3 -c \"print(__import__('pathlib').Path("
+        f"{str(tmp_path)!r}, 'out' + 'side.txt').exists())\""
+    )
+    result = await _bash(command, timeout=5)
+
+    assert "exit_code: 0" in result
+    assert "False" in result
+    assert "secret" not in result
+
+
+@pytest.mark.asyncio
+async def test_bash_strict_sandbox_reads_only_explicit_declared_path(tmp_path: Path):
+    from luna_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from luna_agent.tools import process_sandbox
+    from luna_agent.tools.sandbox import init_sandbox
+
+    if not process_sandbox.process_sandbox_capabilities()["bwrap_available"]:
+        pytest.skip("bubblewrap unavailable")
+    workspace = tmp_path / "workspace"
+    readable = tmp_path / "readable.txt"
+    sibling = tmp_path / "sibling.txt"
+    workspace.mkdir()
+    readable.write_text("allowed", encoding="utf-8")
+    sibling.write_text("hidden", encoding="utf-8")
+    init_sandbox([workspace], [])
+    set_work_dir(workspace)
+
+    command = (
+        "python3 -c \"print((__import__('pathlib').Path("
+        f"{str(readable)!r}).read_text(), __import__('pathlib').Path("
+        f"{str(sibling)!r}).exists()))\""
+    )
+    result = await _bash(command, timeout=5, read_paths=[str(readable)])
+
+    assert "exit_code: 0" in result
+    assert "allowed" in result
+    assert "False" in result
+    assert "hidden" not in result
+
+
+@pytest.mark.asyncio
+async def test_bash_strict_sandbox_masks_blocked_files_inside_cwd(tmp_path: Path):
+    from luna_agent.plugins.builtin.tools.builtin.bash import _bash, set_work_dir
+    from luna_agent.tools import process_sandbox
+    from luna_agent.tools.sandbox import init_sandbox
+
+    if not process_sandbox.process_sandbox_capabilities()["bwrap_available"]:
+        pytest.skip("bubblewrap unavailable")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".env").write_text("SECRET=1", encoding="utf-8")
+    init_sandbox([workspace], ["**/.env"])
+    set_work_dir(workspace)
+
+    result = await _bash(
+        "python3 -c \"print((lambda p: p.read_text() if p.exists() else 'hidden')"
+        "(__import__('pathlib').Path('.') / ('.' + 'env')))\"",
+        timeout=5,
+    )
+
+    assert "SECRET=1" not in result
+    assert "PermissionError" in result or "hidden" in result
+
+
+def test_bash_blocked_mount_scan_prunes_protected_directories(tmp_path: Path):
+    from luna_agent.plugins.builtin.tools.builtin.bash import _collect_blocked_mounts
+    from luna_agent.tools.sandbox import init_sandbox
+
+    workspace = tmp_path / "workspace"
+    protected = workspace / ".git"
+    protected.mkdir(parents=True)
+    (protected / "config").write_text("secret", encoding="utf-8")
+    init_sandbox([workspace], ["**/.git/**"])
+
+    assert _collect_blocked_mounts([workspace]) == (protected.absolute(),)
 
 
 # ── file edit/write reliability ────────────────────────

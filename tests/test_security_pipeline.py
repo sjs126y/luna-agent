@@ -26,6 +26,33 @@ def _agent(tmp_path: Path, *, mode: str = "ask-first"):
     )
 
 
+def test_tool_approval_resolver_uses_call_input_and_fails_closed():
+    from luna_agent.security.evaluator import prepare_tool_call
+    from luna_agent.tools.entry import ToolEntry
+
+    async def handler():
+        return "ok"
+
+    entry = ToolEntry(
+        "dynamic_approval",
+        "demo",
+        {},
+        handler,
+        approval_mode="auto",
+        approval_mode_resolver=lambda input_: input_["mode"],
+    )
+
+    assert prepare_tool_call(
+        {"name": entry.name, "input": {"mode": "cached"}}, entry
+    ).approval_mode == "cached"
+    assert prepare_tool_call(
+        {"name": entry.name, "input": {"mode": "invalid"}}, entry
+    ).approval_mode == "prompt"
+    assert prepare_tool_call(
+        {"name": entry.name, "input": {}}, entry
+    ).approval_mode == "prompt"
+
+
 @pytest.mark.asyncio
 async def test_cached_tool_approval_uses_session_ttl(tmp_path):
     from luna_agent.tools.entry import ToolEntry
@@ -336,6 +363,106 @@ def test_bash_declares_working_directory_and_network_resources(tmp_path, monkeyp
     ]
     assert remote[1].resource == "https://api.github.com:443"
     assert remote[1].access == "connect"
+
+
+def test_bash_declares_explicit_read_and_write_resources(tmp_path, monkeypatch):
+    from luna_agent.plugins.builtin.tools.builtin import bash
+    from luna_agent.security.evaluator import prepare_tool_call
+    from luna_agent.tools.registry import tool_registry
+
+    workspace = tmp_path / "workspace"
+    readable = tmp_path / "source.docx"
+    writable = tmp_path / "output"
+    workspace.mkdir()
+    writable.mkdir()
+    readable.write_text("source", encoding="utf-8")
+    monkeypatch.setattr(bash, "_work_dir", workspace.resolve())
+
+    prepared = prepare_tool_call(
+        {
+            "id": "bash-resource-test",
+            "name": "bash",
+            "input": {
+                "command": "python3 -c \"print(1)\"",
+                "read_paths": [str(readable)],
+                "write_paths": [str(writable)],
+            },
+        },
+        tool_registry.get("bash"),
+    )
+
+    assert prepared.approval_mode == "cached"
+    assert [item.as_dict() for item in prepared.resources] == [
+        {
+            "kind": "filesystem",
+            "resource": str(workspace.resolve()),
+            "access": "write",
+            "reason": "bash working directory",
+        },
+        {
+            "kind": "filesystem",
+            "resource": str(readable.resolve()),
+            "access": "read",
+            "reason": "bash declared read path",
+        },
+        {
+            "kind": "filesystem",
+            "resource": str(writable.resolve()),
+            "access": "write",
+            "reason": "bash declared write path",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ask_first_approves_declared_bash_read_without_exposing_siblings(tmp_path):
+    from luna_agent.plugins.builtin.tools.builtin import bash
+    from luna_agent.tools import process_sandbox
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.sandbox import init_sandbox
+
+    if not process_sandbox.process_sandbox_capabilities()["bwrap_available"]:
+        pytest.skip("bubblewrap unavailable")
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    readable = external / "summary.docx"
+    sibling = external / "private.txt"
+    workspace.mkdir()
+    external.mkdir()
+    readable.write_text("approved", encoding="utf-8")
+    sibling.write_text("hidden", encoding="utf-8")
+    init_sandbox([workspace], [])
+    bash.set_work_dir(workspace)
+    decisions = []
+
+    async def confirm(decision):
+        decisions.append(decision)
+        return "always"
+
+    command = (
+        "python3 -c \"print((__import__('pathlib').Path("
+        f"{str(readable)!r}).read_text(), __import__('pathlib').Path("
+        f"{str(sibling)!r}).exists()))\""
+    )
+    result = await execute_tool_call_result(
+        {
+            "id": "bash-approved-read",
+            "name": "bash",
+            "input": {"command": command, "read_paths": [str(readable)]},
+        },
+        agent=_agent(workspace, mode="ask-first"),
+        confirm=confirm,
+    )
+
+    assert result.status == "success"
+    assert "approved" in result.content
+    assert "False" in result.content
+    assert "hidden" not in result.content
+    assert len(decisions) == 1
+    assert {item["resource"] for item in decisions[0].requested_resources} == {
+        str(workspace.resolve()),
+        str(readable.resolve()),
+    }
 
 
 @pytest.mark.asyncio

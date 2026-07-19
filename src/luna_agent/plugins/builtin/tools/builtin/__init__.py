@@ -27,6 +27,9 @@ _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
     ("luna_agent.plugins.builtin.tools.builtin.glob_tool", ("glob",)),
     ("luna_agent.plugins.builtin.tools.builtin.grep_tool", ("grep",)),
     ("luna_agent.plugins.builtin.tools.builtin.json_tool", ("json",)),
+    ("luna_agent.plugins.builtin.tools.builtin.plugin_tools", (
+        "plugin_inspect", "plugin_build", "plugin_manage",
+    )),
     ("luna_agent.plugins.builtin.tools.builtin.process_tool", (
         "process_start",
         "process_list",

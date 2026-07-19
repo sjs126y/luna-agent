@@ -63,6 +63,8 @@
 
 新增 Skill 命令名为 `/repo-summary`、`/review-pr`、`/triage-issues`、`/release-notes`、`/library-docs`、`/upgrade-library`、`/compare-library-api`、`/inspect-web-page`、`/test-web-page`、`/operate-web-page`。Skill 执行仍表现为普通 conversation turn，不新增前端事件类型。
 
+低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`tool_approval_mode` 由 action 解析：`validate=auto`，`package/enable/disable/reload=cached`，`test/install/rollback/uninstall=prompt`。前端仍只需展示后端事件给出的最终模式。
+
 ## 1. Conversation Event Stream
 
 所有实时前端消费同一种事件模型：
@@ -320,6 +322,24 @@
 - `available_actions`
 - `input_preview`
 - `affected_paths`
+
+### Bash / process_start 资源输入
+
+`bash` 与 `process_start` 共享以下文件系统字段：
+
+- `cwd: string`：进程工作目录，同时声明为 writable filesystem resource。
+- `read_paths: list[string]`：额外现有文件/目录，只读挂载。
+- `write_paths: list[string]`：额外现有文件/目录，可写挂载。
+
+工具身份默认使用 `cached`；路径仍单独进入 `requested_resources[]`。前端确认框必须展示后端返回的精确路径与 access，不应把某个文件授权概括为整个目录授权。blocked path 会在确认前硬拒绝，不会出现在可批准列表。
+
+`doctor --json` 的 `sandbox.process` 新增：
+
+- `bash_effective_backend: "bwrap" | "legacy" | "unavailable"`
+- `bash_filesystem_isolated: boolean`
+- `bash_fail_closed: boolean`
+
+这些字段用于区分 Bash 严格策略与 MCP stdio 的兼容后端；前端应按未知字段可忽略的方式消费。
 
 ### `tool_end`
 

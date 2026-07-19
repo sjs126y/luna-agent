@@ -167,6 +167,33 @@ def contract_test(path: Path, *, config: dict[str, Any] | None = None) -> dict[s
     }
 
 
+def validate_plugin_source(path: Path) -> dict[str, Any]:
+    """Validate a local plugin package without importing or registering it."""
+    root, manifest = _manifest(path)
+    files = _package_files(root)
+    module = manifest.entrypoint.partition(":")[0].split(".", 1)[0]
+    entrypoint_exists = (
+        (root / f"{module}.py").is_file()
+        or (root / module / "__init__.py").is_file()
+    )
+    errors = [] if entrypoint_exists else [
+        f"Plugin entrypoint module is outside or missing from package: {module}"
+    ]
+    return {
+        "ok": not errors,
+        "root": str(root),
+        "plugin_key": manifest.key,
+        "name": manifest.name,
+        "version": manifest.version,
+        "entrypoint": manifest.entrypoint,
+        "plugin_api": manifest.plugin_api,
+        "requires": manifest.requires.as_dict(),
+        "provides": list(manifest.provides),
+        "file_count": len(files),
+        "errors": errors,
+    }
+
+
 def diff_plugins(before: Path, after: Path) -> dict[str, Any]:
     before_root, before_manifest = _manifest(before)
     after_root, after_manifest = _manifest(after)
@@ -317,9 +344,13 @@ def _file_hashes(root: Path) -> dict[str, str]:
 
 def _package_files(root: Path) -> list[Path]:
     ignored = {"__pycache__", ".git", ".pytest_cache", ".venv"}
-    return sorted(
-        item for item in root.rglob("*")
-        if item.is_file()
-        and not any(part in ignored for part in item.relative_to(root).parts)
-        and item.suffix not in {".pyc", ".pyo"}
-    )
+    files: list[Path] = []
+    for item in root.rglob("*"):
+        relative = item.relative_to(root)
+        if any(part in ignored for part in relative.parts):
+            continue
+        if item.is_symlink():
+            raise ValueError(f"Plugin package contains a symbolic link: {relative}")
+        if item.is_file() and item.suffix not in {".pyc", ".pyo"}:
+            files.append(item)
+    return sorted(files)

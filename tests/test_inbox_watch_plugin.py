@@ -78,8 +78,52 @@ async def test_inbox_watch_settles_materializes_and_submits_once(tmp_path):
     assert len(artifact_calls) == 1
     assert artifact_calls[0][2] == "wechat:c1:u1"
     assert conversation.requests[0]["artifact_ids"] == ["art_note"]
-    assert storage.values["inbox-state.json"]["processed"][str(path)]["baseline_only"] is False
+    assert storage.values["inbox-state.json"]["processed"][path.name]["baseline_only"] is False
     manager.unload_plugin(plugin.key)
+
+
+@pytest.mark.asyncio
+async def test_inbox_watch_migrates_legacy_absolute_path_without_resubmitting(tmp_path):
+    manager = _manager(tmp_path)
+    module = manager.list_plugins()[0].module
+    root = tmp_path / "inbox"
+    path = root / "note.txt"
+    storage = _Storage()
+    info = {
+        "path": str(path),
+        "type": "file",
+        "size_bytes": 4,
+        "modified_at": "2026-07-18T00:00:00+00:00",
+    }
+    storage.values["inbox-state.json"] = {
+        "schema_version": 1,
+        "processed": {
+            str(path): {
+                "signature": module._legacy_signature(info),
+                "processed_at": "2026-07-18T00:00:01+00:00",
+                "baseline_only": False,
+            }
+        },
+        "failures": {},
+    }
+    tool = _Tool(root, path)
+    conversation = _Conversation()
+    ctx = SimpleNamespace(resources=SimpleNamespace(
+        storage=storage,
+        tool=tool,
+        conversation=conversation,
+    ))
+    watcher = module.InboxWatcher(ctx, module.InboxWatchConfig.model_validate({
+        "root": str(root),
+        "settle_seconds": 0,
+        "active": {"sessions": ["wechat:c1:u1"]},
+    }))
+
+    assert await watcher.poll_once(now=0) == []
+    assert conversation.requests == []
+    processed = storage.values["inbox-state.json"]["processed"]
+    assert list(processed) == [path.name]
+    assert processed[path.name]["signature"] == module._signature(info)
 
 
 @pytest.mark.asyncio
@@ -100,7 +144,7 @@ async def test_inbox_watch_ignores_symlink_entries_and_rejects_oversized_file(tm
     watcher = module.InboxWatcher(ctx, config)
 
     assert await watcher.poll_once(now=0) == []
-    assert str(path) in storage.values["inbox-state.json"]["failures"]
+    assert path.name in storage.values["inbox-state.json"]["failures"]
     assert all(item[0] != "artifact_from_file" for item in tool.calls)
 
 
@@ -138,7 +182,7 @@ async def test_inbox_watch_stops_retrying_unchanged_file_after_limit(tmp_path):
 
     artifact_calls = [item for item in tool.calls if item[0] == "artifact_from_file"]
     assert len(artifact_calls) == 2
-    assert storage.values["inbox-state.json"]["failures"][str(path)]["attempts"] == 2
+    assert storage.values["inbox-state.json"]["failures"][path.name]["attempts"] == 2
     manager.unload_plugin(PLUGIN_KEY)
 
 

@@ -32,6 +32,12 @@ from luna_agent_plugin_sdk.testing import (
     RegistrationSnapshot,
     run_plugin_contract,
 )
-from luna_agent_plugin_sdk.tools import ToolArtifact, ToolEntry, ToolHandlerOutput
+from luna_agent_plugin_sdk.tools import (
+    ResourceKind,
+    ResourceRequirement,
+    ToolArtifact,
+    ToolEntry,
+    ToolHandlerOutput,
+)
 
 __all__ = [name for name in globals() if not name.startswith("_")]

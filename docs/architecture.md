@@ -690,10 +690,11 @@ Sandbox 是硬边界：
 - bash work dir。
 - bash path restrict。
 - bash network restrict。
+- process mount plan：系统运行目录、`cwd`、显式 read/write resource 与 blocked mask 分层映射。
 - file write size limit。
 - secret/path precheck。
 
-权限允许不代表可以越过 sandbox。
+权限允许不代表可以越过 sandbox。Bash/后台进程的 resource resolver 先生成精确文件系统需求，Tool Pipeline 完成审批后才构造 Bubblewrap mount plan；子进程看不到未声明的宿主路径。MCP stdio 使用同一 mount plan 抽象，但暂时保留宿主只读兼容策略，避免破坏现有 server 运行依赖。
 
 ### Audit
 

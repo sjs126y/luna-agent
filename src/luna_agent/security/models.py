@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from luna_agent_plugin_sdk import ResourceKind, ResourceRequirement
+
 ApprovalPolicy = Literal["on-request", "never"]
 ToolApprovalMode = Literal["auto", "cached", "prompt", "deny"]
-ResourceKind = Literal["filesystem", "network"]
 FileAccess = Literal["read", "write", "deny"]
 
 
@@ -43,26 +44,6 @@ class PermissionProfile:
         if access == "deny":
             return False
         return requirement.access == "read" or access == "write"
-
-
-@dataclass(frozen=True)
-class ResourceRequirement:
-    kind: ResourceKind
-    resource: str
-    access: str = "read"
-    reason: str = ""
-
-    @property
-    def key(self) -> str:
-        return f"{self.kind}:{self.access}:{self.resource}"
-
-    def as_dict(self) -> dict[str, str]:
-        return {
-            "kind": self.kind,
-            "resource": self.resource,
-            "access": self.access,
-            "reason": self.reason,
-        }
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/registration-transactional-2EA44F" alt="Transactional registration">
   <img src="https://img.shields.io/badge/hot%20reload-snapshot%20leased-0A84FF" alt="Snapshot leased hot reload">
   <img src="https://img.shields.io/badge/config-isolated-0A84FF" alt="Isolated config">
-  <img src="https://img.shields.io/badge/SDK-0.1.0-7C3AED" alt="Plugin SDK 0.1.0">
+  <img src="https://img.shields.io/badge/SDK-0.2.0-7C3AED" alt="Plugin SDK 0.2.0">
   <img src="https://img.shields.io/badge/core-lightweight-555555" alt="Lightweight core">
 </p>
 
@@ -128,7 +128,7 @@ src/luna_agent/plugins/
 
 仓库根目录的 `plugins/` 只给用户插件或本地开发插件使用。内置插件不要放到根目录 `plugins/`。
 
-当前根目录通用插件包括 `github_assistant`、`developer_docs`、`browser_operator` 和 `codex_bridge`。前三者分别组合 Skill、MCP、Hook 和状态命令；它们用于验证插件装配边界，不会把 MCP 生命周期或安全策略搬进插件私有实现。
+当前根目录通用插件包括 `github_assistant`、`developer_docs`、`browser_operator`、`codex_bridge` 和 `document_converter`。前四者组合 Skill、MCP、Hook 和状态命令；Document Converter 则演示只有一个按需工具的轻量外置插件。它们用于验证插件装配边界，不会把 MCP 生命周期或安全策略搬进插件私有实现。
 
 仓库里也保留了一个最小示例插件：
 
@@ -145,7 +145,22 @@ examples/plugins/hello/
 
 ## SDK 与 AI 开发入口
 
-外置插件的稳定数据契约位于独立 workspace 包 `packages/luna-agent-plugin-sdk`。插件应从 `luna_agent_plugin_sdk` 导入 `PluginRuntimeContext`、`ToolEntry`、`CommandEntry`、`HookEvent`、Hook outcome 和主动资源声明；`luna_agent.*` 保留给宿主实现与暂未稳定的运行服务。旧宿主导入路径暂时重导出同一类型，不代表新插件应继续依赖它们。
+外置插件的稳定数据契约位于独立 workspace 包 `packages/luna-agent-plugin-sdk`。插件应从 `luna_agent_plugin_sdk` 导入 `PluginRuntimeContext`、`ToolEntry`、`ResourceRequirement`、`CommandEntry`、`HookEvent`、Hook outcome 和主动资源声明；`luna_agent.*` 保留给宿主实现与暂未稳定的运行服务。只读或写入文件的外置工具通过 `ResourceRequirement` 声明精确资源，使调用继续经过 Mode、sandbox、blocked path 与审批管道。旧宿主导入路径暂时重导出同一类型，不代表新插件应继续依赖它们。
+
+## Document Converter
+
+`productivity/document-converter` 只注册一个可由 `tool_search` 发现的 `document_convert` 工具。它把允许读取的本地文档直接转换为分页工具文本，不生成新文件、不调用 LLM、不保存状态，也没有主动 runner。
+
+```json
+{
+  "path": "data/report.docx",
+  "format": "markdown",
+  "offset": 0,
+  "limit": 20000
+}
+```
+
+直接支持 PDF、DOCX、PPTX、XLSX、HTML、CSV、TXT 和 Markdown。返回值包含 `content`、`total_chars`、`has_more` 与 `next_offset`，长文档由 Agent 继续翻页。DOC、XLS、PPT、ODT、ODS、ODP 和 RTF 仅在系统安装 LibreOffice 时转换；缺少依赖会返回明确错误，不影响现代格式。工具身份为 `auto`，但源路径仍执行精确 filesystem read 与硬安全检查。
 
 面向 AI 编写插件时，先获取机器可读边界，再生成与验证：
 
@@ -159,6 +174,31 @@ uv run luna-agent plugins package ./my-plugin
 ```
 
 `create --spec` 支持 `tool`、`skill`、`mcp`、`hook`、`command`、`active` 特性，并生成 `plugin.yaml`、入口模块、`AGENTS.md`、README 和契约测试。`--contract` 使用 SDK 的 `FakePluginRuntimeContext`，不启动宿主；`--integration` 使用临时数据目录中的真实 `PluginManager`，会执行注册、依赖解析和候选能力构建，但不污染正式插件状态。`plugins diff <v1> <v2>` 会比较版本、依赖/能力声明和内容哈希；`plugins package` 生成排除缓存文件的确定性 ZIP。
+
+## Agent 插件工具
+
+小鹿可以通过 `tool_search` 按需发现三个插件控制面工具，它们不常驻每轮 Prompt：
+
+| 工具 | Action | 职责 |
+| --- | --- | --- |
+| `plugin_inspect` | `list/info/versions/operations/operation/capabilities` | 只读查询当前 live PluginManager |
+| `plugin_build` | `validate/test/package` | 静态校验、SDK contract test 与确定性 ZIP 打包，不编辑源码 |
+| `plugin_manage` | `install/enable/disable/reload/rollback/uninstall` | 操作当前 Gateway 使用的同一个 PluginManager 和 Capability Snapshot |
+
+推荐链路：
+
+```text
+tool_search("plugin package install")
+  -> plugin_inspect(action="capabilities")
+  -> 使用 read/write/edit 编写插件
+  -> plugin_build(action="validate")
+  -> plugin_build(action="test")
+  -> plugin_build(action="package")
+  -> plugin_manage(action="install")
+  -> plugin_inspect(action="info")
+```
+
+构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。审批按 action 决定：`validate` 自动执行；`package`、`enable`、`disable`、`reload` 使用 `cached`（Local Auto 直接执行，Ask First 首次确认并复用 TTL）；`test`、`install`、`rollback`、`uninstall` 每次确认。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装源不存在时会提示先执行 `plugin_build(package)`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
 
 ## plugin.yaml
 
@@ -355,6 +395,7 @@ plugins:
       paths: ["TODO.md", "BACKEND_PROGRESS.md"]
       session_key: "wechat:<chat_id>:<user_id>"
       poll_interval_seconds: 30
+      missing_poll_interval_seconds: 30
       settle_seconds: 10
       active:
         enabled: true
@@ -377,6 +418,8 @@ plugins:
 
 `automation/inbox-watch` 对同一文件版本默认最多提交 3 次；达到
 `max_submission_attempts` 后保持失败记录，只有文件签名变化才会重新尝试。
+
+文件身份使用 Inbox 根目录内的相对名称，项目目录迁移不会把同一文件误判为新文件；旧绝对路径状态会在下一次扫描时原地迁移。
 
 这些插件第一次观察外部状态时只建立基线；没有变化时不会调用 LLM。Reminder 和 Inbox 使用稳定 request id，Feed 与 GitHub 使用事件集合摘要生成 request id。显式稳定 ID 的插件提交默认写入 SQLite Submission Ledger：同一 owner/origin/id 的相同载荷在进程重启后复用结果，冲突载荷拒绝；Conversation 已完成但 Delivery 尚未完成时只恢复确定性 `delivery_id` 的 Outbox 投递，不重跑模型。未提供稳定 ID 的普通提交仍只使用有界内存去重。主动功能默认关闭，并要求目标 session 同时出现在 `active.sessions`。
 
