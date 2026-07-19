@@ -189,6 +189,19 @@ class ConversationService:
                 ctx = await build_turn_context(agent, ctx_input, history)
                 if not str(getattr(ctx, "turn_id", "") or ""):
                     setattr(ctx, "turn_id", turn_id)
+            compaction_result = getattr(ctx, "compaction_result", None)
+            if compaction_result is not None:
+                checkpoint_id = await self.session_store.commit_compaction(
+                    session_key,
+                    source,
+                    compaction_result.replacement_history,
+                    compaction_result.metadata,
+                )
+                if not checkpoint_id:
+                    raise RuntimeError("failed to persist compaction checkpoint")
+                current_id = checkpoint_id
+                history = list(compaction_result.replacement_history)
+                previous_count = len(history)
             context_items = getattr(ctx, "hook_contexts", None)
             if context_items is None:
                 context_items = []
@@ -202,6 +215,26 @@ class ConversationService:
             if _accepts_steer(run_conversation):
                 kwargs["steer"] = turn_steer
                 kwargs["session_key"] = session_key
+            checkpoint_contains_current_turn = False
+
+            async def checkpoint_sink(compaction) -> str:
+                nonlocal current_id, history, previous_count, checkpoint_contains_current_turn
+                checkpoint_id = await self.session_store.commit_compaction(
+                    session_key,
+                    source,
+                    compaction.replacement_history,
+                    compaction.metadata,
+                )
+                if not checkpoint_id:
+                    raise RuntimeError("failed to persist mid-turn compaction checkpoint")
+                current_id = checkpoint_id
+                history = list(compaction.replacement_history)
+                previous_count = len(history)
+                checkpoint_contains_current_turn = True
+                return checkpoint_id
+
+            if _accepts_parameter(run_conversation, "checkpoint_sink"):
+                kwargs["checkpoint_sink"] = checkpoint_sink
             result = await run_conversation(agent, ctx, **kwargs)
         except _HookTurnStopped as exc:
             final = str(exc) or "本轮已被钩子停止。"
@@ -269,7 +302,7 @@ class ConversationService:
 
         persistence_summary: dict[str, Any] = {"partial": False}
         if status == "completed" and completed and not context_overflow:
-            if was_compressed:
+            if was_compressed and getattr(ctx, "compaction_result", None) is None:
                 stored_session_id = await self.session_store.create_compressed_session(
                     session_key, source, result["messages"]
                 )
@@ -293,7 +326,11 @@ class ConversationService:
             stored_session_id = current_id
             persistence_summary = partial.summary
         else:
-            minimal_messages = _minimal_turn_messages(user_input.text, final_response)
+            minimal_messages = (
+                [{"role": "assistant", "content": [{"type": "text", "text": final_response}]}]
+                if "checkpoint_contains_current_turn" in locals() and checkpoint_contains_current_turn
+                else _minimal_turn_messages(user_input.text, final_response)
+            )
             await self.session_store.save_transcript(
                 current_id, history + minimal_messages, previous_count
             )
@@ -509,6 +546,17 @@ class ConversationService:
 
     async def get_persisted_turn_report(self, report_id: int) -> dict[str, Any] | None:
         return await self.session_store.get_turn_report(report_id)
+
+    async def recent_compaction_checkpoints(
+        self,
+        *,
+        session_key: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return await self.session_store.recent_compression_checkpoints(
+            session_key=session_key,
+            limit=limit,
+        )
 
     async def tool_runs_for_turn_report(
         self,
@@ -804,6 +852,42 @@ class ConversationService:
         current_id = self.resolve_session_id(session.session_id)
         return await self.session_store.export(current_id, str(export_path))
 
+    async def compact_session(self, session_key: str, source) -> dict[str, Any] | None:
+        """Create a manual checkpoint through the same path as auto compaction."""
+        session = await self.session_store.get_or_create(session_key, source)
+        current_id = self.resolve_session_id(session.session_id)
+        history = await self.session_store.load_history(current_id)
+        if len(history) <= 1:
+            return None
+        agent = await self.get_or_create_agent(session_key)
+        agent._hook_source = source
+        from luna_agent.agent.context import _check_and_build_compaction
+
+        compaction = await _check_and_build_compaction(
+            agent,
+            history,
+            history,
+            trigger="manual",
+            force=True,
+        )
+        if compaction is None:
+            return None
+        checkpoint_id = await self.session_store.commit_compaction(
+            session_key,
+            source,
+            compaction.replacement_history,
+            compaction.metadata,
+        )
+        checkpoints = await self.session_store.recent_compression_checkpoints(
+            session_key=session_key,
+            limit=1,
+        )
+        return {
+            "session_id": checkpoint_id,
+            "window_number": int((checkpoints[-1] if checkpoints else {}).get("window_number") or 0),
+            "metadata": compaction.metadata,
+        }
+
     def default_export_path(self, session_key: str) -> Path:
         return self.settings.agent_data_dir / "exports" / f"{session_key.replace(':', '_')}.jsonl"
 
@@ -844,6 +928,17 @@ class ConversationService:
             threshold_line = f"压缩阈值: {budget.compression_threshold:,} tokens{marker}\n"
         recent_tool_calls = len(getattr(agent, "_last_tool_results", []) or [])
         max_tool_calls = int(getattr(agent, "_max_tool_calls_per_turn", 0) or 0)
+        checkpoints = await self.session_store.recent_compression_checkpoints(
+            session_key=session_key,
+            limit=1,
+        )
+        checkpoint_line = ""
+        if checkpoints:
+            latest = checkpoints[-1]
+            checkpoint_line = (
+                f"压缩窗口: {int(latest.get('window_number') or 0)} "
+                f"({latest.get('trigger') or 'auto'})\n"
+            )
         return (
             f"会话用量\n"
             f"API 调用: {agent.session_api_calls} 次\n"
@@ -859,6 +954,7 @@ class ConversationService:
             f"  MCP tools: {budget.mcp_tools:,}\n"
             f"剩余: {budget.remaining_context:,} tokens\n"
             f"{threshold_line}"
+            f"{checkpoint_line}"
             f"\n最近一轮工具执行: {recent_tool_calls} 次\n"
             f"单轮工具上限: {max_tool_calls} 次"
         )

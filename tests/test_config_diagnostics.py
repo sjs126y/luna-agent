@@ -365,6 +365,31 @@ sandbox:
     assert any("plugins.enabled 必须是字符串列表" in error for error in report["errors"])
 
 
+def test_config_report_warns_that_compaction_max_tokens_is_ignored(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+compression:
+  max_tokens: 500
+  retained_user_tokens: 20000
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\nLLM_BASE_URL=https://api.deepseek.com\nLLM_MODEL=test\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any(item["key"] == "compression.max_tokens" for item in report["deprecated_keys"])
+    assert any("compression.max_tokens 已废弃" in warning for warning in report["warnings"])
+
+
 def test_config_report_accepts_legacy_lumora_memory_alias(tmp_path):
     (tmp_path / "data" / "system").mkdir(parents=True)
     (tmp_path / ".env").write_text(

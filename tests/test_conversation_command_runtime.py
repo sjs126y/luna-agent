@@ -55,11 +55,28 @@ class Service:
         self.usage_kwargs = kwargs
         return "usage"
 
+    async def compact_session(self, session_key, source):
+        from luna_agent.compression import CompactionMetadata
+
+        return {
+            "session_id": "new",
+            "window_number": 2,
+            "metadata": CompactionMetadata(
+                trigger="manual",
+                pre_tokens=1000,
+                post_tokens=200,
+                retained_user_tokens=100,
+            ),
+        }
+
     def security_context(self, session_key):
         return self.security_states.context(session_key)
 
     def request_stop(self, session_key=None):
         return 2
+
+    def steer_snapshot(self, session_key):
+        return {"active_turn_id": ""}
 
 
 class Runtime(ConversationCommandRuntime):
@@ -91,6 +108,11 @@ async def test_conversation_command_runtime_common_methods():
     assert await runtime.stop_agents() == "已停止。已请求停止 2 个子 agent。"
     activity = await runtime.activity_snapshot()
     assert activity["summary"]["active_total"] >= 0
+
+    compacted = await handle_slash_command(runtime, "/compact")
+    assert compacted.handled is True
+    assert "窗口 2" in compacted.response
+    assert "1,000 -> 200" in compacted.response
 
 
 @pytest.mark.asyncio

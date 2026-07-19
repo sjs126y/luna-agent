@@ -46,7 +46,14 @@ KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     "agent": {"max_iterations", "max_tool_calls_per_turn"},
     "agents": {"max_concurrent_runs", "max_tool_calls", "max_tokens", "history_limit"},
     "auth": {"enabled", "admins", "allowed_users"},
-    "compression": {"engine", "model", "max_tokens", "tail_token_budget", "threshold_ratio"},
+    "compression": {
+        "engine",
+        "model",
+        "max_tokens",
+        "retained_user_tokens",
+        "tail_token_budget",
+        "threshold_ratio",
+    },
     "gateway": {
         "platform_reconnect_delays",
         "platform_message_dedupe_max_size",
@@ -185,6 +192,12 @@ def build_config_report(base_dir: Path | str = ".") -> dict[str, Any]:
         for key in sorted(config)
         if key in DEPRECATED_TOP_LEVEL_KEYS
     ]
+    compression_config = config.get("compression")
+    if isinstance(compression_config, dict) and "max_tokens" in compression_config:
+        deprecated_keys.append({
+            "key": "compression.max_tokens",
+            "message": "交接摘要不再设置应用层 token 上限；该字段已忽略。",
+        })
     validation = _validate_config(config)
     registry_validation = validate_registry_config(config)
     coverage = registry_coverage(config)
@@ -428,7 +441,14 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     compression = sections["compression"]
     _enum_value(compression, "engine", "compression.engine", VALID_COMPRESSION_ENGINES, errors)
     _string_value(compression, "model", "compression.model", errors)
-    _positive_int(compression, "max_tokens", "compression.max_tokens", errors)
+    if "max_tokens" in compression:
+        warnings.append("compression.max_tokens 已废弃并忽略，请从配置中删除。")
+    _positive_int(
+        compression,
+        "retained_user_tokens",
+        "compression.retained_user_tokens",
+        errors,
+    )
     _positive_int(compression, "tail_token_budget", "compression.tail_token_budget", errors)
     _ratio_value(compression, "threshold_ratio", "compression.threshold_ratio", errors)
 

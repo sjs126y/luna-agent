@@ -148,8 +148,16 @@
 
 常见字段：
 
+- `trigger: "auto" | "mid_turn" | "overflow"`
 - `pre_message_count: integer`
 - `post_message_count: integer`
+- `pre_tokens: integer`
+- `post_tokens: integer`
+- `summary_tokens: integer`
+- `retained_user_tokens: integer`
+
+压缩会先持久化为新的物理 Session checkpoint，再继续当前 turn。摘要采用完整交接格式，
+后端不设置单独的摘要输出 token 上限。
 
 ### `steer_consumed`
 

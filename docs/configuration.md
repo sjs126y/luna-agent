@@ -229,11 +229,26 @@ uv run luna-agent memory reindex --index all
 | `plugins` | 用户插件目录、显式启用/禁用插件 |
 | `memory` | 外部 provider、review/buffer、Memory LLM 和 Luna Agent 检索 Backend |
 | `multimodal` | 平台附件、多模态降级和原生图片输入策略 |
-| `compression` | 上下文压缩阈值和 tail budget |
+| `compression` | Codex 风格交接压缩、用户原话和近期上下文预算 |
 | `sandbox` | 文件、bash、审计的安全边界 |
 | `mcp` | MCP server 开关和 server 列表 |
 | `session` | 会话过期和会话 override |
 | `auth` | 平台用户认证和白名单 |
+
+### 上下文压缩
+
+```yaml
+compression:
+  engine: compressor
+  model: ""                    # 空值表示使用当前 Agent 模型
+  threshold_ratio: 0.6
+  retained_user_tokens: 20000  # 原样保留的真实用户消息预算
+  tail_token_budget: 20000     # 最近完整消息预算
+```
+
+内置压缩器生成面向下一模型的完整 Handoff Summary，并创建新的物理 Session
+checkpoint。摘要没有独立的字数或 token 上限；旧配置 `compression.max_tokens`
+已废弃并忽略。`/compact` 可以手动创建 checkpoint，`/usage` 会显示当前窗口编号。
 
 ## MCP Server
 

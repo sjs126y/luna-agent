@@ -101,6 +101,8 @@ class CommandRuntime(Protocol):
 
     async def export_session(self) -> tuple[int, str]: ...
 
+    async def compact_session(self) -> str: ...
+
     async def clear_agent(self) -> None: ...
 
     async def memory_report(self) -> dict: ...
@@ -184,6 +186,9 @@ async def handle_slash_command(runtime: CommandRuntime, text: str) -> CommandRes
 
     if command_name == "usage":
         return CommandResult.reply(await _usage(runtime, current_user_message=text))
+
+    if command_name == "compact":
+        return CommandResult.reply(await runtime.compact_session())
 
     if command_name == "export":
         count, path = await runtime.export_session()

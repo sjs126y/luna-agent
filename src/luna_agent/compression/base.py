@@ -4,7 +4,32 @@ Pluggable like MemoryProvider: config selects engine, factory creates it.
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Awaitable
+from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass(frozen=True)
+class CompactionMetadata:
+    """Diagnostics describing one replacement-history checkpoint."""
+
+    trigger: str = "auto"
+    pre_tokens: int = 0
+    post_tokens: int = 0
+    summary_tokens: int = 0
+    retained_user_tokens: int = 0
+    pre_message_count: int = 0
+    post_message_count: int = 0
+    model: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CompactionResult:
+    """A complete context checkpoint ready to replace old history."""
+
+    replacement_history: list[dict]
+    summary: str
+    metadata: CompactionMetadata
 
 
 class ContextEngine(ABC):
@@ -32,10 +57,10 @@ class ContextEngine(ABC):
         messages: list[dict],
         system_prompt: str,
         transport: Any,
-        protect_head: int = 2,
-        protect_tail: int = 6,
-    ) -> list[dict]:
-        """Return compressed message list. Called by build_turn_context."""
+        *,
+        trigger: str = "auto",
+    ) -> CompactionResult:
+        """Return a replacement-history checkpoint."""
         ...
 
     def on_session_start(self) -> None:

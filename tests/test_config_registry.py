@@ -37,6 +37,8 @@ def test_config_registry_keeps_field_order_and_metadata():
     assert fields["llm.context_window"].minimum == 0
     assert fields["sandbox.roots"].allow_csv is True
     assert fields["gateway.delivery_max_attempts"].minimum == 1
+    assert fields["compression.retained_user_tokens"].default == 20000
+    assert fields["compression.max_tokens"].default == 0
     assert fields["profiles"].env_key == "PROFILES"
     assert fields["profiles"].yaml_path == "profiles"
 

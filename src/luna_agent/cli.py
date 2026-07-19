@@ -85,6 +85,7 @@ memory:
 
 compression:
   threshold_ratio: 0.6
+  retained_user_tokens: 20000
   tail_token_budget: 20000
 
 gateway:
@@ -184,6 +185,7 @@ memory:
 
 compression:
   threshold_ratio: 0.6
+  retained_user_tokens: 20000
   tail_token_budget: 20000
 
 gateway:
@@ -283,6 +285,7 @@ memory:
 
 compression:
   threshold_ratio: 0.6
+  retained_user_tokens: 20000
   tail_token_budget: 20000
 
 gateway:

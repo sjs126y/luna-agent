@@ -169,6 +169,14 @@ CORE_COMMAND_SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec("usage", "查看当前会话上下文预算", "/usage", category="runtime"),
+    CommandSpec(
+        "compact",
+        "立即生成上下文交接 checkpoint",
+        "/compact",
+        category="runtime",
+        mutates_state=True,
+        requires_agent=True,
+    ),
     CommandSpec("export", "导出当前会话 JSONL", "/export", category="session"),
     CommandSpec(
         "deny",

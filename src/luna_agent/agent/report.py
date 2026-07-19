@@ -103,6 +103,7 @@ class AgentTurnReport:
     multimodal_diagnostics: dict[str, Any] = field(default_factory=dict)
     llm: TurnLlmReport = field(default_factory=TurnLlmReport)
     retries: list[TurnRetryReport] = field(default_factory=list)
+    compactions: list[dict[str, Any]] = field(default_factory=list)
     steer: dict[str, Any] = field(default_factory=dict)
     event_counts: dict[str, int] = field(default_factory=dict)
 
@@ -125,6 +126,17 @@ class AgentTurnReport:
             diagnostics = data.get("multimodal_diagnostics")
             if isinstance(diagnostics, dict):
                 self.multimodal_diagnostics = dict(diagnostics)
+        elif event.type == "compression":
+            self.was_compressed = True
+            self.compactions.append({
+                "trigger": str(data.get("trigger") or "auto"),
+                "pre_message_count": _as_int(data.get("pre_message_count")),
+                "post_message_count": _as_int(data.get("post_message_count")),
+                "pre_tokens": _as_int(data.get("pre_tokens")),
+                "post_tokens": _as_int(data.get("post_tokens")),
+                "summary_tokens": _as_int(data.get("summary_tokens")),
+                "retained_user_tokens": _as_int(data.get("retained_user_tokens")),
+            })
         elif event.type == "llm_start":
             model = str(data.get("model") or "")
             if model:
@@ -230,6 +242,7 @@ class AgentTurnReport:
             "final_response_summary": self.final_response_summary,
             "initial_message_count": self.initial_message_count,
             "was_compressed": self.was_compressed,
+            "compactions": [dict(item) for item in self.compactions],
             "should_review_memory": self.should_review_memory,
             "attachments_count": self.attachments_count,
             "attachment_kinds": list(self.attachment_kinds),

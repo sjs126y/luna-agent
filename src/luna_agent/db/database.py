@@ -44,6 +44,33 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 
+CREATE TABLE IF NOT EXISTS compression_checkpoints (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_key           TEXT NOT NULL,
+    source_session_id     TEXT NOT NULL,
+    target_session_id     TEXT NOT NULL REFERENCES sessions(session_id),
+    window_number         INTEGER NOT NULL,
+    window_id             TEXT NOT NULL UNIQUE,
+    first_window_id       TEXT NOT NULL,
+    previous_window_id    TEXT NOT NULL,
+    trigger               TEXT DEFAULT 'auto',
+    model                 TEXT DEFAULT '',
+    pre_tokens            INTEGER DEFAULT 0,
+    post_tokens           INTEGER DEFAULT 0,
+    summary_tokens        INTEGER DEFAULT 0,
+    retained_user_tokens  INTEGER DEFAULT 0,
+    pre_message_count     INTEGER DEFAULT 0,
+    post_message_count    INTEGER DEFAULT 0,
+    details_json          TEXT DEFAULT '{}',
+    created_at            REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_compaction_checkpoints_session_key
+ON compression_checkpoints(session_key, id);
+
+CREATE INDEX IF NOT EXISTS idx_compaction_checkpoints_target
+ON compression_checkpoints(target_session_id);
+
 CREATE TABLE IF NOT EXISTS tool_runs (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id          TEXT NOT NULL REFERENCES sessions(session_id),
@@ -539,11 +566,91 @@ class Database:
 
     async def delete_session(self, session_id: str) -> None:
         async with self._write_lock:
+            await self._conn.execute(
+                "DELETE FROM compression_checkpoints "
+                "WHERE source_session_id = ? OR target_session_id = ?",
+                (session_id, session_id),
+            )
             await self._conn.execute("DELETE FROM turn_reports WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM tool_runs WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             await self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
             await self._conn.commit()
+
+    # ── compression checkpoints ──────────────────────
+
+    async def save_compression_checkpoint(self, checkpoint: dict[str, Any]) -> int:
+        row = (
+            str(checkpoint.get("session_key") or ""),
+            str(checkpoint.get("source_session_id") or ""),
+            str(checkpoint.get("target_session_id") or ""),
+            _as_int(checkpoint.get("window_number")),
+            str(checkpoint.get("window_id") or ""),
+            str(checkpoint.get("first_window_id") or ""),
+            str(checkpoint.get("previous_window_id") or ""),
+            str(checkpoint.get("trigger") or "auto"),
+            str(checkpoint.get("model") or ""),
+            _as_int(checkpoint.get("pre_tokens")),
+            _as_int(checkpoint.get("post_tokens")),
+            _as_int(checkpoint.get("summary_tokens")),
+            _as_int(checkpoint.get("retained_user_tokens")),
+            _as_int(checkpoint.get("pre_message_count")),
+            _as_int(checkpoint.get("post_message_count")),
+            json.dumps(
+                clean_payload(checkpoint.get("details") or {}),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            _as_float(checkpoint.get("created_at")) or time.time(),
+        )
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                """INSERT INTO compression_checkpoints (
+                    session_key, source_session_id, target_session_id,
+                    window_number, window_id, first_window_id, previous_window_id,
+                    trigger, model, pre_tokens, post_tokens, summary_tokens,
+                    retained_user_tokens, pre_message_count, post_message_count,
+                    details_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                row,
+            )
+            await self._conn.commit()
+        return int(cursor.lastrowid or 0)
+
+    async def compaction_checkpoint_for_target(
+        self,
+        target_session_id: str,
+    ) -> dict[str, Any] | None:
+        rows = await self._conn.execute(
+            "SELECT * FROM compression_checkpoints WHERE target_session_id = ? LIMIT 1",
+            (target_session_id,),
+        )
+        async for row in rows:
+            return _compaction_checkpoint_row(row)
+        return None
+
+    async def recent_compression_checkpoints(
+        self,
+        *,
+        session_key: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        if session_key:
+            rows = await self._conn.execute(
+                """SELECT * FROM compression_checkpoints
+                   WHERE session_key = ? ORDER BY id DESC LIMIT ?""",
+                (session_key, int(limit)),
+            )
+        else:
+            rows = await self._conn.execute(
+                "SELECT * FROM compression_checkpoints ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            )
+        items = [_compaction_checkpoint_row(row) async for row in rows]
+        items.reverse()
+        return items
 
     async def update_session_key(self, session_id: str, session_key: str) -> None:
         async with self._write_lock:
@@ -971,6 +1078,29 @@ def _turn_report_row(row) -> dict[str, Any]:
         "cache_read_tokens": int(row["cache_read_tokens"] or 0),
         "source": source,
         "report": report,
+        "created_at": float(row["created_at"] or 0.0),
+    }
+
+
+def _compaction_checkpoint_row(row) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "session_key": str(row["session_key"] or ""),
+        "source_session_id": str(row["source_session_id"] or ""),
+        "target_session_id": str(row["target_session_id"] or ""),
+        "window_number": int(row["window_number"] or 0),
+        "window_id": str(row["window_id"] or ""),
+        "first_window_id": str(row["first_window_id"] or ""),
+        "previous_window_id": str(row["previous_window_id"] or ""),
+        "trigger": str(row["trigger"] or ""),
+        "model": str(row["model"] or ""),
+        "pre_tokens": int(row["pre_tokens"] or 0),
+        "post_tokens": int(row["post_tokens"] or 0),
+        "summary_tokens": int(row["summary_tokens"] or 0),
+        "retained_user_tokens": int(row["retained_user_tokens"] or 0),
+        "pre_message_count": int(row["pre_message_count"] or 0),
+        "post_message_count": int(row["post_message_count"] or 0),
+        "details": _loads_object(row["details_json"]),
         "created_at": float(row["created_at"] or 0.0),
     }
 

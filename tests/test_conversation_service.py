@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 
 from luna_agent.config import Settings
+from luna_agent.compression import CompactionMetadata, CompactionResult
 from luna_agent.conversation import ConversationService
 from luna_agent.conversation.service import TURN_REPORT_HISTORY_LIMIT
 from luna_agent.db.database import Database
 from luna_agent.gateway.compression_chain import CompressionChain
 from luna_agent.gateway.session_store import SessionStore
 from luna_agent.models.messages import SessionSource
+from luna_agent.models.messages import NormalizedResponse
 from luna_agent.tools.registry import tool_registry
 
 
@@ -59,11 +62,13 @@ class Ctx:
         was_compressed=False,
         should_review_memory=False,
         current_turn_user_idx=0,
+        compaction_result=None,
     ):
         self.messages = messages
         self.was_compressed = was_compressed
         self.should_review_memory = should_review_memory
         self.current_turn_user_idx = current_turn_user_idx
+        self.compaction_result = compaction_result
 
 
 @pytest_asyncio.fixture
@@ -992,6 +997,129 @@ async def test_run_turn_creates_compressed_session_when_context_was_compressed(s
     assert result.was_compressed is True
     assert calls and calls[0][0] == "cli:default:local"
     assert calls[0][2] == _messages()
+
+
+@pytest.mark.asyncio
+async def test_compaction_checkpoint_is_persisted_before_failed_turn(service, monkeypatch):
+    svc, _manager, _db = service
+    source = _source()
+    original = await svc.session_store.get_or_create("cli:default:local", source)
+    await svc.session_store.save_transcript(original.session_id, _messages("old", "answer"), 0)
+    replacement = [{
+        "role": "user",
+        "content": [{"type": "text", "text": "[Context checkpoint summary]\nstate"}],
+    }]
+    checkpoint = CompactionResult(
+        replacement_history=replacement,
+        summary="state",
+        metadata=CompactionMetadata(pre_tokens=900, post_tokens=100),
+    )
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(
+            replacement + [{"role": "user", "content": [{"type": "text", "text": text}]}],
+            was_compressed=True,
+            current_turn_user_idx=1,
+            compaction_result=checkpoint,
+        )
+
+    async def run_conversation(agent, ctx):
+        raise RuntimeError("model down after checkpoint")
+
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", source, "current request")
+
+    current_id = svc.session_store.resolve_session_id("cli:default:local")
+    assert current_id != original.session_id
+    assert svc.compression_chain.get_chain(original.session_id) == [original.session_id, current_id]
+    assert result.status == "failed"
+    old_history = await svc.session_store.load_history(original.session_id)
+    new_history = await svc.session_store.load_history(current_id)
+    assert any("old" in str(message) for message in old_history)
+    assert any("state" in str(message) for message in new_history)
+    assert any("current request" in str(message) for message in new_history)
+    assert sum("current request" in str(message) for message in new_history) == 1
+
+
+@pytest.mark.asyncio
+async def test_mid_turn_checkpoint_sink_rebases_final_transcript(service, monkeypatch):
+    svc, _manager, _db = service
+    source = _source()
+    original = await svc.session_store.get_or_create("cli:default:local", source)
+    replacement = [
+        {"role": "user", "content": [{"type": "text", "text": "current request"}]},
+        {"role": "user", "content": [{"type": "text", "text": "[Context checkpoint summary]\nworking"}]},
+    ]
+    compaction = CompactionResult(
+        replacement_history=replacement,
+        summary="working",
+        metadata=CompactionMetadata(trigger="mid_turn", pre_tokens=900, post_tokens=100),
+    )
+
+    async def build_turn_context(agent, text, history):
+        return Ctx(
+            [{"role": "user", "content": [{"type": "text", "text": text}]}],
+            current_turn_user_idx=0,
+        )
+
+    async def run_conversation(agent, ctx, checkpoint_sink=None):
+        await checkpoint_sink(compaction)
+        ctx.messages = replacement + [
+            {"role": "assistant", "content": [{"type": "text", "text": "finished"}]}
+        ]
+        return {
+            "final_response": "finished",
+            "messages": ctx.messages,
+            "completed": True,
+        }
+
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
+
+    result = await svc.run_turn("cli:default:local", source, "current request")
+
+    current_id = svc.session_store.resolve_session_id("cli:default:local")
+    history = await svc.session_store.load_history(current_id)
+    assert result.status == "completed"
+    assert current_id != original.session_id
+    assert sum("current request" in str(message) for message in history) == 1
+    assert sum("finished" in str(message) for message in history) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_compaction_uses_shared_checkpoint_path(service):
+    from luna_agent.compression.simple import ContextCompressor
+
+    svc, _manager, _db = service
+    source = _source()
+    session = await svc.session_store.get_or_create("cli:default:local", source)
+    await svc.session_store.save_transcript(
+        session.session_id,
+        _messages("detailed requirement", "detailed answer"),
+        0,
+    )
+    agent = await svc.get_or_create_agent("cli:default:local")
+    agent._compressor = ContextCompressor(output_tokens=8192)
+    agent._transport = AsyncMock()
+    agent._transport.call.return_value = NormalizedResponse(
+        text="complete manual handoff",
+        tool_calls=[],
+        usage={"input_tokens": 100, "output_tokens": 20},
+        finish_reason="end_turn",
+        stop_reason="end_turn",
+        model="test",
+    )
+
+    checkpoint = await svc.compact_session("cli:default:local", source)
+
+    assert checkpoint is not None
+    assert checkpoint["window_number"] == 1
+    assert checkpoint["metadata"].trigger == "manual"
+    current_id = svc.session_store.resolve_session_id("cli:default:local")
+    history = await svc.session_store.load_history(current_id)
+    assert any("complete manual handoff" in str(message) for message in history)
 
 
 @pytest.mark.asyncio
