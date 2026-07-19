@@ -1,23 +1,36 @@
-"""ContextCompressor — prune old tool_results, then LLM summary with iterative update.
-
-Two-step algorithm (Hermes pattern):
-  1. _prune_old_tool_results — regex cleanup, zero LLM cost
-  2. _generate_summary — LLM summary (iterative update if previous summary exists)
-"""
+"""Codex-style context compaction with handoff summaries."""
 
 from __future__ import annotations
 
+import copy
+import json
 import logging
-import re
-import time
 from typing import Any
 
-from luna_agent.compression.base import ContextEngine
+from luna_agent.compression.base import CompactionMetadata, CompactionResult, ContextEngine
 from luna_agent.compression.registry import compression_registry
 from luna_agent.llm.provider import ProviderProfile
-from luna_agent.llm.token_counter import count_messages_tokens, count_tools_tokens
+from luna_agent.llm.token_counter import count_messages_tokens
 
 logger = logging.getLogger(__name__)
+
+SUMMARY_PREFIX = "[Context checkpoint summary]\n"
+LEGACY_SUMMARY_PREFIX = "[系统生成的对话历史摘要]\n"
+DEFAULT_RETAINED_USER_TOKENS = 20_000
+
+HANDOFF_SYSTEM_PROMPT = """You are performing a CONTEXT CHECKPOINT COMPACTION.
+Create a handoff summary for another LLM that will resume the task.
+
+Include:
+- Current progress and every key decision already made
+- Important implementation details, constraints, corrections, and user preferences
+- Rejected approaches that must not be repeated
+- Files, commands, configuration, errors, tool outcomes, and references needed to continue
+- What remains to be done, with enough detail to resume immediately
+
+Completeness is more important than brevity. Avoid repetition, but do not omit confirmed
+details merely to make the summary shorter. Do not impose a word or token limit on yourself.
+"""
 
 
 class ContextCompressor(ContextEngine):
@@ -25,221 +38,110 @@ class ContextCompressor(ContextEngine):
 
     def __init__(
         self,
-        context_length: int = 256000,
+        context_length: int = 256_000,
         threshold_ratio: float = 0.6,
-        tail_token_budget: int = 20000,
-        max_summary_tokens: int = 500,
-        protect_head: int = 2,
-        protect_tail: int = 6,
-        compressor_transport: Any = None,  # optional: separate transport for cheap model
+        tail_token_budget: int = 20_000,
+        retained_user_tokens: int = DEFAULT_RETAINED_USER_TOKENS,
+        compressor_transport: Any = None,
         model: str = "",
+        output_tokens: int = 4096,
     ) -> None:
         self.context_length = context_length
         self.threshold_tokens = int(context_length * threshold_ratio)
         self.tail_token_budget = tail_token_budget
-        self.max_summary_tokens = max_summary_tokens
-        self.protect_head = protect_head
-        self.protect_tail = protect_tail
-        self._compressor_transport = compressor_transport  # None = use main transport
+        self.retained_user_tokens = retained_user_tokens
+        self._compressor_transport = compressor_transport
         self.model = model
-
-        # Per-session state
-        self._previous_summary: str | None = None
-        self._ineffective_compression_count: int = 0
-        self._summary_failure_cooldown_until: float = 0
-        self.last_prompt_tokens: int = 0
-
-    # ── ContextEngine interface ───────────────────────
+        # This is the selected provider's normal output allowance, not a
+        # compaction-specific summary cap.
+        self.output_tokens = output_tokens
+        self.last_prompt_tokens = 0
 
     def should_compress(self, token_count: int, messages: list[dict]) -> bool:
-        if token_count < self.threshold_tokens:
-            return False
-        if self._ineffective_compression_count >= 2:
-            logger.info("Compression disabled: 2 ineffective attempts")
-            return False
-        if time.time() < self._summary_failure_cooldown_until:
-            logger.info("Compression in cooldown until %.0f", self._summary_failure_cooldown_until)
-            return False
-        if len(messages) <= self.protect_head + self.protect_tail + 2:
-            return False
-        return True
+        return token_count >= self.threshold_tokens and len(messages) > 1
 
     async def compress(
         self,
         messages: list[dict],
         system_prompt: str,
         transport: Any,
-        protect_head: int = 2,
-        protect_tail: int = 6,
-    ) -> list[dict]:
-        """Two-step: prune, then summarize if still needed."""
-        self.protect_head = protect_head
-        self.protect_tail = protect_tail
+        *,
+        trigger: str = "auto",
+    ) -> CompactionResult:
         before_tokens = self._estimate_tokens(messages, system_prompt)
         self.last_prompt_tokens = before_tokens
 
-        # Step 1: prune old tool results (zero LLM cost)
-        messages = self._prune_old_tool_results(messages)
+        summary = await self._generate_summary(messages, transport)
+        if not summary:
+            raise RuntimeError("compaction model returned an empty handoff summary")
 
-        # Check if pruning was enough
-        token_count = self._estimate_tokens(messages, system_prompt)
-        if token_count < self.threshold_tokens:
-            logger.info("Pruning sufficient: %d → %d tokens", before_tokens, token_count)
-            return messages
-
-        # Step 2: LLM summary
-        if len(messages) <= self.protect_head + self.protect_tail + 2:
-            return messages
-
-        head = messages[:self.protect_head]
-        middle = messages[self.protect_head:-self.protect_tail]
-        tail = messages[-self.protect_tail:]
-
-        summary = await self._generate_summary(middle, system_prompt, transport)
-        if summary is None:
-            self._summary_failure_cooldown_until = time.time() + 120
-            self._ineffective_compression_count += 1
-            return messages
-
-        # Measure effectiveness
-        summary_msg = {
-            "role": "user",
-            "content": [{"type": "text", "text": f"[系统生成的对话历史摘要]\n{summary}"}],
-        }
-        compressed = head + [summary_msg] + tail
-        after_tokens = count_messages_tokens(compressed, model=self.model) + count_messages_tokens([], system_prompt, model=self.model)
-
-        if before_tokens > 0 and (before_tokens - after_tokens) / before_tokens < 0.10:
-            logger.info("Compression ineffective: %d → %d tokens (< 10%%)", before_tokens, after_tokens)
-            self._ineffective_compression_count += 1
-        else:
-            self._ineffective_compression_count = 0
-
-        # Store for iterative update next time
-        self._previous_summary = summary
-        logger.info("Compressed: %d → %d tokens (saved %d%%)",
-                     before_tokens, after_tokens,
-                     int((1 - after_tokens / (before_tokens or 1)) * 100))
-        return compressed
+        replacement, retained_user_tokens = self._build_replacement_history(messages, summary)
+        after_tokens = self._estimate_tokens(replacement, system_prompt)
+        summary_tokens = count_messages_tokens([_summary_message(summary)], model=self.model)
+        metadata = CompactionMetadata(
+            trigger=trigger,
+            pre_tokens=before_tokens,
+            post_tokens=after_tokens,
+            summary_tokens=summary_tokens,
+            retained_user_tokens=retained_user_tokens,
+            pre_message_count=len(messages),
+            post_message_count=len(replacement),
+            model=self.model,
+        )
+        logger.info(
+            "Compacted context checkpoint: %d -> %d tokens (%d user tokens retained)",
+            before_tokens,
+            after_tokens,
+            retained_user_tokens,
+        )
+        return CompactionResult(replacement, summary, metadata)
 
     def on_session_start(self) -> None:
-        self._previous_summary = None
-        self._ineffective_compression_count = 0
-        self._summary_failure_cooldown_until = 0
+        self.last_prompt_tokens = 0
 
     def on_session_end(self) -> None:
-        self.on_session_start()
+        self.last_prompt_tokens = 0
 
-    # ── Step 1: prune old tool results ─────────────────
-
-    def _prune_old_tool_results(self, messages: list[dict]) -> list[dict]:
-        """Remove tool_result blocks from the middle segment (not head/tail).
-        Pure regex/text matching — no LLM cost. Also cleans orphan tool_use blocks.
-        """
-        if len(messages) <= self.protect_head + self.protect_tail:
-            return messages
-
-        middle = messages[self.protect_head:-self.protect_tail]
-        result: list[dict] = list(messages[:self.protect_head])
-
-        for msg in middle:
-            content = msg.get("content")
-            if isinstance(content, list):
-                # Keep only non-tool_result blocks
-                kept = [b for b in content if b.get("type") != "tool_result"]
-                if kept:
-                    new_msg = dict(msg)
-                    new_msg["content"] = kept
-                    result.append(new_msg)
-                # If all blocks were tool_result, drop the message entirely
-            else:
-                result.append(msg)
-
-        result.extend(messages[-self.protect_tail:])
-
-        # Clean orphan tool_use blocks (no matching tool_result)
-        result = self._clean_orphan_tool_uses(result)
-
-        return result
-
-    @staticmethod
-    def _clean_orphan_tool_uses(messages: list[dict]) -> list[dict]:
-        """Remove tool_use blocks that no longer have a matching tool_result."""
-        # Collect all tool_call_ids that have results
-        has_result: set[str] = set()
-        for msg in messages:
-            content = msg.get("content")
-            if isinstance(content, list):
-                for b in content:
-                    if b.get("type") == "tool_result":
-                        tid = b.get("tool_use_id", "")
-                        if tid:
-                            has_result.add(tid)
-
-        # Remove tool_use blocks without results
-        cleaned: list[dict] = []
-        for msg in messages:
-            content = msg.get("content")
-            if isinstance(content, list):
-                kept = []
-                for b in content:
-                    if b.get("type") == "tool_use":
-                        if b.get("id", "") in has_result:
-                            kept.append(b)
-                        # else: orphan → drop it
-                    else:
-                        kept.append(b)
-                if kept:
-                    new_msg = dict(msg)
-                    new_msg["content"] = kept
-                    cleaned.append(new_msg)
-            else:
-                cleaned.append(msg)
-        return cleaned
-
-    # ── Step 2: LLM summary ────────────────────────────
-
-    async def _generate_summary(
-        self,
-        middle: list[dict],
-        system_prompt: str,
-        transport: Any,
-    ) -> str | None:
-        """Call LLM to summarize middle segment."""
+    async def _generate_summary(self, messages: list[dict], transport: Any) -> str | None:
         use_transport = self._compressor_transport or transport
-        formatted = _format_messages_for_summary(middle)
-
-        if self._previous_summary:
-            prompt = (
-                "以下是之前对话的摘要：\n\n"
-                f"{self._previous_summary}\n\n"
-                "请将以下新的对话内容更新到这个摘要中，保持结构清晰、简洁。"
-                "用中文回复，不超过300字。\n\n"
-                f"新内容：\n{formatted}"
-            )
-        else:
-            prompt = (
-                "请将以下对话历史压缩为一段简洁的摘要，保留关键信息和上下文。"
-                "用中文回复，不超过300字。\n\n"
-                f"{formatted}"
-            )
-
+        formatted = _format_messages_for_summary(messages)
         try:
             response = await use_transport.call(
                 messages=[{
                     "role": "user",
-                    "content": [{"type": "text", "text": prompt}],
+                    "content": [{
+                        "type": "text",
+                        "text": "Create the checkpoint handoff from this conversation:\n\n" + formatted,
+                    }],
                 }],
-                system_prompt="你是一个摘要助手。请简洁地总结对话。",
-                max_tokens=self.max_summary_tokens,
+                system_prompt=HANDOFF_SYSTEM_PROMPT,
+                max_tokens=self.output_tokens,
             )
-            summary = response.text.strip()
-            if not summary:
-                return None
-            return summary
         except Exception:
-            logger.exception("Compression LLM call failed")
+            logger.exception("Compaction LLM call failed")
             return None
+        summary = str(getattr(response, "text", "") or "").strip()
+        return summary or None
+
+    def _build_replacement_history(
+        self,
+        messages: list[dict],
+        summary: str,
+    ) -> tuple[list[dict], int]:
+        tail_indices = _select_recent_indices(messages, self.tail_token_budget, self.model)
+        tail_indices = _complete_tool_pairs(messages, tail_indices)
+
+        user_indices, retained_user_tokens = _select_user_indices(
+            messages,
+            excluded=tail_indices,
+            token_budget=self.retained_user_tokens,
+            model=self.model,
+        )
+        selected = sorted(user_indices | tail_indices)
+        replacement = [copy.deepcopy(messages[index]) for index in selected]
+        replacement = [message for message in replacement if not is_summary_message(message)]
+        replacement.append(_summary_message(summary))
+        return replacement, retained_user_tokens
 
     def _estimate_tokens(self, messages: list[dict], system_prompt: str) -> int:
         return (
@@ -248,20 +150,174 @@ class ContextCompressor(ContextEngine):
         )
 
 
+def is_summary_message(message: dict) -> bool:
+    text = _message_text(message).lstrip()
+    return text.startswith(SUMMARY_PREFIX.rstrip()) or text.startswith(
+        LEGACY_SUMMARY_PREFIX.rstrip()
+    )
+
+
+def _summary_message(summary: str) -> dict:
+    return {
+        "role": "user",
+        "content": [{"type": "text", "text": SUMMARY_PREFIX + summary.strip()}],
+    }
+
+
+def _select_recent_indices(messages: list[dict], token_budget: int, model: str) -> set[int]:
+    if token_budget <= 0:
+        return set()
+    selected: set[int] = set()
+    remaining = token_budget
+    for index in range(len(messages) - 1, -1, -1):
+        if is_summary_message(messages[index]):
+            continue
+        cost = _message_tokens(messages[index], model)
+        if cost > remaining:
+            break
+        selected.add(index)
+        remaining -= cost
+    return selected
+
+
+def _select_user_indices(
+    messages: list[dict],
+    *,
+    excluded: set[int],
+    token_budget: int,
+    model: str,
+) -> tuple[set[int], int]:
+    selected: set[int] = set()
+    used = 0
+    for index in range(len(messages) - 1, -1, -1):
+        if index in excluded or not _is_real_user_message(messages[index]):
+            continue
+        cost = _message_tokens(messages[index], model)
+        if used + cost > token_budget:
+            break
+        selected.add(index)
+        used += cost
+    return selected, used
+
+
+def _is_real_user_message(message: dict) -> bool:
+    if str(message.get("role") or "") != "user" or is_summary_message(message):
+        return False
+    content = message.get("content")
+    if not isinstance(content, list):
+        return bool(str(content or "").strip())
+    has_text = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_result":
+            return False
+        if block.get("type") == "text" and str(block.get("text") or "").strip():
+            has_text = True
+    return has_text
+
+
+def _complete_tool_pairs(messages: list[dict], selected: set[int]) -> set[int]:
+    """Drop boundary tool blocks unless both call and result are retained."""
+    calls: dict[str, int] = {}
+    results: dict[str, int] = {}
+    for index in selected:
+        for block in _content_blocks(messages[index]):
+            if block.get("type") == "tool_use" and block.get("id"):
+                calls[str(block["id"])] = index
+            elif block.get("type") == "tool_result" and block.get("tool_use_id"):
+                results[str(block["tool_use_id"])] = index
+    incomplete_indices = {
+        index for tool_id, index in calls.items() if tool_id not in results
+    } | {
+        index for tool_id, index in results.items() if tool_id not in calls
+    }
+    return selected - incomplete_indices
+
+
+def _content_blocks(message: dict) -> list[dict]:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, dict)]
+
+
+def _message_tokens(message: dict, model: str) -> int:
+    return max(1, count_messages_tokens([message], model=model))
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        str(block.get("text") or "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
+def _format_messages_for_summary(messages: list[dict]) -> str:
+    """Serialize full history for the handoff model without fixed truncation."""
+    lines: list[str] = []
+    for message in messages:
+        role = str(message.get("role") or "unknown")
+        parts: list[str] = []
+        content = message.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    parts.append(str(block))
+                    continue
+                kind = str(block.get("type") or "")
+                if kind == "text":
+                    parts.append(str(block.get("text") or ""))
+                elif kind == "tool_use":
+                    parts.append(
+                        "[tool call] "
+                        + str(block.get("name") or "unknown")
+                        + " "
+                        + json.dumps(block.get("input") or {}, ensure_ascii=False, default=str)
+                    )
+                elif kind == "tool_result":
+                    parts.append(
+                        "[tool result] "
+                        + str(block.get("tool_use_id") or "")
+                        + " "
+                        + _stringify_tool_result(block.get("content"))
+                    )
+                else:
+                    parts.append(json.dumps(block, ensure_ascii=False, default=str))
+        else:
+            parts.append(str(content))
+        lines.append(f"{role}: " + "\n".join(parts))
+    return "\n\n".join(lines)
+
+
+def _stringify_tool_result(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
 def build_simple_compressor(
     settings: Any,
     provider: ProviderProfile,
     api_mode: str,
 ) -> ContextCompressor | None:
-    """Build the built-in compressor implementation."""
     compressor_transport = None
+    output_tokens = int(provider.max_tokens or 4096)
     if settings.compressor_model:
         comp_provider = ProviderProfile(
             name="compressor",
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
             model=settings.compressor_model,
-            max_tokens=512,
+            max_tokens=output_tokens,
         )
         from luna_agent.llm.transport_registry import transport_registry
 
@@ -271,32 +327,11 @@ def build_simple_compressor(
         context_length=provider.context_window or 256_000,
         threshold_ratio=settings.compression_threshold_ratio,
         tail_token_budget=settings.tail_token_budget,
-        max_summary_tokens=settings.compressor_max_tokens,
+        retained_user_tokens=int(getattr(settings, "retained_user_tokens", 20_000) or 20_000),
         compressor_transport=compressor_transport,
         model=provider.model or "",
+        output_tokens=output_tokens,
     )
 
 
 compression_registry.register("simple", build_simple_compressor, aliases=("compressor",))
-
-
-def _format_messages_for_summary(messages: list[dict]) -> str:
-    lines = []
-    for msg in messages:
-        role = msg.get("role", "?")
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            texts = []
-            for block in content:
-                if block.get("type") == "text":
-                    texts.append(block.get("text", ""))
-                elif block.get("type") == "tool_use":
-                    texts.append(f"[调用工具: {block.get('name')}]")
-                elif block.get("type") == "tool_result":
-                    result = str(block.get("content", ""))[:200]
-                    texts.append(f"[工具结果: {result}]")
-            text = " ".join(texts)
-        else:
-            text = str(content)
-        lines.append(f"{role}: {text[:300]}")
-    return "\n".join(lines)

@@ -223,10 +223,18 @@ async def _check_and_compress(
 
     logger.info("Compressing: %d tokens > %d limit", total, agent._compressor.threshold_tokens)
     try:
-        result = await agent._compressor.compress(
+        compaction = await agent._compressor.compress(
             messages,
             agent._cached_system_prompt or "",
             agent._transport,
+        )
+        # Third-party engines written against the original contract may still
+        # return the replacement list directly. Keep that shape readable while
+        # built-ins expose checkpoint metadata through CompactionResult.
+        result = (
+            compaction.replacement_history
+            if hasattr(compaction, "replacement_history")
+            else compaction
         )
         if hook_manager is not None:
             await hook_manager.dispatch(HookEnvelope(
@@ -241,8 +249,8 @@ async def _check_and_compress(
             ))
         return result
     except Exception:
-        logger.exception("Compression failed, falling back to truncation")
-        result = _truncate(messages, agent._compressor.protect_head, agent._compressor.protect_tail)
+        logger.exception("Compression failed; preserving original context")
+        result = messages
         if hook_manager is not None:
             await hook_manager.dispatch(HookEnvelope(
                 event_name=HookEvent.POST_COMPACT,
