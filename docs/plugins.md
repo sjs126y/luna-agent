@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/registration-transactional-2EA44F" alt="Transactional registration">
   <img src="https://img.shields.io/badge/hot%20reload-snapshot%20leased-0A84FF" alt="Snapshot leased hot reload">
   <img src="https://img.shields.io/badge/config-isolated-0A84FF" alt="Isolated config">
-  <img src="https://img.shields.io/badge/SDK-0.1.0-7C3AED" alt="Plugin SDK 0.1.0">
+  <img src="https://img.shields.io/badge/SDK-0.1.1-7C3AED" alt="Plugin SDK 0.1.1">
   <img src="https://img.shields.io/badge/core-lightweight-555555" alt="Lightweight core">
 </p>
 
@@ -183,7 +183,7 @@ tool_search("plugin package install")
   -> plugin_inspect(action="info")
 ```
 
-构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。两者都使用 `approval_mode=prompt`，不会复用 TTL 工具授权。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
+构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。审批按 action 决定：`validate` 自动执行；`package`、`enable`、`disable`、`reload` 使用 `cached`（Local Auto 直接执行，Ask First 首次确认并复用 TTL）；`test`、`install`、`rollback`、`uninstall` 每次确认。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装源不存在时会提示先执行 `plugin_build(package)`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
 
 ## plugin.yaml
 
@@ -380,6 +380,7 @@ plugins:
       paths: ["TODO.md", "BACKEND_PROGRESS.md"]
       session_key: "wechat:<chat_id>:<user_id>"
       poll_interval_seconds: 30
+      missing_poll_interval_seconds: 30
       settle_seconds: 10
       active:
         enabled: true
@@ -402,6 +403,8 @@ plugins:
 
 `automation/inbox-watch` 对同一文件版本默认最多提交 3 次；达到
 `max_submission_attempts` 后保持失败记录，只有文件签名变化才会重新尝试。
+
+文件身份使用 Inbox 根目录内的相对名称，项目目录迁移不会把同一文件误判为新文件；旧绝对路径状态会在下一次扫描时原地迁移。
 
 这些插件第一次观察外部状态时只建立基线；没有变化时不会调用 LLM。Reminder 和 Inbox 使用稳定 request id，Feed 与 GitHub 使用事件集合摘要生成 request id。显式稳定 ID 的插件提交默认写入 SQLite Submission Ledger：同一 owner/origin/id 的相同载荷在进程重启后复用结果，冲突载荷拒绝；Conversation 已完成但 Delivery 尚未完成时只恢复确定性 `delivery_id` 的 Outbox 投递，不重跑模型。未提供稳定 ID 的普通提交仍只使用有界内存去重。主动功能默认关闭，并要求目标 session 同时出现在 `active.sessions`。
 

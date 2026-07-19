@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1176%20passed-2EA44F" alt="1176 tests passed">
+  <img src="https://img.shields.io/badge/tests-1181%20passed-2EA44F" alt="1181 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
 </p>
 
@@ -25,9 +25,10 @@
 
 - 新增三个通过 `tool_search` 延迟发现的内置工具：`plugin_inspect` 统一查询插件/版本/操作/capability，`plugin_build` 负责静态校验、SDK contract test 和确定性打包，`plugin_manage` 负责安装、启停、热重载、回滚与卸载。
 - 管理工具直接取得当前 Agent 绑定的 live `PluginManager`，不会启动 CLI 子进程或创建第二个 manager；Snapshot 变更遵守 Turn lease，新能力从下一轮可见。
-- 构建/安装路径进入现有 filesystem resource 与 blocked-path 校验；构建和管理固定逐次审批，安装仅接受本地目录/ZIP/TAR，内置插件不可管理，卸载固定保留数据且不开放 force/purge。
+- 构建/安装路径进入现有 filesystem resource 与 blocked-path 校验；审批按 action 分为 auto/cached/prompt，安装仅接受本地目录/ZIP/TAR，内置插件不可管理，卸载固定保留数据且不开放 force/purge。
+- 插件列表改为有界摘要，安装源缺失会指向 `plugin_build(package)`；Inbox Watch 状态不再绑定项目绝对路径，Workspace Watch 对缺失目标采用独立退避，减少重复投递与轮询审计噪音。
 - Plugin package 增加符号链接拒绝，避免打包阶段跟随链接读取包目录外内容。
-- 新增 5 项 Agent 工具专项测试，插件/热重载/安全管道宽回归 `162 passed`；完整回归 `1176 passed, 1 warning`。
+- 新增 Agent 工具及 watcher 回归测试，相关聚焦测试 `29 passed`；完整回归 `1181 passed, 1 warning`。
 
 ## 2026-07-19：项目正式更名为 Luna Agent
 

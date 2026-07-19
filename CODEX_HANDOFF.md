@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/branch-feature%2Fplugin--agent--tools-2EA44F" alt="Plugin agent tools branch">
   <img src="https://img.shields.io/badge/backend-stable-0A84FF" alt="Backend stable">
-  <img src="https://img.shields.io/badge/tests-1176%20passed-2EA44F" alt="1176 tests passed">
+  <img src="https://img.shields.io/badge/tests-1181%20passed-2EA44F" alt="1181 tests passed">
 </p>
 
 <p>
@@ -26,8 +26,8 @@
 ## 当前工作分支
 
 - 分支：`feature/plugin-agent-tools`
-- `841bf69 Add discoverable plugin agent tools` 已实现三个通过 `tool_search` 发现的插件查询、构建和 live 管理工具；文档与进度同步待本阶段提交。
-- 最近完整验证：`python -m compileall -q src/luna_agent` 通过；`uv run pytest -q` 为 `1176 passed, 1 warning`。
+- `841bf69` 与 `98ac259` 已实现并记录三个通过 `tool_search` 发现的插件查询、构建和 live 管理工具；当前工作树继续收尾 action 审批与 watcher 问题。
+- 最近完整验证：`python -m compileall -q src/luna_agent` 通过；`uv run python -m pytest -q` 为 `1181 passed, 1 warning`。
 - 唯一 warning 来自飞书 SDK 内部弃用 API，不是当前 Runtime 回归。
 - 用户本地未跟踪的联调文件不属于项目提交，后续 Agent 不应擅自删除或纳入 commit。
 

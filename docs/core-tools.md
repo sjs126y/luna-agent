@@ -6,7 +6,7 @@
 
 ![Core](https://img.shields.io/badge/core-19%20tools-2EA44F)
 ![Bridge](https://img.shields.io/badge/tool%20bridge-3%20entries-2563EB)
-![Tests](https://img.shields.io/badge/tests-1176%20passed-2EA44F)
+![Tests](https://img.shields.io/badge/tests-1181%20passed-2EA44F)
 
 [项目首页](../README.md) · [文档中心](README.md) · [架构说明](architecture.md) · [安全边界](capabilities-and-boundaries.md)
 
@@ -68,7 +68,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | `bash` | 异步进程、超时与中断、持续排空输出、64 KiB 捕获上限 |
 | `web_fetch` | 每次跳转前 SSRF 校验、5 次跳转上限、2 MiB 响应上限、内容类型约束 |
 | 后台进程 | 异步读取，stdout/stderr 各自只保留 4k 字符尾部 |
-| 插件工具 | 查询绑定 live manager；构建路径经过 sandbox；管理操作逐次审批且卸载保留数据 |
+| 插件工具 | 查询绑定 live manager；列表返回有界摘要；构建路径经过 sandbox；审批按 action 分级且卸载保留数据 |
 
 实际事故中的 `/home/sujinsheng` 全目录 `glob('*')` 从约 379 秒降至约 0.02 秒，并在找到 100 个结果后立即停止。
 

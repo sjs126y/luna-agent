@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1176%20passed-2EA44F?logo=pytest&logoColor=white" alt="1176 tests passed">
+  <img src="https://img.shields.io/badge/tests-1181%20passed-2EA44F?logo=pytest&logoColor=white" alt="1181 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -153,7 +153,7 @@ uv run luna-agent serve
 
 ## 扩展 Luna Agent
 
-插件可以组合工具、Skill、MCP Server、Hook、命令和工作流，也可以注册由 Gateway 托管的主动 runner；generation snapshot 支持在运行中安装、更新、回滚或卸载。小鹿能够通过 `tool_search` 按需查询、验证、测试、打包和管理外置插件，操作继续经过 sandbox、逐次审批和审计。外置插件只依赖 `luna-agent-plugin-sdk` 公共契约，manifest 可以声明宿主、SDK、插件、能力和 MCP 工具依赖；稳定 `request_id` 的主动提交在重启后仍保持幂等。当前仓库已经包含：
+插件可以组合工具、Skill、MCP Server、Hook、命令和工作流，也可以注册由 Gateway 托管的主动 runner；generation snapshot 支持在运行中安装、更新、回滚或卸载。小鹿能够通过 `tool_search` 按需查询、验证、测试、打包和管理外置插件，操作继续经过 sandbox、按 action 风险分级的审批和审计。外置插件只依赖 `luna-agent-plugin-sdk` 公共契约，manifest 可以声明宿主、SDK、插件、能力和 MCP 工具依赖；稳定 `request_id` 的主动提交在重启后仍保持幂等。当前仓库已经包含：
 
 | 插件 | 提供能力 |
 | --- | --- |
@@ -179,7 +179,7 @@ uv run luna-agent serve
 
 ```bash
 python -m compileall -q src/luna_agent
-uv run pytest -q  # 1176 passed, 1 warning
+uv run pytest -q  # 1181 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。
