@@ -7,7 +7,6 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from textwrap import shorten
 from typing import Literal
 
@@ -96,17 +95,29 @@ async def _waiter(pid: int, proc: asyncio.subprocess.Process) -> None:
 # ── tool handlers ──────────────────────────────────────
 
 
-async def _process_start(command: str, cwd: str | None = None) -> str:
+async def _process_start(
+    command: str,
+    cwd: str | None = None,
+    read_paths: list[str] | None = None,
+    write_paths: list[str] | None = None,
+) -> str:
     """Start a background shell command and return its process id."""
     from luna_agent.plugins.builtin.tools.builtin import bash as bash_tool
 
-    error = bash_tool._check_command(command)
+    paths, path_error = bash_tool._resolve_execution_paths(
+        cwd=cwd or "",
+        read_paths=read_paths,
+        write_paths=write_paths,
+    )
+    if path_error:
+        return path_error
+    work_dir, readable, writable = paths
+    error = bash_tool._check_command(
+        command,
+        declared_paths=(work_dir, *readable, *writable),
+    )
     if error:
         return error
-
-    work_dir, cwd_error = _resolve_cwd(cwd)
-    if cwd_error:
-        return cwd_error
 
     try:
         proc = await bash_tool.spawn_command(
@@ -114,6 +125,8 @@ async def _process_start(command: str, cwd: str | None = None) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=work_dir,
+            read_paths=readable,
+            write_paths=writable,
         )
         pid = _register(proc, command, cwd=str(work_dir))
         return _format_started(_processes[pid])
@@ -125,26 +138,12 @@ def _process_start_precheck(input_: dict) -> str | None:
     """Run process_start hard safety checks before permission prompts."""
     from luna_agent.plugins.builtin.tools.builtin import bash as bash_tool
 
-    command = input_.get("command", "")
-    if command:
-        error = bash_tool._check_command(command)
-        if error:
-            return error
-    _, cwd_error = _resolve_cwd(input_.get("cwd"))
-    return cwd_error
+    return bash_tool._precheck(input_)
 
 
 def _process_start_resources(input_: dict) -> list:
     from luna_agent.plugins.builtin.tools.builtin import bash as bash_tool
-    from luna_agent.security.models import ResourceRequirement
-
-    work_dir, _ = _resolve_cwd(input_.get("cwd"))
-    resources = [
-        ResourceRequirement("filesystem", str(work_dir), "write", "background process cwd")
-    ]
-    shell_resources = bash_tool.resource_requirements(input_)
-    resources.extend(item for item in shell_resources if item.kind == "network")
-    return resources
+    return bash_tool.resource_requirements(input_)
 
 
 async def _process_list(status: str = "all", limit: int | None = None) -> str:
@@ -447,25 +446,6 @@ def _read_stream(
     return _tail(value.strip(), tail_chars)
 
 
-def _resolve_cwd(cwd: str | None) -> tuple[Path, str | None]:
-    if not cwd:
-        from luna_agent.plugins.builtin.tools.builtin import bash as bash_tool
-        return bash_tool._work_dir, None
-
-    from luna_agent.tools.sandbox import get_sandbox
-
-    sandbox = get_sandbox()
-    full = sandbox.resolve(cwd)
-    error = sandbox.check_path(full)
-    if error:
-        return full, error
-    if not full.exists():
-        return full, f"Error: cwd does not exist: {cwd}"
-    if not full.is_dir():
-        return full, f"Error: cwd is not a directory: {cwd}"
-    return full, None
-
-
 def _runtime_seconds(tp: TrackedProcess) -> float:
     end = tp.finished_at or time.time()
     return max(0.0, end - tp.started_at)
@@ -507,6 +487,16 @@ tool_registry.register(ToolEntry(
         "properties": {
             "command": {"type": "string", "description": "Shell command to start in the background"},
             "cwd": {"type": "string", "description": "Optional working directory within sandbox roots"},
+            "read_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Additional existing files or directories mounted read-only after approval.",
+            },
+            "write_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Additional existing files or directories mounted writable after approval.",
+            },
         },
         "required": ["command"],
     },
@@ -515,6 +505,7 @@ tool_registry.register(ToolEntry(
     permission_category="background",
     tags=["terminal", "background", "process"],
     risk_level="high",
+    approval_mode="cached",
     usage_hint="Use for long-running tests, builds, servers, watchers, or commands that need polling.",
     precheck=_process_start_precheck,
     resource_resolver=_process_start_resources,

@@ -19,6 +19,7 @@ import shlex
 import subprocess
 import time
 from pathlib import Path
+from typing import Iterable
 from urllib.parse import urlparse
 
 from luna_agent.tools.entry import ToolEntry
@@ -145,7 +146,11 @@ _DANGEROUS_PATTERNS: list[str] = [
 ]
 
 
-def _check_command(cmd_line: str) -> str | None:
+def _check_command(
+    cmd_line: str,
+    *,
+    declared_paths: Iterable[Path] = (),
+) -> str | None:
     """Validate command against hard blacklist → whitelist → patterns.
 
     Layer order:
@@ -174,7 +179,7 @@ def _check_command(cmd_line: str) -> str | None:
         return "Error: command chaining (&& || | ;) is not allowed. Use one command per call."
 
     # ── 1.5. Path sandbox — no absolute paths, no traversal ──
-    path_error = _check_path_sandbox(cmd_stripped)
+    path_error = _check_path_sandbox(cmd_stripped, declared_paths=declared_paths)
     if path_error:
         return path_error
 
@@ -239,7 +244,11 @@ def _glob_pattern_to_regex(glob_pat: str) -> str:
     return "[^/\\\\\\s]*".join(escaped)
 
 
-def _check_path_sandbox(cmd_line: str) -> str | None:
+def _check_path_sandbox(
+    cmd_line: str,
+    *,
+    declared_paths: Iterable[Path] = (),
+) -> str | None:
     """Block commands that access files outside the sandbox.
 
     Uses the unified sandbox for blocked patterns and roots.
@@ -259,6 +268,11 @@ def _check_path_sandbox(cmd_line: str) -> str | None:
 
     # ── 2. Restrict paths off? allow everything except blocked ──
     if not _restrict_paths:
+        return None
+
+    # Explicit declarations are enforced by resource approval and bwrap mounts.
+    # The command scanner remains a useful early check, not the security boundary.
+    if tuple(declared_paths):
         return None
 
     # ── 3. Check if command references a path under a sandbox root ──
@@ -307,19 +321,26 @@ async def spawn_command(
     command: str,
     *,
     cwd: Path,
+    read_paths: Iterable[Path] = (),
+    write_paths: Iterable[Path] = (),
     stdout,
     stderr,
 ) -> asyncio.subprocess.Process:
     from luna_agent.tools.env_filter import filter_env
-    from luna_agent.tools.process_sandbox import build_process_launch
-    from luna_agent.tools.sandbox import get_sandbox
+    from luna_agent.tools.process_sandbox import BASH_STRICT_POLICY, build_process_launch
 
+    readable = tuple(Path(path).resolve() for path in read_paths)
+    writable = tuple(Path(path).resolve() for path in write_paths)
+    masks = _collect_blocked_mounts((cwd, *readable, *writable))
     launch = build_process_launch(
         command,
         cwd=cwd,
-        writable_roots=get_sandbox().roots,
+        readable_roots=readable,
+        writable_roots=(cwd, *writable),
+        masked_paths=masks,
         allow_network=_allow_network,
         requested_backend=_process_backend,
+        policy=BASH_STRICT_POLICY,
     )
     kwargs = {
         "stdout": stdout,
@@ -340,8 +361,22 @@ async def spawn_command(
 
 # ── handler ──────────────────────────────────────────
 
-async def _bash(command: str, timeout: int = 30) -> str:
-    error = _check_command(command)
+async def _bash(
+    command: str,
+    timeout: int = 30,
+    cwd: str = "",
+    read_paths: list[str] | None = None,
+    write_paths: list[str] | None = None,
+) -> str:
+    paths, path_error = _resolve_execution_paths(
+        cwd=cwd,
+        read_paths=read_paths,
+        write_paths=write_paths,
+    )
+    if path_error:
+        return path_error
+    work_dir, readable, writable = paths
+    error = _check_command(command, declared_paths=(work_dir, *readable, *writable))
     if error:
         return error
 
@@ -355,7 +390,9 @@ async def _bash(command: str, timeout: int = 30) -> str:
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=_work_dir,
+            cwd=work_dir,
+            read_paths=readable,
+            write_paths=writable,
         )
 
         timeout = min(max(int(timeout or 30), 1), 60)
@@ -487,16 +524,46 @@ def _decode_and_truncate(data: bytes, *, total_bytes: int | None = None) -> tupl
 
 def _precheck(input_: dict) -> str | None:
     command = input_.get("command", "")
-    return _check_command(command) if command else None
+    paths, error = _resolve_execution_paths(
+        cwd=input_.get("cwd", ""),
+        read_paths=input_.get("read_paths"),
+        write_paths=input_.get("write_paths"),
+    )
+    if error:
+        return error
+    work_dir, readable, writable = paths
+    return (
+        _check_command(command, declared_paths=(work_dir, *readable, *writable))
+        if command
+        else None
+    )
 
 
 def resource_requirements(input_: dict) -> list:
-    """Describe the shell's writable work directory and optional network target."""
+    """Describe the shell's declared filesystem and network resources."""
     from luna_agent.security.models import ResourceRequirement
 
+    paths, error = _resolve_execution_paths(
+        cwd=input_.get("cwd", ""),
+        read_paths=input_.get("read_paths"),
+        write_paths=input_.get("write_paths"),
+    )
+    if error:
+        raise ValueError(error)
+    work_dir, readable, writable = paths
     requirements = [
-        ResourceRequirement("filesystem", str(_work_dir), "write", "bash working directory")
+        ResourceRequirement("filesystem", str(work_dir), "write", "bash working directory")
     ]
+    requirements.extend(
+        ResourceRequirement("filesystem", str(path), "read", "bash declared read path")
+        for path in readable
+        if path != work_dir
+    )
+    requirements.extend(
+        ResourceRequirement("filesystem", str(path), "write", "bash declared write path")
+        for path in writable
+        if path != work_dir
+    )
     command = str(input_.get("command") or "")
     try:
         parts = shlex.split(command)
@@ -520,6 +587,98 @@ def resource_requirements(input_: dict) -> list:
     return requirements
 
 
+def _resolve_execution_paths(
+    *,
+    cwd: object = "",
+    read_paths: object = None,
+    write_paths: object = None,
+) -> tuple[tuple[Path, tuple[Path, ...], tuple[Path, ...]], str | None]:
+    work_dir = _resolve_declared_path(str(cwd or _work_dir), base=_work_dir)
+    if not work_dir.exists():
+        return (work_dir, (), ()), f"Error: cwd does not exist: {cwd or _work_dir}"
+    if not work_dir.is_dir():
+        return (work_dir, (), ()), f"Error: cwd is not a directory: {cwd or _work_dir}"
+    blocked = _blocked_path_error(work_dir)
+    if blocked:
+        return (work_dir, (), ()), blocked
+
+    readable, error = _resolve_path_list(read_paths, base=work_dir, label="read_paths")
+    if error:
+        return (work_dir, (), ()), error
+    writable, error = _resolve_path_list(write_paths, base=work_dir, label="write_paths")
+    if error:
+        return (work_dir, (), ()), error
+    return (work_dir, readable, writable), None
+
+
+def _resolve_path_list(
+    values: object,
+    *,
+    base: Path,
+    label: str,
+) -> tuple[tuple[Path, ...], str | None]:
+    if values is None:
+        return (), None
+    if not isinstance(values, (list, tuple)) or any(
+        not isinstance(item, str) for item in values
+    ):
+        return (), f"Error: {label} must be a list of paths"
+    resolved: list[Path] = []
+    for value in values:
+        path = _resolve_declared_path(value, base=base)
+        blocked = _blocked_path_error(path)
+        if blocked:
+            return (), blocked
+        if not path.exists():
+            return (), f"Error: declared path does not exist: {value}"
+        if path not in resolved:
+            resolved.append(path)
+    return tuple(resolved), None
+
+
+def _resolve_declared_path(value: str, *, base: Path) -> Path:
+    path = Path(value).expanduser()
+    return (path if path.is_absolute() else base / path).resolve()
+
+
+def _blocked_path_error(path: Path) -> str | None:
+    from luna_agent.tools.sandbox import get_sandbox
+
+    return get_sandbox().check_blocked_path(path)
+
+
+def _collect_blocked_mounts(paths: Iterable[Path]) -> tuple[Path, ...]:
+    from luna_agent.tools.sandbox import get_sandbox
+
+    sandbox = get_sandbox()
+    masked: set[Path] = set()
+    inspected = 0
+    deadline = time.monotonic() + 2.0
+    for root in {Path(item).resolve() for item in paths}:
+        if not root.is_dir():
+            continue
+        for current, dirs, files in os.walk(root, followlinks=False):
+            inspected += len(dirs) + len(files)
+            if inspected > 50_000 or time.monotonic() > deadline:
+                raise RuntimeError(
+                    "strict sandbox mount scan exceeded its safety budget; use a narrower cwd"
+                )
+            current_path = Path(current)
+            visible_dirs: list[str] = []
+            for name in dirs:
+                candidate = current_path / name
+                if sandbox.check_blocked_path(candidate):
+                    masked.add(candidate.absolute())
+                else:
+                    visible_dirs.append(name)
+            dirs[:] = visible_dirs
+            for name in files:
+                candidate = current_path / name
+                if sandbox.check_blocked_path(candidate):
+                    masked.add(candidate.absolute())
+    return tuple(sorted(masked, key=str))
+
+
 tool_registry.register(ToolEntry(
     name="bash",
     description="Execute a short bounded shell command in the configured sandbox. "
@@ -530,6 +689,17 @@ tool_registry.register(ToolEntry(
         "properties": {
             "command": {"type": "string", "description": "Shell command, e.g. 'ls -la' or 'python --version'"},
             "timeout": {"type": "integer", "description": "Timeout in seconds (default 30, max 60)"},
+            "cwd": {"type": "string", "description": "Working directory. It is a writable resource for this call."},
+            "read_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Additional existing files or directories mounted read-only after approval.",
+            },
+            "write_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Additional existing files or directories mounted writable after approval.",
+            },
         },
         "required": ["command"],
     },
@@ -538,6 +708,7 @@ tool_registry.register(ToolEntry(
     permission_category="bash",
     tags=["terminal", "command", "shell"],
     risk_level="high",
+    approval_mode="cached",
     usage_hint="Use for short bounded inspection or maintenance commands; use process_start for long-running work.",
     precheck=_precheck,
     resource_resolver=resource_requirements,
