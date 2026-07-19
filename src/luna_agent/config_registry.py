@@ -425,7 +425,7 @@ def _compression_fields() -> tuple[ConfigField, ...]:
         _yaml_field("compression.max_tokens", "compressor_max_tokens", 0, "int", "compression", "Deprecated and ignored compaction output limit.", minimum=0),
         _yaml_field("compression.retained_user_tokens", "retained_user_tokens", 20000, "int", "compression", "Token budget for verbatim user messages.", minimum=1),
         _yaml_field("compression.tail_token_budget", "tail_token_budget", 20000, "int", "compression", "Tail token budget.", minimum=1),
-        _yaml_field("compression.threshold_ratio", "compression_threshold_ratio", 0.6, "float", "compression", "Compression threshold ratio.", minimum=0, maximum=1),
+        _yaml_field("compression.threshold_ratio", "compression_threshold_ratio", 0.9, "float", "compression", "Compression threshold ratio.", minimum=0, maximum=1),
     )
 
 

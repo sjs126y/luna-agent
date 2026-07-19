@@ -56,7 +56,7 @@ def test_context_engine_contract_and_registry():
 
 def test_compressor_defaults_have_no_summary_specific_cap():
     compressor = ContextCompressor()
-    assert compressor.threshold_tokens == int(256_000 * 0.6)
+    assert compressor.threshold_tokens == int(256_000 * 0.9)
     assert compressor.tail_token_budget == 20_000
     assert compressor.retained_user_tokens == 20_000
     assert not hasattr(compressor, "max_summary_tokens")
@@ -64,11 +64,11 @@ def test_compressor_defaults_have_no_summary_specific_cap():
 
 
 def test_should_compress_only_uses_context_threshold():
-    compressor = ContextCompressor(context_length=1000, threshold_ratio=0.5)
+    compressor = ContextCompressor(context_length=20_000, threshold_ratio=0.5, output_tokens=100)
     messages = [_text("user", "one"), _text("assistant", "two")]
-    assert compressor.should_compress(499, messages) is False
-    assert compressor.should_compress(500, messages) is True
-    assert compressor.should_compress(900, messages[:1]) is False
+    assert compressor.should_compress(9_999, messages) is False
+    assert compressor.should_compress(10_000, messages) is True
+    assert compressor.should_compress(19_000, messages[:1]) is False
 
 
 def test_update_from_response_tracks_provider_usage():

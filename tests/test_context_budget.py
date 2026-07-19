@@ -2,7 +2,12 @@
 
 import pytest
 
-from luna_agent.context_budget import build_context_budget, compose_context_text, estimate_context_budget
+from luna_agent.context_budget import (
+    build_context_budget,
+    compose_context_text,
+    estimate_context_budget,
+    resolve_compression_threshold,
+)
 from luna_agent.llm.provider import _detect_context_window
 
 
@@ -30,8 +35,9 @@ def test_context_budget_splits_tools_skills_memory_and_mcp():
         tools=tools,
         skills_summary="available skills",
         memory_injections="memory hit",
-        context_limit=1000,
+        context_limit=100_000,
         compression_threshold_ratio=0.6,
+        max_output_tokens=4096,
     )
 
     assert budget.system_prompt > 0
@@ -48,8 +54,12 @@ def test_context_budget_splits_tools_skills_memory_and_mcp():
         budget.memory_injections,
         budget.mcp_tools,
     ])
-    assert budget.remaining_context == 1000 - budget.used
-    assert budget.compression_threshold == 600
+    assert budget.remaining_context == 100_000 - budget.used
+    assert budget.compression_threshold == 60_000
+
+
+def test_compression_threshold_reserves_output_and_safety_margin():
+    assert resolve_compression_threshold(100_000, 30_000, 0.9) == 65_904
 
 
 def test_compose_context_text_skips_empty_parts():
@@ -71,7 +81,8 @@ def test_context_window_detection_uses_updated_families_and_modern_default(model
 async def test_build_context_budget_collects_agent_inputs():
     class Provider:
         model = "deepseek-chat"
-        context_window = 1000
+        context_window = 100_000
+        max_tokens = 4096
 
     class Memory:
         async def prefetch(self, user_message):
@@ -105,8 +116,8 @@ async def test_build_context_budget_collects_agent_inputs():
         current_user_message="remember me",
     )
 
-    assert budget.context_limit == 1000
-    assert budget.compression_threshold == 500
+    assert budget.context_limit == 100_000
+    assert budget.compression_threshold == 50_000
     assert budget.system_prompt > 0
     assert budget.tools_schema > 0
     assert budget.skills > 0
