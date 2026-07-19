@@ -26,7 +26,7 @@
 ## 当前主干同步与范围
 
 - Security v4 前端实现 `b87c524` 已通过 `7b1afd0` 合并进 `main`；独立前端 worktree 仍保留 `feature/frontend-security-v4` 作为历史工作线，不代表主干尚未合并。
-- 当前待合并分支：`refactor/luna-agent-rename`；运行时改名提交为 `7b798ca`，配置迁移为 `38c48c6`，文档迁移为 `f71a507`。
+- Luna Agent 命名迁移已通过 `9ff7f32 Merge Luna Agent rename` 合并进 `main`；前端源码路径、命令和文档已同步。
 - 前端主要范围：`src/luna_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`

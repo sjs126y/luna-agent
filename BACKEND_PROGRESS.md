@@ -23,6 +23,7 @@
 
 ## 2026-07-19：项目正式更名为 Luna Agent
 
+- 重命名分支已通过 `9ff7f32 Merge Luna Agent rename` 合并回 `main`。
 - Python 主包从 `personal_agent` 迁移为 `luna_agent`，发行包与主命令统一为 `luna-agent`；旧 `personal-agent` 命令保留为兼容别名。
 - Plugin SDK 迁移为 `luna-agent-plugin-sdk` / `luna_agent_plugin_sdk`；旧 `lumora_plugin_sdk` 只保留薄重导出，已有外置插件可以继续加载，新插件不再使用旧命名。
 - 内置外部记忆提供器从 `memory/lumora` 迁移为 `memory/luna`；旧 `external_provider: lumora`、provider options 和 managed Markdown 标记均可读取并迁移。
