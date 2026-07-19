@@ -1,19 +1,19 @@
 <div align="center">
 
-<h1>Lumora 项目演进记录</h1>
+<h1>Luna Agent 项目演进记录</h1>
 
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-18-7C3AED" alt="18 phases">
-  <img src="https://img.shields.io/badge/Python%20LOC-86%2C280-0A84FF" alt="86280 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1167%20passed-2EA44F" alt="1167 tests passed">
+  <img src="https://img.shields.io/badge/phases-19-7C3AED" alt="19 phases">
+  <img src="https://img.shields.io/badge/Python%20LOC-88%2C606-0A84FF" alt="88606 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F" alt="1171 tests passed">
 </p>
 
 <p>
   <a href="README.md">项目首页</a> ·
   <a href="docs/README.md">文档中心</a> ·
-  <a href="lumora-roadmap.zh-CN.md">后续方向</a> ·
+  <a href="luna-agent-roadmap.zh-CN.md">后续方向</a> ·
   <a href="BACKEND_PROGRESS.md">当前进度</a>
 </p>
 
@@ -21,13 +21,27 @@
 
 ---
 
-本文记录 Lumora 从最初原型到当前 Agent Runtime 的主要结构变化。它不是逐 commit changelog，也不再只描述 Windows 到 Linux/WSL 的迁移，而是按阶段梳理架构、能力和工程边界的演进，并标注代表提交。
+本文记录 Luna Agent 从最初原型到当前 Agent Runtime 的主要结构变化。它不是逐 commit changelog，也不再只描述 Windows 到 Linux/WSL 的迁移，而是按阶段梳理架构、能力和工程边界的演进，并标注代表提交。
 
 当前主分支状态：
 
 - 分支：`main`
-- 本次统计基准：v0.17 主动插件与投递稳定性收尾
-- 最近全量验证：`uv run pytest -q`，结果 `1167 passed, 1 warning`
+- 本次统计基准：v0.19 Luna Agent 命名迁移
+- 最近全量验证：`uv run pytest -q`，结果 `1171 passed, 1 warning`
+
+## v0.19 Luna Agent 命名迁移
+
+时间：2026-07-19
+
+目标：把项目、Python 包、CLI、Plugin SDK 与内置 Memory provider 统一到 Luna Agent，同时保障已有插件、配置和记忆数据连续可用。
+
+主要变化：
+
+- 主实现迁移到 `src/luna_agent/`，主命令变为 `luna-agent`；旧命令作为迁移期别名继续工作。
+- Plugin SDK 迁移到 `luna_agent_plugin_sdk`，manifest 宿主依赖字段改为 `requires.luna_agent`；旧 SDK import 与 `requires.lumora` 可继续解析。
+- `memory/luna` 成为内置混合检索 provider；旧 provider 名、配置区块和内部记忆标记均有兼容读路径。
+- 配置、脚本、测试、插件示例、运维命令、源码链接和路线图文件完成同步改名。
+- 现有 Qdrant collection 不随品牌强制改名；SQLite Archive、向量数据和用户会话无需搬迁。
 
 ## v0.18 外置 Plugin SDK、依赖治理与可恢复提交
 
@@ -37,7 +51,7 @@
 
 主要变化：
 
-- 从宿主实现中拆出 `lumora-plugin-sdk` workspace 包，稳定 Tool、Hook、Command、Active、Manifest 与 Context 协议。
+- 从宿主实现中拆出 `luna-agent-plugin-sdk` workspace 包，稳定 Tool、Hook、Command、Active、Manifest 与 Context 协议。
 - 建立 manifest 依赖图、兼容版本检查、拓扑加载、循环阻断和 dependent 卸载保护。
 - 在 ConversationCoordinator 外围增加 SQLite Submission Ledger；普通请求保持轻量，显式 durable 请求可恢复 Conversation/Delivery 边界。
 - 新增面向 AI 的 schema/capability 查询、spec 脚手架、契约测试、隔离集成测试、差异检查与打包工具。
@@ -70,7 +84,7 @@
 
 主要变化：
 
-- 建立 `src/personal_agent/` 项目结构。
+- 建立 `src/luna_agent/` 项目结构。
 - 增加配置、数据模型、SQLite 会话存储、LLM transport、工具注册/执行、Agent loop、memory、platform adapter、Gateway。
 - CLI 入口和初版 README 可用。
 
@@ -282,7 +296,7 @@
 
 - MCP 改为 SDK-backed `MCPManager -> MCPServerRuntime -> MCPConnection`，支持 stdio、Streamable HTTP、单 server 隔离、重连、动态工具快照和结构化结果。
 - 记忆拆成 internal Markdown、buffer/revision、SQLite archive、外部 provider 和后台 review worker。
-- Lumora provider 使用 LLM 提取/决策、embedding、Qdrant 与 SQLite FTS5/BM25 混合检索；Mem0 作为可替换 provider，失败时进入 SQLite fallback。
+- Luna Agent provider 使用 LLM 提取/决策、embedding、Qdrant 与 SQLite FTS5/BM25 混合检索；Mem0 作为可替换 provider，失败时进入 SQLite fallback。
 - 修复 Qdrant payload index、scope 隔离、后台迁移和工具循环导致的真实 Gateway 故障。
 
 ## v0.9 被动插件与 Security v4
@@ -350,17 +364,17 @@
 
 时间：2026-07-17
 
-目标：用独立 Benchmark 暴露真实缺陷，并让 Lumora 记忆内部的 embedding/vector/keyword/fusion 可以替换。
+目标：用独立 Benchmark 暴露真实缺陷，并让 Luna Agent 记忆内部的 embedding/vector/keyword/fusion 可以替换。
 
 代表提交：
 
 - `eff77a9` `Merge evaluation findings fixes`
-- `ade7ce2` `Merge Lumora memory backend refactor`
+- `ade7ce2` `Merge Luna Agent memory backend refactor`
 
 主要变化：
 
-- 修复 grep/glob 受保护路径绕过、Lumora UUID 召回、嵌套工具统计、MCP timeout 和 cache 诊断误报。
-- Lumora provider 内部增加轻量 backend contract/factory，支持 embedding、vector、keyword、fusion 和可选 reranker 的独立装配。
+- 修复 grep/glob 受保护路径绕过、Luna Agent UUID 召回、嵌套工具统计、MCP timeout 和 cache 诊断误报。
+- Luna Agent provider 内部增加轻量 backend contract/factory，支持 embedding、vector、keyword、fusion 和可选 reranker 的独立装配。
 - SQLite Archive 继续保存权威记忆，索引可重建；Qdrant 支持本地持久化模式，避免远端向量库拖慢主链路。
 - 工具额度耗尽和空模型响应会进入无工具收尾，不再把内部占位文本直接发送给用户。
 
@@ -458,21 +472,17 @@
 
 ## 当前代码规模
 
-统计口径：v0.16 收尾时 Git 已跟踪文件的物理行数；包含空行和注释，不等同于有效代码行。
+统计口径：v0.19 完成时 Git 已跟踪 Python 文件的物理行数；包含空行和注释，不等同于有效代码行。
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/personal_agent/**/*.py` | 251 | 53,154 |
-| `tests/**/*.py` | 98 | 30,474 |
-| `plugins/**/*.py` | 8 | 1,974 |
-| `scripts/**/*.py` | 2 | 287 |
-| `examples/**/*.py` | 5 | 391 |
-| 其他 Python 包装文件 | 1 | 0 |
-| Python 合计 | 365 | 86,280 |
-| Markdown 文档 | 42 | 7,394 |
-| Git 已跟踪文件总数 | 458 | - |
+| `src/luna_agent/**/*.py` | 254 | 53,937 |
+| `tests/**/*.py` | 102 | 31,026 |
+| Plugins / Examples / Scripts / SDK | 33 | 3,633 |
+| 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
+| Python 合计 | 398 | 88,606 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.32 万行，测试约 3.05 万行，测试代码占 Python 总量约 35.3%。当前完整测试套件为 `1167 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.39 万行，测试约 3.10 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1171 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 
@@ -484,14 +494,14 @@
 
 ## 当前能力快照
 
-- 启动入口：`uv run personal-agent chat`、`uv run personal-agent chat --ui inline`、`uv run personal-agent serve`
+- 启动入口：`uv run luna-agent chat`、`uv run luna-agent chat --ui inline`、`uv run luna-agent serve`
 - 配置入口：`.env` 管 secret，`config.yaml` 管行为配置。
 - 执行模式：`config.yaml -> execution.mode`，交互临时切换用 `/mode`；权限、资源审批、沙箱和 Hook 统一进入 Tool Pipeline。
 - 系统提示词：`data/system/*.md` 与 `profiles` session 映射。
 - 运行数据：`data/`，不进入 git。
 - 对话主链路：所有入口提交到 Coordinator，ConversationService 负责 Agent turn，Delivery/Outbox 负责出站。
 - 扩展能力：插件可注册 Tool、Skill、MCP、Hook、Command、主动 runner 和受限资源端口，并支持 generation snapshot 热重载、回滚与卸载。
-- 记忆：internal snapshot + review buffer + SQLite Archive + 可替换 Lumora/Mem0 外部 provider。
+- 记忆：internal snapshot + review buffer + SQLite Archive + 可替换 Luna Agent/Mem0 外部 provider。
 - 多模态：入站 attachment 与出站 Artifact 分离，四个平台按 capability 原生发送或确定性降级。
 - 可观测性：doctor、runtime health、tool runs、turn reports、activity、cache diagnostics、delivery audit。
 
@@ -500,5 +510,5 @@
 截至本文更新时间：
 
 - `.env`、`data/`、`.venv/`、`__pycache__/`、`.pytest_cache/`、`uv.lock` 均不应进入提交。
-- 如果运行测试后 `src/personal_agent/skills/builtin/.usage.json` 改动，需要恢复后再提交。
+- 如果运行测试后 `src/luna_agent/skills/builtin/.usage.json` 改动，需要恢复后再提交。
 - 结构性变化继续追加到本文；逐提交细节由 Git history 和各专项进度文档承担。

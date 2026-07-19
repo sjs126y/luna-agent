@@ -5,9 +5,9 @@
 <p><strong>当前主干、协作边界和下一位 Agent 应该先看什么</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/branch-main-2EA44F" alt="Main branch">
+  <img src="https://img.shields.io/badge/branch-refactor%2Fluna--agent--rename-2EA44F" alt="Luna Agent rename branch">
   <img src="https://img.shields.io/badge/backend-stable-0A84FF" alt="Backend stable">
-  <img src="https://img.shields.io/badge/tests-1050%20passed-2EA44F" alt="1050 tests passed">
+  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F" alt="1171 tests passed">
 </p>
 
 <p>
@@ -23,12 +23,12 @@
 
 本文是当前主干的协作入口。阶段历史与代码规模见 `PROJECT_EVOLUTION.md`；后端详细实现记录见 `BACKEND_PROGRESS.md`；前端状态见 `FRONTEND_PROGRESS.md`。
 
-## 当前主干
+## 当前工作分支
 
-- 分支：`main`
-- 当前基准：`f3da3d7 Refresh project docs and remove obsolete plans`；最近功能合并为 `0bcb55e Merge outbound multimodal delivery`。
-- 本地 `main` 尚未推送到 `origin/main`。
-- 最近完整验证：`python -m compileall -q src/personal_agent` 通过；`uv run pytest -q` 为 `1050 passed, 1 warning`。
+- 分支：`refactor/luna-agent-rename`
+- 已完成提交：`7b798ca Rename runtime and plugin SDK to Luna Agent`、`38c48c6 Migrate Luna Agent configuration`。
+- 后续待提交：文档、进度记录和路线图文件的命名迁移。
+- 最近完整验证：`python -m compileall -q src/luna_agent` 通过；`uv run pytest -q` 为 `1171 passed, 1 warning`。
 - 唯一 warning 来自飞书 SDK 内部弃用 API，不是当前 Runtime 回归。
 - 用户本地未跟踪的联调文件不属于项目提交，后续 Agent 不应擅自删除或纳入 commit。
 
@@ -36,18 +36,17 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| Runtime：`src/personal_agent/**/*.py` | 228 | 47,458 |
-| Tests：`tests/**/*.py` | 88 | 27,549 |
-| 项目插件：`plugins/**/*.py` | 5 | 488 |
-| Scripts / Examples | 3 | 316 |
-| 其他 Python 包装文件 | 1 | 0 |
-| Python 合计 | 325 | 75,811 |
+| Runtime：`src/luna_agent/**/*.py` | 254 | 53,937 |
+| Tests：`tests/**/*.py` | 102 | 31,026 |
+| Plugins / Examples / Scripts / SDK | 33 | 3,633 |
+| 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
+| Python 合计 | 398 | 88,606 |
 
 统计只包含 Git tracked Python 文件，包含注释与空行。
 
 ## 当前架构
 
-Lumora 已从单一 CLI Agent 原型演进为多入口、可扩展的个人 Agent Runtime：
+Luna Agent 已从单一 CLI Agent 原型演进为多入口、可扩展的个人 Agent Runtime：
 
 ```text
 CLI/TUI | Gateway Adapters | Cron | Plugin Submit
@@ -92,8 +91,8 @@ CLI/TUI | Gateway Adapters | Cron | Plugin Submit
 
 ### Memory 与评测修复
 
-- internal Markdown、review buffer/revision、SQLite Archive、Lumora/Mem0 provider 和 fallback 已完成重构。
-- Lumora 内部使用 backend factory 装配 embedding/vector/keyword/fusion/可选 reranker；Qdrant 支持本地或远程配置。
+- internal Markdown、review buffer/revision、SQLite Archive、Luna Agent/Mem0 provider 和 fallback 已完成重构。
+- Luna Agent 内部使用 backend factory 装配 embedding/vector/keyword/fusion/可选 reranker；Qdrant 支持本地或远程配置。
 - 独立评测发现并修复 protected path 搜索绕过、UUID 召回、嵌套工具统计、MCP timeout 和 cache usage 诊断问题。
 - SQLite Archive 是权威数据源，向量和关键词索引可重建。
 
@@ -132,5 +131,5 @@ CLI/TUI | Gateway Adapters | Cron | Plugin Submit
 - `FRONTEND_PROGRESS.md`：前端 TUI 状态、偏好和接口消费情况。
 - `BACKEND_INTERFACE.md`：前端消费后端事件、命令和 payload 的权威契约。
 - `FRONTEND_INTERFACE_REQUIREMENTS.md`：前端向后端提出的小接口需求。
-- `lumora-roadmap.zh-CN.md`：后续架构方向和完成状态。
+- `luna-agent-roadmap.zh-CN.md`：后续架构方向和完成状态。
 - `TODO.md`：当前剩余工作。

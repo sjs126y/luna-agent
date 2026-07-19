@@ -82,7 +82,7 @@
 
 后端源码契约在：
 
-- `src/personal_agent/conversation/events.py`
+- `src/luna_agent/conversation/events.py`
 - `EVENT_PROTOCOL_VERSION`
 - `EVENT_SCHEMAS`
 - `event_protocol_schema()`
@@ -880,7 +880,7 @@ Gateway 异步确认：
 
 ## 10. Runtime / Doctor Cache Diagnostics
 
-`personal-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
+`luna-agent doctor --section runtime --json` 的 `runtime.llm_cache` 会暴露 provider cache 能力和最近一次缓存 usage 摘要。
 
 常见字段：
 
@@ -904,7 +904,7 @@ Gateway 异步确认：
 
 `last_diagnostics` 与 `llm_end.cache_diagnostics` 字段一致。
 
-`personal-agent doctor --section runtime --json` 的 `runtime.turns.persisted` 会暴露持久化 turn report 摘要。
+`luna-agent doctor --section runtime --json` 的 `runtime.turns.persisted` 会暴露持久化 turn report 摘要。
 
 常见字段：
 
@@ -1011,8 +1011,8 @@ Slash metadata：
 
 Memory doctor/health payload 提供：
 
-- `requested_provider: "lumora" | "mem0" | "fallback" | "none"`
-- `effective_provider: "lumora" | "mem0" | "fallback" | "none"`
+- `requested_provider: "luna" | "mem0" | "fallback" | "none"`
+- `effective_provider: "luna" | "mem0" | "fallback" | "none"`
 - `fallback_reason: string`
 - `internal_revision: integer`
 - `internal_profile: string`
@@ -1041,13 +1041,13 @@ Memory `search` / `list` 的每条外部记录额外提供：
 - `effective_provider: string`：当前 External Memory Router 实际使用的提供器。
 - `target: "external"`
 
-旧记录可以出现 `source_provider="fallback"` 且 `effective_provider="lumora"`；这表示记录历史来源是 fallback，不表示当前路由已经降级。
+旧记录可以出现 `source_provider="fallback"` 且 `effective_provider="lumora"`；`lumora` 是改名前的持久化标识，读取时兼容为 `luna`，不表示当前路由已经降级。
 
 Router 状态按 scope 隔离。幂等语义搜索遇到主提供器异常会重试一次；恢复时先真实 probe，成功后立即切回主提供器，不再用历史迁移阻塞前台请求。待迁移 observation 和待索引 memory 由现有 Memory Review worker 每次各处理一条，并逐条保存尝试次数、错误和完成状态。
 
-`personal-agent memory doctor` 会执行真实 embedding + 外部向量存储探测，并在外部 provider 的 `components` 与 `fingerprints` 中报告 embedding、vector、keyword、fusion、reranker 状态；普通配置诊断仍只表示所选 Backend 的配置/依赖 readiness。
+`luna-agent memory doctor` 会执行真实 embedding + 外部向量存储探测，并在外部 provider 的 `components` 与 `fingerprints` 中报告 embedding、vector、keyword、fusion、reranker 状态；普通配置诊断仍只表示所选 Backend 的配置/依赖 readiness。
 
-`personal-agent memory reindex --index all|vector|keyword` 会从 SQLite Archive 重建 Lumora 派生索引。Archive 始终是权威数据源，切换 embedding、vector 或 keyword Backend 不要求从旧索引服务导出数据。
+`luna-agent memory reindex --index all|vector|keyword` 会从 SQLite Archive 重建 Luna Agent 派生索引。Archive 始终是权威数据源，切换 embedding、vector 或 keyword Backend 不要求从旧索引服务导出数据。
 
 Review worker payload 提供：
 

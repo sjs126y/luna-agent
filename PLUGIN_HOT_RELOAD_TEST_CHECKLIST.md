@@ -18,17 +18,17 @@ Start the branch under test from the repository root:
 
 ```bash
 git switch refactor/plugin-hot-reload-runtime
-uv run personal-agent serve
+uv run luna-agent serve
 ```
 
 Run all `/plugins` commands in WeChat, QQ, Feishu, or the TUI connected to that process. A separate
-`personal-agent plugins ...` process cannot replace capabilities inside an already-running Gateway.
+`luna-agent plugins ...` process cannot replace capabilities inside an already-running Gateway.
 
 Use these absolute fixture paths:
 
 ```text
-/home/sujinsheng/projects/Personal-Agent/examples/plugins/hot_reload_probe_v1
-/home/sujinsheng/projects/Personal-Agent/examples/plugins/hot_reload_probe_v2
+/home/sujinsheng/projects/luna-agent/examples/plugins/hot_reload_probe_v1
+/home/sujinsheng/projects/luna-agent/examples/plugins/hot_reload_probe_v2
 ```
 
 ## 1. Install v1
@@ -36,7 +36,7 @@ Use these absolute fixture paths:
 Send:
 
 ```text
-/plugins install /home/sujinsheng/projects/Personal-Agent/examples/plugins/hot_reload_probe_v1
+/plugins install /home/sujinsheng/projects/luna-agent/examples/plugins/hot_reload_probe_v1
 /plugins info examples/hot-reload-probe
 /hot-version
 ```
@@ -61,7 +61,7 @@ Expected: the tool returns v1 and the same generation/runtime identities shown b
 Send:
 
 ```text
-/plugins install /home/sujinsheng/projects/Personal-Agent/examples/plugins/hot_reload_probe_v2
+/plugins install /home/sujinsheng/projects/luna-agent/examples/plugins/hot_reload_probe_v2
 /plugins info examples/hot-reload-probe
 /hot-version
 ```

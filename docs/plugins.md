@@ -38,7 +38,7 @@ flowchart LR
     Tool & MCP --> Pipeline[Host Security & Runtime]
 ```
 
-Lumora 的被动插件系统不要求插件继承基类。插件通过同步 `register(ctx)` 声明当前 generation 的能力；宿主构建不可变 `CapabilitySnapshot` 并原子发布。现有 Tool、Skill、Hook、MCP 等 manager 继续负责执行，快照只负责稳定路由和生命周期一致性。
+Luna Agent 的被动插件系统不要求插件继承基类。插件通过同步 `register(ctx)` 声明当前 generation 的能力；宿主构建不可变 `CapabilitySnapshot` 并原子发布。现有 Tool、Skill、Hook、MCP 等 manager 继续负责执行，快照只负责稳定路由和生命周期一致性。
 
 <table>
   <tr>
@@ -53,10 +53,10 @@ Lumora 的被动插件系统不要求插件继承基类。插件通过同步 `re
 
 ## 最终目录结构
 
-插件引擎代码固定放在 `src/personal_agent/plugins/core/`：
+插件引擎代码固定放在 `src/luna_agent/plugins/core/`：
 
 ```text
-src/personal_agent/plugins/
+src/luna_agent/plugins/
   core/
     context.py
     manager.py
@@ -92,7 +92,7 @@ src/personal_agent/plugins/
     memory/
       plugin.yaml              # 只注册 memory 工具
       __init__.py
-      lumora/
+      luna/
         __init__.py
         provider.py
         backends/
@@ -145,34 +145,34 @@ examples/plugins/hello/
 
 ## SDK 与 AI 开发入口
 
-外置插件的稳定数据契约位于独立 workspace 包 `packages/lumora-plugin-sdk`。插件应从 `lumora_plugin_sdk` 导入 `PluginRuntimeContext`、`ToolEntry`、`CommandEntry`、`HookEvent`、Hook outcome 和主动资源声明；`personal_agent.*` 保留给宿主实现与暂未稳定的运行服务。旧宿主导入路径暂时重导出同一类型，不代表新插件应继续依赖它们。
+外置插件的稳定数据契约位于独立 workspace 包 `packages/luna-agent-plugin-sdk`。插件应从 `luna_agent_plugin_sdk` 导入 `PluginRuntimeContext`、`ToolEntry`、`CommandEntry`、`HookEvent`、Hook outcome 和主动资源声明；`luna_agent.*` 保留给宿主实现与暂未稳定的运行服务。旧宿主导入路径暂时重导出同一类型，不代表新插件应继续依赖它们。
 
 面向 AI 编写插件时，先获取机器可读边界，再生成与验证：
 
 ```bash
-uv run personal-agent plugins capabilities --json
-uv run personal-agent plugins schema manifest
-uv run personal-agent plugins schema scaffold
-uv run personal-agent plugins create ./my-plugin --spec ./plugin-spec.yaml
-uv run personal-agent plugins test ./my-plugin --contract --integration
-uv run personal-agent plugins package ./my-plugin
+uv run luna-agent plugins capabilities --json
+uv run luna-agent plugins schema manifest
+uv run luna-agent plugins schema scaffold
+uv run luna-agent plugins create ./my-plugin --spec ./plugin-spec.yaml
+uv run luna-agent plugins test ./my-plugin --contract --integration
+uv run luna-agent plugins package ./my-plugin
 ```
 
 `create --spec` 支持 `tool`、`skill`、`mcp`、`hook`、`command`、`active` 特性，并生成 `plugin.yaml`、入口模块、`AGENTS.md`、README 和契约测试。`--contract` 使用 SDK 的 `FakePluginRuntimeContext`，不启动宿主；`--integration` 使用临时数据目录中的真实 `PluginManager`，会执行注册、依赖解析和候选能力构建，但不污染正式插件状态。`plugins diff <v1> <v2>` 会比较版本、依赖/能力声明和内容哈希；`plugins package` 生成排除缓存文件的确定性 ZIP。
 
 ## plugin.yaml
 
-每个插件包必须有 `plugin.yaml`、`plugin.yml` 或 `plugin.json`。内置插件由 `PluginManager` 递归扫描 `src/personal_agent/plugins/builtin/**/plugin.yaml` 发现；用户插件从配置里的插件目录发现。
+每个插件包必须有 `plugin.yaml`、`plugin.yml` 或 `plugin.json`。内置插件由 `PluginManager` 递归扫描 `src/luna_agent/plugins/builtin/**/plugin.yaml` 发现；用户插件从配置里的插件目录发现。
 
 必填字段：
 
 ```yaml
 schema_version: 1
-key: memory/lumora
-name: Lumora Memory Provider
+key: memory/luna
+name: Luna Agent Memory Provider
 version: "1.0.0"
 plugin_api: ">=1,<2"
-entrypoint: personal_agent.plugins.builtin.memory.lumora:register
+entrypoint: luna_agent.plugins.builtin.memory.luna:register
 requires:
   sdk: ">=0.1,<1"
 ```
@@ -182,7 +182,7 @@ requires:
 ```yaml
 description: Hybrid semantic and BM25 external memory provider.
 kind: memory
-provides: [memory_provider:lumora]
+provides: [memory_provider:luna]
 tags: [memory, retrieval]
 requires_env: []
 enabled_by_default: true
@@ -190,7 +190,7 @@ deferred: false
 record_import_delta: false
 ```
 
-`key` 是启用/禁用插件时使用的稳定身份，不要用展示名代替。推荐类似 `platforms/telegram`、`memory/lumora`、`workflows/review` 这样的 key。
+`key` 是启用/禁用插件时使用的稳定身份，不要用展示名代替。推荐类似 `platforms/telegram`、`memory/luna`、`workflows/review` 这样的 key。
 
 manifest 会做严格校验：
 
@@ -208,7 +208,7 @@ manifest 会做严格校验：
 
 ```yaml
 requires:
-  lumora: ">=0.1,<1"
+  luna_agent: ">=0.1,<1"
   sdk: ">=0.1,<1"
   plugins:
     - key: integrations/github-assistant
@@ -281,7 +281,7 @@ plugins/hello/
 主动插件仍是普通 generation，只额外注册一个长期根运行器；它不是 Job/Cron，也不拥有第二套 Capability Snapshot。插件内部可以用 `asyncio.TaskGroup` 组织自己的短期或长期任务，宿主只管理根任务和 generation 生命周期。
 
 ```python
-from lumora_plugin_sdk import ActiveResourceRequest
+from luna_agent_plugin_sdk import ActiveResourceRequest
 
 async def run(ctx):
     storage = ctx.resources.storage
@@ -310,7 +310,7 @@ def register(ctx):
 运行语义：
 
 1. `register()` 只收集能力和 runner，不会启动任务。
-2. 只有 `personal-agent serve` 创建的 Gateway 是 active owner；CLI chat、doctor 和 validate 不启动 runner。
+2. 只有 `luna-agent serve` 创建的 Gateway 是 active owner；CLI chat、doctor 和 validate 不启动 runner。
 3. 插件初始化完成后调用 `await ctx.runtime.ready()`。该调用会阻塞到宿主提交 generation；提交后才允许正式发现、调用资源和投递。
 4. Gateway 停止、插件关闭或 generation 退休时，宿主先请求停止根任务，再按逆序关闭 generation scope 中的连接和清理回调。
 
@@ -426,7 +426,7 @@ plugins:
 正式运行时 Hook 由独立的 `HookManager` 管理，`PluginManager` 只负责注册转发、插件归属和卸载清理。回调接收只读的 `HookEnvelope`，并返回事件对应的 outcome：
 
 ```python
-from lumora_plugin_sdk import HookEvent, PreToolUseOutcome
+from luna_agent_plugin_sdk import HookEvent, PreToolUseOutcome
 
 async def protect_write(event):
     path = str(event.payload.get("input", {}).get("path") or "")
@@ -528,38 +528,38 @@ data/plugins/
 
 ## 记忆提供器
 
-记忆领域与编排位于核心 `src/personal_agent/memory/`：internal Markdown、Agent revision snapshot、observation buffer、SQLite archive、异步 review worker、router 和 fallback。
+记忆领域与编排位于核心 `src/luna_agent/memory/`：internal Markdown、Agent revision snapshot、observation buffer、SQLite archive、异步 review worker、router 和 fallback。
 
 可替换的外部提供器位于插件包：
 
-- `memory/lumora`：Memory LLM、可替换 embedding/vector/keyword/fusion/可选 reranker backend；当前使用百炼 embedding、local/remote Qdrant、SQLite FTS5/BM25 和 RRF。
+- `memory/luna`：Memory LLM、可替换 embedding/vector/keyword/fusion/可选 reranker backend；当前使用百炼 embedding、local/remote Qdrant、SQLite FTS5/BM25 和 RRF。
 - `memory/mem0`：官方 `mem0ai` 依赖的薄适配层。
 - `builtin/memory`：只注册 `memory` / `memory_buffer` 工具。
 
 核心 fallback 不属于插件，主 provider 缺依赖、配置错误或运行失败时自动接管 SQLite + BM25 存储。
 
-Lumora provider 的 SQLite Archive 是权威数据源，向量和关键词索引可以重建。Backend factory 位于 provider 内部，不提升为全局插件系统，也不让每个检索组件拥有独立生命周期。配置见 `docs/configuration.md` 的 Memory Backend 章节。
+Luna Agent provider 的 SQLite Archive 是权威数据源，向量和关键词索引可以重建。Backend factory 位于 provider 内部，不提升为全局插件系统，也不让每个检索组件拥有独立生命周期。配置见 `docs/configuration.md` 的 Memory Backend 章节。
 
 ## 常用诊断命令
 
 ```bash
-uv run python -m personal_agent plugins list --load
-uv run python -m personal_agent plugins info memory/lumora --load
-uv run python -m personal_agent plugins logs integrations/github-assistant
-uv run python -m personal_agent plugins versions integrations/github-assistant
-uv run python -m personal_agent plugins operations
-uv run python -m personal_agent plugins doctor memory/mem0 --json
-uv run python -m personal_agent plugins validate examples/plugins/hello
-uv run personal-agent plugins capabilities --json
-uv run personal-agent plugins test examples/plugins/hello --contract --integration
-uv run personal-agent plugins diff examples/plugins/hot_reload_probe_v1 examples/plugins/hot_reload_probe_v2
-uv run personal-agent plugins package examples/plugins/hello
-uv run python -m personal_agent plugins install ./plugins/my_plugin
-uv run python -m personal_agent plugins install ./plugins/my_plugin --no-enable
-uv run python -m personal_agent plugins reload integrations/github-assistant
-uv run python -m personal_agent plugins rollback user/my-plugin <package-digest>
-uv run python -m personal_agent plugins uninstall user/my-plugin
-uv run python -m personal_agent doctor --json
+uv run python -m luna_agent plugins list --load
+uv run python -m luna_agent plugins info memory/luna --load
+uv run python -m luna_agent plugins logs integrations/github-assistant
+uv run python -m luna_agent plugins versions integrations/github-assistant
+uv run python -m luna_agent plugins operations
+uv run python -m luna_agent plugins doctor memory/mem0 --json
+uv run python -m luna_agent plugins validate examples/plugins/hello
+uv run luna-agent plugins capabilities --json
+uv run luna-agent plugins test examples/plugins/hello --contract --integration
+uv run luna-agent plugins diff examples/plugins/hot_reload_probe_v1 examples/plugins/hot_reload_probe_v2
+uv run luna-agent plugins package examples/plugins/hello
+uv run python -m luna_agent plugins install ./plugins/my_plugin
+uv run python -m luna_agent plugins install ./plugins/my_plugin --no-enable
+uv run python -m luna_agent plugins reload integrations/github-assistant
+uv run python -m luna_agent plugins rollback user/my-plugin <package-digest>
+uv run python -m luna_agent plugins uninstall user/my-plugin
+uv run python -m luna_agent doctor --json
 ```
 
 Gateway/TUI 运行中使用同一控制面：
@@ -580,9 +580,9 @@ Gateway/TUI 运行中使用同一控制面：
 `plugins validate <path>` 可以直接校验一个插件目录或 manifest 文件，不要求先把插件目录写进 `config.yaml`：
 
 ```bash
-uv run python -m personal_agent plugins validate examples/plugins/hello
-uv run python -m personal_agent plugins validate examples/plugins/hello --json
-uv run python -m personal_agent plugins validate examples/plugins/hello --no-load
+uv run python -m luna_agent plugins validate examples/plugins/hello
+uv run python -m luna_agent plugins validate examples/plugins/hello --json
+uv run python -m luna_agent plugins validate examples/plugins/hello --no-load
 ```
 
 默认会执行 `register()`，所以能发现入口导入失败、缺环境变量、注册时报错、command/hook 注册冲突等问题。`--no-load` 只检查 manifest、环境变量和入口导入，不执行注册函数。
@@ -590,7 +590,7 @@ uv run python -m personal_agent plugins validate examples/plugins/hello --no-loa
 示例插件端到端检查：
 
 ```bash
-uv run python -m personal_agent plugins validate examples/plugins/hello
+uv run python -m luna_agent plugins validate examples/plugins/hello
 ```
 
 输出里应该能看到：
@@ -603,6 +603,6 @@ uv run python -m personal_agent plugins validate examples/plugins/hello
 插件相关改动合入前至少跑：
 
 ```bash
-python -m compileall -q src/personal_agent
+python -m compileall -q src/luna_agent
 uv run pytest -q
 ```

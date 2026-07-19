@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/first%20step-doctor-0A84FF" alt="Run doctor first">
   <img src="https://img.shields.io/badge/logs-data%2Flogs-555555" alt="Logs directory">
-  <img src="https://img.shields.io/badge/tests-1167%20passed-2EA44F" alt="1167 tests passed">
+  <img src="https://img.shields.io/badge/tests-1171%20passed-2EA44F" alt="1171 tests passed">
 </p>
 
 <p>
@@ -25,7 +25,7 @@
 
 ```mermaid
 flowchart LR
-    Start[启动失败或行为异常] --> Doctor[personal-agent doctor]
+    Start[启动失败或行为异常] --> Doctor[luna-agent doctor]
     Doctor --> Config{Config 正常?}
     Config -- No --> Fix[修正 .env / config.yaml]
     Config -- Yes --> Runtime{Runtime ready?}
@@ -41,41 +41,41 @@ flowchart LR
 
 ```bash
 uv sync
-uv run personal-agent init --profile local --copy-env --fix-dirs
+uv run luna-agent init --profile local --copy-env --fix-dirs
 # 编辑 .env，填写 LLM_API_KEY
-uv run personal-agent doctor
-uv run personal-agent chat
+uv run luna-agent doctor
+uv run luna-agent chat
 ```
 
 Telegram bot：
 
 ```bash
-uv run personal-agent init --profile telegram --copy-env --fix-dirs
+uv run luna-agent init --profile telegram --copy-env --fix-dirs
 # 编辑 .env，填写 LLM_API_KEY 和 TELEGRAM_BOT_TOKEN
-uv run personal-agent doctor
-uv run personal-agent serve
+uv run luna-agent doctor
+uv run luna-agent serve
 ```
 
 ## 常用命令
 
 ```bash
-uv run personal-agent chat
-uv run personal-agent chat "单轮消息"
-uv run personal-agent serve
+uv run luna-agent chat
+uv run luna-agent chat "单轮消息"
+uv run luna-agent serve
 
-uv run personal-agent doctor
-uv run personal-agent doctor --verbose
-uv run personal-agent doctor --json
-uv run personal-agent init --check
+uv run luna-agent doctor
+uv run luna-agent doctor --verbose
+uv run luna-agent doctor --json
+uv run luna-agent init --check
 
-uv run personal-agent plugins list --load
-uv run personal-agent plugins doctor <plugin-key>
-uv run personal-agent plugins validate examples/plugins/hello
+uv run luna-agent plugins list --load
+uv run luna-agent plugins doctor <plugin-key>
+uv run luna-agent plugins validate examples/plugins/hello
 
-uv run personal-agent memory doctor
-uv run personal-agent memory list
-uv run personal-agent agents list
-uv run personal-agent tokens session
+uv run luna-agent memory doctor
+uv run luna-agent memory list
+uv run luna-agent agents list
+uv run luna-agent tokens session
 ```
 
 ## 配置迁移
@@ -83,8 +83,8 @@ uv run personal-agent tokens session
 旧配置迁移先诊断，不自动覆盖：
 
 ```bash
-uv run personal-agent init --check
-uv run personal-agent doctor
+uv run luna-agent init --check
+uv run luna-agent doctor
 ```
 
 重点看输出里的：
@@ -102,7 +102,7 @@ uv run personal-agent doctor
 
 ## 插件热重载
 
-包安装状态可以用 `personal-agent plugins install|rollback|uninstall` 离线管理；Gateway/TUI 已运行时使用核心 `/plugins` 命令，操作会直接进入当前 `PluginManager`，不需要重启进程。独立 CLI 进程中的 `reload` 只用于加载验证，真正的进程内热重载应使用 `/plugins reload`。
+包安装状态可以用 `luna-agent plugins install|rollback|uninstall` 离线管理；Gateway/TUI 已运行时使用核心 `/plugins` 命令，操作会直接进入当前 `PluginManager`，不需要重启进程。独立 CLI 进程中的 `reload` 只用于加载验证，真正的进程内热重载应使用 `/plugins reload`。
 
 更新会发布新 Capability Snapshot。新 Turn 立即使用新 generation，执行中的 Turn 保持旧 lease；`plugin_runtime.active_leases` 与 `retired_revisions` 可以判断旧实例是否仍在排空。普通卸载保留 `data/plugins/data/<plugin-key>`，只有显式 `--purge-data` 才删除数据。
 
@@ -124,8 +124,8 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 
 `Config`：
 
-- `config.yaml: 否`：运行 `personal-agent init`。
-- `.env: 否`：运行 `personal-agent init --copy-env` 或 `cp .env.example .env`。
+- `config.yaml: 否`：运行 `luna-agent init`。
+- `.env: 否`：运行 `luna-agent init --copy-env` 或 `cp .env.example .env`。
 - `LLM key: 否`：填写 `.env` 的 `LLM_API_KEY`。
 - `unknown keys`：确认是否是旧配置或拼写错误。
 
@@ -170,6 +170,6 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 提交前建议运行：
 
 ```bash
-python -m compileall -q src/personal_agent
+python -m compileall -q src/luna_agent
 uv run pytest -q
 ```

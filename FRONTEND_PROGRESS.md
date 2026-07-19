@@ -27,7 +27,7 @@
 
 - Security v4 前端实现 `b87c524` 已通过 `7b1afd0` 合并进 `main`；独立前端 worktree 仍保留 `feature/frontend-security-v4` 作为历史工作线，不代表主干尚未合并。
 - 当前主干文档/清理基准：`f3da3d7`；最近后端功能基准：`0bcb55e Merge outbound multimodal delivery`。
-- 前端主要范围：`src/personal_agent/tui/`
+- 前端主要范围：`src/luna_agent/tui/`
 - 相关测试：`tests/test_tui_app.py`、`tests/test_tui_layout.py`、`tests/test_tui_renderer.py`
 - 视觉/交互记录：`docs/frontend_decisions.md`
 - 前端只处理 CLI/TUI/desktop-web 侧内容；后端接口权威仍是 `BACKEND_INTERFACE.md`。
@@ -37,7 +37,7 @@
 ### Inline TUI 主体
 
 - 已有 inline TUI 输入区、状态行、上下文 meter、流式回复预览、工具运行活跃区。
-- `personal-agent chat` 默认启动 inline TUI；classic `TerminalRenderer` 和 `--simple` 旧 REPL 已移除。
+- `luna-agent chat` 默认启动 inline TUI；classic `TerminalRenderer` 和 `--simple` 旧 REPL 已移除。
 - 用户消息已增加底色/左侧强调，提高和助手输出的对比度；多行历史消息每行都会保持左侧蓝色强调条。
 - 输入框已有低调背景和左侧提示符；多行输入/折行会保持同一左侧蓝色强调条；输入 `/` 时隐藏底部快捷键，并把命令区域放在输入框下方。
 - 状态栏显示当前执行模式、模型、真正的 context usage，以及最近一轮模型 input/output token。
@@ -185,7 +185,7 @@
 ```bash
 uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
 uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
-PYTHONPYCACHEPREFIX=/tmp/personal-agent-frontend-pycache python -m compileall -q src/personal_agent/tui
+PYTHONPYCACHEPREFIX=/tmp/luna-agent-frontend-pycache python -m compileall -q src/luna_agent/tui
 git diff --check
 ```
 
@@ -203,17 +203,17 @@ git diff --check
 
 ```bash
 uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
-PYTHONPYCACHEPREFIX=/tmp/personal-agent-pycache python -m compileall -q src/personal_agent/tui
+PYTHONPYCACHEPREFIX=/tmp/luna-agent-pycache python -m compileall -q src/luna_agent/tui
 git diff --check
 ```
 
-结果：`92 passed`。普通 `python -m compileall -q src/personal_agent/tui` 在当前 worktree 会因为已有 `__pycache__` 写入报 `Read-only file system`，已用 `PYTHONPYCACHEPREFIX=/tmp/personal-agent-pycache` 完成等价语法验证。
+结果：`92 passed`。普通 `python -m compileall -q src/luna_agent/tui` 在当前 worktree 会因为已有 `__pycache__` 写入报 `Read-only file system`，已用 `PYTHONPYCACHEPREFIX=/tmp/luna-agent-pycache` 完成等价语法验证。
 
 ### 2026-07-07 10:55 CST
 
 - 收敛聊天入口：inline TUI 成为唯一正式交互终端 UI。
 - 删除 classic `TerminalRenderer`、`CliShell` 和对应测试；删除 `--simple` 旧 REPL。
-- 保留 `personal-agent chat --once` 作为脚本/单轮入口。
+- 保留 `luna-agent chat --once` 作为脚本/单轮入口。
 - 全量验证结果：`708 passed`。
 
 ### 2026-07-06 20:40 CST
@@ -271,7 +271,7 @@ git diff --check
 
 ```bash
 uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
-python -m compileall -q src/personal_agent/tui
+python -m compileall -q src/luna_agent/tui
 git diff --check
 uv run pytest tests/test_commands.py tests/test_cli_chat.py tests/test_gateway_commands.py -q
 uv run pytest tests/test_commands.py tests/test_runtime.py tests/test_activity.py tests/test_conversation_command_runtime.py tests/test_cli.py -q
@@ -283,7 +283,7 @@ uv run pytest tests/test_agent_loop.py tests/test_event_protocol.py tests/test_t
 ### 2026-07-08 15:20 CST
 
 - 重新补回 followup TUI 改动，并按用户要求本次完成后立即提交。
-- 启动时输出一次 Lumora ASCII banner 到普通 scrollback，不进入 active region，不改 delta/streaming renderer 链路。
+- 启动时输出一次 Luna Agent ASCII banner 到普通 scrollback，不进入 active region，不改 delta/streaming renderer 链路。
 - Ctrl+C 行为改为：运行中请求 stop；confirm 中拒绝；有输入时清空；空闲空输入时第一次显示短暂提示，第二次退出。Ctrl+D 不再作为空行退出入口。
 - 运行中允许发送只读/控制 slash 命令：`/steer`、`/activity ...`、`/tool-runs ...`、`/usage`、`/agents`、`/session`，结果打印到 scrollback，不启动第二个模型 turn。
 - 完整 slash 命令优先提交，避免 `/activity agents` 被动态 id 候选自动补成某个历史 run id。
@@ -307,7 +307,7 @@ uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_rend
 
 ```bash
 uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
-python -m compileall -q src/personal_agent/tui
+python -m compileall -q src/luna_agent/tui
 git diff --check
 ```
 
@@ -327,7 +327,7 @@ git diff --check
 
 ```bash
 uv run pytest tests/test_tui_app.py tests/test_tui_layout.py tests/test_tui_renderer.py -q
-python -m compileall -q src/personal_agent/tui
+python -m compileall -q src/luna_agent/tui
 git diff --check
 ```
 
