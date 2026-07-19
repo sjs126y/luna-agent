@@ -16,6 +16,7 @@ ConversationEventType = Literal[
     "assistant_message",
     "tool_start",
     "tool_decision",
+    "approval_review",
     "tool_end",
     "artifact_available",
     "response_artifact_selected",
@@ -205,6 +206,19 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
             EventFieldSpec("timeout_seconds", "number", "Configured timeout in seconds when available."),
             EventFieldSpec("method", "string", "HTTP method preview for network tools."),
             EventFieldSpec("process_label", "string", "User-facing label for background process tools."),
+        ),
+    ),
+    "approval_review": EventSchema(
+        "approval_review",
+        "An optional model-backed approval review completed.",
+        fields=(
+            EventFieldSpec("tool_name", "string", "Tool being reviewed.", required=True),
+            EventFieldSpec("tool_use_id", "string", "Provider/tool call id.", required=True),
+            EventFieldSpec("decision", "string", "allow_once/deny/ask_human."),
+            EventFieldSpec("reviewer_model", "string", "Model used for review."),
+            EventFieldSpec("reviewer_latency_ms", "integer", "Review latency in milliseconds."),
+            EventFieldSpec("reviewer_error", "string", "Error that caused human fallback, if any."),
+            EventFieldSpec("fallback", "string", "Fallback path, usually human."),
         ),
     ),
     "tool_end": EventSchema(

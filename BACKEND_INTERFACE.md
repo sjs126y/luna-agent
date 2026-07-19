@@ -792,6 +792,7 @@ Gateway / 平台行为：
 - `/deny all`：撤销当前 session 的全部工具/资源限时授权。
 - `/permissions` payload 提供 `security`、`tool_grants`、`resource_grants`、`temporary_grant_ttl_seconds` 和 `pending_confirmation`；旧类别 grant 字段已删除。
 - `tool_decision` / `tool_end` 新增 `tool_approval_mode` 与 `requested_resources`，前端确认框应优先展示这些字段。
+- 可选的 `approval_review` 事件表示模型审批器完成了一次审查。字段包括 `tool_name`、`tool_use_id`、`decision`（`allow_once` / `deny` / `ask_human`）、`reviewer_model`、`reviewer_latency_ms`、`reviewer_error` 和 `fallback`。该事件只在 `permissions.approval_reviewer.enabled=true` 且请求需要确认时出现；前端可将 `ask_human` 继续展示为普通确认，不应把模型判断视为绕过沙箱。
 
 Gateway 异步确认：
 

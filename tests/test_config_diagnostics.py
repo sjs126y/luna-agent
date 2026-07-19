@@ -120,6 +120,33 @@ sandbox:
     )
 
 
+def test_config_report_validates_approval_reviewer(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        """
+permissions:
+  approval_reviewer:
+    enabled: true
+    fallback: maybe
+    timeout_seconds: 0
+storage:
+  data_dir: ./data
+sandbox:
+  roots: [./data]
+  bash_work_dir: ./data
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_PROVIDER=deepseek\nLLM_API_KEY=test\n",
+        encoding="utf-8",
+    )
+
+    report = build_config_report(tmp_path)
+
+    assert any("permissions.approval_reviewer.fallback" in error for error in report["errors"])
+    assert any("permissions.approval_reviewer.timeout_seconds" in error for error in report["errors"])
+
+
 def test_config_report_validates_process_sandbox_backend(tmp_path):
     (tmp_path / "config.yaml").write_text(
         """

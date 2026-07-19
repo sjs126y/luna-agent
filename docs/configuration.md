@@ -132,6 +132,13 @@ permissions:
     default_external: cached
     tools: {}
     mcp_servers: {}
+  approval_reviewer:
+    enabled: false
+    model: ""                  # empty = current provider/model
+    timeout_seconds: 12
+    fallback: human             # human | deny
+    allow_ttl_grant: false      # TTL grants remain user-only
+    max_risk: medium            # low | medium
 
 llm:
   context_window: 0  # auto-detect; unknown model names default to 256K
