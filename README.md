@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1181%20passed-2EA44F?logo=pytest&logoColor=white" alt="1181 tests passed">
+  <img src="https://img.shields.io/badge/tests-1186%20passed-2EA44F?logo=pytest&logoColor=white" alt="1186 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -165,6 +165,7 @@ uv run luna-agent serve
 | **Reminder** | 持久提醒、重启恢复、取消和到期后通过正式会话链路提醒 |
 | **Feed Watch** | RSS/Atom 条件抓取、关键词过滤、更新去重和批量摘要 |
 | **Inbox Watch** | 监视受控收件箱目录，将稳定文件物化为 Artifact 后交给主 Agent |
+| **Document Converter** | 将 PDF、DOCX、PPTX、XLSX、HTML 等本地文档按页转换成文本或 Markdown |
 
 [查看插件格式与注册能力](docs/plugins.md)
 
@@ -179,7 +180,7 @@ uv run luna-agent serve
 
 ```bash
 python -m compileall -q src/luna_agent
-uv run pytest -q  # 1181 passed, 1 warning
+uv run pytest -q  # 1186 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。

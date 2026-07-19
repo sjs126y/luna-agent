@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/phases-20-7C3AED" alt="20 phases">
   <img src="https://img.shields.io/badge/Python%20LOC-89%2C197-0A84FF" alt="89197 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1181%20passed-2EA44F" alt="1181 tests passed">
+  <img src="https://img.shields.io/badge/tests-1186%20passed-2EA44F" alt="1186 tests passed">
 </p>
 
 <p>
@@ -27,7 +27,7 @@
 
 - 分支：`main`
 - 本次统计基准：v0.20 Agent 插件控制面
-- 最近全量验证：`uv run pytest -q`，结果 `1181 passed, 1 warning`
+- 最近全量验证：`uv run pytest -q`，结果 `1186 passed, 1 warning`
 
 ## v0.20 Agent 可操作的插件控制面
 
@@ -37,6 +37,8 @@
 
 主要变化：
 
+- 增加 `productivity/document-converter`，用单一延迟发现工具将常见本地文档转换为分页文本或 Markdown。
+- Plugin SDK `0.2.0` 公开资源声明契约，外置文件工具继续进入宿主统一安全管道。
 - `plugin_inspect`、`plugin_build`、`plugin_manage` 作为低频工具进入 Capability Snapshot，通过 `tool_search` 按需发现。
 - 查询直接复用 `PluginQueryService`；安装、启停、重载、回滚和卸载直接调用当前 live `PluginManager`。
 - 插件源码仍由普通文件工具编辑，插件构建工具只承担静态校验、SDK contract test 和确定性打包。
@@ -496,7 +498,7 @@
 | 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
 | Python 合计 | 400 | 89,197 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.44 万行，测试约 3.12 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1181 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.44 万行，测试约 3.12 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1186 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

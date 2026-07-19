@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/registration-transactional-2EA44F" alt="Transactional registration">
   <img src="https://img.shields.io/badge/hot%20reload-snapshot%20leased-0A84FF" alt="Snapshot leased hot reload">
   <img src="https://img.shields.io/badge/config-isolated-0A84FF" alt="Isolated config">
-  <img src="https://img.shields.io/badge/SDK-0.1.1-7C3AED" alt="Plugin SDK 0.1.1">
+  <img src="https://img.shields.io/badge/SDK-0.2.0-7C3AED" alt="Plugin SDK 0.2.0">
   <img src="https://img.shields.io/badge/core-lightweight-555555" alt="Lightweight core">
 </p>
 
@@ -128,7 +128,7 @@ src/luna_agent/plugins/
 
 仓库根目录的 `plugins/` 只给用户插件或本地开发插件使用。内置插件不要放到根目录 `plugins/`。
 
-当前根目录通用插件包括 `github_assistant`、`developer_docs`、`browser_operator` 和 `codex_bridge`。前三者分别组合 Skill、MCP、Hook 和状态命令；它们用于验证插件装配边界，不会把 MCP 生命周期或安全策略搬进插件私有实现。
+当前根目录通用插件包括 `github_assistant`、`developer_docs`、`browser_operator`、`codex_bridge` 和 `document_converter`。前四者组合 Skill、MCP、Hook 和状态命令；Document Converter 则演示只有一个按需工具的轻量外置插件。它们用于验证插件装配边界，不会把 MCP 生命周期或安全策略搬进插件私有实现。
 
 仓库里也保留了一个最小示例插件：
 
@@ -145,7 +145,22 @@ examples/plugins/hello/
 
 ## SDK 与 AI 开发入口
 
-外置插件的稳定数据契约位于独立 workspace 包 `packages/luna-agent-plugin-sdk`。插件应从 `luna_agent_plugin_sdk` 导入 `PluginRuntimeContext`、`ToolEntry`、`CommandEntry`、`HookEvent`、Hook outcome 和主动资源声明；`luna_agent.*` 保留给宿主实现与暂未稳定的运行服务。旧宿主导入路径暂时重导出同一类型，不代表新插件应继续依赖它们。
+外置插件的稳定数据契约位于独立 workspace 包 `packages/luna-agent-plugin-sdk`。插件应从 `luna_agent_plugin_sdk` 导入 `PluginRuntimeContext`、`ToolEntry`、`ResourceRequirement`、`CommandEntry`、`HookEvent`、Hook outcome 和主动资源声明；`luna_agent.*` 保留给宿主实现与暂未稳定的运行服务。只读或写入文件的外置工具通过 `ResourceRequirement` 声明精确资源，使调用继续经过 Mode、sandbox、blocked path 与审批管道。旧宿主导入路径暂时重导出同一类型，不代表新插件应继续依赖它们。
+
+## Document Converter
+
+`productivity/document-converter` 只注册一个可由 `tool_search` 发现的 `document_convert` 工具。它把允许读取的本地文档直接转换为分页工具文本，不生成新文件、不调用 LLM、不保存状态，也没有主动 runner。
+
+```json
+{
+  "path": "data/report.docx",
+  "format": "markdown",
+  "offset": 0,
+  "limit": 20000
+}
+```
+
+直接支持 PDF、DOCX、PPTX、XLSX、HTML、CSV、TXT 和 Markdown。返回值包含 `content`、`total_chars`、`has_more` 与 `next_offset`，长文档由 Agent 继续翻页。DOC、XLS、PPT、ODT、ODS、ODP 和 RTF 仅在系统安装 LibreOffice 时转换；缺少依赖会返回明确错误，不影响现代格式。工具身份为 `auto`，但源路径仍执行精确 filesystem read 与硬安全检查。
 
 面向 AI 编写插件时，先获取机器可读边界，再生成与验证：
 
