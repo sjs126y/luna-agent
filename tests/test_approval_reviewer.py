@@ -145,3 +145,36 @@ async def test_executor_uses_reviewer_then_runs_once(tmp_path):
     assert calls == 1
     assert confirmations == 0
     assert len(transport.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_reviewer_deny_fallback_skips_human_confirmation(tmp_path):
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
+
+    async def handler():
+        raise AssertionError("denied request must not run")
+
+    entry = ToolEntry("reviewer_fallback_demo", "demo", {}, handler, approval_mode="prompt")
+    tool_registry.register(entry)
+    agent = _agent(tmp_path, FakeTransport(error=RuntimeError("unsupported model")))
+    agent._approval_reviewer_config["fallback"] = "deny"
+    confirmations = 0
+
+    async def unexpected_confirm(_decision):
+        nonlocal confirmations
+        confirmations += 1
+        return "allow"
+
+    try:
+        result = await execute_tool_call_result(
+            {"id": "review-fallback", "name": entry.name, "input": {}},
+            agent=agent,
+            confirm=unexpected_confirm,
+        )
+    finally:
+        tool_registry.unregister(entry.name)
+
+    assert result.status == "denied"
+    assert confirmations == 0

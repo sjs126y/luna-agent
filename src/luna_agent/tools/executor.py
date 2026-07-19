@@ -912,6 +912,12 @@ async def _review_permission_request(
         reviewer_error=review.error,
         fallback="human" if review.decision == "ask_human" else "",
     )
+    if (
+        review.decision == "ask_human"
+        and review.error
+        and str(getattr(reviewer, "config", {}).get("fallback") or "human") == "deny"
+    ):
+        return "deny"
     return review.decision
 
 
