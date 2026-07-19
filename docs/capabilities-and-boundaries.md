@@ -2,7 +2,7 @@
 
 <h1>功能与边界</h1>
 
-<p><strong>Lumora 能做什么，哪些事情会先问你，哪些事情永远不会偷偷做</strong></p>
+<p><strong>Luna Agent 能做什么，哪些事情会先问你，哪些事情永远不会偷偷做</strong></p>
 
 <p>
   <img src="https://img.shields.io/badge/tools-ready-2EA44F" alt="Tools ready">
@@ -24,7 +24,7 @@
 
 ## 一张表看懂
 
-| 你可以让 Lumora | 它会怎样完成 |
+| 你可以让 Luna Agent | 它会怎样完成 |
 | --- | --- |
 | 处理本地项目 | 读取、搜索、修改文件，执行命令和代码，管理后台进程 |
 | 查询外部信息 | 使用网页工具、MCP、GitHub 和开发文档插件 |
@@ -39,7 +39,7 @@
 <table>
   <tr>
     <td width="50%" valign="top"><strong>工具与自动化</strong><br><br>高频文件、Shell、网络和进程工具直接可用；低频任务、工作流与 MCP 按需发现。扫描、读取和输出都有明确预算，系统会记录真实调用与结果。</td>
-    <td width="50%" valign="top"><strong>长期记忆</strong><br><br>稳定人格与用户资料全量进入上下文；日常事件、偏好和承诺进入可检索记忆。支持 Lumora、Mem0 和 SQLite fallback。</td>
+    <td width="50%" valign="top"><strong>长期记忆</strong><br><br>稳定人格与用户资料全量进入上下文；日常事件、偏好和承诺进入可检索记忆。支持 Luna Agent、Mem0 和 SQLite fallback。</td>
   </tr>
   <tr>
     <td valign="top"><strong>多平台会话</strong><br><br>CLI/TUI、微信、QQ、Telegram、飞书、Cron 和插件触发共享会话、工具、记忆与安全策略。</td>
@@ -102,7 +102,7 @@ flowchart LR
 
 ## 长期运行能力
 
-| 问题 | Lumora 的用户体验 |
+| 问题 | Luna Agent 的用户体验 |
 | --- | --- |
 | 平台断线 | 自动重连并在 Doctor 中显示状态 |
 | 同一会话连续来消息 | 保持顺序，不让两个回合互相覆盖 |

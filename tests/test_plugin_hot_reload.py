@@ -4,11 +4,11 @@ import sys
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.plugins import PluginManager, PluginStatus
-from personal_agent.plugins.runtime import CapabilityKind, PluginRuntimeState
-from personal_agent.tools.entry import ToolEntry
-from personal_agent.tools.registry import tool_registry
+from luna_agent.config import Settings
+from luna_agent.plugins import PluginManager, PluginStatus
+from luna_agent.plugins.runtime import CapabilityKind, PluginRuntimeState
+from luna_agent.tools.entry import ToolEntry
+from luna_agent.tools.registry import tool_registry
 
 
 def _write_plugin(root: Path, result: str) -> None:
@@ -26,7 +26,7 @@ def _write_plugin(root: Path, result: str) -> None:
     )
     (root / "hot_reload.py").write_text(
         "\n".join((
-            "from personal_agent.tools.entry import ToolEntry",
+            "from luna_agent.tools.entry import ToolEntry",
             "",
             "async def handler():",
             f"    return {result!r}",
@@ -61,7 +61,7 @@ def _write_package_plugin(root: Path, result: str) -> None:
     (package / "value.py").write_text(f"VALUE = {result!r}\n", encoding="utf-8")
     (package / "__init__.py").write_text(
         "\n".join((
-            "from personal_agent.tools.entry import ToolEntry",
+            "from luna_agent.tools.entry import ToolEntry",
             "from .value import VALUE",
             "",
             "async def handler():",

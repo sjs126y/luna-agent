@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.attachments import AttachmentStore
-from personal_agent.conversation.input import ConversationInput
-from personal_agent.models.messages import AttachmentRef
-from personal_agent.multimodal import MultiAttachmentProcessor
-from personal_agent.multimodal.image_text import (
+from luna_agent.attachments import AttachmentStore
+from luna_agent.conversation.input import ConversationInput
+from luna_agent.models.messages import AttachmentRef
+from luna_agent.multimodal import MultiAttachmentProcessor
+from luna_agent.multimodal.image_text import (
     ImageTextCache,
     ImageTextDescribeUnavailable,
     ImageTextDescription,
@@ -17,7 +17,7 @@ from personal_agent.multimodal.image_text import (
     VisionImageTextDescriber,
     build_default_image_text_describer,
 )
-from personal_agent.tools.sandbox import init_sandbox
+from luna_agent.tools.sandbox import init_sandbox
 
 
 def _settings(**overrides):
@@ -297,7 +297,7 @@ async def test_text_mode_unsupported_binary_file_returns_notice(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_resolution_error_returns_notice(tmp_path):
-    from personal_agent.attachments.store import AttachmentStoreError
+    from luna_agent.attachments.store import AttachmentStoreError
 
     class Store:
         def resolve(self, ref):
@@ -771,8 +771,8 @@ def test_default_image_text_describer_vision_mode_does_not_use_ocr(tmp_path):
 
 
 def test_vision_transport_uses_anthropic_messages_for_anthropic_provider():
-    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
-    from personal_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+    from luna_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from luna_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
 
     settings = _settings(
         multimodal_image_text_provider="anthropic",
@@ -787,8 +787,8 @@ def test_vision_transport_uses_anthropic_messages_for_anthropic_provider():
 
 
 def test_vision_transport_can_force_chat_completions_for_anthropic_gateway():
-    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
-    from personal_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
+    from luna_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from luna_agent.plugins.builtin.llm.builtin.chat_completions import ChatCompletionsTransport
 
     settings = _settings(
         multimodal_image_text_provider="anthropic",
@@ -803,8 +803,8 @@ def test_vision_transport_can_force_chat_completions_for_anthropic_gateway():
 
 
 def test_vision_transport_can_force_responses_for_anthropic_gateway():
-    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
-    from personal_agent.plugins.builtin.llm.builtin.responses import OpenAIResponsesTransport
+    from luna_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from luna_agent.plugins.builtin.llm.builtin.responses import OpenAIResponsesTransport
 
     settings = _settings(
         multimodal_image_text_provider="anthropic",
@@ -819,8 +819,8 @@ def test_vision_transport_can_force_responses_for_anthropic_gateway():
 
 
 def test_vision_transport_can_force_codex_responses_alias():
-    from personal_agent.multimodal.image_text import _vision_provider, _vision_transport
-    from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
+    from luna_agent.multimodal.image_text import _vision_provider, _vision_transport
+    from luna_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
 
     settings = _settings(
         multimodal_image_text_provider="anthropic",
@@ -835,7 +835,7 @@ def test_vision_transport_can_force_codex_responses_alias():
 
 
 def test_vision_provider_keeps_explicit_anthropic_base_url():
-    from personal_agent.multimodal.image_text import _vision_provider
+    from luna_agent.multimodal.image_text import _vision_provider
 
     settings = _settings(
         multimodal_image_text_provider="anthropic",
@@ -848,7 +848,7 @@ def test_vision_provider_keeps_explicit_anthropic_base_url():
 
 
 def test_vision_provider_uses_xai_defaults():
-    from personal_agent.multimodal.image_text import _vision_provider
+    from luna_agent.multimodal.image_text import _vision_provider
 
     provider = _vision_provider(_settings(), "xai")
 

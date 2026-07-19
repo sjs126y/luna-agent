@@ -15,31 +15,31 @@ import pytest
 
 class TestSandboxResolve:
     def test_relative_under_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir(); (r / "f.txt").write_text("hi")
         sb = Sandbox([r], [])
         assert sb.resolve("f.txt") == r / "f.txt"
 
     def test_relative_not_exists_falls_back(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         sb = Sandbox([r], [])
         assert sb.resolve("nope.txt") == r / "nope.txt"
 
     def test_absolute_preserved(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         f = tmp_path / "other.txt"; f.write_text("x")
         sb = Sandbox([r], [])
         assert sb.resolve(str(f)) == f.resolve()
 
     def test_no_roots_cwd_fallback(self):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         sb = Sandbox([], [])
         assert sb.resolve("t.txt") == Path("t.txt").resolve()
 
     def test_multi_root_first_existing_wins(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r1 = tmp_path / "a"; r1.mkdir()
         r2 = tmp_path / "b"; r2.mkdir(); (r2 / "u.txt").write_text("y")
         sb = Sandbox([r1, r2], [])
@@ -48,13 +48,13 @@ class TestSandboxResolve:
 
 class TestSandboxCheckPath:
     def test_under_root_ok(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir(); f = r / "ok.txt"; f.write_text("x")
         sb = Sandbox([r], [])
         assert sb.check_path(f) is None
 
     def test_outside_root_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         o = tmp_path / "bad.txt"; o.write_text("x")
         sb = Sandbox([r], [])
@@ -62,7 +62,7 @@ class TestSandboxCheckPath:
         assert err and "outside" in err.lower()
 
     def test_under_root_but_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         env = r / ".env"; env.write_text("S=1")
         sb = Sandbox([r], ["**/.env"])
@@ -70,32 +70,32 @@ class TestSandboxCheckPath:
         assert err and "blocked" in err.lower()
 
     def test_deep_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         d = r / "x" / ".git" / "config"; d.parent.mkdir(parents=True); d.write_text("x")
         sb = Sandbox([r], ["**/.git/**"])
         assert sb.check_path(d) is not None
 
     def test_no_roots_allow_any_except_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         f = tmp_path / "a.txt"; f.write_text("x")
         sb = Sandbox([], [])
         assert sb.check_path(f) is None
 
     def test_no_roots_still_blocks_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         env = tmp_path / ".env"; env.write_text("x")
         sb = Sandbox([], ["**/.env"])
         assert sb.check_path(env) is not None
 
     def test_root_exact_allowed(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         sb = Sandbox([r], [])
         assert sb.check_path(r) is None
 
     def test_read_root_allows_reads_but_not_writes(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
 
         workspace = tmp_path / "workspace"
         home = tmp_path / "home"
@@ -110,7 +110,7 @@ class TestSandboxCheckPath:
         assert sb.is_under_root(str(target)) is False
 
     def test_blocked_pattern_wins_inside_read_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
 
         workspace = tmp_path / "workspace"
         home = tmp_path / "home"
@@ -126,42 +126,42 @@ class TestSandboxCheckPath:
 
 class TestCheckBashPath:
     def test_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         sb = Sandbox([tmp_path], ["**/.env"])
         assert sb.check_bash_path("/p/.env") is not None
 
     def test_normal_ok(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         sb = Sandbox([tmp_path], ["**/.env"])
         assert sb.check_bash_path("/tmp/data.txt") is None
 
 
 class TestIsUnderRoot:
     def test_under(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         sb = Sandbox([r], [])
         assert sb.is_under_root(str(r / "f.txt")) is True
 
     def test_outside(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         sb = Sandbox([r], [])
         assert sb.is_under_root(str(tmp_path / "out.txt")) is False
 
     def test_exact_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         r = tmp_path / "ws"; r.mkdir()
         sb = Sandbox([r], [])
         assert sb.is_under_root(str(r)) is True
 
     def test_no_roots(self):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         sb = Sandbox([], [])
         assert sb.is_under_root("/x") is False
 
     def test_sibling_not_confused(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         d = tmp_path / "Desktop"; d.mkdir()
         dp = tmp_path / "DesktopProjects"; dp.mkdir()
         sb = Sandbox([d], [])
@@ -174,32 +174,32 @@ class TestIsUnderRoot:
 
 class TestGlobMatch:
     def test_full_path_env(self):
-        from personal_agent.tools.sandbox import _glob_match
+        from luna_agent.tools.sandbox import _glob_match
         assert _glob_match("/home/user/projects/.env", "**/.env") is True
 
     def test_bare_no_match_starstar(self):
-        from personal_agent.tools.sandbox import _glob_match
+        from luna_agent.tools.sandbox import _glob_match
         assert _glob_match(".env", "**/.env") is False
 
     def test_exact(self):
-        from personal_agent.tools.sandbox import _glob_match
+        from luna_agent.tools.sandbox import _glob_match
         assert _glob_match(".env", ".env") is True
 
     def test_deep_git(self):
-        from personal_agent.tools.sandbox import _glob_match
+        from luna_agent.tools.sandbox import _glob_match
         assert _glob_match("a/b/c/.git/config", "**/.git/**") is True
 
     def test_id_rsa_star(self):
-        from personal_agent.tools.sandbox import _glob_match
+        from luna_agent.tools.sandbox import _glob_match
         assert _glob_match("/home/user/projects/id_rsa", "**/id_rsa*") is True
         assert _glob_match("/home/user/projects/id_rsa.pub", "**/id_rsa*") is True
 
     def test_non_match(self):
-        from personal_agent.tools.sandbox import _glob_match
+        from luna_agent.tools.sandbox import _glob_match
         assert _glob_match("/home/user/projects/notes.txt", "**/.env") is False
 
     def test_windows_backslash(self):
-        from personal_agent.tools.sandbox import _glob_match
+        from luna_agent.tools.sandbox import _glob_match
         assert _glob_match(r"C:\Users\MR\Desktop\.env", "**/.env") is True
 
 
@@ -209,81 +209,81 @@ class TestGlobMatch:
 
 class TestBashPathSandbox:
     def test_blocked_env(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/.env", "**/config.yaml"])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat .env") is not None
 
     def test_blocked_config(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/config.yaml"])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat config.yaml") is not None
 
     def test_blocked_even_restrict_off(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/.env"])
         set_restrict_paths(False)
         assert _check_path_sandbox("cat .env") is not None
 
     def test_restrict_off_allows_etc(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], ["**/.env"])
         set_restrict_paths(False)
         assert _check_path_sandbox("cat /etc/passwd") is None
 
     def test_unix_system_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         for p in ["/etc/passwd", "/var/log", "/proc/cpuinfo", "/usr/bin/env"]:
             assert _check_path_sandbox(f"cat {p}") is not None, f"Should block: {p}"
 
     def test_windows_system_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox(r"type C:\Windows\System32\hosts") is not None
 
     def test_tilde_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat ~/.ssh/id_rsa") is not None
 
     def test_parent_traversal_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox("cat ../../secret.txt") is not None
         assert _check_path_sandbox("ls ../") is not None
 
     def test_relative_paths_ok(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         for cmd in ["cat notes.txt", "ls ./", "python s.py", "echo hi"]:
             assert _check_path_sandbox(cmd) is None, f"Should allow: {cmd}"
 
     def test_root_in_command_ok(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         assert _check_path_sandbox(f"cat {tmp_path}/f.txt") is None
 
     def test_simple_commands_ok(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         init_sandbox([tmp_path], [])
         set_restrict_paths(True)
         for cmd in ["ls", "pwd", "date", "whoami"]:
@@ -293,8 +293,8 @@ class TestBashPathSandbox:
         """BUG: root substring check can falsely allow sibling dirs.
         Root 'Desktop' substring-matches 'DesktopProjects', so
         cat DesktopProjects/secret.txt may bypass if not caught by escape patterns."""
-        from personal_agent.tools.sandbox import init_sandbox
-        from personal_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
+        from luna_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.bash import _check_path_sandbox, set_restrict_paths
         d = tmp_path / "Desktop"; d.mkdir()
         dp = tmp_path / "DesktopProjects"; dp.mkdir()
         init_sandbox([d], [])
@@ -324,32 +324,32 @@ class TestBashGlobToRegex:
     """
 
     def test_dotenv(self):
-        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
+        from luna_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/.env")
         # **/.env → .env → regex \.env (works for simple case)
         assert re.search(r, ".env") is not None
         assert re.search(r, "path/to/.env") is not None
 
     def test_git_trailing_starstar(self):
-        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
+        from luna_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/.git/**")
         assert re.search(r, "path/.git/file") is not None
         assert re.search(r, ".git/") is not None   # fixed: trailing → /, matches directory refs
 
     def test_ssh_trailing_starstar(self):
-        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
+        from luna_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/.ssh/**")
         assert re.search(r, "path/.ssh/config") is not None
         assert re.search(r, ".ssh/") is not None   # fixed: trailing → /, matches directory refs
 
     def test_id_rsa_wildcard(self):
-        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
+        from luna_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/id_rsa*")
         assert re.search(r, "id_rsa") is not None       # fixed: *→wildcard, matches bare name
         assert re.search(r, "id_rsa.pub") is not None   # wildcard matches extension
 
     def test_config_yaml(self):
-        from personal_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
+        from luna_agent.plugins.builtin.tools.builtin.bash import _glob_pattern_to_regex
         r = _glob_pattern_to_regex("**/config.yaml")
         assert re.search(r, "config.yaml") is not None
 
@@ -360,12 +360,12 @@ class TestBashGlobToRegex:
 
 class TestSingleton:
     def test_init_then_get(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox, get_sandbox
+        from luna_agent.tools.sandbox import init_sandbox, get_sandbox
         sb = init_sandbox([tmp_path], ["**/.env"])
         assert get_sandbox() is sb
 
     def test_init_overwrites(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox, get_sandbox
+        from luna_agent.tools.sandbox import init_sandbox, get_sandbox
         r1 = tmp_path / "a"; r1.mkdir()
         r2 = tmp_path / "b"; r2.mkdir()
         a = init_sandbox([r1], [])
@@ -381,41 +381,41 @@ class TestSingleton:
 class TestFileReadIntegration:
     @pytest.mark.asyncio
     async def test_read_normal(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         f = tmp_path / "hello.txt"; f.write_text("world")
-        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+        from luna_agent.plugins.builtin.tools.builtin.file_read import _file_read
         r = await _file_read(str(f))
         assert "world" in r
 
     @pytest.mark.asyncio
     async def test_read_blocked_env(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], ["**/.env"])
         env = tmp_path / ".env"; env.write_text("X")
-        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+        from luna_agent.plugins.builtin.tools.builtin.file_read import _file_read
         r = await _file_read(str(env))
         assert "blocked" in r.lower()
 
     @pytest.mark.asyncio
     async def test_read_outside_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "s.txt"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+        from luna_agent.plugins.builtin.tools.builtin.file_read import _file_read
         r = await _file_read(str(o))
         assert "outside" in r.lower()
 
     @pytest.mark.asyncio
     async def test_read_supports_bounded_line_windows(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         path = tmp_path / "long.txt"
         path.write_text("".join(f"line-{index}\n" for index in range(1, 11)), encoding="utf-8")
         init_sandbox([tmp_path], [])
 
-        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+        from luna_agent.plugins.builtin.tools.builtin.file_read import _file_read
 
         first = await _file_read(str(path), offset=1, limit=3)
         second = await _file_read(str(path), offset=4, limit=3)
@@ -426,13 +426,13 @@ class TestFileReadIntegration:
 
     @pytest.mark.asyncio
     async def test_read_rejects_binary_files(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         path = tmp_path / "binary.dat"
         path.write_bytes(b"hello\x00world")
         init_sandbox([tmp_path], [])
 
-        from personal_agent.plugins.builtin.tools.builtin.file_read import _file_read
+        from luna_agent.plugins.builtin.tools.builtin.file_read import _file_read
 
         result = await _file_read(str(path))
 
@@ -442,18 +442,18 @@ class TestFileReadIntegration:
 class TestFileWriteIntegration:
     @pytest.mark.asyncio
     async def test_write_normal(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
-        from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
+        from luna_agent.plugins.builtin.tools.builtin.file_write import _file_write
         r = await _file_write("out.txt", "data")
         assert "Written" in r
         assert (tmp_path / "out.txt").exists()
 
     @pytest.mark.asyncio
     async def test_write_blocked_env(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], ["**/.env"])
-        from personal_agent.plugins.builtin.tools.builtin.file_write import _file_write
+        from luna_agent.plugins.builtin.tools.builtin.file_write import _file_write
         r = await _file_write(".env", "X")
         assert "blocked" in r.lower()
 
@@ -461,33 +461,33 @@ class TestFileWriteIntegration:
 class TestGlobIntegration:
     @pytest.mark.asyncio
     async def test_glob_in_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         (tmp_path / "a.py").write_text("x"); (tmp_path / "b.py").write_text("y")
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
         r = await _glob("*.py", str(tmp_path))
         assert "a.py" in r and "b.py" in r
 
     @pytest.mark.asyncio
     async def test_glob_outside_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "o.py"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
         r = await _glob("*.py", str(o.parent))
         assert "outside" in r.lower() or "Error" in r
 
     @pytest.mark.asyncio
     async def test_glob_explicit_blocked_file_returns_hard_denial(self, tmp_path: Path):
-        from personal_agent.tools.entry import ToolHandlerOutput
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.entry import ToolHandlerOutput
+        from luna_agent.tools.sandbox import init_sandbox
 
         protected = tmp_path / "pyproject.toml"
         protected.write_text("secret-marker", encoding="utf-8")
         init_sandbox([tmp_path], ["**/pyproject.toml"])
 
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
 
         result = await _glob("pyproject.toml", str(tmp_path))
 
@@ -498,13 +498,13 @@ class TestGlobIntegration:
 
     @pytest.mark.asyncio
     async def test_glob_broad_pattern_omits_blocked_files(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         (tmp_path / "allowed.toml").write_text("visible", encoding="utf-8")
         (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
         init_sandbox([tmp_path], ["**/pyproject.toml"])
 
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
 
         result = await _glob("*.toml", str(tmp_path))
 
@@ -513,12 +513,12 @@ class TestGlobIntegration:
 
     @pytest.mark.asyncio
     async def test_glob_unmatched_broad_search_ignores_unrelated_blocked_file(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
         init_sandbox([tmp_path], ["**/pyproject.toml"])
 
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
 
         result = await _glob("*.jpg", str(tmp_path))
 
@@ -526,7 +526,7 @@ class TestGlobIntegration:
 
     @pytest.mark.asyncio
     async def test_glob_max_depth_prunes_nested_directories(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         (tmp_path / "root.txt").write_text("root", encoding="utf-8")
         nested = tmp_path / "one" / "two"
@@ -535,7 +535,7 @@ class TestGlobIntegration:
         (nested / "deep.txt").write_text("deep", encoding="utf-8")
         init_sandbox([tmp_path], [])
 
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
 
         first_level = await _glob("*.txt", str(tmp_path), max_depth=1)
         second_level = await _glob("*.txt", str(tmp_path), max_depth=2)
@@ -549,7 +549,7 @@ class TestGlobIntegration:
 
     @pytest.mark.asyncio
     async def test_glob_include_hidden_is_explicit(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         (tmp_path / ".visible-on-request.txt").write_text("hidden", encoding="utf-8")
         hidden_dir = tmp_path / ".notes"
@@ -557,7 +557,7 @@ class TestGlobIntegration:
         (hidden_dir / "inside.txt").write_text("hidden", encoding="utf-8")
         init_sandbox([tmp_path], [])
 
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
 
         default = await _glob("*.txt", str(tmp_path))
         included = await _glob("*.txt", str(tmp_path), include_hidden=True)
@@ -568,9 +568,9 @@ class TestGlobIntegration:
 
     @pytest.mark.asyncio
     async def test_glob_scan_runs_off_event_loop(self, tmp_path: Path, monkeypatch):
-        from personal_agent.plugins.builtin.tools.builtin.file_scan import FileScanResult
-        from personal_agent.plugins.builtin.tools.builtin import glob_tool
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.plugins.builtin.tools.builtin.file_scan import FileScanResult
+        from luna_agent.plugins.builtin.tools.builtin import glob_tool
+        from luna_agent.tools.sandbox import init_sandbox
 
         init_sandbox([tmp_path], [])
 
@@ -588,13 +588,13 @@ class TestGlobIntegration:
 
     @pytest.mark.asyncio
     async def test_glob_stops_at_requested_result_limit(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         init_sandbox([tmp_path], [])
         for index in range(20):
             (tmp_path / f"file-{index:02d}.txt").write_text("x", encoding="utf-8")
 
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
 
         result = await _glob("*.txt", str(tmp_path), max_results=5)
 
@@ -603,7 +603,7 @@ class TestGlobIntegration:
 
     @pytest.mark.asyncio
     async def test_glob_prunes_hidden_directories_before_descent(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         hidden = tmp_path / ".cache" / "nested"
         hidden.mkdir(parents=True)
@@ -611,7 +611,7 @@ class TestGlobIntegration:
         (tmp_path / "visible.txt").write_text("visible", encoding="utf-8")
         init_sandbox([tmp_path], [])
 
-        from personal_agent.plugins.builtin.tools.builtin.glob_tool import _glob
+        from luna_agent.plugins.builtin.tools.builtin.glob_tool import _glob
 
         result = await _glob("*.txt", str(tmp_path))
 
@@ -622,32 +622,32 @@ class TestGlobIntegration:
 class TestGrepIntegration:
     @pytest.mark.asyncio
     async def test_grep_in_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         (tmp_path / "c.py").write_text("def fn(): pass")
-        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+        from luna_agent.plugins.builtin.tools.builtin.grep_tool import _grep
         r = await _grep("def", str(tmp_path))
         assert "fn" in r
 
     @pytest.mark.asyncio
     async def test_grep_outside_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "d.txt"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+        from luna_agent.plugins.builtin.tools.builtin.grep_tool import _grep
         r = await _grep("x", str(o.parent))
         assert "outside" in r.lower() or "Error" in r
 
     @pytest.mark.asyncio
     async def test_grep_explicit_blocked_file_returns_hard_denial(self, tmp_path: Path):
-        from personal_agent.tools.entry import ToolHandlerOutput
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.entry import ToolHandlerOutput
+        from luna_agent.tools.sandbox import init_sandbox
 
         (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
         init_sandbox([tmp_path], ["**/pyproject.toml"])
 
-        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+        from luna_agent.plugins.builtin.tools.builtin.grep_tool import _grep
 
         result = await _grep("secret-marker", str(tmp_path), glob="pyproject.toml")
 
@@ -658,13 +658,13 @@ class TestGrepIntegration:
 
     @pytest.mark.asyncio
     async def test_grep_broad_search_skips_blocked_files(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         (tmp_path / "allowed.toml").write_text("visible-marker", encoding="utf-8")
         (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
         init_sandbox([tmp_path], ["**/pyproject.toml"])
 
-        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+        from luna_agent.plugins.builtin.tools.builtin.grep_tool import _grep
 
         result = await _grep("marker", str(tmp_path), glob="*.toml")
 
@@ -674,12 +674,12 @@ class TestGrepIntegration:
 
     @pytest.mark.asyncio
     async def test_grep_unmatched_broad_search_ignores_unrelated_blocked_file(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
 
         (tmp_path / "pyproject.toml").write_text("secret-marker", encoding="utf-8")
         init_sandbox([tmp_path], ["**/pyproject.toml"])
 
-        from personal_agent.plugins.builtin.tools.builtin.grep_tool import _grep
+        from luna_agent.plugins.builtin.tools.builtin.grep_tool import _grep
 
         result = await _grep("missing", str(tmp_path), glob="*.jpg")
 
@@ -689,20 +689,20 @@ class TestGrepIntegration:
 class TestFileEditIntegration:
     @pytest.mark.asyncio
     async def test_edit_normal(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         init_sandbox([tmp_path], [])
         f = tmp_path / "notes.md"; f.write_text("# T")
-        from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+        from luna_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
         r = await _file_edit("append", str(f), content="\nmore")
         assert "Appended" in r
 
     @pytest.mark.asyncio
     async def test_edit_outside_root(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import init_sandbox
+        from luna_agent.tools.sandbox import init_sandbox
         ws = tmp_path / "ws"; ws.mkdir()
         o = tmp_path / "f.md"; o.write_text("x")
         init_sandbox([ws], [])
-        from personal_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
+        from luna_agent.plugins.builtin.tools.builtin.file_edit import _file_edit
         r = await _file_edit("append", str(o), content="more")
         assert "outside" in r.lower()
 
@@ -713,7 +713,7 @@ class TestFileEditIntegration:
 
 class TestEdgeCases:
     def test_all_blocked_patterns(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         blocked = [
             "**/.env", "**/.env.*", "**/.git/**", "**/.ssh/**",
             "**/id_rsa*", "**/.netrc", "**/config.yaml",
@@ -729,7 +729,7 @@ class TestEdgeCases:
             assert sb.check_path(p) is not None, f"Should block: {name}"
 
     def test_normal_files_not_blocked(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         sb = Sandbox([tmp_path], ["**/.env", "**/.git/**", "**/.ssh/**"])
         for name in ["notes.txt", "script.py", "data.json", "README.md", "src/main.py"]:
             p = tmp_path / name
@@ -737,14 +737,14 @@ class TestEdgeCases:
             assert sb.check_path(p) is None, f"Should not block: {name}"
 
     def test_env_star_matches_dotfiles(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         sb = Sandbox([tmp_path], ["**/.env.*"])
         for name in [".env.prod", ".env.local"]:
             p = tmp_path / name; p.touch()
             assert sb.check_path(p) is not None, f"Should block: {name}"
 
     def test_sandbox_root_sibling(self, tmp_path: Path):
-        from personal_agent.tools.sandbox import Sandbox
+        from luna_agent.tools.sandbox import Sandbox
         d = tmp_path / "Desktop"; d.mkdir()
         dp = tmp_path / "DesktopProjects"; dp.mkdir()
         sb = Sandbox([d], [])

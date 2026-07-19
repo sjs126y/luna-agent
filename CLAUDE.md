@@ -4,7 +4,7 @@ This file provides repository guidance to Claude Code. General contribution rule
 
 ## Project Overview
 
-Lumora is a lightweight, plugin-oriented personal Agent Runtime. CLI/TUI, platform Gateway, Cron and capability-bound plugins all submit requests through the same application boundary:
+Luna Agent is a lightweight, plugin-oriented personal Agent Runtime. CLI/TUI, platform Gateway, Cron and capability-bound plugins all submit requests through the same application boundary:
 
 ```text
 Input -> ConversationCoordinator -> ConversationService -> Agent/LLM/Tools
@@ -19,16 +19,16 @@ Use `uv` and Python 3.12+:
 
 ```bash
 uv sync
-uv run personal-agent init --profile local --copy-env --fix-dirs
-uv run personal-agent doctor
-uv run personal-agent chat
-uv run personal-agent serve
+uv run luna-agent init --profile local --copy-env --fix-dirs
+uv run luna-agent doctor
+uv run luna-agent chat
+uv run luna-agent serve
 
-python -m compileall -q src/personal_agent
+python -m compileall -q src/luna_agent
 uv run pytest -q
 ```
 
-The baseline at `0bcb55e` is `1050 passed, 1 warning`; the warning comes from the Feishu SDK. Focused tests should be run before the full suite. Tests may update `src/personal_agent/skills/builtin/.usage.json`; restore it unless intentional.
+The current Luna Agent rename baseline is `1171 passed, 1 warning`; the warning comes from the Feishu SDK. Focused tests should be run before the full suite. Tests may update `src/luna_agent/skills/builtin/.usage.json`; restore it unless intentional.
 
 ## Runtime Boundaries
 
@@ -41,7 +41,7 @@ The baseline at `0bcb55e` is `1050 passed, 1 warning`; the warning comes from th
 
 ## Plugins and Hooks
 
-Built-in plugins live under `src/personal_agent/plugins/builtin/`; user/local plugins live under `plugins/` or configured plugin directories.
+Built-in plugins live under `src/luna_agent/plugins/builtin/`; user/local plugins live under `plugins/` or configured plugin directories.
 
 - A plugin synchronously calls `register(ctx)` to register Tool, Skill, MCP server, Hook, Command, Workflow, Platform or Memory Provider capabilities.
 - Registration is owned and transactional. Do not mutate registries outside PluginContext.
@@ -65,10 +65,10 @@ Preserve blocked paths, sandbox roots/read roots, Bubblewrap behavior, network v
 
 ## Memory
 
-Core memory orchestration lives in `src/personal_agent/memory/`: internal Markdown snapshots, observation buffer, SQLite Archive, review worker, router and fallback.
+Core memory orchestration lives in `src/luna_agent/memory/`: internal Markdown snapshots, observation buffer, SQLite Archive, review worker, router and fallback.
 
-- `memory/lumora` and `memory/mem0` are external provider plugins.
-- Lumora uses provider-internal factories for embedding/vector/keyword/fusion/optional reranker backends.
+- `memory/luna` and `memory/mem0` are external provider plugins.
+- Luna Agent uses provider-internal factories for embedding/vector/keyword/fusion/optional reranker backends.
 - SQLite Archive is authoritative; vector/keyword indexes are rebuildable.
 - Qdrant may use a remote URL or local persistent path, never both.
 - Knowledge RAG is intentionally separate from personal memory.

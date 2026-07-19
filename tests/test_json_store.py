@@ -6,14 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.cron.store import CronStore
-from personal_agent.db.database import Database
-from personal_agent.gateway.auth import AuthManager
-from personal_agent.gateway.compression_chain import CompressionChain
-from personal_agent.gateway.session_store import SessionStore
-from personal_agent.models.messages import SessionSource
-from personal_agent.persistence.json_store import read_json_object, write_json_atomic
-from personal_agent.plugins.core.manager import PluginManager
+from luna_agent.cron.store import CronStore
+from luna_agent.db.database import Database
+from luna_agent.gateway.auth import AuthManager
+from luna_agent.gateway.compression_chain import CompressionChain
+from luna_agent.gateway.session_store import SessionStore
+from luna_agent.models.messages import SessionSource
+from luna_agent.persistence.json_store import read_json_object, write_json_atomic
+from luna_agent.plugins.core.manager import PluginManager
 
 
 def test_json_store_writes_and_recovers_corrupt_object(tmp_path):

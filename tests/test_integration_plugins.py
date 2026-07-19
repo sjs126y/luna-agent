@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.hooks import HookEnvelope, HookEvent, HookManager, HookScope
-from personal_agent.plugins import PluginManager, PluginStatus
+from luna_agent.config import Settings
+from luna_agent.hooks import HookEnvelope, HookEvent, HookManager, HookScope
+from luna_agent.plugins import PluginManager, PluginStatus
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins"
@@ -182,9 +182,9 @@ async def test_github_assistant_blocks_writes_and_unlisted_repositories(tmp_path
 async def test_github_policy_applies_to_lazily_registered_mcp_tool(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.executor import execute_tool_call_result
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.executor import execute_tool_call_result
+    from luna_agent.tools.registry import tool_registry
 
     key = "integrations/github-assistant"
     manager = _manager(tmp_path, monkeypatch, key, {

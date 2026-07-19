@@ -7,10 +7,10 @@ import time
 import pytest
 import pytest_asyncio
 
-from personal_agent.db.database import Database
-from personal_agent.gateway.compression_chain import CompressionChain
-from personal_agent.gateway.session_store import SessionStore
-from personal_agent.models.messages import SessionSource
+from luna_agent.db.database import Database
+from luna_agent.gateway.compression_chain import CompressionChain
+from luna_agent.gateway.session_store import SessionStore
+from luna_agent.models.messages import SessionSource
 
 
 @pytest_asyncio.fixture

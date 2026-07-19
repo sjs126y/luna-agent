@@ -7,7 +7,7 @@ import tempfile
 
 import pytest
 
-from personal_agent.db.database import Database
+from luna_agent.db.database import Database
 
 
 @pytest.fixture

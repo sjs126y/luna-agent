@@ -1,0 +1,10 @@
+key: memory/luna
+name: Luna Memory Provider
+version: "1.0.0"
+description: Hybrid semantic and BM25 long-term memory.
+kind: memory
+entrypoint: luna_agent.plugins.builtin.memory.luna:register
+enabled_by_default: true
+source: builtin
+provides:
+  - memory_provider:luna

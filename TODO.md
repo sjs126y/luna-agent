@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>Lumora TODO</h1>
+<h1>Luna Agent TODO</h1>
 
 <p><strong>只保留真正还需要推进的事情</strong></p>
 
@@ -14,7 +14,7 @@
 <p>
   <a href="README.md">项目首页</a> ·
   <a href="docs/README.md">文档中心</a> ·
-  <a href="lumora-roadmap.zh-CN.md">路线图</a> ·
+  <a href="luna-agent-roadmap.zh-CN.md">路线图</a> ·
   <a href="PLATFORM_MEDIA_TEST_CHECKLIST.md">平台联调</a>
 </p>
 

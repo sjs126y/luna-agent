@@ -1,4 +1,4 @@
-from personal_agent.conversation.transcript import build_stopped_turn_transcript
+from luna_agent.conversation.transcript import build_stopped_turn_transcript
 
 
 def _text(role: str, text: str) -> dict:

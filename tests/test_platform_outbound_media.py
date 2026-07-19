@@ -20,8 +20,8 @@ class _Result:
 
 @pytest.mark.asyncio
 async def test_telegram_sends_native_image(tmp_path):
-    from personal_agent.config import Settings
-    from personal_agent.plugins.builtin.platforms.telegram.adapter import TelegramAdapter
+    from luna_agent.config import Settings
+    from luna_agent.plugins.builtin.platforms.telegram.adapter import TelegramAdapter
 
     path = tmp_path / "image.png"
     path.write_bytes(b"png")
@@ -43,8 +43,8 @@ async def test_telegram_sends_native_image(tmp_path):
 
 @pytest.mark.asyncio
 async def test_feishu_uploads_then_sends_native_image(tmp_path):
-    from personal_agent.config import Settings
-    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+    from luna_agent.config import Settings
+    from luna_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
 
     path = tmp_path / "image.png"
     path.write_bytes(b"png")
@@ -78,8 +78,8 @@ async def test_feishu_uploads_then_sends_native_image(tmp_path):
 
 @pytest.mark.asyncio
 async def test_qq_sends_onebot_media_segment(tmp_path, monkeypatch):
-    from personal_agent.config import Settings
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.config import Settings
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     path = tmp_path / "image.png"
     path.write_bytes(b"png")
@@ -115,8 +115,8 @@ async def test_qq_sends_cross_platform_base64_artifacts(
     kind,
     segment_type,
 ):
-    from personal_agent.config import Settings
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.config import Settings
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     path = tmp_path / "artifact.bin"
     path.write_bytes(b"artifact-content")
@@ -148,14 +148,14 @@ async def test_qq_sends_cross_platform_base64_artifacts(
 
 @pytest.mark.asyncio
 async def test_wechat_encrypts_upload_and_sends_image_item(tmp_path, monkeypatch):
-    from personal_agent.config import Settings
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.config import Settings
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     path = tmp_path / "image.png"
     path.write_bytes(b"plain-image")
     aes_key = bytes.fromhex("00112233445566778899aabbccddeeff")
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.platforms.wechat.adapter.secrets.token_bytes",
+        "luna_agent.plugins.builtin.platforms.wechat.adapter.secrets.token_bytes",
         lambda size: aes_key if size == 16 else b"x" * size,
     )
     adapter = WeChatAdapter(Settings(), db=None)
@@ -229,8 +229,8 @@ async def test_wechat_uses_official_file_and_video_item_types(
     expected_item_type,
     payload_key,
 ):
-    from personal_agent.config import Settings
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.config import Settings
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     path = tmp_path / f"sample.{kind}"
     path.write_bytes(b"content")

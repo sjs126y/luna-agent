@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.memory.models import ProviderReadiness
-from personal_agent.memory.provider_registry import MemoryProviderRegistry
-from personal_agent.memory.provider_registry import memory_provider_registry
-from personal_agent.config import Settings
-from personal_agent.plugins.core.manager import PluginManager
+from luna_agent.memory.models import ProviderReadiness
+from luna_agent.memory.provider_registry import MemoryProviderRegistry
+from luna_agent.memory.provider_registry import memory_provider_registry
+from luna_agent.config import Settings
+from luna_agent.plugins.core.manager import PluginManager
 
 
 def _validator(**kwargs) -> ProviderReadiness:
@@ -38,10 +38,10 @@ def test_builtin_external_memory_plugins_register_and_unload(tmp_path) -> None:
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
-    manager.load_plugin("memory/lumora")
+    manager.load_plugin("memory/luna")
     manager.load_plugin("memory/mem0")
 
-    assert set(memory_provider_registry.names()) == {"lumora", "mem0"}
-    manager.disable_plugin("memory/lumora")
+    assert set(memory_provider_registry.names()) == {"luna", "mem0"}
+    manager.disable_plugin("memory/luna")
     assert memory_provider_registry.names() == ("mem0",)
     memory_provider_registry.clear()

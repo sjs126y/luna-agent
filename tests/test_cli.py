@@ -6,8 +6,8 @@ import json
 
 from typer.testing import CliRunner
 
-from personal_agent.agents.runtime import AgentRun
-from personal_agent.cli import (
+from luna_agent.agents.runtime import AgentRun
+from luna_agent.cli import (
     app,
     build_doctor_report,
     format_config_report,
@@ -31,7 +31,7 @@ def test_tokens_estimate_command_outputs_number():
 
 
 def test_doctor_mcp_summary_reports_background_states():
-    from personal_agent.cli import _doctor_mcp_summary
+    from luna_agent.cli import _doctor_mcp_summary
 
     summary = _doctor_mcp_summary({"mcp_enabled": True}, {
         "configured_count": 5,
@@ -69,7 +69,7 @@ def test_protocol_schema_command_outputs_frontend_contract():
 
 
 def test_doctor_report_includes_security_mode():
-    from personal_agent.config import Settings
+    from luna_agent.config import Settings
 
     settings = Settings(
         execution_mode="full-auto",
@@ -93,7 +93,7 @@ def test_doctor_report_includes_security_mode():
     assert report["sandbox"]["process"]["effective_backend"] in {"bwrap", "legacy"}
     assert "filesystem_isolated" in report["sandbox"]["process"]
     assert "by_permission" in report["tools"]
-    assert "Lumora doctor" in summary
+    assert "Luna Agent doctor" in summary
     assert "工具:" in summary
     assert "doctor --verbose" in summary
     assert "Effective Config:" not in summary
@@ -141,7 +141,7 @@ def test_chat_positional_message_runs_once(monkeypatch):
     def fake_once(message, *, session_name="default"):
         calls.append((message, session_name))
 
-    monkeypatch.setattr("personal_agent.cli.run_cli_once_sync", fake_once)
+    monkeypatch.setattr("luna_agent.cli.run_cli_once_sync", fake_once)
     result = runner.invoke(app, ["chat", "你好", "--session", "work"])
 
     assert result.exit_code == 0
@@ -154,7 +154,7 @@ def test_chat_once_option_runs_once(monkeypatch):
     def fake_once(message, *, session_name="default"):
         calls.append((message, session_name))
 
-    monkeypatch.setattr("personal_agent.cli.run_cli_once_sync", fake_once)
+    monkeypatch.setattr("luna_agent.cli.run_cli_once_sync", fake_once)
     result = runner.invoke(app, ["chat", "--once", "你好"])
 
     assert result.exit_code == 0
@@ -167,7 +167,7 @@ def test_chat_without_message_runs_inline_tui(monkeypatch):
     def fake_inline(*, session_name="default"):
         calls.append(session_name)
 
-    monkeypatch.setattr("personal_agent.tui.app.run_inline_tui_sync", fake_inline)
+    monkeypatch.setattr("luna_agent.tui.app.run_inline_tui_sync", fake_inline)
     result = runner.invoke(app, ["chat", "--session", "work"])
 
     assert result.exit_code == 0
@@ -182,21 +182,21 @@ def test_chat_ui_classic_is_removed():
 
 
 def test_agents_list_show_clear_commands(monkeypatch):
-    monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
+    monkeypatch.setattr("luna_agent.cli._load_agent_run_store", lambda: None)
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
         lambda run_id: AgentRun(run_id=run_id, parent_turn_id="", status="completed"),
     )
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.format_agent_runs",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.format_agent_runs",
         lambda limit=None: f"runs:{limit}",
     )
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.format_agent_run",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.format_agent_run",
         lambda run_id: f"run:{run_id}",
     )
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.clear_agent_runs",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.clear_agent_runs",
         lambda: 3,
     )
 
@@ -222,9 +222,9 @@ def test_agents_json_commands(monkeypatch):
         result="ok",
         usage={"input_tokens": 1, "output_tokens": 2},
     )
-    monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
+    monkeypatch.setattr("luna_agent.cli._load_agent_run_store", lambda: None)
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.list_agent_runs",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.list_agent_runs",
         lambda limit=None: [{
             "schema_version": 3,
             "run_id": "abc123",
@@ -234,7 +234,7 @@ def test_agents_json_commands(monkeypatch):
         }],
     )
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.list_active_agent_runs",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.list_active_agent_runs",
         lambda: [{
             "run_id": "active1",
             "status": "running",
@@ -244,7 +244,7 @@ def test_agents_json_commands(monkeypatch):
         }],
     )
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
         lambda run_id: run if run_id == "abc123" else None,
     )
 
@@ -273,11 +273,11 @@ def test_agents_export_command(monkeypatch, tmp_path):
     )
     output = tmp_path / "run.json"
     monkeypatch.setattr(
-        "personal_agent.cli._load_agent_run_store",
+        "luna_agent.cli._load_agent_run_store",
         lambda: type("SettingsStub", (), {"agent_data_dir": tmp_path})(),
     )
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
         lambda run_id: run if run_id == "abc123" else None,
     )
 
@@ -291,9 +291,9 @@ def test_agents_export_command(monkeypatch, tmp_path):
 
 
 def test_agents_show_missing_outputs_chinese_error(monkeypatch):
-    monkeypatch.setattr("personal_agent.cli._load_agent_run_store", lambda: None)
+    monkeypatch.setattr("luna_agent.cli._load_agent_run_store", lambda: None)
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.get_agent_run",
         lambda run_id: None,
     )
 
@@ -339,12 +339,12 @@ def test_memory_cli_commands(monkeypatch):
         assert limit == 10
         return {"attempted": 2, "completed": 2, "failed": 0}
 
-    monkeypatch.setattr("personal_agent.cli._memory_report", report)
-    monkeypatch.setattr("personal_agent.cli._memory_entries", entries)
-    monkeypatch.setattr("personal_agent.cli._memory_search_entries", search)
-    monkeypatch.setattr("personal_agent.cli._memory_entry", entry)
-    monkeypatch.setattr("personal_agent.cli._memory_delete", delete)
-    monkeypatch.setattr("personal_agent.cli._memory_reindex", reindex)
+    monkeypatch.setattr("luna_agent.cli._memory_report", report)
+    monkeypatch.setattr("luna_agent.cli._memory_entries", entries)
+    monkeypatch.setattr("luna_agent.cli._memory_search_entries", search)
+    monkeypatch.setattr("luna_agent.cli._memory_entry", entry)
+    monkeypatch.setattr("luna_agent.cli._memory_delete", delete)
+    monkeypatch.setattr("luna_agent.cli._memory_reindex", reindex)
 
     assert runner.invoke(app, ["memory", "doctor"]).exit_code == 0
     listed = runner.invoke(app, ["memory", "list", "--json"])
@@ -394,7 +394,7 @@ enabled_by_default: false
     )
     (plugin_dir / "__init__.py").write_text(
         """
-from personal_agent.plugins.models import CommandEntry
+from luna_agent.plugins.models import CommandEntry
 
 def hello(args="", **kwargs):
     return "hello"
@@ -490,7 +490,7 @@ def test_doctor_report_includes_runtime_failure(monkeypatch):
             "_plugins": [],
         }
 
-    monkeypatch.setattr("personal_agent.cli._runtime_health_report", failed_runtime)
+    monkeypatch.setattr("luna_agent.cli._runtime_health_report", failed_runtime)
 
     report = build_doctor_report()
     text = format_doctor_report(report)
@@ -499,7 +499,7 @@ def test_doctor_report_includes_runtime_failure(monkeypatch):
     assert report["runtime"]["initialized"] is False
     assert "Runtime 初始化失败: RuntimeError: broken" in text
     assert "内置 memory provider 不可用" in verbose_text
-    assert "Lumora doctor" in text
+    assert "Luna Agent doctor" in text
     assert "状态: 不可用，需要处理" in text
 
 
@@ -507,7 +507,7 @@ def test_init_command_generates_and_skips_existing_files(tmp_path):
     result = runner.invoke(app, ["init", "--dir", str(tmp_path)])
 
     assert result.exit_code == 0
-    assert "初始化 Personal Agent 配置" in result.output
+    assert "初始化 Luna Agent 配置" in result.output
     assert "已生成" in result.output
     assert (tmp_path / "config.yaml").exists()
     assert (tmp_path / ".env.example").exists()
@@ -535,12 +535,12 @@ def test_init_profiles_generate_distinct_templates(tmp_path):
     assert telegram.exit_code == 0
     assert "enabled: false" in (local_dir / "config.yaml").read_text(encoding="utf-8")
     bot_config = (bot_dir / "config.yaml").read_text(encoding="utf-8")
-    assert "# Personal Agent bot configuration" in bot_config
+    assert "# Luna Agent bot configuration" in bot_config
     assert "enabled: true" in bot_config
     assert "# Telegram" in (bot_dir / ".env.example").read_text(encoding="utf-8")
     telegram_config = (telegram_dir / "config.yaml").read_text(encoding="utf-8")
     telegram_env = (telegram_dir / ".env.example").read_text(encoding="utf-8")
-    assert "# Personal Agent telegram bot configuration" in telegram_config
+    assert "# Luna Agent telegram bot configuration" in telegram_config
     assert "platforms/telegram" in telegram_config
     assert "TELEGRAM_BOT_TOKEN" in telegram_env
     assert "FEISHU_APP_ID" not in telegram_env
@@ -650,9 +650,9 @@ def test_format_config_report_shows_next_steps():
         "unknown_keys": ["old"],
         "deprecated_keys": [],
         "migration_hints": ["确认或移除未知顶层配置: old。"],
-        "recommended_commands": ["personal-agent init"],
+        "recommended_commands": ["luna-agent init"],
         "warnings": ["缺少 config.yaml。"],
-        "next_steps": ["运行 personal-agent init 生成 config.yaml。"],
+        "next_steps": ["运行 luna-agent init 生成 config.yaml。"],
     }
 
     text = format_config_report(report)
@@ -670,7 +670,7 @@ def test_format_config_report_shows_next_steps():
     assert "缺失=QQ_BOT_BASE_URL" in text
     assert "迁移建议" in text
     assert "推荐命令" in text
-    assert "运行 personal-agent init" in text
+    assert "运行 luna-agent init" in text
 
 
 def test_format_doctor_config_section_includes_grouped_effective_config():
@@ -1087,7 +1087,7 @@ def test_format_doctor_report_includes_summary_and_issues():
     summary_text = format_doctor_report(report)
     text = format_doctor_report(report, verbose=True)
 
-    assert "Lumora doctor" in summary_text
+    assert "Luna Agent doctor" in summary_text
     assert "状态: 可用，有提示" in summary_text
     assert "模型: deepseek / deepseek-v4-flash" in summary_text
     assert "运行时: 已就绪" in summary_text

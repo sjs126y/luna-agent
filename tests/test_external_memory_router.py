@@ -2,16 +2,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.memory.archive import MemoryArchive
-from personal_agent.memory.external import ExternalMemoryRouter, FallbackMemoryProvider
-from personal_agent.memory.models import (
+from luna_agent.memory.archive import MemoryArchive
+from luna_agent.memory.external import ExternalMemoryRouter, FallbackMemoryProvider
+from luna_agent.memory.models import (
     MemoryReviewResult,
     MemoryScope,
     Observation,
     ObservationKind,
     ProviderReadiness,
 )
-from personal_agent.memory.provider_registry import MemoryProviderRegistry
+from luna_agent.memory.provider_registry import MemoryProviderRegistry
 
 
 class LLM:

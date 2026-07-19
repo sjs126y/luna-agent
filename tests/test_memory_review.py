@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.memory.models import MemoryScope
-from personal_agent.memory.review import MemoryReviewService, _messages_after_user_turn
+from luna_agent.memory.models import MemoryScope
+from luna_agent.memory.review import MemoryReviewService, _messages_after_user_turn
 
 
 class Archive:

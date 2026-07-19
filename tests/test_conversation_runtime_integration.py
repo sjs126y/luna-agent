@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.conversation import (
+from luna_agent.config import Settings
+from luna_agent.conversation import (
     ConversationCoordinator,
     ConversationService,
     ResponseMode,
@@ -14,13 +14,13 @@ from personal_agent.conversation import (
     SubmissionRequest,
     SubmissionStatus,
 )
-from personal_agent.db.database import Database
-from personal_agent.delivery import DeliveryOutbox, DeliveryService, PlatformDirectory
-from personal_agent.gateway.compression_chain import CompressionChain
-from personal_agent.gateway.session_store import SessionStore
-from personal_agent.models.messages import SessionSource
-from personal_agent.platforms.core import SendResult
-from personal_agent.tools.registry import tool_registry
+from luna_agent.db.database import Database
+from luna_agent.delivery import DeliveryOutbox, DeliveryService, PlatformDirectory
+from luna_agent.gateway.compression_chain import CompressionChain
+from luna_agent.gateway.session_store import SessionStore
+from luna_agent.models.messages import SessionSource
+from luna_agent.platforms.core import SendResult
+from luna_agent.tools.registry import tool_registry
 
 
 class PluginManager:
@@ -140,8 +140,8 @@ async def test_submission_persists_and_delivers_through_full_runtime(tmp_path, m
             "status": "completed",
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     handle = await runtime.coordinator.submit(_request(runtime, "hello"))
     outcome = await handle.outcome()
@@ -194,8 +194,8 @@ async def test_stopped_submission_persists_completed_tool_and_delivers_stop(tmp_
             "turn_report": {"status": "stopped"},
         }
 
-    monkeypatch.setattr("personal_agent.agent.context.build_turn_context", build_turn_context)
-    monkeypatch.setattr("personal_agent.agent.loop.run_conversation", run_conversation)
+    monkeypatch.setattr("luna_agent.agent.context.build_turn_context", build_turn_context)
+    monkeypatch.setattr("luna_agent.agent.loop.run_conversation", run_conversation)
 
     handle = await runtime.coordinator.submit(_request(runtime, "write it"))
     outcome = await handle.outcome()

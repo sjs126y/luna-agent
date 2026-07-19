@@ -35,7 +35,7 @@ def _settings(tmp_path: Path, **overrides):
 
 @pytest.mark.asyncio
 async def test_feishu_disconnect_before_connect_is_idempotent(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+    from luna_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
 
     adapter = FeishuAdapter(_settings(tmp_path), db=None)
 
@@ -49,7 +49,7 @@ async def test_feishu_disconnect_before_connect_is_idempotent(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_feishu_send_without_client_reports_not_connected(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+    from luna_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
 
     adapter = FeishuAdapter(_settings(tmp_path), db=None)
 
@@ -60,7 +60,7 @@ async def test_feishu_send_without_client_reports_not_connected(tmp_path: Path):
 
 
 def test_feishu_receive_id_type_and_error_format():
-    from personal_agent.plugins.builtin.platforms.feishu.adapter import (
+    from luna_agent.plugins.builtin.platforms.feishu.adapter import (
         _receive_id_type,
         _response_error,
     )
@@ -74,8 +74,8 @@ def test_feishu_receive_id_type_and_error_format():
 
 @pytest.mark.asyncio
 async def test_feishu_after_parse_without_hooks_keeps_message_event(tmp_path: Path, monkeypatch):
-    from personal_agent.models.messages import MessageEvent
-    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+    from luna_agent.models.messages import MessageEvent
+    from luna_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
 
     adapter = FeishuAdapter(_settings(tmp_path), db=None)
     captured = []
@@ -107,7 +107,7 @@ async def test_feishu_after_parse_without_hooks_keeps_message_event(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_feishu_image_message_preserves_attachment_reference(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+    from luna_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
 
     adapter = FeishuAdapter(_settings(tmp_path), db=None)
     captured = []
@@ -142,7 +142,7 @@ async def test_feishu_image_message_preserves_attachment_reference(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_feishu_file_message_preserves_name_and_mime(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
+    from luna_agent.plugins.builtin.platforms.feishu.adapter import FeishuAdapter
 
     adapter = FeishuAdapter(_settings(tmp_path), db=None)
     captured = []
@@ -179,8 +179,8 @@ async def test_feishu_file_message_preserves_name_and_mime(tmp_path: Path, monke
 
 @pytest.mark.asyncio
 async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: Path, monkeypatch):
-    from personal_agent.models.messages import MessageEvent, SessionSource
-    from personal_agent.plugins.builtin.platforms.telegram.adapter import TelegramAdapter
+    from luna_agent.models.messages import MessageEvent, SessionSource
+    from luna_agent.plugins.builtin.platforms.telegram.adapter import TelegramAdapter
 
     adapter = TelegramAdapter(_settings(tmp_path, telegram_bot_token="token"), db=None)
     captured = []
@@ -198,7 +198,7 @@ async def test_telegram_after_parse_without_hooks_keeps_message_event(tmp_path: 
 
 
 def test_telegram_message_parts_extracts_photo_document_and_voice():
-    from personal_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
+    from luna_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
 
     msg = SimpleNamespace(
         text="",
@@ -237,7 +237,7 @@ def test_telegram_message_parts_extracts_photo_document_and_voice():
 
 
 def test_telegram_message_parts_allows_attachment_only_message():
-    from personal_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
+    from luna_agent.plugins.builtin.platforms.telegram.adapter import _message_parts
 
     msg = SimpleNamespace(
         text="",
@@ -258,7 +258,7 @@ def test_telegram_message_parts_allows_attachment_only_message():
 
 @pytest.mark.asyncio
 async def test_wechat_connect_without_creds_reports_error(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(
         _settings(tmp_path, weixin_token="", weixin_account_id="", weixin_user_id=""),
@@ -275,7 +275,7 @@ async def test_wechat_connect_without_creds_reports_error(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_wechat_send_without_session_reports_not_connected(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
 
@@ -287,7 +287,7 @@ async def test_wechat_send_without_session_reports_not_connected(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_wechat_send_splits_long_text(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
     adapter._send_session = object()
@@ -309,7 +309,7 @@ async def test_wechat_send_splits_long_text(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_wechat_send_splits_long_code_fence(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
     adapter._send_session = object()
@@ -331,7 +331,7 @@ async def test_wechat_send_splits_long_code_fence(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_wechat_send_includes_cached_context_token(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
     adapter._send_session = object()
@@ -352,7 +352,7 @@ async def test_wechat_send_includes_cached_context_token(tmp_path: Path, monkeyp
 
 @pytest.mark.asyncio
 async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
     captured = []
@@ -389,7 +389,7 @@ async def test_wechat_process_message_summarizes_media_and_caches_context(tmp_pa
 
 @pytest.mark.asyncio
 async def test_wechat_update_enters_base_message_pipeline_once(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
     handled = []
@@ -420,7 +420,7 @@ async def test_wechat_update_enters_base_message_pipeline_once(tmp_path: Path, m
 
 @pytest.mark.asyncio
 async def test_qq_connect_without_websocket_url_reports_error(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path, qq_bot_ws_url=""), db=None)
 
@@ -435,7 +435,7 @@ async def test_qq_connect_without_websocket_url_reports_error(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_qq_websocket_connect_uses_bearer_token(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path, qq_bot_token="secret"), db=None)
     calls = []
@@ -457,7 +457,7 @@ async def test_qq_websocket_connect_uses_bearer_token(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_qq_websocket_event_enters_message_pipeline(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path, qq_bot_webhook_secret="legacy-secret"), db=None)
     captured = []
@@ -482,7 +482,7 @@ async def test_qq_websocket_event_enters_message_pipeline(tmp_path: Path, monkey
 
 @pytest.mark.asyncio
 async def test_qq_websocket_action_matches_echo_without_http(tmp_path: Path):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path, qq_bot_base_url=""), db=None)
     sent = []
@@ -514,7 +514,7 @@ async def test_qq_websocket_action_matches_echo_without_http(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_qq_websocket_reconnect_retries_until_available(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path), db=None)
     adapter._reconnect_delays = (0,)
@@ -540,7 +540,7 @@ async def test_qq_websocket_reconnect_retries_until_available(tmp_path: Path, mo
 
 @pytest.mark.asyncio
 async def test_qq_send_builds_onebot_private_and_group_requests(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path), db=None)
     adapter._session = object()
@@ -566,7 +566,7 @@ async def test_qq_send_builds_onebot_private_and_group_requests(tmp_path: Path, 
 
 @pytest.mark.asyncio
 async def test_qq_send_builds_onebot_rich_segments(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path), db=None)
     adapter._session = object()
@@ -599,7 +599,7 @@ async def test_qq_send_builds_onebot_rich_segments(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_qq_webhook_payload_parses_onebot_message(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path), db=None)
     captured = []
@@ -631,7 +631,7 @@ async def test_qq_webhook_payload_parses_onebot_message(tmp_path: Path, monkeypa
 
 @pytest.mark.asyncio
 async def test_qq_webhook_payload_summarizes_media_segments(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path), db=None)
     captured = []
@@ -671,7 +671,7 @@ async def test_qq_webhook_payload_summarizes_media_segments(tmp_path: Path, monk
 
 @pytest.mark.asyncio
 async def test_qq_webhook_signature_is_checked(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     secret = "webhook-secret"
     adapter = QQAdapter(_settings(tmp_path, qq_bot_webhook_secret=secret), db=None)
@@ -693,8 +693,8 @@ async def test_qq_webhook_signature_is_checked(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_qq_download_attachment_uses_onebot_media_endpoint(tmp_path: Path, monkeypatch):
-    from personal_agent.models.messages import AttachmentRef
-    from personal_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
+    from luna_agent.models.messages import AttachmentRef
+    from luna_agent.plugins.builtin.platforms.qq.adapter import QQAdapter
 
     adapter = QQAdapter(_settings(tmp_path), db=None)
     adapter._session = object()
@@ -731,8 +731,8 @@ async def test_qq_download_attachment_uses_onebot_media_endpoint(tmp_path: Path,
 async def test_wechat_download_attachment_decrypts_cdn_media(tmp_path: Path, monkeypatch):
     from Crypto.Cipher import AES
 
-    from personal_agent.models.messages import AttachmentRef
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.models.messages import AttachmentRef
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     key = b"0123456789abcdef"
     plaintext = b"image-payload"
@@ -773,8 +773,8 @@ async def test_wechat_download_attachment_decrypts_cdn_media(tmp_path: Path, mon
 async def test_wechat_download_prefers_top_level_aeskey(tmp_path: Path, monkeypatch):
     from Crypto.Cipher import AES
 
-    from personal_agent.models.messages import AttachmentRef
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.models.messages import AttachmentRef
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     key = b"0123456789abcdef"
     wrong_key = b"abcdef0123456789"
@@ -813,8 +813,8 @@ async def test_wechat_download_prefers_top_level_aeskey(tmp_path: Path, monkeypa
 async def test_wechat_download_accepts_unpadded_encrypted_media(tmp_path: Path, monkeypatch):
     from Crypto.Cipher import AES
 
-    from personal_agent.models.messages import AttachmentRef
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.models.messages import AttachmentRef
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     key = b"0123456789abcdef"
     plaintext = b"\x89PNG\r\n\x1a\npayload!"
@@ -845,7 +845,7 @@ async def test_wechat_download_accepts_unpadded_encrypted_media(tmp_path: Path, 
 
 @pytest.mark.asyncio
 async def test_wechat_download_reads_all_response_chunks(tmp_path: Path, monkeypatch):
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     class Content:
         async def iter_chunked(self, size):
@@ -879,9 +879,9 @@ async def test_wechat_download_reads_all_response_chunks(tmp_path: Path, monkeyp
 
 @pytest.mark.asyncio
 async def test_wechat_download_attachment_requires_key_before_download(tmp_path: Path, monkeypatch):
-    from personal_agent.models.messages import AttachmentRef
-    from personal_agent.platforms import AttachmentDownloadError
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.models.messages import AttachmentRef
+    from luna_agent.platforms import AttachmentDownloadError
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
 
@@ -908,9 +908,9 @@ async def test_wechat_download_attachment_requires_key_before_download(tmp_path:
 
 @pytest.mark.asyncio
 async def test_wechat_prepare_encrypted_url_uses_platform_downloader(tmp_path: Path, monkeypatch):
-    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
-    from personal_agent.models.messages import AttachmentRef
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.attachments import AttachmentStore, DownloadedAttachment
+    from luna_agent.models.messages import AttachmentRef
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
     adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))
@@ -952,9 +952,9 @@ async def test_wechat_prepare_encrypted_url_uses_platform_downloader(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_wechat_prepare_top_level_encrypted_param_uses_platform_downloader(tmp_path: Path, monkeypatch):
-    from personal_agent.attachments import AttachmentStore, DownloadedAttachment
-    from personal_agent.models.messages import AttachmentRef
-    from personal_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
+    from luna_agent.attachments import AttachmentStore, DownloadedAttachment
+    from luna_agent.models.messages import AttachmentRef
+    from luna_agent.plugins.builtin.platforms.wechat.adapter import WeChatAdapter
 
     adapter = WeChatAdapter(_settings(tmp_path), db=None)
     adapter.set_attachment_store(AttachmentStore(tmp_path / "cache"))

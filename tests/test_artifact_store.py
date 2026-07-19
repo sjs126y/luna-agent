@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from personal_agent.artifacts import ArtifactStatus, ArtifactStore, ArtifactStoreError
-from personal_agent.db.database import Database
+from luna_agent.artifacts import ArtifactStatus, ArtifactStore, ArtifactStoreError
+from luna_agent.db.database import Database
 
 
 @pytest_asyncio.fixture
@@ -88,8 +88,8 @@ async def test_artifact_store_cleans_only_unselected_expired_artifacts(tmp_path,
 
 @pytest.mark.asyncio
 async def test_artifact_store_retains_expired_artifact_referenced_by_active_outbox(tmp_path, artifact_db):
-    from personal_agent.delivery import DeliveryOperation, DeliveryOutbox, DeliveryRequest
-    from personal_agent.models.messages import OutboundMessage
+    from luna_agent.delivery import DeliveryOperation, DeliveryOutbox, DeliveryRequest
+    from luna_agent.models.messages import OutboundMessage
 
     store = ArtifactStore(tmp_path / "artifacts", artifact_db, retention_hours=1)
     await store.initialize()

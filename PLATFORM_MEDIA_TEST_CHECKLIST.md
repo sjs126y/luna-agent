@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>Lumora 平台媒体联调清单</h1>
+<h1>Luna Agent 平台媒体联调清单</h1>
 
 <p><strong>自动化测试已通过，剩下的是微信与 QQ 的真实客户端体验</strong></p>
 

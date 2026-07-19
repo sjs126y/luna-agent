@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.plugins import PluginManager
-from personal_agent.plugins.runtime import CapabilityKind
+from luna_agent.config import Settings
+from luna_agent.plugins import PluginManager
+from luna_agent.plugins.runtime import CapabilityKind
 
 
 def _source(root: Path, *, version: str, value: str) -> Path:
@@ -24,7 +24,7 @@ def _source(root: Path, *, version: str, value: str) -> Path:
     )
     (root / "installed_demo.py").write_text(
         "\n".join((
-            "from personal_agent.tools.entry import ToolEntry",
+            "from luna_agent.tools.entry import ToolEntry",
             f"async def value(): return {value!r}",
             "def register(ctx):",
             "    ctx.register.tool(ToolEntry(",

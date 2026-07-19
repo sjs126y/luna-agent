@@ -4,15 +4,15 @@ import asyncio
 
 import pytest
 
-from personal_agent.mcp.models import (
+from luna_agent.mcp.models import (
     MCPCallResult,
     MCPRuntimeState,
     MCPServerConfig,
     MCPServerInfo,
     MCPToolSpec,
 )
-from personal_agent.mcp.runtime import MCPServerRuntime
-from personal_agent.tools.registry import tool_registry
+from luna_agent.mcp.runtime import MCPServerRuntime
+from luna_agent.tools.registry import tool_registry
 
 
 class FakeConnection:

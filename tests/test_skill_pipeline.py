@@ -21,8 +21,8 @@ import pytest
 @pytest.fixture(autouse=True)
 def _ensure_builtin_skills_registered(tmp_path: Path):
     """Make sure builtin skills are registered (idempotent)."""
-    import personal_agent.skills.builtin  # noqa: F401
-    from personal_agent.skills.registry import skill_registry
+    import luna_agent.skills.builtin  # noqa: F401
+    from luna_agent.skills.registry import skill_registry
 
     old_usage_path = skill_registry.usage_path
     skill_registry.set_usage_path(tmp_path / "data" / "skills" / "usage.json")
@@ -38,7 +38,7 @@ def _make_skill_content(size: int) -> str:
 
 
 def test_register_and_get():
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     assert skill_registry.get("python-expert") is not None
     assert skill_registry.get("git-workflow") is not None
@@ -47,7 +47,7 @@ def test_register_and_get():
 
 
 def test_list_entries():
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     entries = skill_registry.list()
     names = {e.name for e in entries}
@@ -57,7 +57,7 @@ def test_list_entries():
 
 
 def test_get_summaries():
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     summary = skill_registry.get_summaries()
     assert "python-expert" in summary
@@ -66,11 +66,11 @@ def test_get_summaries():
 
 
 def test_discovery_logs_skill_details_at_debug(tmp_path, caplog):
-    from personal_agent.skills.registry import discover_skills, skill_registry
+    from luna_agent.skills.registry import discover_skills, skill_registry
 
     path = tmp_path / "quiet-skill.md"
     path.write_text("---\nname: quiet-skill\ndescription: Quiet test skill\n---\n\n# Quiet", encoding="utf-8")
-    caplog.set_level(logging.DEBUG, logger="personal_agent.skills.registry")
+    caplog.set_level(logging.DEBUG, logger="luna_agent.skills.registry")
     try:
         assert discover_skills(tmp_path) == 1
         records = [record for record in caplog.records if "Auto-discovered skill" in record.message]
@@ -81,8 +81,8 @@ def test_discovery_logs_skill_details_at_debug(tmp_path, caplog):
 
 
 def test_duplicate_registration_overwrites():
-    from personal_agent.skills.registry import skill_registry
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry
+    from luna_agent.skills.entry import SkillEntry
 
     original = skill_registry.get("python-expert")
     original_desc = original.description
@@ -106,7 +106,7 @@ def test_duplicate_registration_overwrites():
 
 
 def test_load_valid_skill():
-    from personal_agent.skills.registry import SKILLS_DIR, skill_registry
+    from luna_agent.skills.registry import SKILLS_DIR, skill_registry
 
     content = skill_registry.load("python-expert")
     assert content is not None
@@ -118,14 +118,14 @@ def test_load_valid_skill():
 
 
 def test_load_nonexistent_skill():
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     assert skill_registry.load("no-such-skill") is None
 
 
 def test_load_path_traversal_blocked():
-    from personal_agent.skills.registry import skill_registry, SKILLS_DIR
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry, SKILLS_DIR
+    from luna_agent.skills.entry import SkillEntry
 
     entry = SkillEntry(
         name="escape-attempt",
@@ -139,8 +139,8 @@ def test_load_path_traversal_blocked():
 
 
 def test_load_absolute_path_outside_skills_dir():
-    from personal_agent.skills.registry import skill_registry
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry
+    from luna_agent.skills.entry import SkillEntry
 
     entry = SkillEntry(
         name="abs-escape",
@@ -154,8 +154,8 @@ def test_load_absolute_path_outside_skills_dir():
 
 
 def test_load_non_md_extension_blocked():
-    from personal_agent.skills.registry import skill_registry, SKILLS_DIR
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry, SKILLS_DIR
+    from luna_agent.skills.entry import SkillEntry
 
     # Create a .txt file inside SKILLS_DIR to bypass traversal check
     txt_path = SKILLS_DIR / "test_skill.txt"
@@ -176,8 +176,8 @@ def test_load_non_md_extension_blocked():
 
 
 def test_load_nonexistent_file():
-    from personal_agent.skills.registry import skill_registry, SKILLS_DIR
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry, SKILLS_DIR
+    from luna_agent.skills.entry import SkillEntry
 
     entry = SkillEntry(
         name="ghost-skill",
@@ -191,8 +191,8 @@ def test_load_nonexistent_file():
 
 
 def test_load_too_large_file():
-    from personal_agent.skills.registry import skill_registry, SKILLS_DIR, MAX_SKILL_BYTES
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry, SKILLS_DIR, MAX_SKILL_BYTES
+    from luna_agent.skills.entry import SkillEntry
 
     # Create a large .md file inside SKILLS_DIR
     large_path = SKILLS_DIR / "huge.md"
@@ -213,8 +213,8 @@ def test_load_too_large_file():
 
 
 def test_load_exactly_max_size():
-    from personal_agent.skills.registry import skill_registry, SKILLS_DIR, MAX_SKILL_BYTES
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry, SKILLS_DIR, MAX_SKILL_BYTES
+    from luna_agent.skills.entry import SkillEntry
 
     # Use write_bytes to avoid Windows \n → \r\n expansion
     content_bytes = b"# Test\n\n" + b"x" * (MAX_SKILL_BYTES - 8)
@@ -240,8 +240,8 @@ def test_load_exactly_max_size():
 
 
 def test_load_writes_audit(tmp_path: Path):
-    from personal_agent.tools.audit import set_audit_path
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.tools.audit import set_audit_path
+    from luna_agent.skills.registry import skill_registry
 
     audit_path = tmp_path / "audit.log"
     set_audit_path(audit_path)
@@ -264,7 +264,7 @@ def test_load_writes_audit(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_skill_search_exact_name():
-    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
+    from luna_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("python-expert")
     assert "python-expert" in result
@@ -273,7 +273,7 @@ async def test_skill_search_exact_name():
 
 @pytest.mark.asyncio
 async def test_skill_search_partial():
-    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
+    from luna_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("python")
     assert "python-expert" in result
@@ -281,7 +281,7 @@ async def test_skill_search_partial():
 
 @pytest.mark.asyncio
 async def test_skill_search_no_match():
-    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
+    from luna_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("zzz-nonexistent-query")
     assert "No matching" in result or "Available:" in result
@@ -289,7 +289,7 @@ async def test_skill_search_no_match():
 
 @pytest.mark.asyncio
 async def test_skill_search_prompts_load():
-    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
+    from luna_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search
 
     result = await _skill_search("git")
     assert "skill_load" in result
@@ -300,7 +300,7 @@ async def test_skill_search_prompts_load():
 
 @pytest.mark.asyncio
 async def test_skill_load_existing():
-    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_load
+    from luna_agent.plugins.builtin.tools.builtin.skill_tools import _skill_load
 
     content = await _skill_load("python-expert")
     assert len(content) > 0
@@ -308,7 +308,7 @@ async def test_skill_load_existing():
 
 @pytest.mark.asyncio
 async def test_skill_load_nonexistent():
-    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_load
+    from luna_agent.plugins.builtin.tools.builtin.skill_tools import _skill_load
 
     result = await _skill_load("no-such-skill")
     assert "not found" in result.lower()
@@ -320,7 +320,7 @@ async def test_skill_load_nonexistent():
 @pytest.mark.asyncio
 async def test_e2e_llm_skill_flow():
     """Simulate: LLM calls skill_search → gets results → calls skill_load → gets content."""
-    from personal_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search, _skill_load
+    from luna_agent.plugins.builtin.tools.builtin.skill_tools import _skill_search, _skill_load
 
     # Step 1: LLM asks "I need help with git"
     search_result = await _skill_search("git")
@@ -336,7 +336,7 @@ async def test_e2e_llm_skill_flow():
 @pytest.mark.asyncio
 async def test_e2e_user_slash_command():
     """Simulate: User types /python, Gateway resolves skill."""
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     # Gateway does: skill_registry.load(skill_name)
     content = skill_registry.load("python-expert")
@@ -352,8 +352,8 @@ async def test_e2e_user_slash_command():
 
 
 def test_load_empty_file():
-    from personal_agent.skills.registry import skill_registry, SKILLS_DIR
-    from personal_agent.skills.entry import SkillEntry
+    from luna_agent.skills.registry import skill_registry, SKILLS_DIR
+    from luna_agent.skills.entry import SkillEntry
 
     empty_path = SKILLS_DIR / "empty.md"
     empty_path.write_text("", encoding="utf-8")
@@ -369,7 +369,7 @@ def test_load_empty_file():
 
 
 def test_trigger_metadata():
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     python = skill_registry.get("python-expert")
     assert "/python" in python.triggers
@@ -384,7 +384,7 @@ def test_trigger_metadata():
 
 
 def test_skill_tools_registered():
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.registry import tool_registry
 
     search = tool_registry.get("skill_search")
     assert search is not None
@@ -399,7 +399,7 @@ def test_skill_tools_registered():
 
 def test_builtin_skills_readable():
     """Verify all 3 builtin .md files are readable and non-empty."""
-    from personal_agent.skills.registry import skill_registry
+    from luna_agent.skills.registry import skill_registry
 
     for name in ["python-expert", "git-workflow", "shell-guide"]:
         content = skill_registry.load(name)

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from personal_agent.plugins.runtime import (
+from luna_agent.plugins.runtime import (
     CandidateCatalog,
     CapabilityBinding,
     CapabilityKind,

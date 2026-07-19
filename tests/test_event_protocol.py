@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.conversation.events import (
+from luna_agent.conversation.events import (
     DELTA_EVENT_TYPES,
     EVENT_PROTOCOL_VERSION,
     EVENT_SCHEMAS,
@@ -18,8 +18,8 @@ from personal_agent.conversation.events import (
 def test_event_protocol_schema_covers_all_event_types():
     from typing import get_args
 
-    from personal_agent.conversation.events import ConversationEventType
-    from personal_agent.tui.renderer_base import Renderer
+    from luna_agent.conversation.events import ConversationEventType
+    from luna_agent.tui.renderer_base import Renderer
 
     event_types = set(get_args(ConversationEventType))
     assert set(EVENT_SCHEMAS) == event_types

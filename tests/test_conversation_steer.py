@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from personal_agent.conversation.steer import ActiveTurnRegistry, SteerManager
+from luna_agent.conversation.steer import ActiveTurnRegistry, SteerManager
 
 
 def test_steer_manager_binds_pending_signal_to_started_turn():

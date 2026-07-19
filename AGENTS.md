@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Source code lives in `src/personal_agent/`. Major subsystems include `agent/` for the agent loop, `gateway/` for platform routing, `tools/` for execution and safety, `plugins/` for built-in and user extension loading, `memory/`, `mcp/`, `workflow/`, and CLI entrypoints such as `cli.py`, `cli_chat.py`, and `cli_shell.py`.
+Source code lives in `src/luna_agent/`. Major subsystems include `agent/` for the agent loop, `gateway/` for platform routing, `tools/` for execution and safety, `plugins/` for built-in and user extension loading, `memory/`, `mcp/`, `workflow/`, and CLI entrypoints such as `cli.py`, `cli_chat.py`, and `cli_shell.py`.
 
 Tests live in `tests/` and follow the subsystem names, for example `test_cli_shell.py`, `test_tool_pipeline.py`, and `test_gateway_commands.py`. Documentation is in `docs/`; examples are in `examples/`; utility scripts are in `scripts/`.
 
@@ -12,10 +12,10 @@ Use `uv` for the project environment.
 
 ```bash
 uv sync
-uv run personal-agent doctor
-uv run personal-agent chat
-uv run personal-agent serve
-python -m compileall -q src/personal_agent
+uv run luna-agent doctor
+uv run luna-agent chat
+uv run luna-agent serve
+python -m compileall -q src/luna_agent
 uv run pytest -q
 ```
 
@@ -36,7 +36,7 @@ uv run pytest tests/test_cli_shell.py -q
 uv run pytest -q
 ```
 
-Some tests update `src/personal_agent/skills/builtin/.usage.json`; restore that file before committing unless the usage data is intentionally changed.
+Some tests update `src/luna_agent/skills/builtin/.usage.json`; restore that file before committing unless the usage data is intentionally changed.
 
 ## Frontend/Backend Codex Workflow
 

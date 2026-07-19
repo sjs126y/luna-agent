@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def test_bwrap_launch_is_read_only_except_configured_roots(tmp_path, monkeypatch):
-    from personal_agent.tools import process_sandbox
+    from luna_agent.tools import process_sandbox
 
     root = tmp_path / "workspace"
     root.mkdir()
@@ -47,7 +47,7 @@ def test_bwrap_launch_is_read_only_except_configured_roots(tmp_path, monkeypatch
 
 
 def test_legacy_launch_is_explicitly_unisolated(tmp_path, monkeypatch):
-    from personal_agent.tools import process_sandbox
+    from luna_agent.tools import process_sandbox
 
     monkeypatch.setattr(
         process_sandbox,
@@ -73,7 +73,7 @@ def test_legacy_launch_is_explicitly_unisolated(tmp_path, monkeypatch):
 
 
 def test_explicit_bwrap_fails_closed_when_unavailable(tmp_path, monkeypatch):
-    from personal_agent.tools import process_sandbox
+    from luna_agent.tools import process_sandbox
 
     monkeypatch.setattr(
         process_sandbox,
@@ -99,7 +99,7 @@ def test_explicit_bwrap_fails_closed_when_unavailable(tmp_path, monkeypatch):
 
 
 def test_process_sandbox_snapshot_reports_degraded_network(monkeypatch):
-    from personal_agent.tools import process_sandbox
+    from luna_agent.tools import process_sandbox
 
     monkeypatch.setattr(
         process_sandbox,

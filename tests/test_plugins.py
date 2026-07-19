@@ -6,11 +6,11 @@ import asyncio
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.plugins.core.manager import PluginManager
-from personal_agent.plugins.models import CommandEntry, PluginManifest, PluginStatus
-from personal_agent.skills.registry import skill_registry
-from personal_agent.tools.registry import tool_registry
+from luna_agent.config import Settings
+from luna_agent.plugins.core.manager import PluginManager
+from luna_agent.plugins.models import CommandEntry, PluginManifest, PluginStatus
+from luna_agent.skills.registry import skill_registry
+from luna_agent.tools.registry import tool_registry
 
 
 def _settings(tmp_path, plugins_dir):
@@ -193,7 +193,7 @@ enabled_by_default: false
     )
     (plugin_dir / "__init__.py").write_text(
         """
-from personal_agent.plugins.models import CommandEntry
+from luna_agent.plugins.models import CommandEntry
 
 def hello(args="", **kwargs):
     return "hello " + (args or "world")
@@ -397,8 +397,8 @@ enabled_by_default: false
     )
     (plugin_dir / "sample_plugin.py").write_text(
         """
-from personal_agent.plugins.models import CommandEntry
-from personal_agent.tools.entry import ToolEntry
+from luna_agent.plugins.models import CommandEntry
+from luna_agent.tools.entry import ToolEntry
 
 async def sample_tool():
     return "tool-ok"
@@ -532,8 +532,8 @@ enabled_by_default: true
     )
     (plugin_dir / "partial_plugin.py").write_text(
         """
-from personal_agent.plugins.models import CommandEntry
-from personal_agent.tools.entry import ToolEntry
+from luna_agent.plugins.models import CommandEntry
+from luna_agent.tools.entry import ToolEntry
 
 async def handler(**kwargs):
     return "ok"
@@ -589,7 +589,7 @@ enabled_by_default: true
         )
         (plugin_dir / f"{module}.py").write_text(
             f"""
-from personal_agent.tools.entry import ToolEntry
+from luna_agent.tools.entry import ToolEntry
 
 async def handler(**kwargs):
     return "{key}"
@@ -896,38 +896,38 @@ def test_builtin_manifests_are_discovered_from_project_plugins(tmp_path):
 
     skills = manager._plugins["builtin/skills"]
     assert skills.manifest.source == "builtin"
-    assert skills.manifest.entrypoint == "personal_agent.plugins.builtin.skills.builtin:register"
+    assert skills.manifest.entrypoint == "luna_agent.plugins.builtin.skills.builtin:register"
     assert skills.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/skills/builtin" in skills.manifest.path.as_posix()
+    assert "src/luna_agent/plugins/builtin/skills/builtin" in skills.manifest.path.as_posix()
 
     tools = manager._plugins["builtin/tools"]
-    assert tools.manifest.entrypoint == "personal_agent.plugins.builtin.tools.builtin:register"
+    assert tools.manifest.entrypoint == "luna_agent.plugins.builtin.tools.builtin:register"
     assert tools.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/tools/builtin" in tools.manifest.path.as_posix()
+    assert "src/luna_agent/plugins/builtin/tools/builtin" in tools.manifest.path.as_posix()
 
     telegram = manager._plugins["platforms/telegram"]
     assert telegram.status == PluginStatus.DEFERRED
-    assert telegram.manifest.entrypoint == "personal_agent.plugins.builtin.platforms.telegram:register"
+    assert telegram.manifest.entrypoint == "luna_agent.plugins.builtin.platforms.telegram:register"
     assert telegram.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/platforms/telegram" in telegram.manifest.path.as_posix()
+    assert "src/luna_agent/plugins/builtin/platforms/telegram" in telegram.manifest.path.as_posix()
 
     qq = manager._plugins["platforms/qq"]
     assert qq.status == PluginStatus.DEFERRED
-    assert qq.manifest.entrypoint == "personal_agent.plugins.builtin.platforms.qq:register"
+    assert qq.manifest.entrypoint == "luna_agent.plugins.builtin.platforms.qq:register"
     assert qq.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/platforms/qq" in qq.manifest.path.as_posix()
+    assert "src/luna_agent/plugins/builtin/platforms/qq" in qq.manifest.path.as_posix()
 
-    memory_lumora = manager._plugins["memory/lumora"]
-    assert memory_lumora.manifest.entrypoint == "personal_agent.plugins.builtin.memory.lumora:register"
-    assert memory_lumora.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/memory/lumora" in memory_lumora.manifest.path.as_posix()
+    memory_luna = manager._plugins["memory/luna"]
+    assert memory_luna.manifest.entrypoint == "luna_agent.plugins.builtin.memory.luna:register"
+    assert memory_luna.manifest.path is not None
+    assert "src/luna_agent/plugins/builtin/memory/luna" in memory_luna.manifest.path.as_posix()
 
     memory_mem0 = manager._plugins["memory/mem0"]
-    assert memory_mem0.manifest.entrypoint == "personal_agent.plugins.builtin.memory.mem0:register"
+    assert memory_mem0.manifest.entrypoint == "luna_agent.plugins.builtin.memory.mem0:register"
     assert memory_mem0.manifest.path is not None
-    assert "src/personal_agent/plugins/builtin/memory/mem0" in memory_mem0.manifest.path.as_posix()
+    assert "src/luna_agent/plugins/builtin/memory/mem0" in memory_mem0.manifest.path.as_posix()
 
-    from personal_agent.plugins.builtin.skills.builtin import register as skills_register
+    from luna_agent.plugins.builtin.skills.builtin import register as skills_register
 
     assert callable(skills_register)
 
@@ -953,7 +953,7 @@ def test_builtin_tools_use_explicit_plugin_registration(tmp_path):
 
 
 def test_builtin_tool_delegate_setup_uses_agent_runtime_settings(tmp_path, monkeypatch):
-    from personal_agent.plugins.builtin.tools.builtin import _setup_delegate
+    from luna_agent.plugins.builtin.tools.builtin import _setup_delegate
 
     captured = {}
 
@@ -961,7 +961,7 @@ def test_builtin_tool_delegate_setup_uses_agent_runtime_settings(tmp_path, monke
         captured.update(kwargs)
 
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.setup_delegate",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.setup_delegate",
         fake_setup_delegate,
     )
     settings = Settings(
@@ -997,22 +997,22 @@ def test_builtin_skills_use_explicit_plugin_registration(tmp_path):
 
 
 def test_disable_memory_provider_plugin_unregisters_provider(tmp_path):
-    from personal_agent.memory.provider_registry import memory_provider_registry
+    from luna_agent.memory.provider_registry import memory_provider_registry
 
     memory_provider_registry.clear()
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
-    manager.load_plugin("memory/lumora")
-    assert memory_provider_registry.get("lumora") is not None
+    manager.load_plugin("memory/luna")
+    assert memory_provider_registry.get("luna") is not None
 
-    manager.disable_plugin("memory/lumora")
-    assert memory_provider_registry.get("lumora") is None
+    manager.disable_plugin("memory/luna")
+    assert memory_provider_registry.get("luna") is None
 
 
 def test_memory_provider_doctor_reports_registered_provider(tmp_path):
-    from personal_agent.memory.provider_registry import memory_provider_registry
+    from luna_agent.memory.provider_registry import memory_provider_registry
 
     memory_provider_registry.clear()
     settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
@@ -1070,7 +1070,7 @@ async def test_hook_priority_and_fail_open(tmp_path):
 
 @pytest.mark.asyncio
 async def test_typed_hook_registration_uses_shared_hook_manager(tmp_path):
-    from personal_agent.hooks import HookEnvelope, HookEvent, HookScope, PreToolUseOutcome
+    from luna_agent.hooks import HookEnvelope, HookEvent, HookScope, PreToolUseOutcome
 
     manager = PluginManager(
         _settings(tmp_path, tmp_path / "plugins"),
@@ -1153,7 +1153,7 @@ enabled_by_default: true
     )
     (plugin_dir / "typed_hook.py").write_text(
         """
-from personal_agent.hooks import HookEvent, PreToolUseOutcome
+from luna_agent.hooks import HookEvent, PreToolUseOutcome
 
 async def protect(event):
     return PreToolUseOutcome.block("protected")

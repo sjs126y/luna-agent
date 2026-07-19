@@ -14,7 +14,7 @@ def _settings(tmp_path: Path, *, mode: str = "ask-first"):
 
 
 def test_mode_presets_have_one_stable_mapping():
-    from personal_agent.security.modes import mode_preset
+    from luna_agent.security.modes import mode_preset
 
     assert mode_preset("read-only").profile == "read-only"
     assert mode_preset("ask-first").approval_policy == "on-request"
@@ -26,8 +26,8 @@ def test_mode_presets_have_one_stable_mapping():
 
 
 def test_permission_profiles_enforce_actual_roots(tmp_path):
-    from personal_agent.security.models import ResourceRequirement
-    from personal_agent.security.session import SecurityStateStore
+    from luna_agent.security.models import ResourceRequirement
+    from luna_agent.security.session import SecurityStateStore
 
     inside = ResourceRequirement("filesystem", str(tmp_path / "a.txt"), "write")
     outside = ResourceRequirement("filesystem", str(tmp_path.parent / "other.txt"), "read")
@@ -43,7 +43,7 @@ def test_permission_profiles_enforce_actual_roots(tmp_path):
 
 
 def test_security_snapshot_reports_effective_cached_tool_behavior(tmp_path):
-    from personal_agent.security.session import security_settings_snapshot
+    from luna_agent.security.session import security_settings_snapshot
 
     ask_first = security_settings_snapshot(_settings(tmp_path, mode="ask-first"))
     local_auto = security_settings_snapshot(_settings(tmp_path, mode="local-auto"))
@@ -53,8 +53,8 @@ def test_security_snapshot_reports_effective_cached_tool_behavior(tmp_path):
 
 
 def test_local_auto_supports_additional_read_only_roots(tmp_path):
-    from personal_agent.security.models import ResourceRequirement
-    from personal_agent.security.session import SecurityStateStore
+    from luna_agent.security.models import ResourceRequirement
+    from luna_agent.security.session import SecurityStateStore
 
     home = tmp_path / "home"
     workspace = home / "projects" / "agent"
@@ -80,8 +80,8 @@ def test_local_auto_supports_additional_read_only_roots(tmp_path):
 
 
 def test_session_grants_use_one_ttl_and_mode_switch_clears(tmp_path):
-    from personal_agent.security.models import ResourceRequirement
-    from personal_agent.security.session import SecurityStateStore
+    from luna_agent.security.models import ResourceRequirement
+    from luna_agent.security.session import SecurityStateStore
 
     store = SecurityStateStore(_settings(tmp_path))
     state = store.get("wechat:user")
@@ -102,7 +102,7 @@ def test_session_grants_use_one_ttl_and_mode_switch_clears(tmp_path):
 
 
 def test_permission_helpers_use_unified_grant_ttl():
-    from personal_agent.permissions import format_grant_duration, temporary_grant_ttl_seconds
+    from luna_agent.permissions import format_grant_duration, temporary_grant_ttl_seconds
 
     settings = SimpleNamespace(
         permission_grant_ttl_minutes=90,
@@ -113,7 +113,7 @@ def test_permission_helpers_use_unified_grant_ttl():
 
 
 def test_security_state_is_not_shared_between_sessions(tmp_path):
-    from personal_agent.security.session import SecurityStateStore
+    from luna_agent.security.session import SecurityStateStore
 
     store = SecurityStateStore(_settings(tmp_path))
     store.get("wechat:a").grant_tool("tool:x", ttl_seconds=60, now=100)

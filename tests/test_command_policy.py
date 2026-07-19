@@ -1,4 +1,4 @@
-from personal_agent.commands.policy import CommandExecutionPolicy, command_execution_policy
+from luna_agent.commands.policy import CommandExecutionPolicy, command_execution_policy
 
 
 def test_command_execution_lanes():

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from personal_agent.mcp.client import MCPClient, MCPServerConfig, MCPToolInfo
+from luna_agent.mcp.client import MCPClient, MCPServerConfig, MCPToolInfo
 
 
 # ── Mock MCP server (Python script) ─────────────────────
@@ -79,9 +79,9 @@ def make_config(mock_server_script: Path) -> MCPServerConfig:
 
 
 def test_http_mcp_tools_declare_server_network_resource():
-    from personal_agent.mcp.models import MCPCallResult, MCPToolSpec
-    from personal_agent.mcp.registrar import MCPToolRegistrar
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.mcp.models import MCPCallResult, MCPToolSpec
+    from luna_agent.mcp.registrar import MCPToolRegistrar
+    from luna_agent.tools.registry import tool_registry
 
     async def call_tool(_name, _arguments):
         return MCPCallResult()
@@ -268,8 +268,8 @@ async def test_client_stderr_tail_survives_failed_connection(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_manager_start_stop(mock_server_script: Path):
     """Manager should connect, register tools, and clean up."""
-    from personal_agent.mcp.manager import MCPManager
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.mcp.manager import MCPManager
+    from luna_agent.tools.registry import tool_registry
 
     server_cfg = {
         "name": "mock",
@@ -318,7 +318,7 @@ async def test_manager_start_stop(mock_server_script: Path):
 @pytest.mark.asyncio
 async def test_manager_disabled_server():
     """Disabled server should be skipped."""
-    from personal_agent.mcp.manager import MCPManager
+    from luna_agent.mcp.manager import MCPManager
 
     manager = MCPManager([{
         "name": "disabled_srv",
@@ -334,7 +334,7 @@ async def test_manager_disabled_server():
 @pytest.mark.asyncio
 async def test_manager_no_servers():
     """Empty config should be a no-op."""
-    from personal_agent.mcp.manager import MCPManager
+    from luna_agent.mcp.manager import MCPManager
 
     manager = MCPManager([])
     count = await manager.start()
@@ -342,7 +342,7 @@ async def test_manager_no_servers():
 
 
 def test_manager_rejects_duplicate_server_names():
-    from personal_agent.mcp.manager import MCPManager
+    from luna_agent.mcp.manager import MCPManager
 
     with pytest.raises(ValueError, match="Duplicate MCP server"):
         MCPManager([
@@ -354,8 +354,8 @@ def test_manager_rejects_duplicate_server_names():
 @pytest.mark.asyncio
 async def test_manager_bad_server_doesnt_block_others(mock_server_script: Path):
     """One bad server shouldn't prevent good ones from connecting."""
-    from personal_agent.mcp.manager import MCPManager
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.mcp.manager import MCPManager
+    from luna_agent.tools.registry import tool_registry
 
     configs = [
         {
@@ -397,8 +397,8 @@ async def test_manager_bad_server_doesnt_block_others(mock_server_script: Path):
 @pytest.mark.asyncio
 async def test_tool_search_discovers_mcp_tools(mock_server_script: Path):
     """tool_search should return MCP tools (deferrable)."""
-    from personal_agent.mcp.manager import MCPManager
-    from personal_agent.tools.registry import dispatch_tool_search
+    from luna_agent.mcp.manager import MCPManager
+    from luna_agent.tools.registry import dispatch_tool_search
 
     manager = MCPManager([{
         "name": "mock",
@@ -431,7 +431,7 @@ async def test_tool_search_discovers_mcp_tools(mock_server_script: Path):
 @pytest.mark.asyncio
 async def test_mcp_tools_not_in_core_list():
     """MCP tools are NOT core — they must be discoverable via tool_search."""
-    from personal_agent.tools.toolsets import is_core_tool, _CORE_TOOLS
+    from luna_agent.tools.toolsets import is_core_tool, _CORE_TOOLS
 
     # MCP prefix tools are not in the core list
     assert "mcp__mock__echo" not in _CORE_TOOLS
@@ -445,9 +445,9 @@ async def test_mcp_tools_not_in_core_list():
 @pytest.mark.asyncio
 async def test_exec_mcp_tool_through_pipeline(mock_server_script: Path):
     """An MCP tool should be callable through the executor pipeline."""
-    from personal_agent.mcp.manager import MCPManager
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from luna_agent.mcp.manager import MCPManager
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.executor import execute_tool_call_result, format_tool_result
     from types import SimpleNamespace
 
     manager = MCPManager([{
@@ -490,10 +490,10 @@ async def test_exec_mcp_tool_through_pipeline(mock_server_script: Path):
 @pytest.mark.asyncio
 async def test_mcp_tool_search_integration(mock_server_script: Path):
     """End-to-end: search for MCP tool, then call it via executor."""
-    from personal_agent.mcp.manager import MCPManager
-    from personal_agent.tools.registry import dispatch_tool_search
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.executor import execute_tool_call_result, format_tool_result
+    from luna_agent.mcp.manager import MCPManager
+    from luna_agent.tools.registry import dispatch_tool_search
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.executor import execute_tool_call_result, format_tool_result
     from types import SimpleNamespace
 
     manager = MCPManager([{

@@ -5,17 +5,17 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from personal_agent.agent.agent import init_agent
-from personal_agent.cli_chat import CliChatRuntime
-from personal_agent.config import Settings
-from personal_agent.db.database import Database
-from personal_agent.gateway.compression_chain import CompressionChain
-from personal_agent.gateway.session_store import SessionStore
-from personal_agent.memory.manager import MemoryManager
-from personal_agent.models.messages import NormalizedResponse
-from personal_agent.llm.provider import ProviderProfile
-from personal_agent.plugins.models import CommandEntry
-from personal_agent.conversation import SubmissionKind, SubmissionOutcome, SubmissionStatus
+from luna_agent.agent.agent import init_agent
+from luna_agent.cli_chat import CliChatRuntime
+from luna_agent.config import Settings
+from luna_agent.db.database import Database
+from luna_agent.gateway.compression_chain import CompressionChain
+from luna_agent.gateway.session_store import SessionStore
+from luna_agent.memory.manager import MemoryManager
+from luna_agent.models.messages import NormalizedResponse
+from luna_agent.llm.provider import ProviderProfile
+from luna_agent.plugins.models import CommandEntry
+from luna_agent.conversation import SubmissionKind, SubmissionOutcome, SubmissionStatus
 
 
 class StaticMemory:
@@ -245,7 +245,7 @@ async def test_cli_memory_command_is_handled_locally(runtime, monkeypatch):
 @pytest.mark.asyncio
 async def test_cli_stop_reports_delegate_agent_count(runtime, monkeypatch):
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
         lambda: 2,
     )
 

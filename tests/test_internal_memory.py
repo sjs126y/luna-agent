@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.memory.internal import InternalMemoryConflict, InternalMemoryStore
-from personal_agent.memory.models import InternalPatchAction, InternalPatchOperation
+from luna_agent.memory.internal import InternalMemoryConflict, InternalMemoryStore
+from luna_agent.memory.models import InternalPatchAction, InternalPatchOperation
 
 
 @pytest.mark.asyncio
@@ -54,3 +54,31 @@ async def test_internal_store_requires_confirmation_for_identity_files(tmp_path)
     )])
 
     assert "Changed soul" not in (system / "SOUL.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_internal_store_migrates_legacy_managed_marker(tmp_path) -> None:
+    system = tmp_path / "system"
+    system.mkdir()
+    path = system / "USER.md"
+    path.write_text(
+        "Notes\n\n<!-- lumora-managed:start -->\n"
+        "- <!-- memory:preference-tea --> Prefers tea.\n"
+        "<!-- lumora-managed:end -->\n",
+        encoding="utf-8",
+    )
+    store = InternalMemoryStore(system)
+    snapshot = store.snapshot()
+
+    await store.apply_operations(snapshot, [InternalPatchOperation(
+        action=InternalPatchAction.UPDATE,
+        observation_id="o2",
+        target_file="USER.md",
+        entry_id="preference-tea",
+        content="Prefers green tea.",
+    )])
+
+    text = path.read_text(encoding="utf-8")
+    assert "<!-- luna-managed:start -->" in text
+    assert "<!-- lumora-managed:start -->" not in text
+    assert "<!-- memory:preference-tea --> Prefers green tea." in text

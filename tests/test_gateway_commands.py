@@ -8,23 +8,23 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 
-from personal_agent.config import Settings
-from personal_agent.db.database import Database
-from personal_agent.platforms.core import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
-from personal_agent.gateway.gateway import Gateway
-from personal_agent.gateway.state import PlatformRuntime
-from personal_agent.memory.manager import MemoryManager
-from personal_agent.models.messages import (
+from luna_agent.config import Settings
+from luna_agent.db.database import Database
+from luna_agent.platforms.core import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
+from luna_agent.gateway.gateway import Gateway
+from luna_agent.gateway.state import PlatformRuntime
+from luna_agent.memory.manager import MemoryManager
+from luna_agent.models.messages import (
     MessageEvent,
     MessagePart,
     OutboundMessage,
     PlatformCapabilities,
     SessionSource,
 )
-from personal_agent.plugins.models import CommandEntry
-from personal_agent.conversation import ConversationTurnResult
-from personal_agent.conversation import ConversationCoordinator, SubmissionOutcome, SubmissionStatus
-from personal_agent.delivery import DeliveryOutbox, DeliveryService, PlatformDirectory
+from luna_agent.plugins.models import CommandEntry
+from luna_agent.conversation import ConversationTurnResult
+from luna_agent.conversation import ConversationCoordinator, SubmissionOutcome, SubmissionStatus
+from luna_agent.delivery import DeliveryOutbox, DeliveryService, PlatformDirectory
 
 
 class Memory:
@@ -99,7 +99,7 @@ async def gateway(tmp_path):
     )
 
     async def dispatch_command(request):
-        from personal_agent.commands.runtime import CommandResult, handle_slash_command
+        from luna_agent.commands.runtime import CommandResult, handle_slash_command
 
         if request.command_runtime is None:
             return CommandResult.unhandled()
@@ -256,7 +256,7 @@ async def test_coordinator_gateway_delivers_auth_response_as_protected_message(g
 
 @pytest.mark.asyncio
 async def test_gateway_message_hook_runs_after_auth_and_rewrites_input(gateway, monkeypatch):
-    from personal_agent.hooks import GatewayMessageOutcome, HookEvent, HookManager
+    from luna_agent.hooks import GatewayMessageOutcome, HookEvent, HookManager
 
     hook_manager = HookManager()
     gateway.hook_manager = hook_manager
@@ -304,7 +304,7 @@ async def test_gateway_message_hook_runs_after_auth_and_rewrites_input(gateway, 
 
 @pytest.mark.asyncio
 async def test_gateway_message_hook_can_block_before_agent(gateway, monkeypatch):
-    from personal_agent.hooks import GatewayMessageOutcome, HookEvent, HookManager
+    from luna_agent.hooks import GatewayMessageOutcome, HookEvent, HookManager
 
     hook_manager = HookManager()
     gateway.hook_manager = hook_manager
@@ -531,7 +531,7 @@ async def test_gateway_commands_lists_slash_plugin_commands_only(gateway):
 
 @pytest.mark.asyncio
 async def test_gateway_lifecycle_hooks_observe_start_connect_disconnect_stop(gateway, monkeypatch):
-    from personal_agent.hooks import HookEvent, HookManager
+    from luna_agent.hooks import HookEvent, HookManager
 
     hook_manager = HookManager()
     gateway.hook_manager = hook_manager
@@ -1222,7 +1222,7 @@ async def test_gateway_removed_allow_is_unhandled_and_stop_applies_to_cached_age
 async def test_gateway_stop_reports_delegate_agent_count(gateway, monkeypatch):
     gateway._agent_cache["telegram:c1:u1"] = Agent()
     monkeypatch.setattr(
-        "personal_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
+        "luna_agent.plugins.builtin.tools.builtin.delegate.stop_delegate_agents",
         lambda: 3,
     )
 

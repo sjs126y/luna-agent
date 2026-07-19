@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.memory.models import MemoryScope, Observation, ObservationKind
+from luna_agent.memory.models import MemoryScope, Observation, ObservationKind
 
 
 def test_observation_round_trips() -> None:
@@ -30,7 +30,7 @@ def test_memory_scope_serializes() -> None:
     scope = MemoryScope(user_id="u1", session_key="cli:1", profile="work")
     assert scope.as_dict() == {
         "user_id": "u1",
-        "agent_id": "lumora",
+        "agent_id": "luna",
         "session_key": "cli:1",
         "profile": "work",
     }

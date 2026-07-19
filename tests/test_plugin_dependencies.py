@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.plugins import PluginManager, PluginStatus
+from luna_agent.config import Settings
+from luna_agent.plugins import PluginManager, PluginStatus
 
 
 def _write_plugin(
@@ -33,7 +33,7 @@ def _write_plugin(
         encoding="utf-8",
     )
     (plugin / f"{module}.py").write_text(
-        "from lumora_plugin_sdk import CommandEntry\n"
+        "from luna_agent_plugin_sdk import CommandEntry\n"
         "def register(ctx):\n"
         f"    ctx.register.command(CommandEntry('{module}', 'test', lambda: 'ok'))\n",
         encoding="utf-8",

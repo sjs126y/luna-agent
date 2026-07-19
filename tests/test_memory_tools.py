@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.memory.tools import memory_buffer_tool_entry, memory_tool_entry, set_memory_manager
-from personal_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
+from luna_agent.memory.tools import memory_buffer_tool_entry, memory_tool_entry, set_memory_manager
+from luna_agent.tools.runtime_context import reset_current_tool_agent, set_current_tool_agent
 
 
 class Manager:
@@ -29,7 +29,7 @@ class Manager:
                 "content": "x" * 500,
                 "kind": "fact",
                 "importance": 0.7,
-                "source_provider": "lumora",
+                "source_provider": "luna",
                 "created_at": "2026-07-17T00:00:00+00:00",
                 "metadata": {"large": "ignored"},
                 "scope": {"user_id": "private"},

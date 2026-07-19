@@ -36,13 +36,13 @@ flowchart LR
 
 ## 目标
 
-Lumora 将 MCP 从一次性 stdio 工具加载器演进为长期运行的外部能力 runtime，同时保留现有工具权限、安全、审计和渐进式披露语义。
+Luna Agent 将 MCP 从一次性 stdio 工具加载器演进为长期运行的外部能力 runtime，同时保留现有工具权限、安全、审计和渐进式披露语义。
 
 ## 决策
 
 - 使用官方 MCP Python SDK 的稳定 v1.x 协议与 transport 实现，依赖约束为 `mcp>=1.27,<2`。
-- Lumora 自己管理 server 生命周期、重连、工具快照、Registry 同步、健康状态和安全策略。
-- SDK 类型只存在于 MCP connection adapter 内部；Manager、runtime 和工具层使用 Lumora 自己的模型。
+- Luna Agent 自己管理 server 生命周期、重连、工具快照、Registry 同步、健康状态和安全策略。
+- SDK 类型只存在于 MCP connection adapter 内部；Manager、runtime 和工具层使用 Luna Agent 自己的模型。
 - 每台 server 使用独立 `MCPServerRuntime`，单台故障不得影响其他 server。
 - stdio 与 Streamable HTTP 实现同一个 connection contract。
 - 旧配置没有 `transport` 且包含 `command` 时继续按 stdio 解释。

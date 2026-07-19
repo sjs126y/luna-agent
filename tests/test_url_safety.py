@@ -4,7 +4,7 @@ from __future__ import annotations
 def test_url_safety_checks_every_dns_answer(monkeypatch):
     import socket
 
-    from personal_agent.tools.url_safety import check_url
+    from luna_agent.tools.url_safety import check_url
 
     monkeypatch.setattr(
         socket,
@@ -22,7 +22,7 @@ def test_url_safety_checks_every_dns_answer(monkeypatch):
 
 
 def test_private_opt_in_never_allows_link_local_metadata():
-    from personal_agent.tools.url_safety import check_url
+    from luna_agent.tools.url_safety import check_url
 
     error = check_url("http://169.254.169.254/latest", allow_private=True)
 

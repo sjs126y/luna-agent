@@ -6,15 +6,15 @@ import json
 
 import pytest
 
-from personal_agent.agent.factory import create_agent_runtime
-from personal_agent.agent.factory import _resolve_api_mode
-from personal_agent.agent.agent import _build_system_prompt, init_agent
-from personal_agent.config import Settings
-from personal_agent.llm.provider import ProviderProfile, provider_registry
-from personal_agent.llm.transport_registry import transport_registry
-from personal_agent.models.messages import NormalizedResponse
-from personal_agent.tools.entry import ToolEntry
-from personal_agent.tools.registry import dispatch_tool_search, tool_registry
+from luna_agent.agent.factory import create_agent_runtime
+from luna_agent.agent.factory import _resolve_api_mode
+from luna_agent.agent.agent import _build_system_prompt, init_agent
+from luna_agent.config import Settings
+from luna_agent.llm.provider import ProviderProfile, provider_registry
+from luna_agent.llm.transport_registry import transport_registry
+from luna_agent.models.messages import NormalizedResponse
+from luna_agent.tools.entry import ToolEntry
+from luna_agent.tools.registry import dispatch_tool_search, tool_registry
 
 
 class FakeTransport:
@@ -100,8 +100,8 @@ async def test_create_agent_runtime_wires_plugin_hooks(tmp_path):
 
 @pytest.mark.asyncio
 async def test_create_agent_runtime_supports_codex_responses_mode_from_settings(tmp_path, monkeypatch):
-    from personal_agent.plugins.builtin.llm.builtin import register
-    from personal_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
+    from luna_agent.plugins.builtin.llm.builtin import register
+    from luna_agent.plugins.builtin.llm.builtin.responses import CodexResponsesTransport
 
     register(None)
     monkeypatch.delenv("LLM_API_MODE", raising=False)
@@ -140,7 +140,7 @@ def test_system_prompt_includes_tool_protocol_before_tool_list():
 
 @pytest.mark.asyncio
 async def test_background_tool_registration_refreshes_agent_on_next_turn():
-    from personal_agent.agent.context import build_turn_context
+    from luna_agent.agent.context import build_turn_context
 
     provider = ProviderProfile(name="test", base_url="https://example.test", api_key="", model="test-model")
     agent = init_agent(FakeTransport(provider), provider=provider)

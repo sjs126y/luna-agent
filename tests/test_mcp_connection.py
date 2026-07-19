@@ -9,8 +9,8 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from personal_agent.mcp.connection import SDKMCPConnection
-from personal_agent.mcp.models import MCPServerConfig
+from luna_agent.mcp.connection import SDKMCPConnection
+from luna_agent.mcp.models import MCPServerConfig
 
 
 MOCK_SERVER = r"""
@@ -153,7 +153,7 @@ async def test_sdk_http_connection_requires_configured_header_env():
 
 
 def test_mcp_http_requires_https_and_explicit_private_opt_in():
-    from personal_agent.mcp.connection import _validate_http_target
+    from luna_agent.mcp.connection import _validate_http_target
 
     insecure = MCPServerConfig.from_mapping({
         "name": "remote",
@@ -178,7 +178,7 @@ def test_mcp_http_requires_https_and_explicit_private_opt_in():
 
 
 def test_stdio_connection_uses_process_sandbox(tmp_path, monkeypatch):
-    from personal_agent.tools import process_sandbox
+    from luna_agent.tools import process_sandbox
 
     monkeypatch.setattr(
         process_sandbox,
@@ -209,7 +209,7 @@ def test_stdio_connection_uses_process_sandbox(tmp_path, monkeypatch):
 
 
 def test_mcp_result_payloads_are_bounded():
-    from personal_agent.mcp.connection import _normalize_call_result
+    from luna_agent.mcp.connection import _normalize_call_result
 
     class Block:
         def __init__(self, value):
@@ -242,7 +242,7 @@ def test_mcp_result_payloads_are_bounded():
 
 
 def test_mcp_text_links_are_promoted_only_from_configured_artifact_root(tmp_path):
-    from personal_agent.mcp.connection import _normalize_call_result
+    from luna_agent.mcp.connection import _normalize_call_result
 
     output = tmp_path / "playwright"
     output.mkdir()
@@ -279,7 +279,7 @@ def test_mcp_text_links_are_promoted_only_from_configured_artifact_root(tmp_path
 
 
 def test_mcp_text_link_promotion_rejects_symlinks_and_marks_oversize(tmp_path):
-    from personal_agent.mcp.connection import _normalize_call_result
+    from luna_agent.mcp.connection import _normalize_call_result
 
     output = tmp_path / "playwright"
     output.mkdir()

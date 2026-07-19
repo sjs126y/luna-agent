@@ -3,14 +3,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.delivery import DeliveryResult, DeliveryStatus
-from personal_agent.plugins.core.ports import (
+from luna_agent.delivery import DeliveryResult, DeliveryStatus
+from luna_agent.plugins.core.ports import (
     PluginConversationPort,
     PluginNotificationPort,
     PluginStoragePort,
     PluginTaskPort,
 )
-from personal_agent.plugins.runtime import PluginRuntimeState
+from luna_agent.plugins.runtime import PluginRuntimeState
 
 
 def _plugin(*, provides=("active", "notification"), sessions=("wechat:c1:u1",)):

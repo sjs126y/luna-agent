@@ -3,7 +3,7 @@ key: integrations/workspace-watch
 name: Workspace Watch
 version: "0.1.0"
 plugin_api: ">=1,<2"
-description: Proactively asks Lumora to review stable changes to configured workspace files.
+description: Proactively asks Luna Agent to review stable changes to configured workspace files.
 kind: integration
 entrypoint: workspace_watch:register
 requires:

@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.db.database import Database
+from luna_agent.config import Settings
+from luna_agent.db.database import Database
 
 
 @pytest.fixture
 def isolate_audit_log(tmp_path):
-    from personal_agent.tools.audit import set_audit_path
+    from luna_agent.tools.audit import set_audit_path
 
     set_audit_path(tmp_path / "audit.log")
     yield

@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.config import Settings
-from personal_agent.plugins import PluginManager, PluginStatus
+from luna_agent.config import Settings
+from luna_agent.plugins import PluginManager, PluginStatus
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "feed_watch"

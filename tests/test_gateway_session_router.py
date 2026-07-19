@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from personal_agent.gateway.session_router import GatewaySessionRouter
+from luna_agent.gateway.session_router import GatewaySessionRouter
 
 
 def _source(chat_id: str = "c1"):

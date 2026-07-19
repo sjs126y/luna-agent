@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from personal_agent.hooks import (
+from luna_agent.hooks import (
     GatewayMessageOutcome,
     HookEnvelope,
     HookEvent,

@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.conversation import SessionDirectory, SubmissionOutcome, SubmissionStatus
-from personal_agent.cron.entry import CronEntry
-from personal_agent.cron.scheduler import CronScheduler
+from luna_agent.conversation import SessionDirectory, SubmissionOutcome, SubmissionStatus
+from luna_agent.cron.entry import CronEntry
+from luna_agent.cron.scheduler import CronScheduler
 
 
 class SubmissionPort:

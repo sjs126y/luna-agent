@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from lumora_plugin_sdk import ActiveResourceRequest, CommandEntry
+from luna_agent_plugin_sdk import ActiveResourceRequest, CommandEntry
 
 
 class ActiveConfig(BaseModel):

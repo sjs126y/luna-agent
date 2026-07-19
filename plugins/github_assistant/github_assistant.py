@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from lumora_plugin_sdk import (
+from luna_agent_plugin_sdk import (
     ActiveResourceRequest,
     CommandEntry,
     HookEvent,

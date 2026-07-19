@@ -5,14 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from personal_agent.agent.agent import init_agent, Agent
-from personal_agent.agent.context import build_turn_context
-from personal_agent.agent.loop import run_conversation
-from personal_agent.agent.retry import RetryState
-from personal_agent.models.messages import NormalizedResponse
-from personal_agent.llm.provider import ProviderProfile
-from personal_agent.conversation.events import ConversationEventSink, EventRecorder
-from personal_agent.conversation.steer import SteerManager
+from luna_agent.agent.agent import init_agent, Agent
+from luna_agent.agent.context import build_turn_context
+from luna_agent.agent.loop import run_conversation
+from luna_agent.agent.retry import RetryState
+from luna_agent.models.messages import NormalizedResponse
+from luna_agent.llm.provider import ProviderProfile
+from luna_agent.conversation.events import ConversationEventSink, EventRecorder
+from luna_agent.conversation.steer import SteerManager
 
 
 class MockTransport:
@@ -121,7 +121,7 @@ def provider():
 @pytest.mark.asyncio
 async def test_simple_response(provider):
     """Agent returns final response when no tool_calls."""
-    from personal_agent.conversation.events import EventRecorder
+    from luna_agent.conversation.events import EventRecorder
 
     recorder = EventRecorder()
     transport = MockTransport([
@@ -299,7 +299,7 @@ async def test_build_turn_context_counts_ephemeral_injections_once(provider, mon
     agent = init_agent(transport, provider, compressor=compressor, memory_manager=memory)
     agent._pending_skill_injection = "[技能注入] " + "i" * 400
     monkeypatch.setattr(
-        "personal_agent.agent.context._load_skill_summaries",
+        "luna_agent.agent.context._load_skill_summaries",
         lambda: "[技能摘要] " + "s" * 400,
     )
 
@@ -313,7 +313,7 @@ async def test_build_turn_context_counts_ephemeral_injections_once(provider, mon
     assert agent._last_skill_injection == ctx.skill_injection
     assert agent._last_memory_injections == ctx.memory_injections_text
 
-    from personal_agent.agent.loop import _build_api_messages
+    from luna_agent.agent.loop import _build_api_messages
 
     api_messages = await _build_api_messages(agent, ctx)
 
@@ -353,7 +353,7 @@ async def test_build_turn_context_detects_same_length_compression(provider):
 @pytest.mark.asyncio
 async def test_empty_response_retry(provider):
     """Empty response triggers retry nudge."""
-    from personal_agent.conversation.events import EventRecorder
+    from luna_agent.conversation.events import EventRecorder
 
     recorder = EventRecorder()
     transport = MockTransport([
@@ -439,8 +439,8 @@ async def test_tool_use_loop(provider):
     agent = init_agent(transport, provider)
 
     # Register echo tool
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _echo(msg: str = ""):
         return f"Echo: {msg}"
@@ -505,8 +505,8 @@ async def test_post_tool_empty_uses_one_tool_free_finalization_without_persistin
         NormalizedResponse(text="", finish_reason="end_turn"),
         NormalizedResponse(text="根据记忆工具结果，当前共有若干长期记忆。", finish_reason="end_turn"),
     ])
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _echo(value: str = ""):
         return '{"items": [{"id": "m1", "content": "likes tea"}]}'
@@ -555,8 +555,8 @@ async def test_identical_successful_tool_call_finalizes_after_three_executions(p
         NormalizedResponse(text="根据已有结果，测试内容已处理。", finish_reason="end_turn"),
     ])
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     executions = 0
 
@@ -612,8 +612,8 @@ async def test_duplicate_tool_finalization_empty_response_uses_safe_fallback(pro
         for index in range(1, 5)
     ] + [NormalizedResponse(text="", finish_reason="end_turn")])
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _echo(msg: str = ""):
         return "sensitive raw result that must not be exposed"
@@ -655,8 +655,8 @@ async def test_duplicate_ids_in_one_response_execute_each_unique_id_once(provide
         NormalizedResponse(text="只执行了一次。", finish_reason="end_turn"),
     ])
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     executions: list[str] = []
 
@@ -705,7 +705,7 @@ async def test_duplicate_ids_in_one_response_execute_each_unique_id_once(provide
 
 @pytest.mark.asyncio
 async def test_stop_hook_can_continue_once_without_persisting_instruction(provider):
-    from personal_agent.hooks import HookEvent, HookManager, StopOutcome
+    from luna_agent.hooks import HookEvent, HookManager, StopOutcome
 
     transport = MockTransport([
         NormalizedResponse(text="draft", finish_reason="end_turn"),
@@ -753,8 +753,8 @@ async def test_tool_quota_denial_stops_agent_loop(provider):
         NormalizedResponse(text="已根据现有结果完成总结。", finish_reason="end_turn"),
     ])
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _quota_echo(msg: str = ""):
         return f"Echo: {msg}"
@@ -791,8 +791,8 @@ async def test_tool_quota_finalization_uses_fallback_when_model_returns_empty(pr
         NormalizedResponse(text="", finish_reason="end_turn"),
     ])
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _quota_fallback_echo(msg: str = ""):
         return "done"
@@ -821,8 +821,8 @@ async def test_iteration_limit_returns_nonempty_stop_message(provider):
         NormalizedResponse(text="should not run", finish_reason="end_turn"),
     ])
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _iteration_echo(msg: str = ""):
         return f"Echo: {msg}"
@@ -854,8 +854,8 @@ async def test_turn_report_records_denied_tool_decision(provider):
     ])
     agent = init_agent(transport, provider)
 
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _danger(value: str = ""):
         return f"danger:{value}"
@@ -870,7 +870,7 @@ async def test_turn_report_records_denied_tool_decision(provider):
         approval_mode="cached",
     ))
 
-    from personal_agent.security.session import SecurityStateStore
+    from luna_agent.security.session import SecurityStateStore
     agent._security_context = SecurityStateStore(SimpleNamespace(
         execution_mode="ask-first",
         sandbox_roots=[Path.cwd()],
@@ -916,9 +916,9 @@ async def test_permission_required_network_tool_stops_without_looping(provider):
         ),
     ])
 
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _search(query: str = "", max_results: int = 3):
         return f"searched:{query}:{max_results}"
@@ -970,8 +970,8 @@ async def test_hard_safety_denial_forces_tool_free_finalization(provider):
         ),
     ])
 
-    from personal_agent.tools.entry import ToolEntry, ToolHandlerOutput
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.tools.entry import ToolEntry, ToolHandlerOutput
+    from luna_agent.tools.registry import tool_registry
 
     async def _guarded_search(query: str = ""):
         return ToolHandlerOutput(
@@ -1025,10 +1025,10 @@ async def test_temporary_network_grant_survives_turn_reset(provider):
         ),
     ])
 
-    from personal_agent.security.models import ResourceRequirement
-    from personal_agent.security.session import SecurityStateStore
-    from personal_agent.tools.entry import ToolEntry
-    from personal_agent.tools.registry import tool_registry
+    from luna_agent.security.models import ResourceRequirement
+    from luna_agent.security.session import SecurityStateStore
+    from luna_agent.tools.entry import ToolEntry
+    from luna_agent.tools.registry import tool_registry
 
     async def _search(query: str = "", max_results: int = 3):
         return f"searched:{query}:{max_results}"
@@ -1109,7 +1109,7 @@ async def test_turn_report_does_not_treat_tool_advice_as_completed_use(provider)
 
 @pytest.mark.asyncio
 async def test_llm_failure_returns_failed_status(provider):
-    from personal_agent.conversation.events import EventRecorder
+    from luna_agent.conversation.events import EventRecorder
 
     recorder = EventRecorder()
     agent = init_agent(FailingTransport([]), provider)
@@ -1131,7 +1131,7 @@ async def test_llm_failure_returns_failed_status(provider):
 
 @pytest.mark.asyncio
 async def test_interrupt_emits_structured_stop_event(provider):
-    from personal_agent.conversation.events import EventRecorder
+    from luna_agent.conversation.events import EventRecorder
 
     recorder = EventRecorder()
     agent = init_agent(MockTransport([]), provider)

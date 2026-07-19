@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from personal_agent.llm import client as llm_client
+from luna_agent.llm import client as llm_client
 
 
 @pytest.mark.asyncio

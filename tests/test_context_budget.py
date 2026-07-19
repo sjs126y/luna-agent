@@ -2,8 +2,8 @@
 
 import pytest
 
-from personal_agent.context_budget import build_context_budget, compose_context_text, estimate_context_budget
-from personal_agent.llm.provider import _detect_context_window
+from luna_agent.context_budget import build_context_budget, compose_context_text, estimate_context_budget
+from luna_agent.llm.provider import _detect_context_window
 
 
 def test_context_budget_splits_tools_skills_memory_and_mcp():

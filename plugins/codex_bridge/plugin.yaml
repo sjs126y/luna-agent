@@ -3,7 +3,7 @@ key: integrations/codex-bridge
 name: Codex Bridge
 version: "0.1.0"
 plugin_api: ">=1,<2"
-description: Register the official Codex MCP server with Lumora-enforced session boundaries.
+description: Register the official Codex MCP server with Luna Agent-enforced session boundaries.
 kind: integration
 entrypoint: codex_bridge:register
 requires:
