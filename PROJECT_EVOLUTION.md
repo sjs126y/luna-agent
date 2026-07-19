@@ -509,6 +509,15 @@
 - Agent 工具循环支持 mid-turn 压缩和一次 context-overflow 恢复，物理 Session 链继续负责历史审计和恢复。
 - SQLite 新增窗口 lineage 与 token 诊断；`/compact` 支持手动 checkpoint，`/usage` 显示当前窗口。
 
+## 2026-07-19 - Provider 与模型能力解析
+
+- Provider 默认协议、模型硬上下文、最大输出和来源信息收敛到统一 capability catalog。
+- OpenAI 默认使用 256K 经济窗口；其他已知模型按硬上限运行；显式配置和未知模型均有保守裁剪边界。
+- OpenRouter catalog miss 支持短超时元数据补全和 24 小时缓存，远端不可用时继续使用本地 fallback。
+- 主 Agent、Memory、插件与视觉 LLM 统一 `api_mode` 解析，特殊 Responses 中转仍可显式覆盖。
+- 上下文压缩默认阈值提升至 90%，并为输出与安全余量保留空间；事件、turn report、`doctor` 和 `/usage` 可追踪最终解析结果。
+- 当前 `gpt-5.6-terra` 配置使用 256K 有效窗口、1.05M 模型硬上限和显式 `codex_responses`；完整测试为 `1197 passed, 1 warning`。
+
 ## 当前代码规模
 
 统计口径：v0.19 完成时 Git 已跟踪 Python 文件的物理行数；包含空行和注释，不等同于有效代码行。

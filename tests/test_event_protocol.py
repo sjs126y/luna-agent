@@ -116,6 +116,9 @@ def test_frontend_protocol_schema_aliases_event_protocol_schema():
     assert llm_fields["context_remaining_tokens"]["type"] == "integer"
     assert llm_fields["context_percent"]["type"] == "number"
     assert llm_fields["context_budget"]["type"] == "object"
+    assert llm_fields["provider"]["type"] == "string"
+    assert llm_fields["api_mode"]["type"] == "string"
+    assert llm_fields["model_capability"]["type"] == "object"
 
 
 def test_conversation_event_as_dict_includes_protocol_version():

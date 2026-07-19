@@ -59,9 +59,9 @@ LLM_CONTEXT_WINDOW=0
 LLM_REASONING_EFFORT=
 ```
 
-`LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。Codex/Ahoo 这类 Responses 中转站通常使用根 `LLM_BASE_URL`，并显式设置 `LLM_API_MODE=codex_responses`。
+`LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。`auto` 先使用 provider 默认协议：OpenAI 为 Responses、Anthropic 为 Messages，DeepSeek、OpenRouter 和 xAI 为 Chat Completions；未知 provider 才根据明确的 base URL 判断，否则回退 Chat Completions。Codex/Ahoo 这类有特殊鉴权或语义的 Responses 中转站仍应显式设置 `LLM_API_MODE=codex_responses`，显式配置始终优先。
 
-`LLM_CONTEXT_WINDOW=0` 表示按显式容量标记和模型族自动推断上下文窗口。当前识别 GPT-5、GPT-4.1、GPT-4/4o、Claude、Gemini、DeepSeek、Qwen、o-series，以及名称中的 `1m`、`400k`、`256k`、`200k`、`128k`、`64k`、`32k`；无法可靠识别的新模型默认按 `256000` 处理。使用中转站自定义模型名时，最好填写服务实际公布的窗口，例如 `1000000`。同一配置也可以写在 `config.yaml` 的 `llm.context_window`，显式配置始终覆盖模型名推断，来源优先级是 `.env` 高于 `config.yaml`。
+模型能力解析会区分“模型硬上限”和“Luna Agent 有效窗口”。`LLM_CONTEXT_WINDOW=0` 时，OpenAI provider 默认使用 `256000` 的经济窗口，其他已知模型使用 catalog 中的硬上限；无法可靠识别的新模型保守按 `256000` 处理。显式 `LLM_CONTEXT_WINDOW` 会覆盖默认值，但不会超过已知硬上限。`LLM_MAX_TOKENS` 同样不会超过已知输出上限。模型名中的 `1m`、`400k`、`256k` 等容量标记可用于未收录的中转模型；OpenRouter 静态未命中时会以 3 秒超时查询其模型元数据，并缓存 24 小时。`doctor` 和 `/usage` 会显示最终值、来源及裁剪状态。
 
 `LLM_REASONING_EFFORT` 用于设置支持推理强度的模型。留空表示不发送该字段；常见值是 `minimal` / `low` / `medium` / `high`。Chat Completions 会发送 `reasoning_effort`，Responses / Codex Responses 会发送 `reasoning.effort`，Anthropic Messages 暂不额外映射。
 
@@ -241,7 +241,7 @@ uv run luna-agent memory reindex --index all
 compression:
   engine: compressor
   model: ""                    # 空值表示使用当前 Agent 模型
-  threshold_ratio: 0.6
+  threshold_ratio: 0.9
   retained_user_tokens: 20000  # 原样保留的真实用户消息预算
   tail_token_budget: 20000     # 最近完整消息预算
 ```
@@ -249,6 +249,7 @@ compression:
 内置压缩器生成面向下一模型的完整 Handoff Summary，并创建新的物理 Session
 checkpoint。摘要没有独立的字数或 token 上限；旧配置 `compression.max_tokens`
 已废弃并忽略。`/compact` 可以手动创建 checkpoint，`/usage` 会显示当前窗口编号。
+自动压缩阈值取 `有效窗口 * threshold_ratio` 与安全输入上限的较小值；安全输入上限会预留模型输出额度，以及 `max(4096, 有效窗口的 1%)` 安全余量。
 
 ## MCP Server
 

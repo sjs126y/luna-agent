@@ -197,7 +197,7 @@ Gateway 负责：
 它负责：
 
 - 根据 `settings.llm_provider` 获取 `ProviderProfile`。
-- 根据 `LLM_API_MODE` 或 provider/base URL 选择 API mode。
+- 通过 Provider capability 统一解析 `LLM_API_MODE`、协议来源和模型限制。
 - 从 transport registry 获取 transport。
 - 创建 compressor。
 - 调用 `init_agent()`。
@@ -546,7 +546,7 @@ Transport registry 按 API mode 选择 transport。
 - `responses`。
 - `codex_responses`。
 
-`LLM_API_MODE=auto` 会尝试根据 provider/base URL 探测；中转站场景建议显式配置。
+`LLM_API_MODE=auto` 优先采用 provider 默认协议，未知 provider 才使用明确的 base URL 线索。主 Agent、Memory LLM、插件 LLM port 和视觉 LLM 共用同一解析结果；特殊中转协议仍建议显式配置。
 
 ### Anthropic Messages
 
@@ -608,7 +608,9 @@ Usage 会归一成前端和 doctor 能理解的字段：
 
 `context_used_tokens` 表示当前上下文占用，不等同于最近一次 API 的 input tokens。
 
-Provider 优先使用显式 `llm.context_window`；配置为 `0` 时按模型名中的容量标记和已知模型族推断。无法识别的新模型使用 256K fallback，压缩阈值再按 `compression.threshold_ratio` 计算，不再因为自定义中转模型名退回 64K。
+Provider capability catalog 同时记录模型硬上下文、输出上限、数据来源与校验日期。`ProviderProfile.context_window` 保持为 Agent 实际使用的有效窗口：OpenAI 未显式配置时默认 256K，其他已知 provider 使用模型硬上限，未知模型使用 256K fallback；显式上下文和输出配置都会被已知硬上限裁剪。OpenRouter 仅在静态 catalog 未命中时查询远端模型元数据，并以短超时和本地 TTL 缓存降级。
+
+压缩阈值默认是有效窗口的 90%，同时必须为本轮输出额度和 `max(4096, context * 1%)` 留出空间。压缩器、`/usage` 与事件诊断共用同一个阈值函数。
 
 </details>
 

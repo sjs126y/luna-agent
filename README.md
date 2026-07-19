@@ -114,6 +114,7 @@ flowchart LR
 | 能力 | 状态 | 说明 |
 | --- | :---: | --- |
 | 多轮会话与流式输出 | Ready | 会话切换、上下文统计、运行中停止与修正 |
+| 模型与协议适配 | Ready | 自动选择 provider 协议、识别模型限制并保护长上下文 |
 | 文件、Shell、网络与进程工具 | Ready | 核心工具直接可用，低频能力按需发现，扫描和输出有界 |
 | MCP Client Runtime | Ready | stdio / Streamable HTTP、后台启动、断线恢复 |
 | 长期个人记忆 | Ready | Luna Memory、Mem0、混合检索和本地 Qdrant |

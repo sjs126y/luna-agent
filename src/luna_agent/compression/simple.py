@@ -9,6 +9,7 @@ from typing import Any
 
 from luna_agent.compression.base import CompactionMetadata, CompactionResult, ContextEngine
 from luna_agent.compression.registry import compression_registry
+from luna_agent.context_budget import resolve_compression_threshold
 from luna_agent.llm.provider import ProviderProfile
 from luna_agent.llm.token_counter import count_messages_tokens, estimate_tokens
 
@@ -39,7 +40,7 @@ class ContextCompressor(ContextEngine):
     def __init__(
         self,
         context_length: int = 256_000,
-        threshold_ratio: float = 0.6,
+        threshold_ratio: float = 0.9,
         tail_token_budget: int = 20_000,
         retained_user_tokens: int = DEFAULT_RETAINED_USER_TOKENS,
         compressor_transport: Any = None,
@@ -47,7 +48,11 @@ class ContextCompressor(ContextEngine):
         output_tokens: int = 4096,
     ) -> None:
         self.context_length = context_length
-        self.threshold_tokens = int(context_length * threshold_ratio)
+        self.threshold_tokens = resolve_compression_threshold(
+            context_length,
+            output_tokens,
+            threshold_ratio,
+        )
         self.tail_token_budget = tail_token_budget
         self.retained_user_tokens = retained_user_tokens
         self._compressor_transport = compressor_transport

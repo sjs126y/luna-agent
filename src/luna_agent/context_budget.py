@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any
 
 from luna_agent.llm.token_counter import count_messages_tokens, count_tools_tokens, estimate_tokens
@@ -10,6 +11,22 @@ from luna_agent.llm.token_counter import count_messages_tokens, count_tools_toke
 
 def compose_context_text(*parts: str) -> str:
     return "\n".join(part for part in parts if part)
+
+
+def resolve_compression_threshold(
+    context_window: int,
+    max_output_tokens: int,
+    threshold_ratio: float,
+) -> int:
+    """Reserve response capacity while honoring the configured context ratio."""
+    context_limit = max(1, int(context_window or 0))
+    ratio = max(0.0, min(float(threshold_ratio or 0), 1.0))
+    if ratio <= 0:
+        return 0
+    safety_margin = max(4096, math.ceil(context_limit * 0.01))
+    ratio_threshold = math.floor(context_limit * ratio)
+    safe_input_ceiling = context_limit - max(0, int(max_output_tokens or 0)) - safety_margin
+    return max(1, min(ratio_threshold, safe_input_ceiling))
 
 
 @dataclass
@@ -70,6 +87,7 @@ def estimate_context_budget(
     context_limit: int = 0,
     model: str = "",
     compression_threshold_ratio: float = 0,
+    max_output_tokens: int = 0,
 ) -> ContextBudget:
     if context_limit <= 0:
         from luna_agent.llm.provider import _detect_context_window
@@ -91,9 +109,10 @@ def estimate_context_budget(
     skills_tokens = estimate_tokens(skills_summary, model)
     memory_tokens = estimate_tokens(memory_injections, model)
     used = system_tokens + history_tokens + tool_tokens + mcp_tokens + skills_tokens + memory_tokens
-    compression_threshold = (
-        int(context_limit * compression_threshold_ratio)
-        if compression_threshold_ratio > 0 else 0
+    compression_threshold = resolve_compression_threshold(
+        context_limit,
+        max_output_tokens,
+        compression_threshold_ratio,
     )
 
     return ContextBudget(
@@ -132,6 +151,9 @@ async def build_context_budget(
             system_prompt = getattr(agent, "_cached_system_prompt", "") or ""
         if tools is None:
             tools = getattr(agent, "tools", [])
+        max_output_tokens = int(getattr(provider, "max_tokens", 0) or 0)
+    else:
+        max_output_tokens = 0
 
     if tools is None:
         tools = []
@@ -140,6 +162,8 @@ async def build_context_budget(
         model = model or str(getattr(settings, "llm_model", "") or "")
         if context_limit <= 0:
             context_limit = int(getattr(settings, "llm_context_window", 0) or 0)
+        if max_output_tokens <= 0:
+            max_output_tokens = int(getattr(settings, "llm_max_tokens", 0) or 0)
 
     if skills_summary is None:
         skills_summary = _current_skill_summaries()
@@ -160,6 +184,7 @@ async def build_context_budget(
         context_limit=context_limit,
         model=model,
         compression_threshold_ratio=threshold_ratio,
+        max_output_tokens=max_output_tokens,
     )
 
 

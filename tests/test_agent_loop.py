@@ -218,6 +218,8 @@ async def test_simple_response(provider):
     assert report["final_response_summary"] == "Hello!"
     assert report["llm"]["context_used_tokens"] > 0
     assert report["llm"]["context_budget"]["used"] == report["llm"]["context_used_tokens"]
+    assert report["llm"]["provider"] == provider.name
+    assert report["llm"]["model_capability"]["model"] == provider.model
     assert [event.type for event in recorder.events] == [
         "turn_start",
         "llm_start",
@@ -230,6 +232,8 @@ async def test_simple_response(provider):
     assert recorder.events[2].data["context_used_tokens"] > 0
     assert recorder.events[2].data["context_remaining_tokens"] >= 0
     assert recorder.events[2].data["context_budget"]["used"] == recorder.events[2].data["context_used_tokens"]
+    assert recorder.events[2].data["provider"] == provider.name
+    assert recorder.events[2].data["model_capability"]["model"] == provider.model
     assert recorder.events[3].message == "Hello!"
 
 

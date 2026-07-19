@@ -33,7 +33,11 @@ async def create_agent_runtime(
     """Resolve provider/transport/compressor and assemble an Agent."""
     provider_name = settings.llm_provider
     provider = provider_registry.get(provider_name, settings)
-    api_mode = _resolve_api_mode(settings, provider_name)
+    if provider_name == "openrouter":
+        from luna_agent.llm.model_metadata import enrich_openrouter_profile
+
+        await enrich_openrouter_profile(provider, settings.agent_data_dir)
+    api_mode = _resolve_api_mode(settings, provider_name, provider)
     transport = transport_registry.get(api_mode, provider)
     logger.debug("Agent transport: provider=%s api_mode=%s", provider_name, api_mode)
 
@@ -77,7 +81,13 @@ async def create_agent_runtime(
     return AgentRuntime(agent=agent, provider=provider, transport=transport)
 
 
-def _resolve_api_mode(settings, provider_name: str) -> str:
+def _resolve_api_mode(
+    settings,
+    provider_name: str,
+    provider: ProviderProfile | None = None,
+) -> str:
+    if provider is not None and provider.api_mode:
+        return provider.api_mode
     configured = str(getattr(settings, "llm_api_mode", "auto") or "auto").strip()
     if configured and configured != "auto":
         return configured

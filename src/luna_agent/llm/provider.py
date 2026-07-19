@@ -2,9 +2,18 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import logging
 from typing import Any
 
+from luna_agent.llm.capabilities import (
+    ResolvedModelCapability,
+    detect_context_window,
+    resolve_api_mode,
+    resolve_model_capability,
+)
+
 CacheStrategy = str
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,8 +26,18 @@ class ProviderProfile:
     api_key: str
     model: str
     max_tokens: int = 4096
-    context_window: int = 0                # 0 = auto-detect from model name
+    context_window: int = 0                # Effective window used by the Agent.
     reasoning_effort: str = ""             # provider-specific effort, empty = omit
+    model_context_limit: int = 0            # Documented or conservative hard limit.
+    model_max_output_tokens: int = 0        # 0 = capability is not verified.
+    context_source: str = ""
+    output_source: str = ""
+    capability_source: str = ""
+    capability_verified_at: str = ""
+    context_clamped: bool = False
+    output_clamped: bool = False
+    api_mode: str = ""
+    api_mode_source: str = ""
 
     # Hooks to patch vendor quirks (e.g., a vendor doesn't support temperature)
     request_hook: Callable[[dict], dict] | None = None
@@ -55,41 +74,71 @@ class ProviderProfile:
             "max_image_bytes": self.max_image_bytes,
         }
 
+    def model_capability(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "effective_context_window": self.context_window,
+            "model_context_limit": self.model_context_limit,
+            "effective_max_output_tokens": self.max_tokens,
+            "model_max_output_tokens": self.model_max_output_tokens,
+            "context_source": self.context_source,
+            "output_source": self.output_source,
+            "capability_source": self.capability_source,
+            "capability_verified_at": self.capability_verified_at,
+            "context_clamped": self.context_clamped,
+            "output_clamped": self.output_clamped,
+            "api_mode": self.api_mode,
+            "api_mode_source": self.api_mode_source,
+        }
+
 
 def _detect_context_window(model: str) -> int:
-    """Infer a practical context window from explicit markers and model family."""
-    m = model.lower()
-    if any(marker in m for marker in ("1m", "1.0m", "1000k")):
-        return 1_000_000
-    if "400k" in m:
-        return 400_000
-    if "256k" in m:
-        return 256_000
-    if "200k" in m:
-        return 200_000
-    if "128k" in m:
-        return 128_000
-    if "64k" in m:
-        return 64_000
-    if "32k" in m:
-        return 32_000
-
-    if "gemini" in m or "gpt-4.1" in m or "deepseek" in m:
-        return 1_000_000
-    if "gpt-5" in m:
-        return 400_000
-    if "claude" in m or any(name in m for name in ("o1", "o3", "o4")):
-        return 200_000
-    if "gpt-4" in m or "gpt-4o" in m or "qwen" in m:
-        return 128_000
-    return 256_000
+    """Compatibility wrapper for consumers that have no provider config."""
+    return detect_context_window(model)
 
 
-def _configured_context_window(config) -> int:
-    configured = int(getattr(config, "llm_context_window", 0) or 0)
-    if configured > 0:
-        return configured
-    return _detect_context_window(str(getattr(config, "llm_model", "") or ""))
+def _configured_capability(config, provider_name: str) -> ResolvedModelCapability:
+    capability = resolve_model_capability(
+        provider_name,
+        str(getattr(config, "llm_model", "") or ""),
+        configured_context_window=int(getattr(config, "llm_context_window", 0) or 0),
+        configured_max_output_tokens=int(getattr(config, "llm_max_tokens", 4096) or 4096),
+    )
+    if capability.context_clamped:
+        logger.warning(
+            "Configured context window exceeds known model limit; clamped: "
+            "provider=%s model=%s configured=%s limit=%s",
+            provider_name,
+            capability.model,
+            getattr(config, "llm_context_window", 0),
+            capability.model_context_limit,
+        )
+    if capability.output_clamped:
+        logger.warning(
+            "Configured max output exceeds known model limit; clamped: "
+            "provider=%s model=%s configured=%s limit=%s",
+            provider_name,
+            capability.model,
+            getattr(config, "llm_max_tokens", 4096),
+            capability.model_max_output_tokens,
+        )
+    return capability
+
+
+def _capability_fields(config, provider_name: str) -> dict[str, Any]:
+    resolved = _configured_capability(config, provider_name)
+    return {
+        "max_tokens": resolved.effective_max_output_tokens,
+        "context_window": resolved.effective_context_window,
+        "model_context_limit": resolved.model_context_limit,
+        "model_max_output_tokens": resolved.model_max_output_tokens,
+        "context_source": resolved.context_source,
+        "output_source": resolved.output_source,
+        "capability_source": resolved.capability_source,
+        "capability_verified_at": resolved.capability_verified_at,
+        "context_clamped": resolved.context_clamped,
+        "output_clamped": resolved.output_clamped,
+    }
 
 
 def _configured_reasoning_effort(config) -> str:
@@ -112,22 +161,23 @@ class ProviderRegistry:
     def get(self, name: str, config) -> ProviderProfile:
         if name not in self._factories:
             raise KeyError(f"Unknown provider: {name}. Registered: {list(self._factories)}")
-        return self._factories[name](config)
+        profile = self._factories[name](config)
+        configured = str(getattr(config, "llm_api_mode", "auto") or "auto").strip()
+        if configured and configured != "auto":
+            profile.api_mode = configured
+            profile.api_mode_source = "configured"
+        else:
+            profile.api_mode = self.detect_api_mode(profile.base_url, name)
+            profile.api_mode_source = resolve_api_mode(name, profile.base_url).source
+        return profile
 
     def list(self) -> list[str]:
         return list(self._factories.keys())
 
     @staticmethod
     def detect_api_mode(base_url: str, provider_name: str) -> str:
-        """Infer api_mode from provider metadata after Settings handles overrides."""
-        url_lower = base_url.lower()
-        if "anthropic" in url_lower:
-            return "anthropic_messages"
-        if "openai" in url_lower or "openrouter" in url_lower:
-            return "chat_completions"
-        if provider_name == "deepseek" and "anthropic" in url_lower:
-            return "anthropic_messages"
-        return "chat_completions"
+        """Infer api_mode from provider defaults and clear endpoint metadata."""
+        return resolve_api_mode(provider_name, base_url).mode
 
 
 # Module-level singleton
@@ -139,8 +189,8 @@ provider_registry = ProviderRegistry()
 def _deepseek_factory(config) -> ProviderProfile:
     return ProviderProfile(
         name="deepseek", base_url=config.llm_base_url, api_key=config.llm_api_key,
-        model=config.llm_model, max_tokens=config.llm_max_tokens,
-        context_window=_configured_context_window(config),
+        model=config.llm_model,
+        **_capability_fields(config, "deepseek"),
         reasoning_effort=_configured_reasoning_effort(config),
         cache_strategy="prefix",
         supports_cache_usage=True,
@@ -154,8 +204,8 @@ def _deepseek_factory(config) -> ProviderProfile:
 def _openai_factory(config) -> ProviderProfile:
     return ProviderProfile(
         name="openai", base_url=config.llm_base_url, api_key=config.llm_api_key,
-        model=config.llm_model, max_tokens=config.llm_max_tokens,
-        context_window=_configured_context_window(config),
+        model=config.llm_model,
+        **_capability_fields(config, "openai"),
         reasoning_effort=_configured_reasoning_effort(config),
         cache_strategy="prefix",
         supports_cache_usage=True,
@@ -172,8 +222,8 @@ def _openai_factory(config) -> ProviderProfile:
 def _anthropic_factory(config) -> ProviderProfile:
     return ProviderProfile(
         name="anthropic", base_url=config.llm_base_url, api_key=config.llm_api_key,
-        model=config.llm_model, max_tokens=config.llm_max_tokens,
-        context_window=_configured_context_window(config),
+        model=config.llm_model,
+        **_capability_fields(config, "anthropic"),
         reasoning_effort=_configured_reasoning_effort(config),
         cache_strategy="explicit",
         supports_cache_usage=True,
@@ -195,8 +245,7 @@ def _openrouter_factory(config) -> ProviderProfile:
                  else "https://openrouter.ai/api/v1",
         api_key=config.llm_api_key,
         model=config.llm_model,
-        max_tokens=config.llm_max_tokens,
-        context_window=_configured_context_window(config),
+        **_capability_fields(config, "openrouter"),
         reasoning_effort=_configured_reasoning_effort(config),
         extra_headers={
             "HTTP-Referer": "http://localhost",
@@ -218,8 +267,7 @@ def _xai_factory(config) -> ProviderProfile:
         base_url=config.llm_base_url or "https://api.x.ai/v1",
         api_key=config.llm_api_key,
         model=config.llm_model,
-        max_tokens=config.llm_max_tokens,
-        context_window=_configured_context_window(config),
+        **_capability_fields(config, "xai"),
         reasoning_effort=_configured_reasoning_effort(config),
         supports_image_input=True,
         image_input_modes=("url", "base64"),

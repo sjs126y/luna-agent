@@ -51,19 +51,42 @@ def test_xai_provider_uses_official_default_base_url():
     assert provider.model == "grok-4.5"
 
 
+def test_provider_profile_exposes_resolved_api_mode_and_source():
+    openai = provider_registry.get("openai", _settings("openai", "gpt-5.6"))
+    anthropic = provider_registry.get("anthropic", _settings("anthropic", "claude-sonnet"))
+
+    assert openai.api_mode == "responses"
+    assert openai.api_mode_source == "provider-default"
+    assert anthropic.api_mode == "anthropic_messages"
+
+
+def test_explicit_api_mode_overrides_provider_default():
+    settings = _settings("openai", "gpt-5.6")
+    settings.llm_api_mode = "codex_responses"
+
+    provider = provider_registry.get("openai", settings)
+
+    assert provider.api_mode == "codex_responses"
+    assert provider.api_mode_source == "configured"
+
+
 def test_provider_context_window_uses_configured_override():
     settings = _settings("openai", "gpt-5.5")
     settings.llm_context_window = 1_000_000
 
     provider = provider_registry.get("openai", settings)
 
-    assert provider.context_window == 1_000_000
+    assert provider.context_window == 400_000
+    assert provider.model_context_limit == 400_000
+    assert provider.context_clamped is True
 
 
 def test_provider_context_window_falls_back_to_model_detection():
     provider = provider_registry.get("openai", _settings("openai", "gpt-5.5"))
 
-    assert provider.context_window == 400_000
+    assert provider.context_window == 256_000
+    assert provider.model_context_limit == 400_000
+    assert provider.context_source == "provider-default"
 
 
 def test_provider_reasoning_effort_uses_env_setting():

@@ -59,12 +59,10 @@ class MemoryLLMFacade:
             llm_max_tokens=config.max_tokens,
             llm_context_window=0,
             llm_reasoning_effort="",
+            llm_api_mode=config.api_mode,
         )
         profile = provider_registry.get(config.provider, values)
-        api_mode = config.api_mode
-        if not api_mode or api_mode == "auto":
-            api_mode = provider_registry.detect_api_mode(config.base_url, config.provider)
-        return transport_registry.get(api_mode, profile)
+        return transport_registry.get(profile.api_mode, profile)
 
 
 def _parse_json_object(text: str) -> Any:

@@ -166,7 +166,10 @@ async def run_conversation(
                 api_calls=agent.session_api_calls + 1,
                 message_count=len(api_messages),
                 tool_count=len(active_tools),
+                provider=getattr(agent._provider, "name", ""),
                 model=getattr(agent._provider, "model", ""),
+                api_mode=getattr(agent._provider, "api_mode", ""),
+                model_capability=_provider_capability_payload(agent._provider),
                 **context_usage_payload,
             )
 
@@ -350,7 +353,10 @@ async def run_conversation(
             cache_diagnostics=cache_diagnostics,
             tool_call_count=len(response.tool_calls or []),
             finish_reason=response.finish_reason,
+            provider=getattr(agent._provider, "name", ""),
             model=response.model or getattr(agent._provider, "model", ""),
+            api_mode=getattr(agent._provider, "api_mode", ""),
+            model_capability=_provider_capability_payload(agent._provider),
             context_window=getattr(agent._provider, "context_window", 0),
             **context_usage_payload,
         )
@@ -1000,6 +1006,14 @@ def _message_text(message: dict) -> str:
         for block in content
         if isinstance(block, dict) and block.get("type") == "text"
     )
+
+
+def _provider_capability_payload(provider) -> dict:
+    capability = getattr(provider, "model_capability", None)
+    if callable(capability):
+        value = capability()
+        return dict(value) if isinstance(value, dict) else {}
+    return {}
 
 
 def _build_request_context_budget(

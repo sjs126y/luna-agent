@@ -184,7 +184,10 @@
 - `api_calls: integer`
 - `message_count: integer`
 - `tool_count: integer`
+- `provider: string`
 - `model: string`
+- `api_mode: string`
+- `model_capability: object`
 - `context_used_tokens: integer`
 - `context_remaining_tokens: integer`
 - `context_percent: number`
@@ -222,7 +225,10 @@
 - `cache_diagnostics: object`
 - `tool_call_count: integer`
 - `finish_reason: string`
+- `provider: string`
 - `model: string`
+- `api_mode: string`
+- `model_capability: object`
 - `context_window: integer`
 - `context_used_tokens: integer`
 - `context_remaining_tokens: integer`
@@ -232,7 +238,8 @@
 字段语义：
 
 - `input_tokens` / `output_tokens` 是 provider 返回的最近一次 API 调用实际消耗。
-- `context_window` 是模型上下文窗口大小。
+- `context_window` 是后端最终给 Agent 使用的有效上下文窗口，不一定等于模型硬上限。
+- `model_capability` 提供 `model_context_limit`、`model_max_output_tokens`、`effective_context_window`、`effective_max_output_tokens`、`context_source`、`output_source`、`capability_source`、`capability_verified_at`、`context_clamped`、`output_clamped`、`api_mode` 和 `api_mode_source`。前端可将其用于诊断，不应自行重新推断模型限制。
 - `context_used_tokens` / `context_remaining_tokens` / `context_percent` 是后端按当前请求体估算的上下文占用，前端 context meter 应优先使用这些字段。
 - `context_budget` 是上下文估算明细，常见字段：
   - `system_prompt`
@@ -528,7 +535,7 @@
 - 图片在 `text` fallback 模式下会进入统一图片文本化链路；配置 `multimodal.image_text_provider` 后可调用辅助 vision provider 生成文本描述。
 - `multimodal.image_text_api_mode` 可控制图片文本化使用的 API 协议：`auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。`anthropic + auto` 会按 Anthropic Messages 请求，base URL 会按 `{base}/messages` 调用，例如 `https://api.deepseek.com/anthropic` -> `/anthropic/messages`；OpenAI-compatible 中转站应显式使用 `chat_completions`；Codex/Ahoo 这类 Responses 中转站建议显式使用 `codex_responses`，base URL 通常填根地址，例如 `https://api.ahooqq.cn`，后端会请求 `{base}/responses`。`codex_responses` 是 `responses` 的语义别名，底层 wire format 相同。
 - 主 Agent 的 `LLM_API_MODE` 也支持 `responses` / `codex_responses`。使用 Codex/Ahoo 这类中转站时，推荐 `.env` 设为 `LLM_PROVIDER=openai`、`LLM_BASE_URL=https://api.ahooqq.cn`、`LLM_API_MODE=codex_responses`、`LLM_MODEL=<目标模型>`；`doctor` 会接受该配置。
-- 主 Agent 的上下文窗口可通过 `.env` 的 `LLM_CONTEXT_WINDOW` 或 `config.yaml` 的 `llm.context_window` 显式配置；默认 `0` 表示按模型名自动推断。该值会影响 `llm_end.context_window`、`context_budget.context_limit`、`/usage` 上下文估算和 turn report 里的 context 字段。`.env` 优先级高于 `config.yaml`，中转站自定义模型名可填真实窗口，例如 `1000000`。
+- 主 Agent 的上下文窗口可通过 `.env` 的 `LLM_CONTEXT_WINDOW` 或 `config.yaml` 的 `llm.context_window` 显式配置；默认 `0` 表示自动解析。OpenAI provider 默认使用 256K 有效窗口，其他已知 provider 使用模型硬上限，未知模型使用 256K fallback；显式值不能超过已知硬上限。该值会影响 `llm_end.context_window`、`context_budget.context_limit`、`/usage` 和 turn report。
 - vision fallback 的 API key / base URL 使用 `.env` 的 `IMAGE_TEXT_API_KEY` / `IMAGE_TEXT_BASE_URL`；前端不参与模型调用。
 - 配置 `multimodal.ocr_endpoint` 后，后端可调用本地 OCR HTTP 服务；OCR 引擎不内置在主项目中。
 
@@ -877,6 +884,9 @@ Gateway 异步确认：
 
 完整 `report.llm` 除了 `input_tokens` / `output_tokens` / cache 字段外，也包含：
 
+- `provider`
+- `api_mode`
+- `model_capability`
 - `context_window`
 - `context_used_tokens`
 - `context_remaining_tokens`
