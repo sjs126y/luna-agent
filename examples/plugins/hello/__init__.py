@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from personal_agent.plugins import CommandEntry
+from lumora_plugin_sdk import CommandEntry
 
 _GREETING = "hello"
 

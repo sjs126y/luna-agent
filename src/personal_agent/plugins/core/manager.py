@@ -104,6 +104,9 @@ class PluginManager:
         self._control_store = PluginControlStateStore(install_root / "control-state.json")
         self.events = PluginEventJournal(self._control_store)
         self.operations = PluginOperationTracker(self._control_store, self.events)
+        from personal_agent.plugins.dependencies import PluginDependencyResolver
+
+        self.dependencies = PluginDependencyResolver(self)
         self._pending_package_removals: dict[str, dict[str, Any]] = {}
         self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
         self._active_owner_running = False
@@ -238,7 +241,9 @@ class PluginManager:
     def load_enabled(self, *, include_deferred: bool = False) -> None:
         if not self._plugins:
             self.discover()
-        for plugin in list(self._plugins.values()):
+        enabled_keys = [plugin.key for plugin in self._plugins.values() if plugin.enabled]
+        for key in self.dependencies.load_order(enabled_keys):
+            plugin = self._plugins[key]
             if not plugin.enabled:
                 plugin.status = PluginStatus.DISABLED
                 continue
@@ -257,6 +262,31 @@ class PluginManager:
         if not plugin.enabled:
             plugin.status = PluginStatus.DISABLED
             return plugin
+
+        dependency_report = self.dependencies.report(key)
+        if not dependency_report.ok:
+            plugin.status = PluginStatus.BLOCKED
+            plugin.runtime_state = PluginRuntimeState.DISCOVERED
+            plugin.error = "; ".join(
+                item.message for item in dependency_report.issues if item.severity == "error"
+            )
+            plugin.error_traceback = None
+            return plugin
+        for requirement in plugin.manifest.requires.plugins:
+            dependency = self._plugins.get(requirement.key)
+            if dependency is None or not dependency.enabled:
+                continue
+            if dependency.status is not PluginStatus.LOADED:
+                dependency = self.load_plugin(dependency.key, publish=publish)
+            if dependency.status is not PluginStatus.LOADED:
+                plugin.status = PluginStatus.BLOCKED
+                plugin.runtime_state = PluginRuntimeState.DISCOVERED
+                plugin.error = (
+                    f"Plugin dependency is not loaded: {dependency.key} "
+                    f"({dependency.status.value})"
+                )
+                plugin.error_traceback = None
+                return plugin
 
         missing_env = self._missing_env(plugin.manifest)
         if missing_env:
@@ -989,17 +1019,36 @@ class PluginManager:
         key: str,
         *,
         purge_data: bool = False,
+        force: bool = False,
     ) -> LoadedPlugin:
         async with self.operations.track(key, "uninstall"):
-            return await self._uninstall_plugin_runtime(key, purge_data=purge_data)
+            return await self._uninstall_plugin_runtime(
+                key,
+                purge_data=purge_data,
+                force=force,
+            )
 
     async def _uninstall_plugin_runtime(
         self,
         key: str,
         *,
         purge_data: bool,
+        force: bool,
     ) -> LoadedPlugin:
         self.operations.stage("draining", details={"purge_data": purge_data})
+        dependents = self.dependencies.dependents(key, enabled_only=True)
+        if dependents and not force:
+            raise RuntimeError(
+                "Plugin has enabled dependents: " + ", ".join(dependents)
+            )
+        for dependent_key in dependents:
+            self.disable_plugin(dependent_key)
+            self.install_store.set_enabled(dependent_key, False)
+            self.events.record(
+                dependent_key,
+                "dependency_disabled",
+                details={"dependency": key},
+            )
         record = self.install_store.packages().get(key)
         if not isinstance(record, dict):
             raise KeyError(f"Installed plugin not found: {key}")
@@ -1256,7 +1305,10 @@ class PluginManager:
             report["manifest_valid"]
             and report["entrypoint_importable"]
             and not report["missing_env"]
-            and report["status"] != PluginStatus.ERROR.value
+            and report["status"] not in {
+                PluginStatus.ERROR.value,
+                PluginStatus.BLOCKED.value,
+            }
         )
         return report
 

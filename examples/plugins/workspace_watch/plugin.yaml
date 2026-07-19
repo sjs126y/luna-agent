@@ -2,9 +2,12 @@ schema_version: 1
 key: integrations/workspace-watch
 name: Workspace Watch
 version: "0.1.0"
+plugin_api: ">=1,<2"
 description: Proactively asks Lumora to review stable changes to configured workspace files.
 kind: integration
 entrypoint: workspace_watch:register
+requires:
+  sdk: ">=0.1,<1"
 provides: [active, command]
 tags: [active, workspace, monitoring]
 enabled_by_default: false

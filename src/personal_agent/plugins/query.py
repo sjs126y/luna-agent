@@ -80,6 +80,8 @@ class PluginQueryService:
             "manifest_path": manager._manifest_path(plugin),
             "source_boundary": manager._source_boundary(plugin),
             "requires_env": plugin.manifest.requires_env,
+            "plugin_api": plugin.manifest.plugin_api,
+            "requires": plugin.manifest.requires.as_dict(),
             "missing_env": missing_env,
             "manifest_valid": not manifest_error,
             "manifest_error": manifest_error,
@@ -107,6 +109,7 @@ class PluginQueryService:
         report["latest_event"] = events[0] if events else {}
         report["installed_versions"] = self.versions(plugin.key)
         report["mcp"] = self._mcp_health(plugin.mcp_servers_registered)
+        report["dependency_report"] = manager.dependencies.report(plugin.key).as_dict()
         return report
 
     def runtime_health(self) -> dict[str, Any]:

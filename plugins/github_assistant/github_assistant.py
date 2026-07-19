@@ -11,8 +11,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from personal_agent.hooks import HookEvent, PreToolUseOutcome
-from personal_agent.plugins import ActiveResourceRequest, CommandEntry
+from lumora_plugin_sdk import (
+    ActiveResourceRequest,
+    CommandEntry,
+    HookEvent,
+    PreToolUseOutcome,
+)
 
 
 class ActiveConfig(BaseModel):

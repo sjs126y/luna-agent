@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Multi-platform AI Agent (MVP)"
 requires-python = ">=3.12"
 dependencies = [
+    "lumora-plugin-sdk",
     "pydantic-settings>=2.6",
     "lark-oapi>=1.4",
     "python-telegram-bot>=21.10",
@@ -29,6 +30,12 @@ dependencies = [
     "mcp>=1.27,<2",
     "qdrant-client>=1.12",
 ]
+
+[tool.uv.sources]
+lumora-plugin-sdk = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/lumora-plugin-sdk"]
 
 [project.scripts]
 personal-agent = "personal_agent.cli:run"
