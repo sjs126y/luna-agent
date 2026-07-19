@@ -1,4 +1,4 @@
-# Personal Agent — behavioral configuration
+# Luna Agent — behavioral configuration
 # API keys / base URLs / secrets → .env
 
 agent:
@@ -47,7 +47,7 @@ toolsets:
   enabled: ["all"]            # ["all"] | ["web","terminal","utility"] | etc.
 
 memory:
-  external_provider: "lumora"      # lumora | mem0 | fallback | none
+  external_provider: "luna"      # luna | lumora | mem0 | fallback | none
   review:
     external_turn_interval: 10
     internal_turn_interval: 50
@@ -60,7 +60,7 @@ memory:
     api_mode: "auto"
     max_tokens: 2048
   providers:
-    lumora:
+    luna:
       embedding:
         provider: "openai_compatible"
         base_url: "https://llm-emwc1qhbxb5bsk0u.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
@@ -72,7 +72,7 @@ memory:
       vector:
         provider: "qdrant"
         path: "./data/memory/qdrant"
-        collection: "lumora_memories"
+        collection: "lumora_memories"  # 保留现有 collection，避免改名后丢失历史向量
       keyword:
         provider: "sqlite_fts5"
         tokenizer: "unicode61"
@@ -120,7 +120,7 @@ session:
 
 sandbox:
   roots:                           # writable directories for Local/Full Auto and bash
-    - "/home/sujinsheng/projects/Personal-Agent"
+    - "."
     - "/mnt/c/Users/MR/Desktop/SJS-AGENT"
     - "/mnt/c/Users/MR/Desktop/luna workspace"
   read_roots:                      # native file tools may read, but never write or use via bash
@@ -233,8 +233,8 @@ plugins:
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "/home/sujinsheng/.codex"
-      runtime_codex_home: "/home/sujinsheng/projects/Personal-Agent/data/codex-bridge"
-      cwd: "/home/sujinsheng/projects/Personal-Agent"
+      runtime_codex_home: "./data/codex-bridge"
+      cwd: "."
       sandbox: "workspace-write"
       connect_timeout_seconds: 60
       call_timeout_seconds: 1800
@@ -277,7 +277,7 @@ mcp:
     - name: "filesystem"
       transport: "stdio"
       command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/sujinsheng/projects/Personal-Agent"]
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
       allow_network: true
       enabled: false  # native file tools already enforce sandbox/blocked paths
 
@@ -286,7 +286,7 @@ mcp:
       command: "npx"
       args: ["-y", "@modelcontextprotocol/server-memory"]
       env:
-        MEMORY_FILE_PATH: "/home/sujinsheng/projects/Personal-Agent/data/mcp/memory.jsonl"
+        MEMORY_FILE_PATH: "./data/mcp/memory.jsonl"
       allow_network: true
       enabled: true
 

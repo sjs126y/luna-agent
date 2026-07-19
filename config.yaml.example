@@ -1,4 +1,4 @@
-# Lumora 行为配置模板
+# Luna Agent 行为配置模板
 # 复制为 config.yaml 后即可作为本机配置起步。
 # 密钥、基础地址、平台令牌等敏感信息放到 .env，不要写进本文件。
 # 如需自定义长期系统提示词，可复制 data/system.example 为 data/system 后编辑其中的 Markdown 文件。
@@ -53,7 +53,7 @@ toolsets:
   enabled: ["all"]                # ["all"] 或 ["web","terminal","utility"] 等
 
 memory:
-  external_provider: "lumora"     # lumora | mem0 | fallback | none
+  external_provider: "luna"     # luna | lumora | mem0 | fallback | none
   review:
     external_turn_interval: 10     # 每 N 轮整理外部记忆，0 表示关闭
     internal_turn_interval: 50
@@ -66,7 +66,7 @@ memory:
     api_mode: "auto"
     max_tokens: 2048
   providers:
-    lumora:
+    luna:
       embedding:
         provider: "openai_compatible"
         base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -78,7 +78,7 @@ memory:
       vector:
         provider: "qdrant"
         path: "./data/memory/qdrant"  # 本地 Qdrant；远程部署改用 url 和 api_key_env
-        collection: "lumora_memories"
+        collection: "luna_memories"
         timeout_seconds: 10
       keyword:
         provider: "sqlite_fts5"
