@@ -121,6 +121,28 @@ async def test_create_agent_runtime_supports_codex_responses_mode_from_settings(
     assert runtime.provider.base_url == "https://api.ahooqq.cn"
 
 
+@pytest.mark.asyncio
+async def test_create_agent_runtime_uses_anthropic_messages_for_deepseek_auto(tmp_path):
+    from luna_agent.plugins.builtin.llm.builtin import register
+    from luna_agent.plugins.builtin.llm.builtin.anthropic import AnthropicMessagesTransport
+
+    register(None)
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[],
+        llm_provider="deepseek",
+        llm_base_url="https://api.deepseek.com",
+        llm_api_key="test",
+        llm_api_mode="auto",
+        llm_model="deepseek-chat",
+    )
+
+    runtime = await create_agent_runtime(settings)
+
+    assert isinstance(runtime.transport, AnthropicMessagesTransport)
+    assert runtime.provider.base_url == "https://api.deepseek.com/anthropic"
+
+
 def test_system_prompt_includes_tool_protocol_before_tool_list():
     provider = ProviderProfile(name="test", base_url="https://example.test", api_key="", model="test-model")
     agent = init_agent(FakeTransport(provider), provider=provider)

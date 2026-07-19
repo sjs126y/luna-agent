@@ -51,7 +51,7 @@ LLM 基础字段：
 ```dotenv
 LLM_PROVIDER=deepseek
 LLM_API_KEY=
-LLM_BASE_URL=https://api.deepseek.com
+LLM_BASE_URL=https://api.deepseek.com/anthropic
 LLM_MODEL=deepseek-chat
 LLM_API_MODE=auto
 LLM_MAX_TOKENS=4096
@@ -59,7 +59,7 @@ LLM_CONTEXT_WINDOW=0
 LLM_REASONING_EFFORT=
 ```
 
-`LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。`auto` 先使用 provider 默认协议：OpenAI 为 Responses、Anthropic 为 Messages，DeepSeek、OpenRouter 和 xAI 为 Chat Completions；未知 provider 才根据明确的 base URL 判断，否则回退 Chat Completions。Codex/Ahoo 这类有特殊鉴权或语义的 Responses 中转站仍应显式设置 `LLM_API_MODE=codex_responses`，显式配置始终优先。
+`LLM_API_MODE` 可选 `auto` / `chat_completions` / `anthropic_messages` / `responses` / `codex_responses`。`auto` 先使用 provider 默认协议：OpenAI 为 Responses，Anthropic 和 DeepSeek 为 Messages，OpenRouter 和 xAI 为 Chat Completions；未知 provider 才根据明确的 base URL 判断，否则回退 Chat Completions。DeepSeek 官方根地址在 `auto/anthropic_messages` 下会规范化到 `/anthropic`，显式 `chat_completions` 时使用普通根地址。Codex/Ahoo 这类有特殊鉴权或语义的 Responses 中转站仍应显式设置 `LLM_API_MODE=codex_responses`，显式配置始终优先。
 
 模型能力解析会区分“模型硬上限”和“Luna Agent 有效窗口”。`LLM_CONTEXT_WINDOW=0` 时，OpenAI provider 默认使用 `256000` 的经济窗口，其他已知模型使用 catalog 中的硬上限；无法可靠识别的新模型保守按 `256000` 处理。显式 `LLM_CONTEXT_WINDOW` 会覆盖默认值，但不会超过已知硬上限。`LLM_MAX_TOKENS` 同样不会超过已知输出上限。模型名中的 `1m`、`400k`、`256k` 等容量标记可用于未收录的中转模型；OpenRouter 静态未命中时会以 3 秒超时查询其模型元数据，并缓存 24 小时。`doctor` 和 `/usage` 会显示最终值、来源及裁剪状态。
 

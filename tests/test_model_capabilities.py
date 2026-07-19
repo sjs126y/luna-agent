@@ -76,5 +76,5 @@ def test_api_mode_resolution_precedence():
     ).mode == "codex_responses"
     assert resolve_api_mode("openai", "https://proxy.example/v1").mode == "responses"
     assert resolve_api_mode("anthropic", "https://proxy.example/v1").mode == "anthropic_messages"
-    assert resolve_api_mode("deepseek", "https://api.deepseek.com").mode == "chat_completions"
+    assert resolve_api_mode("deepseek", "https://api.deepseek.com").mode == "anthropic_messages"
     assert resolve_api_mode("unknown", "https://api.anthropic.com").mode == "anthropic_messages"

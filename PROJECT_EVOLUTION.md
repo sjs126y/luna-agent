@@ -517,6 +517,7 @@
 - 主 Agent、Memory、插件与视觉 LLM 统一 `api_mode` 解析，特殊 Responses 中转仍可显式覆盖。
 - 上下文压缩默认阈值提升至 90%，并为输出与安全余量保留空间；事件、turn report、`doctor` 和 `/usage` 可追踪最终解析结果。
 - 当前 `gpt-5.6-terra` 配置使用 256K 有效窗口、1.05M 模型硬上限和显式 `codex_responses`；完整测试为 `1197 passed, 1 warning`。
+- DeepSeek 默认采用 Anthropic Messages；官方 base URL 会按显式协议在普通根地址与 `/anthropic` 之间安全规范化。
 
 ## 当前代码规模
 
@@ -530,7 +531,7 @@
 | 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
 | Python 合计 | 402 | 90,887 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.48 万行，测试约 3.19 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1185 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.48 万行，测试约 3.19 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1201 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

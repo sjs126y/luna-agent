@@ -67,7 +67,7 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         default_effective_context=OPENAI_DEFAULT_EFFECTIVE_CONTEXT,
     ),
     "anthropic": ProviderCapability(name="anthropic", default_api_mode="anthropic_messages"),
-    "deepseek": ProviderCapability(name="deepseek", default_api_mode="chat_completions"),
+    "deepseek": ProviderCapability(name="deepseek", default_api_mode="anthropic_messages"),
     "openrouter": ProviderCapability(name="openrouter", default_api_mode="chat_completions"),
     "xai": ProviderCapability(name="xai", default_api_mode="chat_completions"),
 }

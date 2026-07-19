@@ -51,6 +51,37 @@ def test_xai_provider_uses_official_default_base_url():
     assert provider.model == "grok-4.5"
 
 
+def test_deepseek_auto_prefers_anthropic_endpoint():
+    settings = _settings("deepseek", "deepseek-chat")
+    settings.llm_base_url = "https://api.deepseek.com"
+
+    provider = provider_registry.get("deepseek", settings)
+
+    assert provider.api_mode == "anthropic_messages"
+    assert provider.base_url == "https://api.deepseek.com/anthropic"
+
+
+def test_deepseek_empty_base_url_uses_anthropic_endpoint():
+    settings = _settings("deepseek", "deepseek-chat")
+    settings.llm_base_url = ""
+
+    provider = provider_registry.get("deepseek", settings)
+
+    assert provider.api_mode == "anthropic_messages"
+    assert provider.base_url == "https://api.deepseek.com/anthropic"
+
+
+def test_deepseek_explicit_chat_completions_uses_official_root():
+    settings = _settings("deepseek", "deepseek-chat")
+    settings.llm_base_url = "https://api.deepseek.com/anthropic"
+    settings.llm_api_mode = "chat_completions"
+
+    provider = provider_registry.get("deepseek", settings)
+
+    assert provider.api_mode == "chat_completions"
+    assert provider.base_url == "https://api.deepseek.com"
+
+
 def test_provider_profile_exposes_resolved_api_mode_and_source():
     openai = provider_registry.get("openai", _settings("openai", "gpt-5.6"))
     anthropic = provider_registry.get("anthropic", _settings("anthropic", "claude-sonnet"))
