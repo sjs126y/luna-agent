@@ -1216,7 +1216,8 @@ QQ 插件的 `plugins.config.platforms/qq.runtime.mode` 可为 `external` 或 `m
 
 - `plugin_dev_create(plugin_id, description, brief?)`：在外部 development workspace 创建脚手架、插件简报和规范副本，并建立持久会话记录；重复调用同一 `plugin_id` 幂等返回已有会话。
 - `plugin_dev_message(plugin_id, text)`：向该插件唯一 Codex Thread 提交一条消息；已有 Turn 时进入有界内存队列并立即返回 accepted/queued。
-- `plugin_dev_list()`、`plugin_dev_status(plugin_id)`、`plugin_dev_events(plugin_id, limit?)`：查询会话、Thread、工作区、状态和最近最多 20 条事件。
+- `plugin_dev_list()`、`plugin_dev_status(plugin_id)`：查询会话、Thread、工作区和当前状态。
+- `plugin_dev_events(plugin_id, limit=20, offset=0, order="desc", event_types?, detail="summary")`：分页查询持久事件。`limit` 最大 200；`order` 为 `asc|desc`；`detail` 为 `summary|full`。返回 `total`、`returned`、`has_more`、`next_offset` 和 `events[]`。
 - `plugin_dev_cancel(plugin_id)`：中断当前 Turn，清理排队消息并标记会话 cancelled。
 - `codex_approval_list(plugin_id?)`、`codex_approval_decide(request_id, decision)`：查看并允许一次或拒绝 App Server 请求；`decision` 为 `allow_once` 或 `deny`。
 

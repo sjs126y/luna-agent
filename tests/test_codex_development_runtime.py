@@ -44,6 +44,7 @@ def runtime(tmp_path):
         approvals_reviewer="user",
         sandbox="workspace-write",
         app_server_timeout_seconds=2.0,
+        event_retention=1000,
         notify_sessions=["wechat:test"],
     )
     config.development_spec_path.write_text("# plugin contract\n", encoding="utf-8")
@@ -70,9 +71,15 @@ async def test_events_are_bounded_and_delivered_with_event_specific_context(runt
     await runtime.create("demo", "demo plugin")
     for index in range(55):
         await runtime._on_message("demo", {"method": "item/agentMessage/completed", "params": {"text": f"message {index}"}})
-    events = runtime.events("demo", 20)
-    assert len(events) == 20
-    assert events[-1]["text"] == "message 54"
+    events = runtime.events("demo", limit=20)
+    assert events["total"] == 55
+    assert events["returned"] == 20
+    assert events["events"][0]["text"] == "message 54"
+    assert events["next_offset"] == 20
+    second_page = runtime.events("demo", limit=20, offset=20, order="desc")
+    assert second_page["events"][0]["text"] == "message 34"
+    full = runtime.events("demo", limit=1, detail="full")
+    assert "metadata" in full["events"][0]
     assert conversation.intents
     assert "Codex 的新消息" in conversation.intents[-1].instruction
 
@@ -94,3 +101,17 @@ def test_first_turn_loads_contract_around_plain_feature_request():
     assert "PLUGIN_BRIEF.md" in prompt
     assert "把 docx 转换成 Markdown" in prompt
     assert "Do not install" in prompt
+
+
+@pytest.mark.asyncio
+async def test_nested_codex_error_is_human_readable(runtime):
+    await runtime.create("errors", "demo plugin")
+    await runtime._on_message("errors", {
+        "method": "error",
+        "params": {"error": {
+            "message": "Reconnecting... 2/5",
+            "additionalDetails": "failed to lookup address information",
+        }},
+    })
+    event = runtime.events("errors", limit=1)["events"][0]
+    assert event["text"] == "Reconnecting... 2/5 - failed to lookup address information"

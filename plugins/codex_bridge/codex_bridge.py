@@ -14,6 +14,12 @@ from luna_agent_plugin_sdk import ActiveResourceRequest, HookEvent, PreToolUseOu
 from .development import CodexDevelopmentRuntime
 
 
+class ActiveConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+
+
 class CodexBridgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -30,7 +36,9 @@ class CodexBridgeConfig(BaseModel):
     approval_policy: Literal["on-request", "never"] = "on-request"
     approvals_reviewer: Literal["user", "auto_review"] = "user"
     app_server_timeout_seconds: float = Field(default=60.0, gt=0)
+    event_retention: int = Field(default=1000, ge=100, le=10000)
     notify_sessions: list[str] = Field(default_factory=list)
+    active: ActiveConfig = Field(default_factory=ActiveConfig)
 
 
 def register(ctx) -> None:
@@ -142,8 +150,22 @@ def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
     async def status_handler(plugin_id: str):
         return runtime.status(plugin_id)
 
-    async def events_handler(plugin_id: str, limit: int = 5):
-        return runtime.events(plugin_id, limit)
+    async def events_handler(
+        plugin_id: str,
+        limit: int = 20,
+        offset: int = 0,
+        order: str = "desc",
+        event_types: list[str] | None = None,
+        detail: str = "summary",
+    ):
+        return runtime.events(
+            plugin_id,
+            limit=limit,
+            offset=offset,
+            order=order,
+            event_types=event_types,
+            detail=detail,
+        )
 
     async def cancel_handler(plugin_id: str):
         return await runtime.cancel(plugin_id)
@@ -196,8 +218,18 @@ def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
     ))
     ctx.register.tool(ToolEntry(
         name="plugin_dev_events",
-        description="Show the most recent bounded Codex development events for one plugin.",
-        schema={"type": "object", "properties": {"plugin_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, "required": ["plugin_id"], "additionalProperties": False},
+        description=(
+            "Page through Codex development events for one plugin. Choose up to 200 events, "
+            "newest or oldest first, filter event types, and request summary or full protocol metadata."
+        ),
+        schema={"type": "object", "properties": {
+            "plugin_id": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+            "offset": {"type": "integer", "minimum": 0, "default": 0},
+            "order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
+            "event_types": {"type": "array", "items": {"type": "string"}},
+            "detail": {"type": "string", "enum": ["summary", "full"], "default": "summary"},
+        }, "required": ["plugin_id"], "additionalProperties": False},
         handler=events_handler, toolset="plugin", permission_category="read", approval_mode="auto",
         tags=["plugin", "codex", "events"], idempotent=True,
     ))
@@ -237,3 +269,8 @@ def _prepare_runtime_home(source: Path, runtime: Path) -> None:
     if not runtime_auth.exists():
         shutil.copyfile(source_auth, runtime_auth)
         runtime_auth.chmod(0o600)
+    source_config = source / "config.toml"
+    if source_config.is_file():
+        runtime_config = runtime / "config.toml"
+        shutil.copyfile(source_config, runtime_config)
+        runtime_config.chmod(0o600)

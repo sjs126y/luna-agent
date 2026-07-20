@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -18,13 +19,15 @@ from .prompts import wrap_event
 
 
 _SAFE_ID = re.compile(r"[^a-zA-Z0-9._-]+")
+logger = logging.getLogger(__name__)
 
 
 class DevelopmentStore:
     """Small bounded JSON store; Codex owns the authoritative thread history."""
 
-    def __init__(self, storage) -> None:
+    def __init__(self, storage, *, max_events: int = 1000) -> None:
         self.storage = storage
+        self.max_events = max(100, min(int(max_events), 10000))
         value = storage.read_json("development-sessions.json", default={"schema_version": 1, "sessions": {}})
         self.data = value if isinstance(value, dict) else {"schema_version": 1, "sessions": {}}
         self.data.setdefault("schema_version", 1)
@@ -39,7 +42,7 @@ class DevelopmentStore:
 
     def put(self, session: DevelopmentSession) -> None:
         session.updated_at = utc_now()
-        session.events = session.events[-50:]
+        session.events = session.events[-self.max_events:]
         self.data["sessions"][session.plugin_id] = session.to_dict()
         self.save()
 
@@ -51,7 +54,7 @@ class CodexDevelopmentRuntime:
     def __init__(self, *, config, ctx) -> None:
         self.config = config
         self.ctx = ctx
-        self.store = DevelopmentStore(ctx.storage)
+        self.store = DevelopmentStore(ctx.storage, max_events=config.event_retention)
         self.servers: dict[str, CodexAppServer] = {}
         self.pending_approvals: dict[str, tuple[str, dict[str, Any]]] = {}
         self._queued: dict[str, list[str]] = {}
@@ -71,7 +74,7 @@ class CodexDevelopmentRuntime:
                 await server.close()
             self.servers.clear()
             for session in self.store.all():
-                if session.status in {DevelopmentStatus.RUNNING.value, DevelopmentStatus.WAITING_CODEX.value}:
+                if session.status == DevelopmentStatus.RUNNING.value:
                     session.status = DevelopmentStatus.STALE.value
                     session.last_error = "Codex Bridge runtime stopped; active turn was not resumed"
                     self.store.put(session)
@@ -130,9 +133,49 @@ class CodexDevelopmentRuntime:
     def status(self, plugin_id: str) -> dict[str, Any]:
         return self.summary(self._require(plugin_id))
 
-    def events(self, plugin_id: str, limit: int = 5) -> list[dict[str, Any]]:
+    def events(
+        self,
+        plugin_id: str,
+        limit: int = 20,
+        offset: int = 0,
+        order: str = "desc",
+        event_types: list[str] | None = None,
+        detail: str = "summary",
+    ) -> dict[str, Any]:
         session = self._require(plugin_id)
-        return session.events[-max(1, min(int(limit), 20)):]
+        bounded_limit = max(1, min(int(limit), 200))
+        bounded_offset = max(0, int(offset))
+        normalized_order = str(order or "desc").lower()
+        if normalized_order not in {"asc", "desc"}:
+            raise ValueError("order must be asc or desc")
+        if detail not in {"summary", "full"}:
+            raise ValueError("detail must be summary or full")
+        allowed_types = {str(value) for value in (event_types or []) if str(value)}
+        values = [
+            event for event in session.events
+            if not allowed_types or str(event.get("event_type")) in allowed_types
+        ]
+        if normalized_order == "desc":
+            values = list(reversed(values))
+        page = values[bounded_offset: bounded_offset + bounded_limit]
+        if detail == "summary":
+            page = [_event_summary(event) for event in page]
+        next_offset = bounded_offset + len(page)
+        return {
+            "plugin_id": session.plugin_id,
+            "thread_id": session.thread_id,
+            "status": session.status,
+            "total": len(values),
+            "offset": bounded_offset,
+            "limit": bounded_limit,
+            "returned": len(page),
+            "order": normalized_order,
+            "detail": detail,
+            "event_types": sorted(allowed_types),
+            "has_more": next_offset < len(values),
+            "next_offset": next_offset if next_offset < len(values) else None,
+            "events": page,
+        }
 
     def approvals(self, plugin_id: str = "") -> list[dict[str, Any]]:
         return [
@@ -195,7 +238,7 @@ class CodexDevelopmentRuntime:
             self.pending_approvals[str(message["id"])] = (plugin_id, message)
             event_type = DevelopmentEventType.APPROVAL_REQUESTED
         else:
-            event_type = _event_type(method)
+            event_type = _event_type(method, params)
         if event_type is None:
             return
         text = _event_text(method, params)
@@ -204,7 +247,14 @@ class CodexDevelopmentRuntime:
             session.status = DevelopmentStatus.RUNNING.value
         elif event_type == DevelopmentEventType.TURN_COMPLETED:
             session.current_turn_id = ""
-            session.status = DevelopmentStatus.WAITING_CODEX.value
+            turn = params.get("turn") or {}
+            turn_status = str(turn.get("status") or params.get("status") or "").lower()
+            turn_error = _event_text(method, params) if "fail" in turn_status else ""
+            if "fail" in turn_status:
+                session.status = DevelopmentStatus.FAILED.value
+                session.last_error = turn_error
+            else:
+                session.status = DevelopmentStatus.WAITING_CODEX.value
             server = self.servers.get(plugin_id)
             if server is not None:
                 server.active_turn_id = ""
@@ -215,7 +265,14 @@ class CodexDevelopmentRuntime:
                     self._queued.pop(plugin_id, None)
                 asyncio.create_task(self.message(plugin_id, next_message))
         elif event_type in {DevelopmentEventType.ERROR, DevelopmentEventType.PROCESS_RESTARTED}:
-            session.status = DevelopmentStatus.FAILED.value if event_type == DevelopmentEventType.ERROR else DevelopmentStatus.STALE.value
+            retrying = event_type == DevelopmentEventType.ERROR and bool(params.get("willRetry"))
+            session.status = (
+                DevelopmentStatus.RUNNING.value
+                if retrying
+                else DevelopmentStatus.FAILED.value
+                if event_type == DevelopmentEventType.ERROR
+                else DevelopmentStatus.STALE.value
+            )
             session.last_error = text
         await self._record(session, event_type, text, metadata={"method": method, "params": _compact(params)})
         await self._notify(session, event_type, text)
@@ -244,9 +301,14 @@ class CodexDevelopmentRuntime:
                     evidence={"plugin_id": session.plugin_id, "thread_id": session.thread_id, "event_type": event_type.value},
                     request_id=f"codex-event:{session.plugin_id}:{uuid4().hex}",
                 ))
-            except Exception:
-                # Event persistence remains authoritative if delivery is temporarily unavailable.
-                continue
+            except Exception as exc:
+                logger.warning(
+                    "Codex event delivery failed: plugin=%s session=%s event=%s error=%s",
+                    session.plugin_id,
+                    session_key,
+                    event_type.value,
+                    exc,
+                )
 
     def _require(self, plugin_id: str) -> DevelopmentSession:
         plugin_id = self._normalize_id(plugin_id)
@@ -275,11 +337,19 @@ class CodexDevelopmentRuntime:
             shutil.copyfile(spec, workspace / "LUNA_PLUGIN_DEVELOPMENT.md")
 
 
-def _event_type(method: str) -> DevelopmentEventType | None:
+def _event_type(method: str, params: dict[str, Any] | None = None) -> DevelopmentEventType | None:
+    params = params or {}
     if method in {"turn/started", "turn.started"}:
         return DevelopmentEventType.TURN_STARTED
-    if method in {"item/agentMessage/completed", "item/completed"}:
+    if method == "item/agentMessage/completed":
         return DevelopmentEventType.ASSISTANT_MESSAGE
+    if method == "item/completed":
+        item_type = str((params.get("item") or {}).get("type") or "")
+        if item_type == "userMessage":
+            return None
+        if item_type == "agentMessage":
+            return DevelopmentEventType.ASSISTANT_MESSAGE
+        return DevelopmentEventType.PROGRESS
     if method == "item/agentMessage/delta":
         # Deltas are intentionally not submitted as separate active intents.
         return None
@@ -303,12 +373,38 @@ def _event_text(method: str, params: dict[str, Any]) -> str:
         value = params.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+        if isinstance(value, dict):
+            nested = _dict_text(value)
+            if nested:
+                return nested
     item = params.get("item")
     if isinstance(item, dict):
-        for key in ("text", "content", "summary", "command"):
+        for key in ("text", "content", "summary", "command", "aggregatedOutput", "output"):
             value = item.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, list):
+                texts = [
+                    str(part.get("text") or "").strip()
+                    for part in value
+                    if isinstance(part, dict) and str(part.get("text") or "").strip()
+                ]
+                if texts:
+                    return "\n".join(texts)
+        item_type = str(item.get("type") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if item_type:
+            return f"{item_type}{f': {status}' if status else ''}"
+    turn = params.get("turn")
+    if isinstance(turn, dict):
+        error = turn.get("error")
+        if isinstance(error, dict):
+            nested = _dict_text(error)
+            if nested:
+                return nested
+        status = str(turn.get("status") or "").strip()
+        if status:
+            return f"turn {status}"
     return method or "Codex event"
 
 
@@ -320,6 +416,27 @@ def _compact(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value if not isinstance(value, str) else value[:1000]
     return str(value)
+
+
+def _dict_text(value: dict[str, Any]) -> str:
+    parts = []
+    for key in ("message", "additionalDetails", "reason", "detail"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip():
+            parts.append(item.strip())
+    return " - ".join(dict.fromkeys(parts))
+
+
+def _event_summary(event: dict[str, Any]) -> dict[str, Any]:
+    metadata = event.get("metadata") or {}
+    return {
+        "event_id": event.get("event_id", ""),
+        "event_type": event.get("event_type", ""),
+        "text": str(event.get("text", ""))[:2000],
+        "created_at": event.get("created_at", ""),
+        "turn_id": event.get("turn_id", ""),
+        "method": metadata.get("method", "") if isinstance(metadata, dict) else "",
+    }
 
 
 def _initial_development_prompt(feature_request: str) -> str:

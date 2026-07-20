@@ -37,7 +37,13 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
     source_home = tmp_path / ".codex"
     source_home.mkdir()
     (source_home / "auth.json").write_text("{}", encoding="utf-8")
+    (source_home / "config.toml").write_text(
+        'model_provider = "Relay"\n[model_providers.Relay]\nbase_url = "https://relay.example/v1"\n',
+        encoding="utf-8",
+    )
     runtime_home = workspace / "data" / "codex-bridge"
+    runtime_home.mkdir(parents=True)
+    (runtime_home / "config.toml").write_text('model_provider = "Old"\n', encoding="utf-8")
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         sandbox_roots=[workspace],
@@ -73,20 +79,27 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
     assert server.env["CODEX_HOME"] == str(runtime_home.resolve())
     assert (runtime_home / "auth.json").read_text(encoding="utf-8") == "{}"
     assert (runtime_home / "auth.json").stat().st_mode & 0o777 == 0o600
+    assert "relay.example" in (runtime_home / "config.toml").read_text(encoding="utf-8")
+    assert (runtime_home / "config.toml").stat().st_mode & 0o777 == 0o600
 
     view = manager.capability_store.current.view({CapabilityKind.TOOL})
     list_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_list")
     create_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_create")
     status_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_status")
-    assert list_route is not None and create_route is not None and status_route is not None
+    events_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_events")
+    assert all(route is not None for route in (list_route, create_route, status_route, events_route))
     list_entry = manager.capability_payload(list_route.binding_id)
     create_entry = manager.capability_payload(create_route.binding_id)
     status_entry = manager.capability_payload(status_route.binding_id)
+    events_entry = manager.capability_payload(events_route.binding_id)
     assert await list_entry.handler() == []
     created = await create_entry.handler("contract-test", "A small plugin")
     status = await status_entry.handler("contract-test")
+    events = await events_entry.handler("contract-test", limit=100, order="asc", detail="full")
     assert created["plugin_id"] == "contract-test"
     assert status["status"] == "created"
+    assert events["limit"] == 100
+    assert events["detail"] == "full"
 
     outcome = await manager.hook_manager.dispatch(HookEnvelope(
         event_name=HookEvent.PRE_TOOL_USE,
