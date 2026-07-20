@@ -1210,7 +1210,26 @@ QQ 平台现要求 `.env` 配置 `QQ_BOT_WS_URL`。`QQ_BOT_BASE_URL` 为可选 H
 
 QQ 插件的 `plugins.config.platforms/qq.runtime.mode` 可为 `external` 或 `managed`。受管模式只执行用户明确配置的绝对可执行路径，不经过 shell；前端或诊断界面不应提供任意命令编辑与立即执行能力。
 
-## 16. Compatibility Notes
+## 16. Codex Plugin Development Bridge
+
+启用 `integrations/codex-bridge` 后，Codex Bridge 暴露以下 Agent 工具：
+
+- `plugin_dev_create(plugin_id, description, brief?)`：在外部 development workspace 创建脚手架、插件简报和规范副本，并建立持久会话记录；重复调用同一 `plugin_id` 幂等返回已有会话。
+- `plugin_dev_message(plugin_id, text)`：向该插件唯一 Codex Thread 提交一条消息；已有 Turn 时进入有界内存队列并立即返回 accepted/queued。
+- `plugin_dev_list()`、`plugin_dev_status(plugin_id)`：查询会话、Thread、工作区和当前状态。
+- `plugin_dev_events(plugin_id, limit=20, offset=0, order="desc", event_types?, detail="summary")`：分页查询持久事件。`limit` 最大 200；`order` 为 `asc|desc`；`detail` 为 `summary|full`。返回 `total`、`returned`、`has_more`、`next_offset` 和 `events[]`。
+- `plugin_dev_cancel(plugin_id)`：中断当前 Turn，清理排队消息并标记会话 cancelled。
+- `codex_approval_list(plugin_id?)`、`codex_approval_decide(request_id, decision)`：查看并允许一次或拒绝 App Server 请求；`decision` 为 `allow_once` 或 `deny`。
+
+`plugin_dev_events` 的事件存储始终使用带时区的 UTC。返回给 Agent/前端的 `created_at` 是本机展示时区，`created_at_utc` 保留规范化 UTC 值；不要用展示字段进行跨时区排序或持久化。
+
+同一插件发布 `plugin-development-workflow` Skill。前端或 Agent 可按名称发现并加载；加载只向当前模型上下文注入协作规则，不创建 Workspace、不启动 Codex Turn，也不改变会话状态。Skill 规定方案探索、方案讨论、最终方案、执行计划、用户授权、实现、审查、打包和安装的边界；底层仍统一使用上述通用工具。
+
+Codex Bridge 只通过 `ActiveConversationIntent` 投递需要 Luna 处理的关键事件，不把事件写成普通用户输入。持久事件流仍包含 `turn_started`、`assistant_message`、`progress`、`request_user_input`、`approval_requested`、`turn_completed`、`error` 和 `process_restarted`；普通进度、Turn 开始及 `willRetry=true` 的自动重试不会创建 Conversation Turn。中间 `assistant_message` 会暂存，随 `turn_completed` 合并为一次最终通知；同一 Turn 的不可恢复错误和失败完成只通知一次。`active.sessions` 同时决定授权会话与通知目标；为空时只持久化事件，不主动唤醒会话。每个插件工作区保存一次只读 `LUNA_PLUGIN_DEVELOPMENT.md`，后续 Turn 不重复注入规范。
+
+开发会话状态存储在插件私有 `development-sessions.json`，并公开最近一次有效 `model` 与 `model_provider`；Codex Thread 历史仍由 Codex `CODEX_HOME` 管理。App Server 使用 `config/read` 解析隔离配置，并在 `thread/start` / `thread/resume` 显式覆盖 model/provider；响应失配时失败关闭。重启只恢复 Thread，不静默恢复中断 Turn；未处理审批默认拒绝。旧 `mcp__codex__codex` MCP 与 Hook 注册继续兼容。
+
+## 17. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

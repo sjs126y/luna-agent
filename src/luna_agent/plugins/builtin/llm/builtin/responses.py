@@ -391,8 +391,9 @@ def _collect_response_output(response: dict, tool_call_deltas: dict[int, dict]) 
 
 
 def _collect_full_function_call(idx: int, item: dict, tool_call_deltas: dict[int, dict]) -> None:
-    entry = tool_call_deltas.setdefault(idx, {"id": "", "name": "", "arguments_json": ""})
-    entry["id"] = str(item.get("call_id") or item.get("id") or entry["id"])
+    call_id = str(item.get("call_id") or item.get("id") or "")
+    entry = _find_or_create_tool_call(tool_call_deltas, idx, call_id)
+    entry["id"] = call_id or entry["id"]
     entry["name"] = str(item.get("name") or entry["name"])
     arguments = item.get("arguments")
     if isinstance(arguments, dict):
@@ -405,18 +406,37 @@ def _collect_tool_call_delta(event: dict, tool_call_deltas: dict[int, dict]) -> 
     etype = str(event.get("type") or "")
     if etype == "response.function_call_arguments.delta":
         idx = int(event.get("output_index") or 0)
-        entry = tool_call_deltas.setdefault(idx, {"id": "", "name": "", "arguments_json": ""})
+        entry = _find_or_create_tool_call(tool_call_deltas, idx, str(event.get("call_id") or ""))
         entry["arguments_json"] += str(event.get("delta") or "")
     elif etype == "response.output_item.done":
         item = event.get("item") or {}
         if not isinstance(item, dict) or item.get("type") != "function_call":
             return
         idx = int(event.get("output_index") or len(tool_call_deltas))
-        entry = tool_call_deltas.setdefault(idx, {"id": "", "name": "", "arguments_json": ""})
-        entry["id"] = str(item.get("call_id") or item.get("id") or entry["id"])
+        call_id = str(item.get("call_id") or item.get("id") or "")
+        entry = _find_or_create_tool_call(tool_call_deltas, idx, call_id)
+        entry["id"] = call_id or entry["id"]
         entry["name"] = str(item.get("name") or entry["name"])
         if item.get("arguments"):
             entry["arguments_json"] = str(item.get("arguments") or "")
+
+
+def _find_or_create_tool_call(
+    tool_call_deltas: dict[int, dict],
+    idx: int,
+    call_id: str,
+) -> dict:
+    """Merge Responses stream phases even when their output indexes differ.
+
+    A function call can appear in both ``response.output_item.done`` and the
+    final ``response.completed`` snapshot. Middle stations may renumber the
+    latter after hiding reasoning items, so ``call_id`` is the stable key.
+    """
+    if call_id:
+        for entry in tool_call_deltas.values():
+            if str(entry.get("id") or "") == call_id:
+                return entry
+    return tool_call_deltas.setdefault(idx, {"id": "", "name": "", "arguments_json": ""})
 
 
 def _build_tool_calls(tool_call_deltas: dict[int, dict]) -> list[dict]:
