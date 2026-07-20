@@ -165,7 +165,7 @@ class CodexDevelopmentRuntime:
                 codex_home=self.config.runtime_codex_home,
                 approval_policy=self.config.approval_policy,
                 approvals_reviewer=self.config.approvals_reviewer,
-                sandbox=_app_server_sandbox(self.config.sandbox),
+                sandbox=self.config.sandbox,
                 timeout_seconds=self.config.app_server_timeout_seconds,
                 on_event=lambda message: self._on_message(session.plugin_id, message),
             )
@@ -174,6 +174,7 @@ class CodexDevelopmentRuntime:
             try:
                 session.thread_id = await server.start(thread_id=old_thread)
             except Exception as exc:
+                await server.close()
                 self.servers.pop(session.plugin_id, None)
                 session.status = DevelopmentStatus.FAILED.value
                 session.last_error = str(exc)
@@ -319,13 +320,6 @@ def _compact(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value if not isinstance(value, str) else value[:1000]
     return str(value)
-
-
-def _app_server_sandbox(value: str) -> str:
-    return {
-        "read-only": "readOnly",
-        "workspace-write": "workspaceWrite",
-    }.get(str(value), str(value))
 
 
 def _initial_development_prompt(feature_request: str) -> str:

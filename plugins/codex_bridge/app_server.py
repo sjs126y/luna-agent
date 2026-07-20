@@ -28,7 +28,7 @@ class CodexAppServer:
         codex_home: Path,
         approval_policy: str = "on-request",
         approvals_reviewer: str = "user",
-        sandbox: str = "workspaceWrite",
+        sandbox: str = "workspace-write",
         timeout_seconds: float = 30.0,
         on_event: EventCallback | None = None,
     ) -> None:
