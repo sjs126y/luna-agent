@@ -6,7 +6,9 @@ import pytest
 
 from luna_agent.config import Settings
 from luna_agent.plugins import PluginManager, PluginStatus
+from luna_agent.skills.registry import skill_registry
 from luna_agent.tools.registry import tool_registry
+from luna_agent.workflow.registry import workflow_registry
 
 
 @pytest.mark.asyncio
@@ -130,6 +132,72 @@ async def test_external_active_plugin_uses_host_runtime_control(tmp_path: Path) 
     finally:
         await manager.stop_active_plugins()
         await manager.unload_plugin_runtime("user/worker-active")
+
+
+@pytest.mark.asyncio
+async def test_external_plugin_replays_explicit_skill_and_workflow(tmp_path: Path) -> None:
+    root = tmp_path / "plugins" / "capabilities"
+    root.mkdir(parents=True)
+    (root / "notes.md").write_text("# Worker skill\n", encoding="utf-8")
+    (root / "plugin.yaml").write_text(
+        "\n".join((
+            "schema_version: 1",
+            "key: user/worker-capabilities",
+            "name: Worker Capabilities",
+            "version: 1.0.0",
+            "entrypoint: capabilities:register",
+            "requires:",
+            "  sdk: '>=0.3,<1'",
+            "provides: [skills, workflow]",
+            "enabled_by_default: true",
+        )),
+        encoding="utf-8",
+    )
+    (root / "capabilities.py").write_text(
+        "from dataclasses import dataclass, field\n"
+        "@dataclass\n"
+        "class Skill:\n"
+        "    name: str\n"
+        "    description: str\n"
+        "    path: str\n"
+        "    triggers: list[str] = field(default_factory=list)\n"
+        "@dataclass\n"
+        "class Workflow:\n"
+        "    name: str\n"
+        "    description: str\n"
+        "    fn: object\n"
+        "    phases: list[str] = field(default_factory=list)\n"
+        "    when_to_use: str = ''\n"
+        "async def run(value=None): return {'worker': True, 'value': value}\n"
+        "def register(ctx):\n"
+        "    ctx.register.skill(Skill('worker_skill', 'skill', str(ctx.resolve_path('notes.md'))))\n"
+        "    ctx.register.workflow(Workflow('worker_workflow', 'workflow', run, ['run'], 'test'))\n",
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[root.parent],
+            plugins_enabled=["user/worker-capabilities"],
+            plugin_worker_isolation=True,
+            plugin_sandbox_backend="process-only",
+        ),
+        plugin_dirs=[root.parent],
+        include_builtin=False,
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    plugin = manager.load_plugin("user/worker-capabilities")
+    try:
+        assert plugin.status is PluginStatus.LOADED
+        assert skill_registry.get("worker_skill") is not None
+        workflow = workflow_registry.get("worker_workflow")
+        assert workflow is not None
+        assert await workflow.fn("ok") == {"worker": True, "value": "ok"}
+    finally:
+        manager.unload_plugin("user/worker-capabilities")
+        skill_registry.unregister("worker_skill")
+        workflow_registry.unregister("worker_workflow")
 
 
 @pytest.mark.asyncio

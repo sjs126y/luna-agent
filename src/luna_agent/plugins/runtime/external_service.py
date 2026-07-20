@@ -24,6 +24,8 @@ from luna_agent_plugin_sdk import (
 from luna_agent.plugins.install import PluginEnvironment, PluginEnvironmentManager
 from luna_agent.plugins.runtime.sandbox import build_plugin_worker_launch
 from luna_agent.plugins.runtime.worker_client import PluginWorkerClient
+from luna_agent.skills.entry import SkillEntry
+from luna_agent.workflow.registry import WorkflowDef
 
 
 class ExternalPluginRuntimeService:
@@ -191,6 +193,33 @@ class ExternalPluginRuntimeService:
                 timeout_seconds=value.get("timeout_seconds"),
                 resource_resolver=resource_resolver if bindings else None,
                 resource_bindings=bindings,
+            ))
+        for descriptor in capabilities.get("skills", []):
+            value = _plain(descriptor)
+            ctx._register_skill(SkillEntry(
+                name=str(value.get("name") or ""),
+                description=str(value.get("description") or ""),
+                path=str(value.get("path") or ""),
+                triggers=list(value.get("triggers") or []),
+                plugin_key=plugin.key,
+                allowed_root=str(value.get("allowed_root") or plugin.manifest.path or ""),
+            ))
+        for descriptor in capabilities.get("workflows", []):
+            value = _plain(descriptor)
+            handler_id = str(value.get("handler_id") or value.get("name") or "")
+
+            async def workflow(args=None, _handler_id=handler_id):
+                return await worker.call(
+                    "invoke",
+                    {"handler_id": _handler_id, "args": [args]},
+                )
+
+            ctx._register_workflow(WorkflowDef(
+                name=str(value.get("name") or ""),
+                description=str(value.get("description") or ""),
+                fn=workflow,
+                phases=list(value.get("phases") or []),
+                when_to_use=str(value.get("when_to_use") or ""),
             ))
         for relative_path in capabilities.get("skill_directories", []):
             ctx._register_skills(str(relative_path))

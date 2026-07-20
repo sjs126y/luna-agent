@@ -256,7 +256,17 @@ class WorkerRegistrationPort:
         return count
 
     def workflow(self, definition: Any) -> None:
-        self.runtime.capabilities["workflows"].append(to_wire(definition))
+        name = str(getattr(definition, "name", "") or "")
+        fn = getattr(definition, "fn", None)
+        if not name or not callable(fn):
+            raise ValueError("External plugin workflow requires name and callable fn")
+        self.runtime.capabilities["workflows"].append({
+            "handler_id": self.runtime.bind("workflow", name, fn),
+            "name": name,
+            "description": str(getattr(definition, "description", "") or ""),
+            "phases": list(getattr(definition, "phases", ()) or ()),
+            "when_to_use": str(getattr(definition, "when_to_use", "") or ""),
+        })
 
     def platform(self, _entry: Any) -> None:
         raise ValueError("External plugins cannot register platform adapters")
