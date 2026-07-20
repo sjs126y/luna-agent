@@ -8,9 +8,12 @@ import inspect
 import json
 import os
 import sys
+import re
 from contextvars import ContextVar
 from pathlib import Path
 from types import MappingProxyType
+from types import ModuleType
+from importlib.machinery import ModuleSpec
 from typing import Any
 
 from luna_agent_plugin_sdk.active import ActiveResourceRequest
@@ -135,7 +138,7 @@ class RemoteResourceNamespace:
 class RemoteResources:
     def __init__(self, peer: FramedRPCPeer, storage: WorkerStorage) -> None:
         self.storage = storage
-        for name in ("tool", "mcp", "llm", "conversation", "delivery", "events", "artifacts", "process"):
+        for name in ("tool", "mcp", "llm", "conversation", "delivery", "events", "artifacts", "process", "workspace"):
             setattr(self, name, RemoteResourceNamespace(peer, name))
 
 
@@ -415,9 +418,18 @@ class PluginWorkerRuntime:
         )
         module_name, _, function_name = str(payload["entrypoint"]).partition(":")
         function_name = function_name or "register"
-        sys.path.insert(0, str(root))
+        namespace = "luna_plugin_" + re.sub(
+            r"[^0-9A-Za-z_]",
+            "_",
+            self.context.runtime_instance_id,
+        )
+        package = ModuleType(namespace)
+        package.__package__ = namespace
+        package.__spec__ = ModuleSpec(namespace, loader=None, is_package=True)
+        package.__path__ = [str(root)]  # type: ignore[attr-defined]
+        sys.modules[namespace] = package
         try:
-            module = importlib.import_module(module_name)
+            module = importlib.import_module(f"{namespace}.{module_name}")
             register = getattr(module, function_name, None)
             if not callable(register):
                 raise TypeError(f"Plugin entrypoint is not callable: {payload['entrypoint']}")
@@ -425,10 +437,7 @@ class PluginWorkerRuntime:
             if inspect.isawaitable(result):
                 raise TypeError("Plugin register() must be synchronous")
         finally:
-            try:
-                sys.path.remove(str(root))
-            except ValueError:
-                pass
+            pass
         return {
             "protocol_version": PROTOCOL_VERSION,
             "sdk_version": SDK_VERSION,

@@ -44,35 +44,48 @@ class CodexBridgeConfig(BaseModel):
 def register(ctx) -> None:
     config = ctx.parse_config(CodexBridgeConfig)
     command = str(config.command).strip()
-    resolved_command = shutil.which(command) if command else None
+    resolved_command = command if getattr(ctx, "is_isolated", False) else shutil.which(command)
     if resolved_command is None:
         raise ValueError(f"Codex executable was not found: {command or '<empty>'}")
 
-    writable_roots = [Path(item).expanduser().resolve() for item in ctx.settings.sandbox_roots]
+    settings = getattr(ctx, "settings", None)
+    writable_roots = [Path(item).expanduser().resolve() for item in getattr(settings, "sandbox_roots", [])]
     cwd = (config.cwd or (writable_roots[0] if writable_roots else Path.cwd()))
-    cwd = Path(cwd).expanduser().resolve()
-    if not any(_is_within(cwd, root) for root in writable_roots):
+    cwd = Path(cwd).expanduser()
+    if not getattr(ctx, "is_isolated", False):
+        cwd = cwd.resolve()
+    if not getattr(ctx, "is_isolated", False) and not any(_is_within(cwd, root) for root in writable_roots):
         raise ValueError("Codex Bridge cwd must be within sandbox.roots")
 
-    source_codex_home = Path(config.source_codex_home).expanduser().resolve()
+    source_codex_home = Path(config.source_codex_home).expanduser()
+    if not getattr(ctx, "is_isolated", False):
+        source_codex_home = source_codex_home.resolve()
     runtime_codex_home = Path(
-        config.runtime_codex_home or (ctx.settings.agent_data_dir / "codex-bridge")
-    ).expanduser().resolve()
-    if not any(_is_within(runtime_codex_home, root) for root in writable_roots):
+        config.runtime_codex_home or (getattr(settings, "agent_data_dir", Path("data")) / "codex-bridge")
+    ).expanduser()
+    if not getattr(ctx, "is_isolated", False):
+        runtime_codex_home = runtime_codex_home.resolve()
+    if not getattr(ctx, "is_isolated", False) and not any(_is_within(runtime_codex_home, root) for root in writable_roots):
         raise ValueError("Codex Bridge runtime_codex_home must be within sandbox.roots")
-    _prepare_runtime_home(source_codex_home, runtime_codex_home)
+    if not getattr(ctx, "is_isolated", False):
+        _prepare_runtime_home(source_codex_home, runtime_codex_home)
     development_root = Path(
         config.development_root
         or (Path.home() / ".local" / "share" / "luna-agent" / "plugin-workspaces")
-    ).expanduser().resolve()
+    ).expanduser()
+    if not getattr(ctx, "is_isolated", False):
+        development_root = development_root.resolve()
     development_spec_path = Path(
         config.development_spec_path or (Path(__file__).resolve().parents[2] / "docs" / "plugin-development.md")
-    ).expanduser().resolve()
-    if _is_within(development_root, cwd):
+    ).expanduser()
+    if not getattr(ctx, "is_isolated", False):
+        development_spec_path = development_spec_path.resolve()
+    if not getattr(ctx, "is_isolated", False) and _is_within(development_root, cwd):
         raise ValueError("Codex Bridge development_root must be outside the host workspace")
-    if development_root in {Path(development_root.anchor), Path.home().resolve()}:
+    if not getattr(ctx, "is_isolated", False) and development_root in {Path(development_root.anchor), Path.home().resolve()}:
         raise ValueError("Codex Bridge development_root is too broad")
-    development_root.mkdir(parents=True, exist_ok=True)
+    if not getattr(ctx, "is_isolated", False):
+        development_root.mkdir(parents=True, exist_ok=True)
     runtime = CodexDevelopmentRuntime(config=config.model_copy(update={
         "runtime_codex_home": runtime_codex_home,
         "development_root": development_root,
@@ -80,14 +93,13 @@ def register(ctx) -> None:
     }), ctx=ctx)
 
     ctx.register.skills("skills")
+    isolated = bool(getattr(ctx, "is_isolated", False))
     ctx.register.mcp_server({
         "name": "codex",
         "transport": "stdio",
-        "command": sys.executable,
-        "args": [
-            str(ctx.resolve_path("stdio_filter.py")),
-            str(resolved_command),
-            "mcp-server",
+        "command": str(resolved_command) if isolated else sys.executable,
+        "args": ["mcp-server"] if isolated else [
+            str(ctx.resolve_path("stdio_filter.py")), str(resolved_command), "mcp-server"
         ],
         "env": {"CODEX_HOME": str(runtime_codex_home)},
         "connect_timeout_seconds": config.connect_timeout_seconds,
@@ -131,7 +143,11 @@ def register(ctx) -> None:
     _register_development_tools(ctx, runtime)
     ctx.register.active(
         run=runtime.run,
-        resources=ActiveResourceRequest(conversation=True),
+        resources=ActiveResourceRequest(
+            conversation=True,
+            processes=("codex-app-server",),
+            workspaces=("development",),
+        ),
         restart_policy="on_failure",
         startup_timeout=20,
         shutdown_timeout=20,

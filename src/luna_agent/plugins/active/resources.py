@@ -98,6 +98,16 @@ class PluginResourceFacade:
             self._artifacts = self._manager.plugin_artifact_port(self._plugin)
         return self._artifacts
 
+    @property
+    def process(self):
+        self._require("process", bool(self._request.processes))
+        return self._manager.plugin_process_port(self._plugin)
+
+    @property
+    def workspace(self):
+        self._require("workspace", bool(self._request.workspaces))
+        return self._manager.plugin_workspace_port(self._plugin)
+
     def safe_summary(self) -> dict[str, Any]:
         return self._request.safe_summary()
 

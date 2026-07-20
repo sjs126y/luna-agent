@@ -130,3 +130,89 @@ async def test_external_active_plugin_uses_host_runtime_control(tmp_path: Path) 
     finally:
         await manager.stop_active_plugins()
         await manager.unload_plugin_runtime("user/worker-active")
+
+
+@pytest.mark.asyncio
+async def test_external_codex_bridge_registers_without_host_imports(tmp_path: Path) -> None:
+    from pathlib import Path as _Path
+
+    plugin_root = _Path(__file__).resolve().parents[1] / "plugins"
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[plugin_root],
+        plugins_enabled=["integrations/codex-bridge"],
+        plugins_config={
+            "integrations/codex-bridge": {
+                "command": "sh",
+                "source_codex_home": str(tmp_path / "source-codex"),
+                "runtime_codex_home": str(tmp_path / "runtime-codex"),
+                "development_root": str(tmp_path / "development"),
+                "development_spec_path": str(tmp_path / "spec.md"),
+                "active": {"enabled": False},
+            },
+        },
+        plugin_worker_isolation=True,
+        plugin_sandbox_backend="process-only",
+    )
+    (tmp_path / "source-codex").mkdir()
+    (tmp_path / "spec.md").write_text("plugin spec", encoding="utf-8")
+    manager = PluginManager(
+        settings,
+        plugin_dirs=[plugin_root],
+        include_builtin=False,
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    plugin = manager.load_plugin("integrations/codex-bridge")
+    try:
+        assert plugin.status is PluginStatus.LOADED
+        assert plugin.worker is not None
+        assert plugin.active_registration is not None
+        assert "codex-app-server" in plugin.active_registration.resources.processes
+        assert "development" in plugin.active_registration.resources.workspaces
+    finally:
+        manager.unload_plugin("integrations/codex-bridge")
+
+
+@pytest.mark.asyncio
+async def test_host_process_port_is_allowlisted_and_bidirectional(tmp_path: Path) -> None:
+    from luna_agent.plugins.runtime.external_service import PluginHostProcessService
+
+    class Settings:
+        plugins_config = {
+            "user/process": {
+                "host_processes": {
+                    "echo": {
+                        "executable": "cat",
+                        "args_prefix": [],
+                        "cwd": str(tmp_path),
+                        "cwd_roots": [str(tmp_path)],
+                        "max_instances": 1,
+                    }
+                }
+            }
+        }
+
+    class Manager:
+        settings = Settings()
+
+    class Registration:
+        class Resources:
+            processes = ("echo",)
+        resources = Resources()
+
+    class Plugin:
+        key = "user/process"
+        runtime_instance_id = "user-process:one"
+        active_registration = Registration()
+
+    service = PluginHostProcessService(Manager())
+    port = service.port(Plugin())
+    started = await port.start(name="echo", cwd=str(tmp_path))
+    process_id = str(started["process_id"])
+    try:
+        await port.write_line(process_id=process_id, text="hello")
+        line = await port.read_line(process_id=process_id)
+        assert line["line"] == "hello"
+    finally:
+        await port.stop(process_id=process_id)

@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 import json
 import logging
 import re
-import shutil
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -87,13 +86,13 @@ class CodexDevelopmentRuntime:
             existing = self.store.get(plugin_id)
             if existing:
                 return self.summary(existing)
-            workspace = self.config.development_root / plugin_id
-            workspace.mkdir(parents=True, exist_ok=True)
-            self._write_scaffold(workspace, plugin_id, description, brief)
+            workspace = await self.ctx.resources.workspace.create(workspace=plugin_id)
+            workspace_path = str(_value(workspace, "path") or "")
+            await self._write_scaffold(plugin_id, description, brief)
             session = DevelopmentSession(
                 plugin_id=plugin_id,
-                workspace_path=str(workspace),
-                brief_path=str(workspace / "PLUGIN_BRIEF.md"),
+                workspace_path=workspace_path,
+                brief_path=str(Path(workspace_path) / "PLUGIN_BRIEF.md"),
                 spec_revision=self.config.development_spec_revision,
             )
             self.store.put(session)
@@ -209,7 +208,8 @@ class CodexDevelopmentRuntime:
         server = self.servers.get(session.plugin_id)
         if server is None or not server.running:
             server = CodexAppServer(
-                command=self.config.command,
+                process_port=self.ctx.resources.process,
+                process_name="codex-app-server",
                 cwd=Path(session.workspace_path),
                 codex_home=self.config.runtime_codex_home,
                 approval_policy=self.config.approval_policy,
@@ -393,14 +393,31 @@ class CodexDevelopmentRuntime:
     def summary(self, session: DevelopmentSession) -> dict[str, Any]:
         return {**session.to_dict(), "events": len(session.events), "server_running": bool(self.servers.get(session.plugin_id) and self.servers[session.plugin_id].running)}
 
-    def _write_scaffold(self, workspace: Path, plugin_id: str, description: str, brief: str) -> None:
-        (workspace / ".codex-plugin").mkdir(exist_ok=True)
-        (workspace / ".codex-plugin" / "plugin.json").write_text(json.dumps({"name": plugin_id, "version": "0.1.0", "description": description}, indent=2) + "\n", encoding="utf-8")
-        (workspace / "plugin.yaml").write_text(f"schema_version: 1\nkey: external/{plugin_id}\nname: {plugin_id}\nversion: \"0.1.0\"\nplugin_api: \">=1,<2\"\nentrypoint: plugin:register\nprovides: [tool]\n", encoding="utf-8")
-        (workspace / "PLUGIN_BRIEF.md").write_text(f"# {plugin_id}\n\n{description}\n\n{brief}\n", encoding="utf-8")
-        spec = Path(self.config.development_spec_path)
-        if spec.is_file():
-            shutil.copyfile(spec, workspace / "LUNA_PLUGIN_DEVELOPMENT.md")
+    async def _write_scaffold(self, plugin_id: str, description: str, brief: str) -> None:
+        workspace = self.ctx.resources.workspace
+        await workspace.write(
+            path=f"{plugin_id}/.codex-plugin/plugin.json",
+            text=json.dumps({"name": plugin_id, "version": "0.1.0", "description": description}, indent=2) + "\n",
+        )
+        await workspace.write(
+            path=f"{plugin_id}/plugin.yaml",
+            text=f"schema_version: 1\nkey: external/{plugin_id}\nname: {plugin_id}\nversion: \"0.1.0\"\nplugin_api: \">=1,<2\"\nentrypoint: plugin:register\nprovides: [tool]\n",
+        )
+        await workspace.write(
+            path=f"{plugin_id}/PLUGIN_BRIEF.md",
+            text=f"# {plugin_id}\n\n{description}\n\n{brief}\n",
+        )
+        if self.config.development_spec_path:
+            await workspace.copy(
+                source=str(self.config.development_spec_path),
+                path=f"{plugin_id}/LUNA_PLUGIN_DEVELOPMENT.md",
+            )
+
+
+def _value(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
 
 
 def _event_type(method: str, params: dict[str, Any] | None = None) -> DevelopmentEventType | None:

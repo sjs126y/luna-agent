@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import signal
+import subprocess
 from uuid import uuid4
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,8 @@ class ExternalPluginRuntimeService:
         self.manager = manager
         self.environments = PluginEnvironmentManager(Path(root) / "environments")
         self.workers: dict[str, PluginWorkerClient] = {}
+        self.processes = PluginHostProcessService(manager)
+        self.workspaces = PluginHostWorkspaceService(manager)
 
     def prepare_environment(self, plugin) -> PluginEnvironment:
         return self.environments.ensure(plugin.key, plugin.manifest.requires.python)
@@ -104,6 +108,7 @@ class ExternalPluginRuntimeService:
         worker = self.workers.pop(runtime_id, None) or getattr(plugin, "worker", None)
         if worker is not None:
             worker.stop()
+        self.processes.stop_generation(plugin.runtime_instance_id)
         plugin.worker = None
 
     def summary(self, plugin) -> dict[str, Any]:
@@ -287,7 +292,9 @@ class ExternalPluginRuntimeService:
                 value = await value
             return {"value": value, "state": control.safe_summary()}
         if resource == "process":
-            raise PermissionError("Plugin process resource has not been declared")
+            return await self.processes.call(plugin, operation, args, kwargs)
+        if resource == "workspace":
+            return await self.workspaces.call(plugin, operation, args, kwargs)
         facade = self.manager.plugin_resource_facade(
             plugin,
             plugin.active_registration.resources,
@@ -340,12 +347,14 @@ class ExternalPluginRuntimeService:
             raw = kwargs.get(binding.argument)
             if raw in (None, ""):
                 continue
-            source = Path(str(raw)).expanduser()
-            if not source.is_absolute():
-                source = (Path.cwd() / source).resolve()
+            requested = Path(str(raw)).expanduser()
+            if requested.is_symlink():
+                raise ValueError(f"External plugin input must not be a symbolic link: {requested}")
+            if not requested.is_absolute():
+                source = (Path.cwd() / requested).resolve()
             else:
-                source = source.resolve()
-            if source.is_symlink() or not source.is_file():
+                source = requested.resolve()
+            if not source.is_file():
                 raise ValueError(f"External plugin input is not a regular file: {source}")
             target = exchange / source.name
             shutil.copyfile(source, target)
@@ -374,6 +383,8 @@ def _active_resources(value: dict[str, Any]) -> ActiveResourceRequest:
         delivery=bool(value.get("delivery", False)),
         events=bool(value.get("events", False)),
         artifacts=bool(value.get("artifacts", False)),
+        processes=tuple(value.get("processes") or ()),
+        workspaces=tuple(value.get("workspaces") or ()),
     )
 
 
@@ -393,3 +404,332 @@ def _invocation_metadata() -> dict[str, str]:
         ),
         "operation_id": str(getattr(agent, "_hook_turn_id", "") or ""),
     }
+
+
+class PluginHostProcessService:
+    """Generation-owned interactive subprocesses selected from user configuration."""
+
+    def __init__(self, manager) -> None:
+        self.manager = manager
+        self._processes: dict[str, dict[str, Any]] = {}
+
+    def port(self, plugin):
+        return BoundPluginProcessPort(self, plugin)
+
+    async def call(
+        self,
+        plugin,
+        operation: str,
+        args: list[Any],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        if plugin.active_registration is None:
+            raise PermissionError("Plugin process resource requires an active declaration")
+        declared = set(plugin.active_registration.resources.processes)
+        if operation == "start":
+            name = str(kwargs.get("name") or (args[0] if args else ""))
+            if name not in declared:
+                raise PermissionError(f"Plugin process is not declared: {plugin.key}:{name}")
+            return await self._start(plugin, name, kwargs)
+        process_id = str(kwargs.get("process_id") or (args[0] if args else ""))
+        record = self._record(plugin, process_id)
+        process = record["process"]
+        if operation == "write_line":
+            if process.stdin is None:
+                raise RuntimeError("Plugin process stdin is unavailable")
+            value = str(kwargs.get("text") or (args[1] if len(args) > 1 else ""))
+            process.stdin.write((value + "\n").encode("utf-8"))
+            await process.stdin.drain()
+            return {"written": True}
+        if operation in {"read_line", "read_stderr_line"}:
+            stream = process.stdout if operation == "read_line" else process.stderr
+            if stream is None:
+                return {"line": "", "eof": True}
+            timeout = float(kwargs.get("timeout") or 0)
+            reader = stream.readline()
+            line = await asyncio.wait_for(reader, timeout=timeout) if timeout > 0 else await reader
+            return {
+                "line": line.decode("utf-8", errors="replace").rstrip("\r\n"),
+                "eof": not bool(line),
+                "returncode": process.returncode,
+            }
+        if operation == "status":
+            return {"running": process.returncode is None, "returncode": process.returncode}
+        if operation == "stop":
+            await self._stop_record(process_id, record)
+            return {"stopped": True}
+        raise PermissionError(f"Plugin process operation is unavailable: {operation}")
+
+    async def _start(self, plugin, name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+        spec = self._spec(plugin, name)
+        existing = [
+            item for item in self._processes.values()
+            if item["runtime_id"] == plugin.runtime_instance_id and item["name"] == name
+        ]
+        max_instances = max(1, int(spec.get("max_instances") or 1))
+        if len(existing) >= max_instances:
+            raise RuntimeError(f"Plugin process instance limit reached: {name}")
+        executable = shutil.which(str(spec.get("executable") or ""))
+        if not executable:
+            raise FileNotFoundError(f"Configured plugin process executable was not found: {name}")
+        prefix = [str(item) for item in spec.get("args_prefix", [])]
+        extra = [str(item) for item in kwargs.get("args", [])]
+        if extra and not bool(spec.get("allow_extra_args", False)):
+            raise PermissionError(f"Plugin process does not allow extra arguments: {name}")
+        cwd = Path(str(kwargs.get("cwd") or spec.get("cwd") or ".")).expanduser().resolve()
+        roots = [Path(item).expanduser().resolve() for item in spec.get("cwd_roots", [])]
+        if not roots or not any(cwd == root or root in cwd.parents for root in roots):
+            raise PermissionError(f"Plugin process cwd is outside configured roots: {cwd}")
+        requested_env = {str(k): str(v) for k, v in dict(kwargs.get("env") or {}).items()}
+        allowed_env = set(str(item) for item in spec.get("env_allowlist", []))
+        if set(requested_env) - allowed_env:
+            raise PermissionError("Plugin process requested undeclared environment variables")
+        env = {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            **{str(k): str(v) for k, v in dict(spec.get("env") or {}).items()},
+            **requested_env,
+        }
+        seed_from = str(spec.get("seed_from") or "")
+        seed_to = str(spec.get("seed_to") or "")
+        if seed_from and seed_to:
+            self._seed_directory(Path(seed_from).expanduser(), Path(seed_to).expanduser())
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        process = await asyncio.create_subprocess_exec(
+            executable,
+            *prefix,
+            *extra,
+            cwd=str(cwd),
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name != "nt",
+            creationflags=creationflags,
+        )
+        process_id = uuid4().hex
+        self._processes[process_id] = {
+            "process": process,
+            "runtime_id": plugin.runtime_instance_id,
+            "name": name,
+        }
+        return {"process_id": process_id, "pid": process.pid, "name": name}
+
+    def _spec(self, plugin, name: str) -> dict[str, Any]:
+        all_config = getattr(self.manager.settings, "plugins_config", {}) or {}
+        config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
+        specs = config.get("host_processes", {}) if isinstance(config, dict) else {}
+        spec = specs.get(name) if isinstance(specs, dict) else None
+        # Explicit host_processes configuration wins over the Codex convenience
+        # default so operators can tighten the executable, cwd, and environment.
+        if name == "codex-app-server" and not isinstance(spec, dict) and isinstance(config, dict):
+            spec = {
+                "executable": config.get("command") or "codex",
+                "args_prefix": ["app-server"],
+                "cwd_roots": [config.get("development_root") or ".", config.get("cwd") or "."],
+                "env": {"CODEX_HOME": str(config.get("runtime_codex_home") or "data/codex-bridge")},
+                "seed_from": config.get("source_codex_home") or "",
+                "seed_to": config.get("runtime_codex_home") or "",
+                "max_instances": 8,
+            }
+        if not isinstance(spec, dict):
+            raise PermissionError(f"Plugin host process is not configured: {plugin.key}:{name}")
+        return spec
+
+    @staticmethod
+    def _seed_directory(source: Path, destination: Path) -> None:
+        if not source.is_dir():
+            return
+        destination.mkdir(parents=True, exist_ok=True)
+        for name in ("auth.json", "config.toml"):
+            source_file = source / name
+            target = destination / name
+            if source_file.is_file() and not target.exists():
+                shutil.copyfile(source_file, target)
+
+    def _record(self, plugin, process_id: str) -> dict[str, Any]:
+        record = self._processes.get(process_id)
+        if record is None or record["runtime_id"] != plugin.runtime_instance_id:
+            raise KeyError(f"Plugin process not found: {process_id}")
+        return record
+
+    def stop_generation(self, runtime_id: str) -> None:
+        records = [
+            (process_id, record)
+            for process_id, record in self._processes.items()
+            if record["runtime_id"] == runtime_id
+        ]
+        if not records:
+            return
+
+        async def stop_all() -> None:
+            await asyncio.gather(
+                *(self._stop_record(process_id, record) for process_id, record in records),
+                return_exceptions=True,
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(stop_all())
+        else:
+            loop.create_task(stop_all(), name=f"plugin-process-stop:{runtime_id}")
+
+    async def _stop_record(self, process_id: str, record: dict[str, Any]) -> None:
+        self._processes.pop(process_id, None)
+        process = record["process"]
+        if process.returncode is not None:
+            return
+        if os.name != "nt":
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        else:
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            if os.name != "nt":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            await process.wait()
+
+
+class BoundPluginProcessPort:
+    def __init__(self, service: PluginHostProcessService, plugin) -> None:
+        self.service = service
+        self.plugin = plugin
+
+    async def start(self, *, name: str, **kwargs: Any) -> Any:
+        return await self.service.call(
+            self.plugin,
+            "start",
+            [],
+            {"name": name, **kwargs},
+        )
+
+    async def write_line(self, *, process_id: str, text: str) -> Any:
+        return await self.service.call(
+            self.plugin, "write_line", [], {"process_id": process_id, "text": text}
+        )
+
+    async def read_line(self, *, process_id: str, timeout: float = 0) -> Any:
+        return await self.service.call(
+            self.plugin, "read_line", [], {"process_id": process_id, "timeout": timeout}
+        )
+
+    async def read_stderr_line(self, *, process_id: str, timeout: float = 0) -> Any:
+        return await self.service.call(
+            self.plugin,
+            "read_stderr_line",
+            [],
+            {"process_id": process_id, "timeout": timeout},
+        )
+
+    async def status(self, *, process_id: str) -> Any:
+        return await self.service.call(
+            self.plugin, "status", [], {"process_id": process_id}
+        )
+
+    async def stop(self, *, process_id: str) -> Any:
+        return await self.service.call(
+            self.plugin, "stop", [], {"process_id": process_id}
+        )
+
+
+class PluginHostWorkspaceService:
+    def __init__(self, manager) -> None:
+        self.manager = manager
+
+    def port(self, plugin):
+        return BoundPluginWorkspacePort(self, plugin)
+
+    async def call(self, plugin, operation: str, args: list[Any], kwargs: dict[str, Any]) -> Any:
+        declared = set(plugin.active_registration.resources.workspaces)
+        name = str(kwargs.get("name") or (args[0] if args else ""))
+        if name not in declared:
+            raise PermissionError(f"Plugin workspace is not declared: {plugin.key}:{name}")
+        spec = self._spec(plugin, name)
+        root_value = str(spec.get("root") or "").strip()
+        if not root_value:
+            raise PermissionError(f"Plugin workspace has no configured root: {name}")
+        root = Path(root_value).expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        if operation == "create":
+            workspace = (root / str(kwargs.get("workspace") or kwargs.get("id") or "")).resolve()
+            if root not in workspace.parents and workspace != root:
+                raise PermissionError("Plugin workspace path escapes configured root")
+            workspace.mkdir(parents=True, exist_ok=True)
+            return {"path": str(workspace)}
+        path = self._path(root, str(kwargs.get("path") or ""))
+        if operation == "write":
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(str(kwargs.get("text") or ""), encoding="utf-8")
+            return {"path": str(path)}
+        if operation == "read":
+            return {"text": path.read_text(encoding="utf-8"), "path": str(path)}
+        if operation == "copy":
+            source = Path(str(kwargs.get("source") or "")).expanduser().resolve()
+            read_roots = [
+                Path(item).expanduser().resolve()
+                for item in spec.get("read_roots", [])
+                if str(item or "").strip()
+            ]
+            if not any(source == item or item in source.parents for item in read_roots):
+                raise PermissionError("Plugin workspace source is outside configured read roots")
+            if not source.is_file():
+                raise FileNotFoundError(f"Plugin workspace source is not a file: {source}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, path)
+            return {"path": str(path)}
+        raise PermissionError(f"Plugin workspace operation is unavailable: {operation}")
+
+    @staticmethod
+    def _path(root: Path, relative: str) -> Path:
+        candidate = Path(relative)
+        path = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+        if path != root and root not in path.parents:
+            raise PermissionError("Plugin workspace path escapes configured root")
+        return path
+
+    def _spec(self, plugin, name: str) -> dict[str, Any]:
+        all_config = getattr(self.manager.settings, "plugins_config", {}) or {}
+        config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
+        specs = config.get("host_workspaces", {}) if isinstance(config, dict) else {}
+        if isinstance(specs, dict) and isinstance(specs.get(name), dict):
+            return dict(specs[name])
+        if name == "development" and isinstance(config, dict) and config.get("development_root"):
+            configured_spec = str(config.get("development_spec_path") or "").strip()
+            if configured_spec:
+                spec_path = Path(configured_spec).expanduser()
+            else:
+                plugin_root = Path(plugin.manifest.path or "").resolve()
+                spec_path = plugin_root.parents[1] / "docs" / "plugin-development.md"
+            return {
+                "root": config.get("development_root"),
+                "read_roots": [str(spec_path)],
+            }
+        raise PermissionError(f"Plugin workspace is not configured: {plugin.key}:{name}")
+
+
+class BoundPluginWorkspacePort:
+    def __init__(self, service: PluginHostWorkspaceService, plugin) -> None:
+        self.service = service
+        self.plugin = plugin
+
+    async def create(self, *, workspace: str) -> Any:
+        return await self.service.call(self.plugin, "create", [], {"name": "development", "workspace": workspace})
+
+    async def write(self, *, path: str, text: str) -> Any:
+        return await self.service.call(self.plugin, "write", [], {"name": "development", "path": path, "text": text})
+
+    async def read(self, *, path: str) -> Any:
+        return await self.service.call(self.plugin, "read", [], {"name": "development", "path": path})
+
+    async def copy(self, *, source: str, path: str) -> Any:
+        return await self.service.call(self.plugin, "copy", [], {"name": "development", "source": source, "path": path})

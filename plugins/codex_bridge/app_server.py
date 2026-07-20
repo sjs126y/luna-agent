@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -23,7 +22,8 @@ class CodexAppServer:
     def __init__(
         self,
         *,
-        command: str,
+        process_port: Any,
+        process_name: str,
         cwd: Path,
         codex_home: Path,
         approval_policy: str = "on-request",
@@ -32,7 +32,8 @@ class CodexAppServer:
         timeout_seconds: float = 30.0,
         on_event: EventCallback | None = None,
     ) -> None:
-        self.command = command
+        self.process_port = process_port
+        self.process_name = process_name
         self.cwd = cwd
         self.codex_home = codex_home
         self.approval_policy = approval_policy
@@ -40,7 +41,7 @@ class CodexAppServer:
         self.sandbox = sandbox
         self.timeout_seconds = timeout_seconds
         self.on_event = on_event
-        self.process: asyncio.subprocess.Process | None = None
+        self.process_id = ""
         self.thread_id = ""
         self.active_turn_id = ""
         self.effective_model = ""
@@ -57,23 +58,20 @@ class CodexAppServer:
 
     @property
     def running(self) -> bool:
-        return self.process is not None and self.process.returncode is None and not self._closed
+        return bool(self.process_id and not self._closed)
 
     async def start(self, *, thread_id: str = "") -> str:
         if self.running:
             return self.thread_id
         self._closed = False
-        env = os.environ.copy()
-        env["CODEX_HOME"] = str(self.codex_home)
-        self.process = await asyncio.create_subprocess_exec(
-            self.command,
-            "app-server",
+        started = await self.process_port.start(
+            name=self.process_name,
             cwd=str(self.cwd),
-            env=env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            env={"CODEX_HOME": str(self.codex_home)},
         )
+        self.process_id = str(_value(started, "process_id") or "")
+        if not self.process_id:
+            raise CodexAppServerError("Host process port did not return a process id")
         self._reader_task = asyncio.create_task(self._read_stdout(), name="codex-app-server-stdout")
         self._stderr_task = asyncio.create_task(self._read_stderr(), name="codex-app-server-stderr")
         await self._request(
@@ -133,24 +131,20 @@ class CodexAppServer:
         self._server_requests.pop(str(request_id), None)
 
     async def close(self, *, timeout: float = 10.0) -> None:
-        if self._closed and self.process is None:
+        if self._closed and not self.process_id:
             return
         self._closed = True
-        process = self.process
-        self.process = None
-        if process is None:
+        process_id = self.process_id
+        self.process_id = ""
+        if not process_id:
             return
-        if process.stdin is not None:
-            process.stdin.close()
         try:
-            await asyncio.wait_for(process.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+            await asyncio.wait_for(
+                self.process_port.stop(process_id=process_id),
+                timeout=timeout,
+            )
+        except Exception:
+            pass
         for task in (self._reader_task, self._stderr_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -239,23 +233,28 @@ class CodexAppServer:
         await self._write({"jsonrpc": "2.0", "method": method, "params": params})
 
     async def _write(self, message: dict[str, Any]) -> None:
-        process = self.process
-        if process is None or process.stdin is None or process.returncode is not None:
+        if not self.process_id or self._closed:
             raise CodexAppServerError("Codex App Server is not running")
-        payload = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
+        payload = json.dumps(message, ensure_ascii=False)
         async with self._write_lock:
-            process.stdin.write(payload)
-            await process.stdin.drain()
+            await self.process_port.write_line(
+                process_id=self.process_id,
+                text=payload,
+            )
 
     async def _read_stdout(self) -> None:
-        process = self.process
-        if process is None or process.stdout is None:
+        process_id = self.process_id
+        if not process_id:
             return
         try:
-            async for line in process.stdout:
+            while not self._closed and self.process_id == process_id:
+                result = await self.process_port.read_line(process_id=process_id)
+                line = str(_value(result, "line") or "")
+                if bool(_value(result, "eof")):
+                    break
                 try:
-                    message = json.loads(line.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
+                    message = json.loads(line)
+                except json.JSONDecodeError:
                     continue
                 if "id" in message and message.get("id") in self._pending:
                     future = self._pending[message["id"]]
@@ -275,7 +274,7 @@ class CodexAppServer:
                         future.set_exception(error)
                 await self._emit({
                     "method": "codex/processExited",
-                    "params": {"returncode": process.returncode, "stderr": self.last_stderr},
+                    "params": {"returncode": _value(result, "returncode"), "stderr": self.last_stderr},
                 })
         except asyncio.CancelledError:
             raise
@@ -283,12 +282,16 @@ class CodexAppServer:
             await self._emit({"method": "codex/processError", "params": {"error": str(exc)}})
 
     async def _read_stderr(self) -> None:
-        process = self.process
-        if process is None or process.stderr is None:
+        process_id = self.process_id
+        if not process_id:
             return
         try:
-            async for line in process.stderr:
-                self.last_stderr = line.decode("utf-8", errors="replace").strip()[-2000:]
+            while not self._closed and self.process_id == process_id:
+                result = await self.process_port.read_stderr_line(process_id=process_id)
+                line = str(_value(result, "line") or "")
+                if bool(_value(result, "eof")):
+                    break
+                self.last_stderr = line.strip()[-2000:]
         except asyncio.CancelledError:
             raise
 
@@ -298,3 +301,9 @@ class CodexAppServer:
         result = self.on_event(message)
         if asyncio.iscoroutine(result):
             await result
+
+
+def _value(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)

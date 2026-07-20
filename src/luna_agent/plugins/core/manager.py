@@ -199,6 +199,12 @@ class PluginManager:
 
         return PluginArtifactPort(plugin=plugin, store=self._artifact_store)
 
+    def plugin_process_port(self, plugin):
+        return self.external_runtime.processes.port(plugin)
+
+    def plugin_workspace_port(self, plugin):
+        return self.external_runtime.workspaces.port(plugin)
+
     def plugin_storage_port(self, plugin):
         from luna_agent.plugins.core.ports import PluginStoragePort
 

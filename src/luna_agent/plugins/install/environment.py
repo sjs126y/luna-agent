@@ -106,9 +106,18 @@ class PluginEnvironmentManager:
                 str(_venv_python(candidate)),
                 str(self.sdk_source),
             ]
-            if expected.dependencies:
-                install.extend(["--only-binary", ":all:", *expected.dependencies])
             self._run(install)
+            if expected.dependencies:
+                self._run([
+                    self.uv_command,
+                    "pip",
+                    "install",
+                    "--python",
+                    str(_venv_python(candidate)),
+                    "--only-binary",
+                    ":all:",
+                    *expected.dependencies,
+                ])
             self._run([
                 str(_venv_python(candidate)),
                 "-c",

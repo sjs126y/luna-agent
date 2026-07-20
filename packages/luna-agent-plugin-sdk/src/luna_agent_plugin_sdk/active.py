@@ -77,6 +77,8 @@ class ActiveResourceRequest:
     delivery: bool = False
     events: bool = False
     artifacts: bool = False
+    processes: tuple[str, ...] = ()
+    workspaces: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tools", _names(self.tools, "tools"))
@@ -86,6 +88,8 @@ class ActiveResourceRequest:
         object.__setattr__(self, "optional_mcp_servers", _names(
             self.optional_mcp_servers, "optional_mcp_servers"
         ))
+        object.__setattr__(self, "processes", _names(self.processes, "processes"))
+        object.__setattr__(self, "workspaces", _names(self.workspaces, "workspaces"))
         normalized = {
             str(server or "").strip(): _names(tools, f"mcp.{server}")
             for server, tools in dict(self.mcp or {}).items()
@@ -118,6 +122,8 @@ class ActiveResourceRequest:
             "delivery": self.delivery,
             "events": self.events,
             "artifacts": self.artifacts,
+            "processes": list(self.processes),
+            "workspaces": list(self.workspaces),
         }
 
 
