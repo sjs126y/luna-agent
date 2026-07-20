@@ -65,7 +65,7 @@ async def test_create_writes_external_scaffold_and_persists_session(runtime):
 
 
 @pytest.mark.asyncio
-async def test_events_are_bounded_and_delivered_with_event_specific_context(runtime):
+async def test_events_are_bounded_and_turn_completion_delivers_last_message(runtime):
     conversation = Conversation()
     runtime._active_ctx = SimpleNamespace(resources=SimpleNamespace(conversation=conversation))
     await runtime.create("demo", "demo plugin")
@@ -80,8 +80,83 @@ async def test_events_are_bounded_and_delivered_with_event_specific_context(runt
     assert second_page["events"][0]["text"] == "message 34"
     full = runtime.events("demo", limit=1, detail="full")
     assert "metadata" in full["events"][0]
-    assert conversation.intents
-    assert "Codex 的新消息" in conversation.intents[-1].instruction
+    assert conversation.intents == []
+
+    await runtime._on_message("demo", {
+        "method": "turn/completed",
+        "params": {"turn": {"id": "turn-1", "status": "completed"}},
+    })
+    assert len(conversation.intents) == 1
+    assert "本轮 Codex 交流已经结束" in conversation.intents[0].instruction
+    assert "message 54" in conversation.intents[0].instruction
+    assert runtime.status("demo")["last_result"] == "message 54"
+
+
+@pytest.mark.asyncio
+async def test_progress_and_retry_events_are_persisted_without_waking_conversation(runtime):
+    conversation = Conversation()
+    runtime._active_ctx = SimpleNamespace(resources=SimpleNamespace(conversation=conversation))
+    await runtime.create("quiet", "demo plugin")
+
+    await runtime._on_message("quiet", {
+        "method": "thread/status/changed",
+        "params": {"status": "running"},
+    })
+    await runtime._on_message("quiet", {
+        "method": "error",
+        "params": {
+            "message": "Reconnecting... 2/5",
+            "willRetry": True,
+            "turnId": "turn-retry",
+        },
+    })
+
+    assert runtime.events("quiet", limit=10)["total"] == 2
+    assert conversation.intents == []
+
+
+@pytest.mark.asyncio
+async def test_terminal_error_and_failed_completion_wake_conversation_once(runtime):
+    conversation = Conversation()
+    runtime._active_ctx = SimpleNamespace(resources=SimpleNamespace(conversation=conversation))
+    await runtime.create("failed", "demo plugin")
+
+    await runtime._on_message("failed", {
+        "method": "error",
+        "params": {
+            "message": "connection failed",
+            "willRetry": False,
+            "turnId": "turn-failed",
+        },
+    })
+    await runtime._on_message("failed", {
+        "method": "turn/completed",
+        "params": {"turn": {
+            "id": "turn-failed",
+            "status": "failed",
+            "error": {"message": "connection failed"},
+        }},
+    })
+
+    assert len(conversation.intents) == 1
+    assert "Codex 开发出现错误" in conversation.intents[0].instruction
+
+
+@pytest.mark.asyncio
+async def test_notification_request_ids_are_unique_per_target_session(runtime):
+    conversation = Conversation()
+    runtime._active_ctx = SimpleNamespace(resources=SimpleNamespace(conversation=conversation))
+    runtime.config.active.sessions = ["wechat:first", "wechat:second"]
+    await runtime.create("targets", "demo plugin")
+
+    await runtime._on_message("targets", {
+        "id": "approval-1",
+        "method": "item/commandExecution/requestApproval",
+        "params": {"command": "pytest"},
+    })
+
+    assert len(conversation.intents) == 2
+    assert len({intent.request_id for intent in conversation.intents}) == 2
 
 
 @pytest.mark.asyncio

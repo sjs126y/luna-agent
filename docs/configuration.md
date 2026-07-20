@@ -307,9 +307,9 @@ GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 
 仓库内的 `integrations/codex-bridge` 插件会注册官方 `codex mcp-server`。启用后，Luna Agent 可调用 `mcp__codex__codex` 创建独立 Codex 线程，并使用 `mcp__codex__codex-reply` 继续该线程。插件的 `PreToolUse` Hook 会固定 `cwd`、sandbox 和内部 approval policy，丢弃调用方传入的危险扩权参数；外层 MCP 工具审批仍按 `permissions.tool_approval` 执行。
 
-Codex 需要可写的状态目录。插件首次加载时将 `source_codex_home/auth.json` 复制到 `runtime_codex_home`；每次加载还会同步 `config.toml`，确保 App Server 使用与本机 Codex CLI 相同的 provider、base URL、模型与网络配置。两个文件权限均设为 `0600`，Codex 自己的数据库、Thread 和 token 更新仍留在隔离目录。默认建议把它放在已忽略的 `data/codex-bridge/`，不要提交其中内容。官方服务的实验性 `codex/event` 通知由插件内 stdio 适配器过滤，标准 MCP 请求、响应和错误保持原样。
+Codex 需要可写的状态目录。插件首次加载时将 `source_codex_home/auth.json` 复制到 `runtime_codex_home`；每次加载还会同步 `config.toml`，确保 App Server 使用与本机 Codex CLI 相同的 provider、base URL、模型与网络配置。两个文件权限均设为 `0600`，Codex 自己的数据库、Thread 和 token 更新仍留在隔离目录。默认建议把它放在已忽略的 `data/codex-bridge/`，不要提交其中内容。App Server 初始化后会通过 `config/read` 取得有效 model/provider，并在 `thread/start` 与 `thread/resume` 中显式传入；响应与有效配置不一致时失败关闭，不会沿用旧 Thread 的 provider。官方服务的实验性 `codex/event` 通知由插件内 stdio 适配器过滤，标准 MCP 请求、响应和错误保持原样。
 
-Codex Bridge 还提供 App Server 驱动的插件开发会话。每个 `plugin_id` 对应一个外部开发工作区和一个持久 Codex Thread；工作区默认位于 `~/.local/share/luna-agent/plugin-workspaces/`，并且配置校验会拒绝任何位于宿主 `cwd` 内的开发目录。该专用目录不加入 Luna 普通工具的 `sandbox.roots`。首次创建时会写入脚手架、`PLUGIN_BRIEF.md` 和只读的 `LUNA_PLUGIN_DEVELOPMENT.md` 开发规范副本。`plugin_dev_message` 只负责提交或排队消息，Codex 的后续事件由 active runtime 异步投递给 `active.sessions`；同一列表同时是宿主 Conversation Port 的会话授权白名单。
+Codex Bridge 还提供 App Server 驱动的插件开发会话。每个 `plugin_id` 对应一个外部开发工作区和一个持久 Codex Thread；工作区默认位于 `~/.local/share/luna-agent/plugin-workspaces/`，并且配置校验会拒绝任何位于宿主 `cwd` 内的开发目录。该专用目录不加入 Luna 普通工具的 `sandbox.roots`。首次创建时会写入脚手架、`PLUGIN_BRIEF.md` 和只读的 `LUNA_PLUGIN_DEVELOPMENT.md` 开发规范副本。`plugin_dev_message` 只负责提交或排队消息。完整 App Server 事件会持久化供 `plugin_dev_events` 查询，但普通进度、Turn 开始和自动重试不会提交 Conversation；只有等待输入、审批、聚合后的最终结果、不可恢复错误和活动 Turn 丢失才异步投递给 `active.sessions`。同一列表同时是宿主 Conversation Port 的会话授权白名单。
 
 ```yaml
 integrations/codex-bridge:

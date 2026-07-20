@@ -53,6 +53,8 @@ class DevelopmentEvent:
 class DevelopmentSession:
     plugin_id: str
     thread_id: str = ""
+    model: str = ""
+    model_provider: str = ""
     workspace_path: str = ""
     brief_path: str = ""
     spec_revision: str = ""
@@ -73,4 +75,3 @@ class DevelopmentSession:
         fields = {key: value[key] for key in cls.__dataclass_fields__ if key in value}
         fields["events"] = list(fields.get("events") or [])
         return cls(**fields)
-

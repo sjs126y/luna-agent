@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1215%20passed-2EA44F" alt="1215 tests passed">
+  <img src="https://img.shields.io/badge/tests-1228%20passed-2EA44F" alt="1228 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--20-555555" alt="Updated 2026-07-20">
 </p>
 
@@ -20,6 +20,14 @@
 </div>
 
 ---
+
+## 2026-07-20：Codex Bridge 事件降噪与 Provider 绑定
+
+- App Server 的完整事件继续持久化，但普通进度、Turn 开始和自动重试不再提交 `ActiveConversationIntent`；中间 assistant message 聚合到 Turn 完成，只唤醒 Luna 一次。
+- 审批和等待输入仍即时通知；不可恢复错误与随后的失败完成按 `turn_id` 去重，进程事件只在活动 Turn 丢失时通知。
+- App Server 初始化后调用 `config/read`，把有效 model/provider 显式传给 `thread/start` 和 `thread/resume`，并对返回配置执行 fail-closed 校验。
+- 真实恢复既有 Thread `019f7d94-...`，保留 Thread ID 并将内置 `openai` 覆盖为当前自定义 `OpenAI` provider；未启动模型 Turn。
+- Codex Bridge 聚焦验证 `16 passed`，主动插件与 Conversation 宽回归 `58 passed`；完整回归 `1228 passed, 1 warning`，唯一警告来自飞书 SDK 的弃用 API。
 
 ## 2026-07-20：主动插件唤醒与 Luna Companion
 

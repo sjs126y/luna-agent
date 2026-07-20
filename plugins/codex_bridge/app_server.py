@@ -43,6 +43,9 @@ class CodexAppServer:
         self.process: asyncio.subprocess.Process | None = None
         self.thread_id = ""
         self.active_turn_id = ""
+        self.effective_model = ""
+        self.effective_model_provider = ""
+        self.effective_service_tier: str | None = None
         self._next_id = 1
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._server_requests: dict[str, dict[str, Any]] = {}
@@ -81,16 +84,15 @@ class CodexAppServer:
             },
         )
         await self._notify("initialized", {})
+        await self._load_effective_config()
         if thread_id:
             try:
-                result = await self._request("thread/resume", {
-                    "threadId": thread_id,
-                    "approvalsReviewer": self.approvals_reviewer,
-                })
+                result = await self._request("thread/resume", self._resume_params(thread_id))
             except CodexAppServerError:
                 result = await self._request("thread/start", self._thread_params())
         else:
             result = await self._request("thread/start", self._thread_params())
+        self._validate_thread_config(result)
         self.thread_id = str(result.get("thread", {}).get("id") or thread_id)
         if not self.thread_id:
             await self.close()
@@ -162,12 +164,61 @@ class CodexAppServer:
         self.active_turn_id = ""
 
     def _thread_params(self) -> dict[str, Any]:
-        return {
+        params: dict[str, Any] = {
+            "model": self.effective_model,
+            "modelProvider": self.effective_model_provider,
             "cwd": str(self.cwd),
             "approvalPolicy": self.approval_policy,
             "approvalsReviewer": self.approvals_reviewer,
             "sandbox": self.sandbox,
         }
+        if self.effective_service_tier is not None:
+            params["serviceTier"] = self.effective_service_tier
+        return params
+
+    def _resume_params(self, thread_id: str) -> dict[str, Any]:
+        return {"threadId": str(thread_id), **self._thread_params()}
+
+    async def _load_effective_config(self) -> None:
+        result = await self._request("config/read", {
+            "includeLayers": False,
+            "cwd": str(self.cwd),
+        })
+        config = result.get("config") or {}
+        self.effective_model = str(config.get("model") or "").strip()
+        self.effective_model_provider = str(
+            config.get("modelProvider") or config.get("model_provider") or ""
+        ).strip()
+        service_tier = (
+            config.get("serviceTier")
+            if "serviceTier" in config
+            else config.get("service_tier")
+        )
+        self.effective_service_tier = (
+            str(service_tier).strip() if service_tier is not None else None
+        )
+        if not self.effective_model:
+            raise CodexAppServerError("Codex effective config did not resolve a model")
+        if not self.effective_model_provider:
+            raise CodexAppServerError("Codex effective config did not resolve a model provider")
+
+    def _validate_thread_config(self, result: dict[str, Any]) -> None:
+        thread = result.get("thread") or {}
+        actual_model = str(result.get("model") or thread.get("model") or "").strip()
+        actual_provider = str(
+            result.get("modelProvider") or thread.get("modelProvider") or ""
+        ).strip()
+        if actual_model != self.effective_model:
+            raise CodexAppServerError(
+                "Codex thread model mismatch: "
+                f"expected {self.effective_model!r}, got {actual_model or '<missing>'!r}"
+            )
+        if actual_provider != self.effective_model_provider:
+            raise CodexAppServerError(
+                "Codex thread provider mismatch: "
+                f"expected {self.effective_model_provider!r}, "
+                f"got {actual_provider or '<missing>'!r}"
+            )
 
     async def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request_id = self._next_id

@@ -9,7 +9,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from luna_agent_plugin_sdk import ActiveConversationIntent
 
@@ -58,6 +58,7 @@ class CodexDevelopmentRuntime:
         self.servers: dict[str, CodexAppServer] = {}
         self.pending_approvals: dict[str, tuple[str, dict[str, Any]]] = {}
         self._queued: dict[str, list[str]] = {}
+        self._notified_terminal_turns: set[str] = set()
         self._lock = asyncio.Lock()
         self._active_ctx = None
 
@@ -113,6 +114,8 @@ class CodexDevelopmentRuntime:
             _initial_development_prompt(text) if first_turn else text
         )
         session.current_turn_id = turn_id
+        session.last_result = ""
+        session.last_error = ""
         session.status = DevelopmentStatus.RUNNING.value
         self.store.put(session)
         return {"ok": True, "queued": False, "plugin_id": session.plugin_id, "thread_id": session.thread_id, "turn_id": turn_id}
@@ -223,6 +226,9 @@ class CodexDevelopmentRuntime:
                 session.last_error = str(exc)
                 self.store.put(session)
                 raise
+            session.model = server.effective_model
+            session.model_provider = server.effective_model_provider
+            self.store.put(session)
             if old_thread:
                 await self._record(session, DevelopmentEventType.PROCESS_RESTARTED, "Codex App Server restarted; the previous active turn was not resumed")
         return server
@@ -242,8 +248,13 @@ class CodexDevelopmentRuntime:
         if event_type is None:
             return
         text = _event_text(method, params)
+        event_turn_id = str(
+            params.get("turnId")
+            or (params.get("turn") or {}).get("id")
+            or session.current_turn_id
+        )
         if method == "turn/started":
-            session.current_turn_id = str(params.get("turn", {}).get("id") or session.current_turn_id)
+            session.current_turn_id = event_turn_id
             session.status = DevelopmentStatus.RUNNING.value
         elif event_type == DevelopmentEventType.TURN_COMPLETED:
             session.current_turn_id = ""
@@ -274,19 +285,70 @@ class CodexDevelopmentRuntime:
                 else DevelopmentStatus.STALE.value
             )
             session.last_error = text
-        await self._record(session, event_type, text, metadata={"method": method, "params": _compact(params)})
-        await self._notify(session, event_type, text)
+        await self._record(
+            session,
+            event_type,
+            text,
+            turn_id=event_turn_id,
+            metadata={"method": method, "params": _compact(params)},
+        )
+        notification = self._notification_text(
+            session,
+            event_type,
+            text,
+            params,
+            turn_id=event_turn_id,
+        )
+        if notification:
+            await self._notify(
+                session,
+                event_type,
+                notification,
+                event_key=str(message.get("id") or event_turn_id or uuid4().hex),
+            )
 
-    async def _record(self, session, event_type, text, metadata=None) -> None:
+    async def _record(self, session, event_type, text, *, turn_id="", metadata=None) -> None:
         event = DevelopmentEvent(
             event_id=f"dev:{uuid4().hex}", plugin_id=session.plugin_id, event_type=event_type.value,
-            text=text, thread_id=session.thread_id, turn_id=session.current_turn_id, metadata=metadata or {},
+            text=text, thread_id=session.thread_id,
+            turn_id=str(turn_id or session.current_turn_id), metadata=metadata or {},
         )
-        session.last_result = text if event_type in {DevelopmentEventType.ASSISTANT_MESSAGE, DevelopmentEventType.TURN_COMPLETED} else session.last_result
+        if event_type == DevelopmentEventType.ASSISTANT_MESSAGE:
+            session.last_result = text
         session.events.append(event.to_dict())
         self.store.put(session)
 
-    async def _notify(self, session, event_type, text) -> None:
+    def _notification_text(self, session, event_type, text, params, *, turn_id: str) -> str:
+        """Select only events that require Luna to run a conversation turn."""
+        if event_type in {
+            DevelopmentEventType.REQUEST_USER_INPUT,
+            DevelopmentEventType.APPROVAL_REQUESTED,
+        }:
+            return text
+        if event_type == DevelopmentEventType.PROCESS_RESTARTED:
+            return text if session.current_turn_id else ""
+        if event_type == DevelopmentEventType.ERROR:
+            if bool(params.get("willRetry")):
+                return ""
+            return text if self._claim_terminal_turn(session.plugin_id, turn_id) else ""
+        if event_type == DevelopmentEventType.TURN_COMPLETED:
+            turn = params.get("turn") or {}
+            status = str(turn.get("status") or params.get("status") or "").lower()
+            if "fail" in status:
+                return text if self._claim_terminal_turn(session.plugin_id, turn_id) else ""
+            return str(session.last_result or text).strip()
+        return ""
+
+    def _claim_terminal_turn(self, plugin_id: str, turn_id: str) -> bool:
+        key = f"{plugin_id}:{turn_id or 'unknown'}"
+        if key in self._notified_terminal_turns:
+            return False
+        if len(self._notified_terminal_turns) >= 1000:
+            self._notified_terminal_turns.clear()
+        self._notified_terminal_turns.add(key)
+        return True
+
+    async def _notify(self, session, event_type, text, *, event_key: str) -> None:
         if self._active_ctx is None:
             return
         sessions = set(self.config.active.sessions or [])
@@ -295,11 +357,12 @@ class CodexDevelopmentRuntime:
         instruction = wrap_event(plugin_id=session.plugin_id, thread_id=session.thread_id, event_type=event_type.value, text=text)
         for session_key in sessions:
             try:
+                target_key = uuid5(NAMESPACE_URL, session_key).hex
                 await self._active_ctx.resources.conversation.submit_intent(ActiveConversationIntent(
-                    intent_id=f"codex:{session.plugin_id}:{uuid4().hex}", session_key=session_key,
+                    intent_id=f"codex:{session.plugin_id}:{event_type.value}:{event_key}:{target_key}", session_key=session_key,
                     kind=f"codex_{event_type.value}", instruction=instruction,
                     evidence={"plugin_id": session.plugin_id, "thread_id": session.thread_id, "event_type": event_type.value},
-                    request_id=f"codex-event:{session.plugin_id}:{uuid4().hex}",
+                    request_id=f"codex-event:{session.plugin_id}:{event_type.value}:{event_key}:{target_key}",
                 ))
             except Exception as exc:
                 logger.warning(
