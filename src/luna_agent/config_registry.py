@@ -545,6 +545,19 @@ def _plugin_fields() -> tuple[ConfigField, ...]:
         _yaml_field("plugins.enabled", "plugins_enabled", [], "list", "plugins", "Enabled plugins."),
         _yaml_field("plugins.disabled", "plugins_disabled", [], "list", "plugins", "Disabled plugins."),
         _yaml_field("plugins.config", "plugins_config", {}, "dict", "plugins", "Per-plugin configuration."),
+        _yaml_field("plugins.runtime.isolate_external", "plugin_worker_isolation", False, "bool", "plugins", "Run external plugins in isolated workers."),
+        _yaml_field(
+            "plugins.runtime.sandbox_backend",
+            "plugin_sandbox_backend",
+            "auto",
+            "str",
+            "plugins",
+            "External plugin sandbox backend.",
+            choices=("auto", "bwrap", "appcontainer", "process-only"),
+        ),
+        _yaml_field("plugins.runtime.allow_network", "plugin_worker_allow_network", False, "bool", "plugins", "Allow direct network access inside external plugin workers."),
+        _yaml_field("plugins.runtime.startup_timeout_seconds", "plugin_worker_startup_timeout", 45.0, "float", "plugins", "External plugin worker startup timeout.", minimum=1),
+        _yaml_field("plugins.runtime.shutdown_timeout_seconds", "plugin_worker_shutdown_timeout", 10.0, "float", "plugins", "External plugin worker shutdown timeout.", minimum=0.5),
     )
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -246,7 +246,7 @@ def to_wire(value: Any) -> Any:
             "__type__": type(value).__name__,
             "fields": {field.name: to_wire(getattr(value, field.name)) for field in fields(value)},
         }
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): to_wire(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
         return [to_wire(item) for item in value]

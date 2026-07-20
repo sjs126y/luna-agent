@@ -51,6 +51,7 @@ from luna_agent.plugins.runtime.importer import (
     import_generation_entrypoint,
 )
 from luna_agent.plugins.install import PluginInstaller, PluginInstallStore
+from luna_agent.plugins.runtime.external_service import ExternalPluginRuntimeService
 from luna_agent.plugins.active import (
     ActivePluginRunner,
     PluginDataRevisionStore,
@@ -96,6 +97,7 @@ class PluginManager:
         install_root = Path(getattr(settings, "agent_data_dir", "data")) / "plugins"
         self.install_store = PluginInstallStore(install_root / "install-state.json")
         self.installer = PluginInstaller(install_root)
+        self.external_runtime = ExternalPluginRuntimeService(self, install_root)
         self.data_revisions = PluginDataRevisionStore(self.installer.data_root)
         from luna_agent.plugins.control_state import PluginControlStateStore
         from luna_agent.plugins.events import PluginEventJournal
@@ -305,10 +307,14 @@ class PluginManager:
             all_config = getattr(self.settings, "plugins_config", {}) or {}
             plugin_config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
             plugin.package_digest = package_digest(plugin.manifest.path)
+            environment = None
+            if self._is_external_isolation_enabled(plugin):
+                environment = self.external_runtime.prepare_environment(plugin)
             plugin.generation_id = generation_id(
                 plugin.key,
                 plugin.package_digest,
                 plugin_config if isinstance(plugin_config, dict) else {},
+                environment_id=environment.environment_id if environment is not None else "",
             )
             plugin.runtime_instance_id = runtime_instance_id(plugin.key)
             if plugin.manifest.source != "builtin":
@@ -317,22 +323,30 @@ class PluginManager:
                     plugin.runtime_instance_id,
                 )
             plugin.ctx = PluginRuntimeContext(self, plugin)
-            module, register_fn = self._import_entrypoint(
-                plugin.manifest,
-                namespace=plugin.module_namespace,
-            )
-            plugin.module = module
-            if register_fn is not None:
-                result = register_fn(plugin.ctx)
-                if inspect.isawaitable(result):
-                    raise RuntimeError("Async plugin register() is not supported during synchronous load")
-            elif hasattr(module, "register"):
-                result = module.register(plugin.ctx)
-                if inspect.isawaitable(result):
-                    raise RuntimeError("Async plugin register() is not supported during synchronous load")
+            if environment is not None:
+                self.data_revisions.prepare(plugin, candidate=True)
+                self.external_runtime.start(
+                    plugin,
+                    environment=environment,
+                    config=plugin_config if isinstance(plugin_config, dict) else {},
+                )
+            else:
+                module, register_fn = self._import_entrypoint(
+                    plugin.manifest,
+                    namespace=plugin.module_namespace,
+                )
+                plugin.module = module
+                if register_fn is not None:
+                    result = register_fn(plugin.ctx)
+                    if inspect.isawaitable(result):
+                        raise RuntimeError("Async plugin register() is not supported during synchronous load")
+                elif hasattr(module, "register"):
+                    result = module.register(plugin.ctx)
+                    if inspect.isawaitable(result):
+                        raise RuntimeError("Async plugin register() is not supported during synchronous load")
             if plugin.active_registration is not None:
                 plugin.active_enabled = self._resolve_active_enabled(plugin.key)
-                if not publish:
+                if not publish and plugin.data_path is None:
                     self.data_revisions.prepare(plugin, candidate=True)
                 plugin.active_runner = ActivePluginRunner(
                     plugin=plugin,
@@ -340,6 +354,8 @@ class PluginManager:
                     context=plugin.ctx,
                     scope=plugin.generation_scope,
                 )
+            if environment is not None and publish:
+                self.data_revisions.commit(plugin)
             after = self._registration_snapshot()
             self._assert_no_registry_replacements(before, after, plugin.key)
             if plugin.manifest.record_import_delta:
@@ -363,6 +379,8 @@ class PluginManager:
                 counts["commands"],
             )
         except Exception as exc:
+            self.external_runtime.stop(plugin)
+            self.data_revisions.discard(plugin)
             self.hook_manager.unregister_owner(plugin.runtime_instance_id)
             self._restore_registration_snapshot(before)
             self._clear_plugin_registrations(plugin)
@@ -430,6 +448,8 @@ class PluginManager:
         plugin.status = PluginStatus.DISABLED if not plugin.enabled else PluginStatus.DISCOVERED
         self._publish_without_owner(plugin.key)
         self._active_runtime_by_plugin.pop(plugin.key, None)
+        if plugin.runtime_instance_id not in self.capability_store.retained_runtime_ids():
+            self.external_runtime.stop(plugin)
         return plugin
 
     def reload_plugin(self, key: str) -> LoadedPlugin:
@@ -524,7 +544,7 @@ class PluginManager:
                 candidate.active_runner.start()
                 await candidate.active_runner.wait_ready()
 
-            if candidate.active_registration is not None:
+            if candidate.data_revision_id:
                 self.data_revisions.commit(candidate)
             self.operations.stage("publishing")
             self._publish_staged_plugin(candidate)
@@ -575,6 +595,7 @@ class PluginManager:
         if scope is not None:
             await scope.aclose()
         cleanup_generation_namespace(candidate.module_namespace)
+        self.external_runtime.stop(candidate)
         candidate.module = None
         candidate.ctx = None
         candidate.runtime_state = PluginRuntimeState.FAILED
@@ -1661,6 +1682,12 @@ class PluginManager:
             missing.append(name)
         return missing
 
+    def _is_external_isolation_enabled(self, plugin: LoadedPlugin) -> bool:
+        return bool(
+            plugin.manifest.source != "builtin"
+            and getattr(self.settings, "plugin_worker_isolation", False)
+        )
+
     def _import_entrypoint(
         self,
         manifest: PluginManifest,
@@ -2090,6 +2117,7 @@ class PluginManager:
                 if not task.done():
                     task.cancel()
             self._close_generation_scope(plugin)
+            self.external_runtime.stop(plugin)
             cleanup_generation_namespace(plugin.module_namespace)
             plugin.ctx = None
             plugin.module = None

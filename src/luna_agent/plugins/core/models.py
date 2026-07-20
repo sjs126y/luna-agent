@@ -43,6 +43,10 @@ class LoadedPlugin:
     runtime_instance_id: str = ""
     module_namespace: str = ""
     package_digest: str = ""
+    environment_id: str = ""
+    environment_path: Any | None = None
+    sandbox_backend: str = ""
+    worker: Any | None = None
     runtime_state: PluginRuntimeState = PluginRuntimeState.DISCOVERED
     generation_scope: Any | None = None
     active_registration: Any | None = None

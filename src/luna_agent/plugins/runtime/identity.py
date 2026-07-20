@@ -35,11 +35,14 @@ def generation_id(
     plugin_key: str,
     package_hash: str,
     config: Mapping[str, Any] | None = None,
+    *,
+    environment_id: str = "",
 ) -> str:
     payload = json.dumps(
         {
             "api": PLUGIN_API_VERSION,
             "config": dict(config or {}),
+            "environment": str(environment_id or ""),
             "package": package_hash,
             "plugin": plugin_key,
         },

@@ -64,7 +64,7 @@ def build_plugin_worker_launch(
 
     data_root = data_root.resolve()
     data_root.mkdir(parents=True, exist_ok=True)
-    command = f"{shlex.quote(str(python.resolve()))} -m luna_agent_plugin_sdk.worker"
+    command = f"{shlex.quote(str(python.absolute()))} -m luna_agent_plugin_sdk.worker"
     launch = build_process_launch(
         command,
         cwd=data_root,
@@ -120,7 +120,7 @@ def _process_only_launch(*, python: Path, data_root: Path) -> PluginWorkerLaunch
     data_root = data_root.resolve()
     data_root.mkdir(parents=True, exist_ok=True)
     return PluginWorkerLaunch(
-        argv=(str(python.resolve()), "-m", "luna_agent_plugin_sdk.worker"),
+        argv=(str(python.absolute()), "-m", "luna_agent_plugin_sdk.worker"),
         cwd=data_root,
         backend="process-only",
         filesystem_isolated=False,

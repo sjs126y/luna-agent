@@ -104,12 +104,13 @@ class RemoteResourceNamespace:
 
     def __getattr__(self, operation: str):
         async def call(*args, **kwargs):
-            return await self.peer.call("resource.call", {
+            result = await self.peer.call("resource.call", {
                 "resource": self.resource,
                 "operation": operation,
                 "args": list(args),
                 "kwargs": kwargs,
             })
+            return _remote_value(result)
 
         return call
 
@@ -119,6 +120,71 @@ class RemoteResources:
         self.storage = storage
         for name in ("tool", "mcp", "llm", "conversation", "delivery", "events", "artifacts", "process"):
             setattr(self, name, RemoteResourceNamespace(peer, name))
+
+
+class RemoteRuntimeControl(RemoteResourceNamespace):
+    def __init__(self, peer: FramedRPCPeer) -> None:
+        super().__init__(peer, "runtime")
+
+    @property
+    def stop_requested(self) -> bool:
+        return bool(self.peer_state.get("stop_requested", False))
+
+    @property
+    def quiescing(self) -> bool:
+        return bool(self.peer_state.get("quiescing", False))
+
+    @property
+    def peer_state(self) -> dict[str, Any]:
+        runtime = getattr(self.peer, "_plugin_runtime_state", None)
+        return runtime if isinstance(runtime, dict) else {}
+
+    async def ready(self) -> None:
+        await self._call("ready")
+
+    async def wait_until_resumed(self) -> None:
+        await self._call("wait_until_resumed")
+
+    async def wait_until_stopped(self) -> None:
+        await self._call("wait_until_stopped")
+
+    async def wait_for_wakeup(self, timeout: float | None = None) -> str:
+        return str(await self._call("wait_for_wakeup", timeout=timeout))
+
+    def heartbeat(self) -> None:
+        asyncio.create_task(self._call("heartbeat"))
+
+    async def _call(self, operation: str, **kwargs: Any) -> Any:
+        result = await self.peer.call("resource.call", {
+            "resource": "runtime",
+            "operation": operation,
+            "args": [],
+            "kwargs": kwargs,
+        }, timeout=86400.0)
+        if isinstance(result, dict) and isinstance(result.get("state"), dict):
+            setattr(self.peer, "_plugin_runtime_state", dict(result["state"]))
+            return result.get("value")
+        return result
+
+
+class RemoteRecord(dict):
+    """Mapping result that also supports the attribute access used by host ports."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+def _remote_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        fields = value.get("fields") if value.get("__type__") else None
+        source = fields if isinstance(fields, dict) else value
+        return RemoteRecord({key: _remote_value(item) for key, item in source.items()})
+    if isinstance(value, list):
+        return [_remote_value(item) for item in value]
+    return value
 
 
 class WorkerRegistrationPort:
@@ -257,7 +323,7 @@ class WorkerPluginContext:
         self.tasks = WorkerTaskPort()
         self.resources = RemoteResources(runtime.peer, self.storage)
         self.register = WorkerRegistrationPort(runtime)
-        self.runtime: Any = None
+        self.runtime = RemoteRuntimeControl(runtime.peer)
 
     def parse_config(self, model_type: Any) -> Any:
         validator = getattr(model_type, "model_validate", None)
@@ -297,6 +363,8 @@ class PluginWorkerRuntime:
         self.active_task: asyncio.Task[Any] | None = None
         peer.register("initialize", self.initialize)
         peer.register("invoke", self.invoke)
+        peer.register("active.start", self.active_start)
+        peer.register("active.wait", self.active_wait)
         peer.register("shutdown", self.shutdown)
         peer.register("health", self.health)
 
@@ -349,6 +417,10 @@ class PluginWorkerRuntime:
             raise KeyError(f"Plugin handler not found: {handler_id}")
         args = list(payload.get("args") or [])
         kwargs = dict(payload.get("kwargs") or {})
+        if bool(payload.get("context")):
+            if self.context is None:
+                raise RuntimeError("Plugin worker is not initialized")
+            args.insert(0, self.context)
         result = handler(*args, **kwargs)
         if inspect.isawaitable(result):
             result = await result
@@ -361,6 +433,29 @@ class PluginWorkerRuntime:
             "handlers": len(self.handlers),
             "active_running": self.active_task is not None and not self.active_task.done(),
         }
+
+    async def active_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.active_task is not None and not self.active_task.done():
+            raise RuntimeError("Plugin active runner is already running")
+        handler_id = str(payload.get("handler_id") or "")
+        handler = self.handlers.get(handler_id)
+        if handler is None or self.context is None:
+            raise KeyError(f"Plugin active handler not found: {handler_id}")
+
+        async def run() -> None:
+            result = handler(self.context)
+            if inspect.isawaitable(result):
+                await result
+
+        self.active_task = asyncio.create_task(run(), name="plugin-active-runner")
+        return {"started": True}
+
+    async def active_wait(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        task = self.active_task
+        if task is None:
+            raise RuntimeError("Plugin active runner has not started")
+        await task
+        return {"stopped": True}
 
     async def shutdown(self, _payload: dict[str, Any]) -> dict[str, Any]:
         if self.active_task is not None:
