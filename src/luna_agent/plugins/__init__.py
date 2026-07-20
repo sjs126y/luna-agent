@@ -10,11 +10,15 @@ from luna_agent_plugin_sdk import (
     PluginRuntimeContext,
 )
 from luna_agent.plugins.core.manager import PluginManager
+from luna_agent.plugins.core.coordinator import GenerationCoordinator
 from luna_agent.plugins.query import PluginQueryService
 from luna_agent.plugins.core.models import (
     HookRegistration,
     LoadedPlugin,
+    PluginDefinition,
+    PluginGeneration,
     PluginStatus,
+    PluginView,
 )
 
 __all__ = [
@@ -24,10 +28,14 @@ __all__ = [
     "ActiveRunnerState",
     "CommandEntry",
     "HookRegistration",
+    "GenerationCoordinator",
     "LoadedPlugin",
+    "PluginDefinition",
+    "PluginGeneration",
     "PluginRuntimeContext",
     "PluginManager",
     "PluginQueryService",
     "PluginManifest",
     "PluginStatus",
+    "PluginView",
 ]

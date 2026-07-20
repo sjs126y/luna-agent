@@ -369,6 +369,8 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
             ensure_system_files(system_dir)
         with boot_report.step("memory"):
             memory_manager = await create_memory_manager(settings, plugin_manager, system_dir, data_dir)
+        with boot_report.step("plugins.seal_boot_scope"):
+            plugin_manager.seal_boot_scope()
         with boot_report.step("memory_review"):
             memory_review_service = MemoryReviewService(
                 memory_manager,

@@ -24,15 +24,22 @@ part of this item.
 
 ### Native Windows AppContainer
 
-Status: implemented; native Windows smoke validation remains pending.
+Status: completed on 2026-07-21, including native Windows smoke validation.
 
 Native Windows `auto` and `appcontainer` now create a per-plugin AppContainer
 profile, grant only the package/environment read roots and generation data write
 root, inherit only framed-RPC stdio handles, and assign the suspended Worker to a
 kill-on-close Job Object before resuming it. Network capability is omitted unless
 explicitly enabled. All setup failures remain fail-closed; `process-only` remains
-development-only. This branch was completed under WSL, so the native launcher
-still needs a Windows CI or physical-host smoke run before release certification.
+development-only. The repository smoke gate was executed with native Windows
+Python and returned exit code 0. It verified the `appcontainer` backend, data
+directory write access, blocked host read/write, blocked network, blocked child
+process creation, Job Object kill-on-close, and profile mapping cleanup:
+
+```text
+uv run --isolated --project <repo> python scripts/windows_plugin_appcontainer_smoke.py
+{"backend": "appcontainer", "ok": true, "profile_removed": true, ...}
+```
 
 ### Installed Package Migration
 

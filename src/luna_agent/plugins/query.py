@@ -28,6 +28,7 @@ class PluginQueryService:
         if not manager._plugins:
             manager.discover()
         plugin = manager._plugins[key]
+        view = plugin.view()
         missing_env = manager._missing_env(plugin.manifest)
         manifest_error = (plugin.error or "") if plugin.manifest.entrypoint == "invalid" else ""
         entrypoint_checked = False
@@ -55,6 +56,7 @@ class PluginQueryService:
             "enabled": plugin.enabled,
             "status": plugin.status.value,
             "runtime_state": plugin.runtime_state.value,
+            "runtime_backend": view.runtime_backend.value,
             "generation_id": plugin.generation_id,
             "runtime_instance_id": plugin.runtime_instance_id,
             "snapshot_revision": manager.capability_store.current.revision,
@@ -67,6 +69,7 @@ class PluginQueryService:
             "active_error": plugin.active_error,
             "active_restart_count": plugin.active_restart_count,
             "active_circuit_open": plugin.active_circuit_open,
+            "active_status": dict(view.active),
             "active_resources": (
                 plugin.active_registration.resources.safe_summary()
                 if plugin.active_registration is not None
@@ -97,6 +100,8 @@ class PluginQueryService:
             "registered": plugin.registration_counts(),
             "registered_items": manager._registered_items(plugin),
             "external_runtime": manager.external_runtime.summary(plugin),
+            "worker_status": dict(view.worker),
+            "boot_scope": manager.boot_scope_report(plugin.key),
             "diagnostic_hints": manager._diagnostic_hints(
                 plugin,
                 missing_env,
@@ -130,6 +135,16 @@ class PluginQueryService:
             "installed_packages": len(manager.install_store.packages()),
             "pending_removals": sorted(manager._pending_package_removals),
             "active_owner_running": manager._active_owner_running,
+            "generation_coordinator": manager.generation_coordinator.health_snapshot(),
+            "active_supervisor": manager.active_supervisor.health_snapshot(),
+            "worker_supervisor": (
+                manager.external_runtime.worker_supervisor.health_snapshot()
+            ),
+            "boot_scope": {
+                "sealed": manager.boot_scope_sealed,
+                "pending_restart_plugins": sorted(manager._pending_boot_scope),
+                "pending_restart_count": len(manager._pending_boot_scope),
+            },
             "active_plugins": [
                 {
                     "key": plugin.key,

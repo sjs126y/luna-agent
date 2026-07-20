@@ -5,7 +5,40 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass
+class DataRevisionCommit:
+    """Reversible current-pointer update used during generation publication."""
+
+    store: "PluginDataRevisionStore"
+    plugin_key: str
+    revision_id: str
+    previous_revision_id: str
+    finalized: bool = False
+
+    def rollback(self) -> None:
+        if self.finalized:
+            return
+        current = self.store.current_revision(self.plugin_key)
+        if current != self.revision_id:
+            raise RuntimeError(
+                f"plugin data revision changed after commit: {self.plugin_key}"
+            )
+        self.store._write_current(self.plugin_key, self.previous_revision_id)
+        candidate = (
+            self.store._plugin_root(self.plugin_key)
+            / "revisions"
+            / self.revision_id
+        )
+        if self.revision_id != self.previous_revision_id:
+            shutil.rmtree(candidate, ignore_errors=True)
+        self.finalized = True
+
+    def finalize(self) -> None:
+        self.finalized = True
 
 
 class PluginDataRevisionStore:
@@ -33,16 +66,30 @@ class PluginDataRevisionStore:
             self.commit(plugin)
         return destination
 
-    def commit(self, plugin) -> None:
+    def commit(self, plugin) -> DataRevisionCommit:
         path = Path(plugin.data_path or "")
         expected = self._plugin_root(plugin.key) / "revisions" / plugin.data_revision_id
         if not plugin.data_revision_id or path.resolve() != expected.resolve() or not path.is_dir():
             raise RuntimeError(f"plugin data revision is invalid: {plugin.key}")
-        pointer = self._plugin_root(plugin.key) / "current.json"
+        previous = self.current_revision(plugin.key)
+        self._write_current(plugin.key, plugin.data_revision_id)
+        return DataRevisionCommit(
+            store=self,
+            plugin_key=plugin.key,
+            revision_id=plugin.data_revision_id,
+            previous_revision_id=previous,
+        )
+
+    def _write_current(self, plugin_key: str, revision_id: str) -> None:
+        pointer = self._plugin_root(plugin_key) / "current.json"
+        if not revision_id:
+            pointer.unlink(missing_ok=True)
+            pointer.with_suffix(".tmp").unlink(missing_ok=True)
+            return
         pointer.parent.mkdir(parents=True, exist_ok=True)
         temporary = pointer.with_suffix(".tmp")
         temporary.write_text(
-            json.dumps({"revision": plugin.data_revision_id}, ensure_ascii=True) + "\n",
+            json.dumps({"revision": revision_id}, ensure_ascii=True) + "\n",
             encoding="utf-8",
         )
         os.replace(temporary, pointer)

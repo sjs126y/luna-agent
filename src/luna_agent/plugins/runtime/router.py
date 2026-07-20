@@ -8,7 +8,7 @@ from typing import Any
 
 from luna_agent.plugins.runtime.catalog import CandidateCatalog
 from luna_agent.plugins.runtime.mapper import CapabilityMapper
-from luna_agent.plugins.runtime.models import CapabilityBinding
+from luna_agent.plugins.runtime.models import CapabilityBinding, CapabilityKind
 from luna_agent.plugins.runtime.snapshot import (
     CapabilitySnapshot,
     CapabilitySnapshotBuilder,
@@ -73,6 +73,7 @@ class CapabilityRouter:
         runtime_instance_id: str,
         core_bindings: Iterable[CapabilityBinding] = (),
         core_payloads: dict[str, Any] | None = None,
+        preserve_kinds: Iterable[CapabilityKind] = (),
     ) -> CapabilitySnapshot:
         bindings = self.runtime_bindings.get(runtime_instance_id)
         if bindings is None:
@@ -85,33 +86,78 @@ class CapabilityRouter:
         core = tuple(core_bindings)
         if core:
             active["core"] = core
-        if core_payloads:
-            self.payloads.update(core_payloads)
-        active[owner] = bindings
+        active[owner] = self._preserve_owner_kinds(
+            owner,
+            bindings,
+            preserve_kinds,
+        )
+        payload_rollback = self._update_payloads(core_payloads or {})
+        try:
+            snapshot = self._publish_bindings(active, self.dynamic_bindings)
+        except Exception:
+            self._restore_payloads(payload_rollback)
+            raise
         self.active_bindings = active
-        return self.publish_current()
+        return snapshot
 
-    def publish_staged(self, owner: str, runtime_instance_id: str) -> CapabilitySnapshot:
+    def publish_staged(
+        self,
+        owner: str,
+        runtime_instance_id: str,
+        *,
+        preserve_kinds: Iterable[CapabilityKind] = (),
+    ) -> CapabilitySnapshot:
         bindings = self.runtime_bindings.get(runtime_instance_id)
         if bindings is None:
             raise RuntimeError(f"Staged plugin bindings are unavailable: {owner}")
-        self.active_bindings = {**self.active_bindings, owner: bindings}
-        return self.publish_current()
+        active = {
+            **self.active_bindings,
+            owner: self._preserve_owner_kinds(owner, bindings, preserve_kinds),
+        }
+        snapshot = self._publish_bindings(active, self.dynamic_bindings)
+        self.active_bindings = active
+        return snapshot
 
-    def publish_without_owner(self, owner: str) -> CapabilitySnapshot | None:
+    def publish_without_owner(
+        self,
+        owner: str,
+        *,
+        preserve_kinds: Iterable[CapabilityKind] = (),
+    ) -> CapabilitySnapshot | None:
         if owner not in self.active_bindings:
             return None
-        self.active_bindings = {
+        preserved = set(preserve_kinds)
+        retained = tuple(
+            binding
+            for binding in self.active_bindings[owner]
+            if binding.kind in preserved
+        )
+        active = {
             key: bindings for key, bindings in self.active_bindings.items() if key != owner
         }
-        return self.publish_current()
+        if retained:
+            active[owner] = retained
+        snapshot = self._publish_bindings(active, self.dynamic_bindings)
+        self.active_bindings = active
+        return snapshot
 
-    def restore_owner(self, owner: str, runtime_instance_id: str) -> CapabilitySnapshot | None:
+    def restore_owner(
+        self,
+        owner: str,
+        runtime_instance_id: str,
+        *,
+        preserve_kinds: Iterable[CapabilityKind] = (),
+    ) -> CapabilitySnapshot | None:
         bindings = self.runtime_bindings.get(runtime_instance_id)
         if bindings is None:
             return None
-        self.active_bindings = {**self.active_bindings, owner: bindings}
-        return self.publish_current()
+        active = {
+            **self.active_bindings,
+            owner: self._preserve_owner_kinds(owner, bindings, preserve_kinds),
+        }
+        snapshot = self._publish_bindings(active, self.dynamic_bindings)
+        self.active_bindings = active
+        return snapshot
 
     def replace_dynamic_source(
         self,
@@ -122,32 +168,101 @@ class CapabilityRouter:
         staged = tuple(bindings)
         if staged == self.dynamic_bindings.get(source_key, ()):
             return None
+        dynamic = dict(self.dynamic_bindings)
         if staged:
-            self.dynamic_bindings[source_key] = staged
+            dynamic[source_key] = staged
         else:
-            self.dynamic_bindings.pop(source_key, None)
-        self.payloads.update(payloads)
-        return self.publish_current()
+            dynamic.pop(source_key, None)
+        payload_rollback = self._update_payloads(payloads)
+        try:
+            snapshot = self._publish_bindings(self.active_bindings, dynamic)
+        except Exception:
+            self._restore_payloads(payload_rollback)
+            raise
+        self.dynamic_bindings = dynamic
+        return snapshot
 
     def build_current(self) -> CapabilitySnapshot:
+        return self._build(self.active_bindings, self.dynamic_bindings)
+
+    def _build(
+        self,
+        active_bindings: dict[str, tuple[CapabilityBinding, ...]],
+        dynamic_bindings: dict[str, tuple[CapabilityBinding, ...]],
+    ) -> CapabilitySnapshot:
         catalog = CandidateCatalog([
             binding
-            for owner_bindings in self.active_bindings.values()
+            for owner_bindings in active_bindings.values()
             for binding in owner_bindings
         ] + [
             binding
-            for dynamic_bindings in self.dynamic_bindings.values()
-            for binding in dynamic_bindings
+            for source_bindings in dynamic_bindings.values()
+            for binding in source_bindings
         ])
         return self.builder.build(catalog, revision=self.store.current.revision + 1)
 
     def publish_current(self) -> CapabilitySnapshot:
-        snapshot = self.store.publish_nowait(self.build_current())
-        if self._on_publish is not None:
-            result = self._on_publish(snapshot)
-            if inspect.isawaitable(result):
-                raise RuntimeError("Capability publish callback must be synchronous")
-        return snapshot
+        return self._publish_bindings(self.active_bindings, self.dynamic_bindings)
+
+    def _publish_bindings(
+        self,
+        active_bindings: dict[str, tuple[CapabilityBinding, ...]],
+        dynamic_bindings: dict[str, tuple[CapabilityBinding, ...]],
+    ) -> CapabilitySnapshot:
+        snapshot = self._build(active_bindings, dynamic_bindings)
+        previous = self.store.current
+        try:
+            if self._on_publish is not None:
+                result = self._on_publish(snapshot)
+                if inspect.isawaitable(result):
+                    raise RuntimeError("Capability publish callback must be synchronous")
+            return self.store.publish_nowait(snapshot)
+        except Exception:
+            # The route callback may have changed a derived registry before it
+            # raised. Re-apply the last committed route set and leave the
+            # CapabilityStore untouched when publication did not complete.
+            if self._on_publish is not None:
+                try:
+                    result = self._on_publish(previous)
+                    if inspect.isawaitable(result):
+                        raise RuntimeError("Capability publish callback must be synchronous")
+                except Exception:
+                    pass
+            raise
+
+    def _preserve_owner_kinds(
+        self,
+        owner: str,
+        staged: tuple[CapabilityBinding, ...],
+        preserve_kinds: Iterable[CapabilityKind],
+    ) -> tuple[CapabilityBinding, ...]:
+        preserved = set(preserve_kinds)
+        if not preserved:
+            return staged
+        live = tuple(
+            binding
+            for binding in self.active_bindings.get(owner, ())
+            if binding.kind in preserved
+        )
+        replaceable = tuple(
+            binding for binding in staged if binding.kind not in preserved
+        )
+        return (*replaceable, *live)
+
+    def _update_payloads(self, payloads: dict[str, Any]) -> dict[str, tuple[bool, Any]]:
+        previous = {
+            binding_id: (binding_id in self.payloads, self.payloads.get(binding_id))
+            for binding_id in payloads
+        }
+        self.payloads.update(payloads)
+        return previous
+
+    def _restore_payloads(self, previous: dict[str, tuple[bool, Any]]) -> None:
+        for binding_id, (existed, payload) in previous.items():
+            if existed:
+                self.payloads[binding_id] = payload
+            else:
+                self.payloads.pop(binding_id, None)
 
     async def _retire(self, snapshot: CapabilitySnapshot) -> None:
         retained_ids = self.store.retained_binding_ids()

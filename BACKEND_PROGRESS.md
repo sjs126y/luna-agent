@@ -6,8 +6,8 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1261%20passed-2EA44F" alt="1261 tests passed">
-  <img src="https://img.shields.io/badge/updated-2026--07--20-555555" alt="Updated 2026-07-20">
+  <img src="https://img.shields.io/badge/tests-1282%20passed-2EA44F" alt="1282 tests passed">
+  <img src="https://img.shields.io/badge/updated-2026--07--21-555555" alt="Updated 2026-07-21">
 </p>
 
 <p>
@@ -21,11 +21,20 @@
 
 ---
 
+## 2026-07-21：插件 generation 架构收口与原生 Windows 验证
+
+- 插件状态拆为 `PluginDefinition`、`PluginGeneration` 和只读 `PluginView`；`LoadedPlugin` 仅保留兼容转发。`GenerationCoordinator` 统一 generation 状态迁移和候选切换，`RegistrationTransaction` 把 Tool、Skill、Workflow、Platform、Hook、Command、MCP、Memory 与数据 revision 纳入可回滚提交边界。
+- `CapabilityRouter` 负责候选 binding 和原子快照发布；发布回调失败不会前移快照 revision，主动执行提交失败会恢复旧 generation 的路由、registry、数据指针和 active runner。新增架构边界测试，防止 Manager 重新拥有 Worker/active 生命周期状态。
+- 主动插件由 `ActiveSupervisor` 管理，外置 Worker 由 `WorkerSupervisor` 管理；Worker 崩溃恢复保留 capability proxy、校验 contract、按退避重启并清理完成的 recovery task。Runtime health 新增 generation coordinator、active supervisor、worker supervisor 和 boot scope 诊断。
+- Memory manager 构造后 seal boot scope；Memory provider 立即冻结，deferred Platform 可完成 Gateway 首次装配，已有 Platform 路由随后冻结。两者在后续热重载中保留当前绑定并标记 `pending_restart`，下一次完整启动应用；Tool/Skill/Hook/Command/MCP 仍可在当前进程切换。
+- 原生 Windows smoke 已通过：AppContainer 文件/网络/子进程边界、受控 stdio、kill-on-close Job Object 和 profile mapping 清理均验证成功。WSL/Linux 继续使用 Bubblewrap，Windows `process-only` 仍仅用于开发。
+- 验证：`python -m compileall -q src/luna_agent packages/luna-agent-plugin-sdk/src scripts`、`git diff --check`、原生 Windows smoke；完整回归 `1282 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
+
 ## 2026-07-20：插件隔离收尾、恢复与环境治理
 
 - 当前安装中的 `productivity/document-converter`、`external/markdown-structure-analyzer` 和 `integrations/workspace-watch` 已补齐 SDK `>=0.3`/Python 依赖并重新打包安装，旧 digest 与数据保留；当前 `config.yaml` 已启用 `isolate_external: true`、`sandbox_backend: auto` 和默认禁网。
 - 普通 Worker 意外退出会进入 failed/recovering，拒绝新调用，按可配置退避重建并校验 capability contract；连续失败打开 circuit breaker。诊断与事件公开重启次数、失败窗口、最近退出/错误和下次重试时间，主动 runner 随 Worker 恢复。
-- 原生 Windows AppContainer 启动器已实现 profile/SID、最小目录 ACL、`SECURITY_CAPABILITIES`、stdio handle allowlist、suspended launch 和 kill-on-close Job Object；任何失败均拒绝加载。当前仅完成 WSL 静态/单元验证，仍需原生 Windows smoke。
+- 原生 Windows AppContainer 启动器已实现 profile/SID、最小目录 ACL、`SECURITY_CAPABILITIES`、stdio handle allowlist、suspended launch 和 kill-on-close Job Object；任何失败均拒绝加载。原生 smoke 结果见 2026-07-21 收口记录。
 - 环境 GC 新增安装版本、活动 generation 和跨进程文件 lease 引用；CLI/Agent 均支持环境报告及 dry-run-first 清理，无法确认的 metadata/manifest 保守保留。
 - `AppRuntime.close()` 现在异步取消恢复任务并并发回收所有被动 Worker，释放环境 lease 时不阻塞 Worker 回调所需的宿主事件循环；短生命周期 CLI manager 也显式关闭 Worker。
 - WSL 实机验证三个迁移插件均以 Bubblewrap Worker 加载；Document Converter、Markdown Analyzer、被动 Worker 崩溃恢复、热重载、Codex Bridge 和 Workspace Watch 主动启动均通过。Unix Worker 使用独立 session，终端信号由 Gateway 统一收尾。

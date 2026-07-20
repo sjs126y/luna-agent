@@ -8,7 +8,9 @@ import pytest
 
 from luna_agent.config import Settings
 from luna_agent.plugins.core.manager import PluginManager
+from luna_agent.plugins.core.models import LoadedPlugin
 from luna_agent.plugins.models import CommandEntry, PluginManifest, PluginStatus
+from luna_agent.plugins.runtime import PluginRuntimeState, RuntimeBackend
 from luna_agent.skills.registry import skill_registry
 from luna_agent.tools.registry import tool_registry
 
@@ -67,6 +69,32 @@ def test_only_platform_plugins_can_be_deferred():
 
     with pytest.raises(ValueError, match="only supported for platform"):
         PluginManifest.from_mapping(data)
+
+
+def test_loaded_plugin_facade_keeps_generation_state_in_owned_models():
+    manifest = PluginManifest.from_mapping({
+        "key": "user/state-model",
+        "name": "State Model",
+        "version": "1.0.0",
+        "entrypoint": "state_model:register",
+    })
+    plugin = LoadedPlugin(key=manifest.key, manifest=manifest, enabled=True)
+
+    plugin.runtime_state = PluginRuntimeState.PREPARING
+    plugin.runtime_backend = RuntimeBackend.WORKER
+    plugin.worker_state = "recovering"
+    plugin.active_restart_count = 2
+    plugin.tools_registered.append("state_tool")
+    view = plugin.view()
+
+    assert plugin.definition.enabled is True
+    assert plugin.generation.runtime_state is PluginRuntimeState.PREPARING
+    assert plugin.generation.worker_status.state == "recovering"
+    assert plugin.generation.active_status.restart_count == 2
+    assert view.runtime_backend is RuntimeBackend.WORKER
+    assert view.registrations["tools"] == 1
+    with pytest.raises(TypeError):
+        view.worker["state"] = "mutated"
 
 
 def test_invalid_manifest_is_preserved_for_doctor(tmp_path):

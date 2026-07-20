@@ -1120,6 +1120,7 @@ Review worker payload 提供：
 - `registered: object`，各类能力计数
 - `registered_items: object`，按 Tool、Skill、MCP Server、Hook 等分组的名称
 - `runtime_state: "discovered" | "preparing" | "ready" | "active" | "draining" | "stopped" | "failed"`
+- `runtime_backend: "in_process" | "worker"`，当前 generation 的执行后端
 - `generation_id: string`
 - `runtime_instance_id: string`
 - `snapshot_revision: integer`
@@ -1131,6 +1132,9 @@ Review worker payload 提供：
 - `active_resources: object`，主动 generation 声明的 Tool、MCP 和应用端口安全摘要
 - `external_runtime: object`，外置 Worker 诊断；包含 `isolated`、`environment_id`、`environment_path`、`sandbox_backend`、`state`、`restart_count`、`failure_count`、`circuit_open`、`last_exit_at`、`next_retry_at`、`last_error` 和 `worker`
   - `worker` 常见字段为 `pid`、`running`、`returncode`、`last_error`、`stderr_tail`
+- `worker_status: object`，Worker Supervisor 的安全摘要；字段为 `state`、`restart_count`、`failure_count`、`circuit_open`、`last_error`、`last_exit_at`、`next_retry_at`
+- `active_status: object`，Active Supervisor 的安全摘要；字段为 `enabled`、`error`、`restart_count`、`failure_count`、`circuit_open`
+- `boot_scope: object`，字段为 `sealed`、`pending_restart`、`capabilities`。Memory provider 在 boot scope seal 后不会被替换；deferred Platform 可在 Gateway 首次装配时加载，已有 Platform 路由之后不会被热重载替换。`pending_restart=true` 表示需要完整重启才能应用新绑定。
 - 主动会话端口使用 SDK 的 `ActiveConversationIntent` 和 `ConversationStatus` 契约：
   - `ActiveConversationIntent`：`intent_id`、`session_key`、`kind`、`instruction`、`evidence`、`request_id`、`metadata`。
   - `ConversationStatus`：`session_key`、`busy`、`queued_count`、`last_user_at`、`last_assistant_at`、`recent_user_messages`（有界列表）。
@@ -1167,6 +1171,10 @@ Review worker payload 提供：
 - `installed_packages: integer`
 - `pending_removals: list[string]`
 - `active_owner_running: boolean`
+- `generation_coordinator: object`，字段为 `transition_count` 和 `last_transition`；后者包含 `plugin_key`、`runtime_instance_id`、`previous`、`current`、`reason`、`changed_at`
+- `active_supervisor: object`，字段为 `owner_running`、`watch_task_count`
+- `worker_supervisor: object`，字段为 `worker_count`、`running_count`、`recovery_task_count`、`environment_lease_count`、`stopping_count`
+- `boot_scope: object`，字段为 `sealed`、`pending_restart_plugins`、`pending_restart_count`
 - `active_plugins: list[object]`，稳定字段为 `key`、`enabled`、`state`、`ready`、`restart_count`、`circuit_open`、`error`
 
 核心 slash command registry 提供 `/plugins` 及 `list/info/logs/versions/operations/operation/install/reload/enable/disable/active/rollback/uninstall` 子命令。`active` 用法为 `/plugins active <key> <on|off|restart|run>`；`run` 只发送一次 manual 唤醒。

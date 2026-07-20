@@ -135,3 +135,53 @@ async def test_capability_router_retires_payload_after_last_lease_releases():
 
     assert router.payload(first.binding_id) is None
     assert router.payload(second.binding_id) == "v2"
+
+
+def test_capability_router_does_not_commit_conflicting_proposed_state():
+    router = CapabilityRouter()
+    first = _binding("convert", owner="plugin/a", runtime="runtime-a")
+    conflicting = _binding("convert", owner="plugin/b", runtime="runtime-b")
+    router.stage("runtime-a", [first], {first.binding_id: "a"})
+    router.publish_plugin(owner="plugin/a", runtime_instance_id="runtime-a")
+    revision = router.store.current.revision
+    router.stage(
+        "runtime-b",
+        [conflicting],
+        {conflicting.binding_id: "b"},
+    )
+
+    with pytest.raises(ValueError, match="Capability conflict"):
+        router.publish_staged("plugin/b", "runtime-b")
+
+    assert router.store.current.revision == revision
+    assert "plugin/b" not in router.active_bindings
+    assert router.store.current.view().resolve(
+        CapabilityKind.TOOL, "convert"
+    ).owner == "plugin/a"
+
+
+def test_capability_router_does_not_advance_store_when_publish_callback_fails():
+    callback_revisions = []
+
+    def on_publish(snapshot):
+        callback_revisions.append(snapshot.revision)
+        if snapshot.revision > 0:
+            raise RuntimeError("derived route activation failed")
+
+    router = CapabilityRouter(on_publish=on_publish)
+    binding = _binding("candidate", runtime="runtime-candidate")
+    router.stage(
+        "runtime-candidate",
+        [binding],
+        {binding.binding_id: "payload"},
+    )
+
+    with pytest.raises(RuntimeError, match="derived route activation failed"):
+        router.publish_plugin(
+            owner="plugin/demo",
+            runtime_instance_id="runtime-candidate",
+        )
+
+    assert router.store.current.revision == 0
+    assert "plugin/demo" not in router.active_bindings
+    assert callback_revisions == [1, 0]

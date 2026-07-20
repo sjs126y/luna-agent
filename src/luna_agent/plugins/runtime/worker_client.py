@@ -170,6 +170,8 @@ class PluginWorkerClient:
             process.wait(timeout=self.shutdown_timeout)
         except subprocess.TimeoutExpired:
             self._terminate()
+        finally:
+            self._close_process_handles(process)
         self.stopped.set()
 
     def safe_summary(self) -> dict[str, Any]:
@@ -266,3 +268,13 @@ class PluginWorkerClient:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=2.0)
+
+    @staticmethod
+    def _close_process_handles(process: Any) -> None:
+        """Close custom launcher handles without assuming ``Popen`` semantics."""
+        close = getattr(process, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass

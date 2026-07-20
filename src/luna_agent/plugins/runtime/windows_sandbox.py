@@ -129,14 +129,22 @@ class _AppContainerProcess:
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
+        self._returncode: int | None = None
 
     def poll(self) -> int | None:
+        if not self._process:
+            return self._returncode
         code = wintypes.DWORD()
         if not ctypes.windll.kernel32.GetExitCodeProcess(self._process, ctypes.byref(code)):
             raise ctypes.WinError()
-        return None if code.value == _STILL_ACTIVE else int(code.value)
+        if code.value == _STILL_ACTIVE:
+            return None
+        self._returncode = int(code.value)
+        return self._returncode
 
     def wait(self, timeout: float | None = None) -> int:
+        if not self._process:
+            return int(self._returncode or 0)
         milliseconds = 0xFFFFFFFF if timeout is None else max(0, int(float(timeout) * 1000))
         result = ctypes.windll.kernel32.WaitForSingleObject(self._process, milliseconds)
         if result == _WAIT_TIMEOUT:
@@ -158,6 +166,10 @@ class _AppContainerProcess:
             except Exception:
                 pass
         if self._process:
+            try:
+                self.poll()
+            except Exception:
+                pass
             kernel32.CloseHandle(self._process)
             self._process = wintypes.HANDLE()
         if self._job:
@@ -190,24 +202,33 @@ def appcontainer_launch(
     environment_root = environment_root.resolve()
     data_root = data_root.resolve()
     data_root.mkdir(parents=True, exist_ok=True)
+    runtime_roots = _python_runtime_roots(python, environment_root)
+    base_python = runtime_roots[0] / "python.exe"
+    if not base_python.is_file():
+        raise RuntimeError(f"Windows base Python executable does not exist: {base_python}")
     profile_name = _profile_name(plugin_key, runtime_instance_id)
     profile = _AppContainerProfileLease(
         profile_name=profile_name,
-        roots=(plugin_root, environment_root, data_root),
+        roots=(plugin_root, environment_root, *runtime_roots, data_root),
     )
 
     def process_factory(command: Sequence[str], cwd: Path, env: dict[str, str]):
+        worker_command = (str(base_python), *tuple(command)[1:])
+        worker_env = {
+            **env,
+            "__PYVENV_LAUNCHER__": str(Path(python).resolve()),
+        }
         return profile.spawn(
-            command=command,
+            command=worker_command,
             cwd=cwd,
-            env=env,
-            readable_roots=(plugin_root, environment_root),
+            env=worker_env,
+            readable_roots=(plugin_root, environment_root, *runtime_roots),
             writable_root=data_root,
             allow_network=allow_network,
         )
 
     return PluginWorkerLaunch(
-        argv=(str(python.absolute()), "-m", "luna_agent_plugin_sdk.worker"),
+        argv=(str(base_python), "-m", "luna_agent_plugin_sdk.worker"),
         cwd=data_root,
         backend="appcontainer",
         filesystem_isolated=True,
@@ -221,6 +242,30 @@ def _profile_name(plugin_key: str, runtime_instance_id: str = "") -> str:
     identity = f"{plugin_key}\0{runtime_instance_id or 'legacy'}"
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
     return f"LunaAgent.Plugin.{digest}"
+
+
+def _python_runtime_roots(python: Path, environment_root: Path) -> tuple[Path, ...]:
+    """Resolve the base runtime required by a Windows venv launcher."""
+    config = Path(environment_root) / "pyvenv.cfg"
+    home = ""
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if separator and key.strip().lower() == "home":
+            home = value.strip().strip('"')
+            break
+    candidate = Path(home) if home else Path(python).resolve().parent
+    if not candidate.is_absolute():
+        raise RuntimeError(f"Windows plugin Python home is not absolute: {candidate}")
+    candidate = candidate.resolve()
+    if candidate == Path(candidate.anchor):
+        raise RuntimeError(f"Windows plugin Python home is too broad: {candidate}")
+    if not candidate.is_dir():
+        raise RuntimeError(f"Windows plugin Python home does not exist: {candidate}")
+    return (candidate,)
 
 
 class _AppContainerProfileLease:

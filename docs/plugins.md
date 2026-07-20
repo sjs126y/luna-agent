@@ -416,9 +416,9 @@ if not status.busy and status.recent_user_messages:
 | `artifacts.create/get` | 必须声明；只能读取该插件自己创建的 Artifact |
 | `storage` | 始终限定在当前插件的数据 revision |
 
-主动调用没有交互式确认通道。资源声明就是宿主给该 generation 的精确非交互授权；未声明调用直接拒绝，所有调用仍通过现有硬安全、Hook、执行与审计管道。当前是受信任的进程内插件模型；若未来开放第三方市场，再在 generation 外增加系统级进程沙箱。
+主动调用没有交互式确认通道。资源声明就是宿主给该 generation 的精确非交互授权；未声明调用直接拒绝，所有调用仍通过现有硬安全、Hook、执行与审计管道。内置插件可以使用进程内 adapter；外置插件的 active runner 与被动 Tool 共用隔离 Worker 和 Worker Supervisor，不会再直接借用宿主生命周期。
 
-根任务异常退出时按 `never`、`on_failure` 或 `always` 重启；默认退避为 `1/2/5/10/30` 秒，可通过 `active.restart_backoff_seconds` 修改。同一 generation 在 5 分钟内连续失败 5 次会打开熔断，需 `/plugins active <key> restart` 人工恢复。
+根任务异常退出时按 `never`、`on_failure` 或 `always` 重启；默认退避为 `1/2/5/10/30` 秒，可通过 `active.restart_backoff_seconds` 修改。同一 generation 在 5 分钟内连续失败 5 次会打开熔断，需 `/plugins active <key> restart` 人工恢复。Worker 意外退出则先拒绝新调用并标记 generation `failed/recovering`，按 `plugin_worker_restart_backoff` 重建；替代 Worker 的 capability contract 必须一致，连续失败由 Worker Supervisor 打开独立熔断。
 
 ### Workspace Watch 示例
 
@@ -526,6 +526,18 @@ plugins:
 
 `register(ctx)` 在 generation 准备事务中执行。任何异常或跨插件同名冲突都不会发布候选快照。Tool、Skill、Workflow、Platform、Command、Memory Provider 和 MCP Server 不允许跨插件重名；同一 Hook 事件可以有多个有序回调。
 
+插件状态分成三层，避免把包定义、一次运行实例和公开路由混在一个可变对象里：
+
+- `PluginDefinition` 保存 manifest、启用状态和管理错误。
+- `PluginGeneration` 保存 `generation_id`、`runtime_instance_id`、运行后端、Worker/active 状态、数据 revision 和注册事务。
+- `PluginView` 是只读诊断投影；兼容层 `LoadedPlugin` 只转发这两层的旧字段，不再拥有 Worker、active 或路由监督逻辑。
+
+`GenerationCoordinator` 是 generation 状态迁移和候选切换的唯一写入口。`CapabilityRouter` 负责把事务中的注册映射为候选 binding，再通过 `CapabilityStore` 发布不可变快照；快照发布前会先验证所有名称冲突。`RegistrationTransaction` 在准备阶段不改宿主兼容 registry，提交失败时同时恢复 registry、Hook、MCP、Memory 和数据 revision。
+
+主动插件由 `ActiveSupervisor` 管理根任务、就绪、quiesce、重启退避和熔断；被动外置插件由 `WorkerSupervisor` 管理 Worker、环境 lease、崩溃恢复和 Worker 级熔断。`ActiveExecution` 只选择进程内或 Worker-backed adapter，插件业务回调仍通过同一 `PluginRuntimeContext` 和宿主资源端口运行。
+
+Memory manager 构造完成后会 seal boot scope。Memory provider 从此保留当前 boot 的绑定；`deferred: true` 的 Platform 仍可在 Gateway 首次装配时完成第一次加载，已有 Platform 路由随后也被冻结。运行中重载会更新可热切换的 Tool/Skill/Hook/Command/MCP 路由，但保留已冻结的 Platform/Memory 绑定，并在 `plugins info` 与 runtime health 标记 `pending_restart`；下一次完整启动才会切换这些绑定。
+
 ## Hook 规则
 
 正式运行时 Hook 由独立的 `HookManager` 管理，`PluginManager` 只负责注册转发、插件归属和卸载清理。回调接收只读的 `HookEnvelope`，并返回事件对应的 outcome：
@@ -625,7 +637,7 @@ data/plugins/
   install-state.json
 ```
 
-每个运行实例都有三个身份：`generation_id` 表示包、有效配置与 Plugin API 的组合；`runtime_instance_id` 表示本次存活实例；`snapshot_revision` 表示宿主当前能力视图。更新会先准备隔离 module namespace、MCP 与候选数据 revision，再 quiesce v1 并启动 v2。只有 v2 调用 `ready()` 后，宿主才提交数据指针和 Capability Snapshot、放行 v2、停止 v1。失败会丢弃候选 revision 并 resume v1。执行中的 Turn 持有旧 lease，不会中途切换；旧实例在 lease 清空后进入 STOPPED。
+每个运行实例都有三个身份：`generation_id` 表示包、有效配置与 Plugin API 的组合；`runtime_instance_id` 表示本次存活实例；`snapshot_revision` 表示宿主当前能力视图。更新会先准备隔离 module namespace、MCP 与候选数据 revision，再由 ActiveSupervisor quiesce v1 并启动 v2。只有 v2 调用 `ready()` 后，GenerationCoordinator 才以注册事务、数据 revision 和 Capability Snapshot 为一个提交边界放行 v2；提交后的 active 监督失败仍有显式 publication rollback，避免留下半发布状态。执行中的 Turn 持有旧 lease，不会中途切换；旧实例在 lease 清空后进入 STOPPED。
 
 普通卸载先发布不包含该插件的新快照，再等待旧 lease 排空并删除 package；插件数据默认保留，只有 `--purge-data` 才删除隔离数据目录。更新保留历史 package，可按 digest 回滚。
 

@@ -7,6 +7,7 @@ import pytest
 from luna_agent.config import Settings
 from luna_agent.plugins import PluginManager, PluginStatus
 from luna_agent.plugins.runtime import CapabilityKind, PluginRuntimeState
+from luna_agent.platforms.core import platform_registry
 from luna_agent.tools.entry import ToolEntry
 from luna_agent.tools.registry import tool_registry
 
@@ -73,6 +74,57 @@ def _write_package_plugin(root: Path, result: str) -> None:
             "        description='Return the isolated generation value',",
             "        schema={'type': 'object', 'properties': {}},",
             "        handler=handler,",
+            "    ))",
+        )),
+        encoding="utf-8",
+    )
+
+
+def _write_boot_scoped_plugin(
+    root: Path,
+    result: str,
+    *,
+    deferred: bool = False,
+) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    manifest_lines = [
+        "key: user/boot-scoped",
+        "name: Boot Scoped",
+        "version: 1.0.0",
+        "entrypoint: boot_scoped:register",
+        "provides: [tools, platforms]",
+        "enabled_by_default: true",
+    ]
+    if deferred:
+        manifest_lines.extend(("kind: platform", "deferred: true"))
+    (root / "plugin.yaml").write_text(
+        "\n".join(manifest_lines),
+        encoding="utf-8",
+    )
+    (root / "boot_scoped.py").write_text(
+        "\n".join((
+            "from luna_agent.platforms.core import PlatformEntry",
+            "from luna_agent.tools.entry import ToolEntry",
+            "",
+            f"VALUE = {result!r}",
+            "",
+            "async def handler():",
+            "    return VALUE",
+            "",
+            "def factory(*_args, **_kwargs):",
+            "    return VALUE",
+            "",
+            "def register(ctx):",
+            "    ctx.register.tool(ToolEntry(",
+            "        name='boot_scoped_value',",
+            "        description='Return the generation value',",
+            "        schema={'type': 'object', 'properties': {}},",
+            "        handler=handler,",
+            "    ))",
+            "    ctx.register.platform(PlatformEntry(",
+            "        name='boot-scoped-platform',",
+            "        factory=factory,",
+            "        check_fn=lambda _config: True,",
             "    ))",
         )),
         encoding="utf-8",
@@ -178,6 +230,128 @@ async def test_package_generations_keep_relative_imports_isolated_until_lease_re
         name == second.module_namespace or name.startswith(f"{second.module_namespace}.")
         for name in sys.modules
     )
+
+
+@pytest.mark.asyncio
+async def test_staged_generation_does_not_replace_compatibility_registry(tmp_path):
+    plugin_dir = tmp_path / "plugins" / "hot_reload"
+    _write_plugin(plugin_dir, "version-one")
+    manager = PluginManager(
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[plugin_dir.parent],
+            plugin_worker_isolation=False,
+        ),
+        plugin_dirs=[plugin_dir.parent],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+    first = manager.load_plugin("user/hot-reload")
+    old_entry = tool_registry.get("hot_value")
+    old_revision = manager.capability_store.current.revision
+
+    _write_plugin(plugin_dir, "version-two")
+    candidate = manager._activate_manifest(
+        first.manifest,
+        previous=first,
+        evict=True,
+        publish=False,
+    )
+
+    assert candidate.status is PluginStatus.LOADED
+    assert candidate.registration_transaction.committed is False
+    assert tool_registry.get("hot_value") is old_entry
+    assert manager.capability_store.current.revision == old_revision
+
+    await manager._discard_staged_plugin(candidate, first)
+
+
+@pytest.mark.asyncio
+async def test_boot_scoped_capabilities_wait_for_restart_during_reload(tmp_path):
+    plugin_dir = tmp_path / "plugins" / "boot-scoped"
+    _write_boot_scoped_plugin(plugin_dir, "version-one")
+    manager = PluginManager(
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[plugin_dir.parent],
+            plugin_worker_isolation=False,
+        ),
+        plugin_dirs=[plugin_dir.parent],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+    first = manager.load_plugin("user/boot-scoped")
+    old_platform = platform_registry.get("boot-scoped-platform")
+    old_route = manager.capability_store.current.view().resolve(
+        CapabilityKind.PLATFORM,
+        "boot-scoped-platform",
+    )
+    manager.seal_boot_scope()
+
+    _write_boot_scoped_plugin(plugin_dir, "version-two")
+    second = await manager.reload_plugin_runtime("user/boot-scoped")
+    tool_route = manager.capability_store.current.view().resolve(
+        CapabilityKind.TOOL,
+        "boot_scoped_value",
+    )
+    platform_route = manager.capability_store.current.view().resolve(
+        CapabilityKind.PLATFORM,
+        "boot-scoped-platform",
+    )
+
+    assert await manager.capability_payload(tool_route.binding_id).handler() == "version-two"
+    assert platform_registry.get("boot-scoped-platform") is old_platform
+    assert platform_route.runtime_instance_id == old_route.runtime_instance_id
+    assert platform_route.runtime_instance_id == first.runtime_instance_id
+    assert second.runtime_instance_id != first.runtime_instance_id
+    assert manager.queries.plugin_info(second.key)["boot_scope"] == {
+        "sealed": True,
+        "pending_restart": True,
+        "capabilities": ["platform"],
+    }
+
+    manager._boot_scope_sealed = False
+    manager.unload_plugin(second.key)
+    platform_registry.unregister("boot-scoped-platform")
+
+
+def test_deferred_platform_can_complete_first_load_after_boot_scope_seal(tmp_path):
+    plugin_dir = tmp_path / "plugins" / "boot-scoped"
+    _write_boot_scoped_plugin(plugin_dir, "version-one", deferred=True)
+    manager = PluginManager(
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[plugin_dir.parent],
+            plugin_worker_isolation=False,
+        ),
+        plugin_dirs=[plugin_dir.parent],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+    manager.discover()
+    manager.seal_boot_scope()
+
+    try:
+        loaded = manager.load_plugin("user/boot-scoped")
+        route = manager.capability_store.current.view().resolve(
+            CapabilityKind.PLATFORM,
+            "boot-scoped-platform",
+        )
+
+        assert loaded.status is PluginStatus.LOADED
+        assert platform_registry.get("boot-scoped-platform") is not None
+        assert route.runtime_instance_id == loaded.runtime_instance_id
+        assert manager.queries.plugin_info(loaded.key)["boot_scope"] == {
+            "sealed": True,
+            "pending_restart": False,
+            "capabilities": [],
+        }
+    finally:
+        manager._boot_scope_sealed = False
+        plugin = manager._plugins.get("user/boot-scoped")
+        if plugin is not None and plugin.status is PluginStatus.LOADED:
+            manager.unload_plugin(plugin.key)
+        platform_registry.unregister("boot-scoped-platform")
 
 
 def test_mcp_tool_list_changes_publish_snapshot_without_health_churn(tmp_path):

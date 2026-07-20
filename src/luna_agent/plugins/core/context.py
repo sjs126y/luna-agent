@@ -90,6 +90,10 @@ class PluginRuntimeContext:
         if not isinstance(plugin_config, dict):
             raise ValueError(f"Plugin config must be an object: {plugin.key}")
         self._config = MappingProxyType(deepcopy(plugin_config))
+        from luna_agent.plugins.core.registration import RegistrationTransaction
+
+        self.registration_transaction = RegistrationTransaction(manager, plugin)
+        plugin.registration_transaction = self.registration_transaction
         self.register = PluginRegistrationPort(self)
         self._resources = None
 
@@ -236,9 +240,8 @@ class PluginRuntimeContext:
         should_register = self.manager.ensure_registration_available(
             "tool", entry.name, existing, entry, self.plugin.key,
         )
-        self._mark_owner(entry if should_register else existing)
-        if should_register:
-            tool_registry.register(entry)
+        selected = entry if should_register else existing
+        self.registration_transaction.stage_named("tools", entry.name, selected)
         if entry.name not in self.plugin.tools_registered:
             self.plugin.tools_registered.append(entry.name)
 
@@ -250,9 +253,8 @@ class PluginRuntimeContext:
         should_register = self.manager.ensure_registration_available(
             "skill", entry.name, existing, entry, self.plugin.key,
         )
-        self._mark_owner(entry if should_register else existing)
-        if should_register:
-            skill_registry.register(entry)
+        selected = entry if should_register else existing
+        self.registration_transaction.stage_named("skills", entry.name, selected)
         if entry.name not in self.plugin.skills_registered:
             self.plugin.skills_registered.append(entry.name)
 
@@ -264,9 +266,8 @@ class PluginRuntimeContext:
         should_register = self.manager.ensure_registration_available(
             "workflow", defn.name, existing, defn, self.plugin.key,
         )
-        self._mark_owner(defn if should_register else existing)
-        if should_register:
-            workflow_registry.register(defn)
+        selected = defn if should_register else existing
+        self.registration_transaction.stage_named("workflows", defn.name, selected)
         if defn.name not in self.plugin.workflows_registered:
             self.plugin.workflows_registered.append(defn.name)
 
@@ -278,15 +279,14 @@ class PluginRuntimeContext:
         should_register = self.manager.ensure_registration_available(
             "platform", entry.name, existing, entry, self.plugin.key,
         )
-        self._mark_owner(entry if should_register else existing)
-        if should_register:
-            platform_registry.register(entry)
+        selected = entry if should_register else existing
+        self.registration_transaction.stage_named("platforms", entry.name, selected)
         if entry.name not in self.plugin.platforms_registered:
             self.plugin.platforms_registered.append(entry.name)
 
     def _register_mcp_server(self, config: MCPServerConfig | dict[str, Any]) -> None:
         self._require_registration()
-        normalized = self.manager.register_mcp_server(self.plugin.key, config)
+        normalized = self.registration_transaction.stage_mcp_server(config)
         label = normalized.name
         if label not in self.plugin.mcp_servers_registered:
             self.plugin.mcp_servers_registered.append(label)
@@ -345,11 +345,12 @@ class PluginRuntimeContext:
         try:
             hook_event = event if isinstance(event, HookEvent) else HookEvent(str(event))
         except ValueError:
-            self.manager.register_hook(self.plugin.key, str(event), callback, priority)
+            self.registration_transaction.stage_legacy_hook(
+                str(event), callback, priority
+            )
             label = f"legacy:{event}:{priority}"
         else:
-            registration = self.manager.register_event_hook(
-                self.plugin.key,
+            registration = self.registration_transaction.stage_typed_hook(
                 hook_event,
                 callback,
                 name=name,
@@ -363,22 +364,15 @@ class PluginRuntimeContext:
 
     def _register_command(self, entry: CommandEntry) -> None:
         self._require_registration()
-        entry.plugin_key = self.plugin.key
-        self.manager.register_command(entry)
+        self.registration_transaction.stage_command(entry)
         if entry.name not in self.plugin.commands_registered:
             self.plugin.commands_registered.append(entry.name)
 
     def _register_memory_provider(self, *, name: str, factory, validator) -> None:
         self._require_registration()
-        from luna_agent.memory.provider_registry import memory_provider_registry
-
-        memory_provider_registry.register(
-            name=name,
-            plugin_key=self.plugin.key,
-            factory=factory,
-            validator=validator,
+        normalized = self.registration_transaction.stage_memory_provider(
+            name=name, factory=factory, validator=validator
         )
-        normalized = str(name).strip().lower()
         if normalized not in self.plugin.memory_providers_registered:
             self.plugin.memory_providers_registered.append(normalized)
 
@@ -418,16 +412,3 @@ class PluginRuntimeContext:
             on_resume=on_resume,
             on_stop=on_stop,
         )
-
-    def _mark_owner(self, entry: Any | None) -> None:
-        if entry is None:
-            return
-        try:
-            setattr(entry, "_plugin_key", self.plugin.key)
-        except (AttributeError, TypeError):
-            pass
-        if hasattr(entry, "plugin_key"):
-            try:
-                setattr(entry, "plugin_key", self.plugin.key)
-            except (AttributeError, TypeError):
-                pass

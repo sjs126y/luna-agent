@@ -18,6 +18,51 @@ class PluginRuntimeState(str, Enum):
     FAILED = "failed"
 
 
+class RuntimeBackend(str, Enum):
+    IN_PROCESS = "in_process"
+    WORKER = "worker"
+
+
+@dataclass
+class WorkerRuntimeStatus:
+    state: str = "stopped"
+    restart_count: int = 0
+    failure_times: list[float] = field(default_factory=list)
+    circuit_open: bool = False
+    last_error: str = ""
+    last_exit_at: str = ""
+    next_retry_at: str = ""
+
+    def safe_summary(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "restart_count": self.restart_count,
+            "failure_count": len(self.failure_times),
+            "circuit_open": self.circuit_open,
+            "last_error": self.last_error,
+            "last_exit_at": self.last_exit_at,
+            "next_retry_at": self.next_retry_at,
+        }
+
+
+@dataclass
+class ActiveRuntimeStatus:
+    enabled: bool = False
+    error: str = ""
+    restart_count: int = 0
+    failure_times: list[float] = field(default_factory=list)
+    circuit_open: bool = False
+
+    def safe_summary(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "error": self.error,
+            "restart_count": self.restart_count,
+            "failure_count": len(self.failure_times),
+            "circuit_open": self.circuit_open,
+        }
+
+
 class CapabilityKind(str, Enum):
     TOOL = "tool"
     SKILL = "skill"

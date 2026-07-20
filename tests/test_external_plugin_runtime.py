@@ -340,7 +340,11 @@ async def test_passive_worker_recovers_without_replacing_tool_proxy(tmp_path: Pa
     assert plugin.worker is not None and plugin.worker.process is not None
     plugin.worker.process.kill()
     for _ in range(300):
-        if plugin.worker_state == "running" and plugin.worker_restart_count == 1:
+        if (
+            plugin.worker_state == "running"
+            and plugin.worker_restart_count == 1
+            and not manager.external_runtime.worker_supervisor.recovery_tasks
+        ):
             break
         await asyncio.sleep(0.01)
     try:
@@ -348,6 +352,9 @@ async def test_passive_worker_recovers_without_replacing_tool_proxy(tmp_path: Pa
         assert plugin.worker_restart_count == 1
         assert await entry.handler() != first_pid
         assert manager.capability_store.current.revision >= 2
+        assert manager.external_runtime.worker_supervisor.health_snapshot()[
+            "recovery_task_count"
+        ] == 0
     finally:
         manager.unload_plugin("user/worker-recover")
         tool_registry.unregister("worker_recover_pid")

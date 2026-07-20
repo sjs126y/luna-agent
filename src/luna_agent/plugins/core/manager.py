@@ -24,6 +24,7 @@ from luna_agent.persistence.json_store import read_json_object, write_json_atomi
 from luna_agent.commands.registry import CORE_COMMAND_NAMES
 from luna_agent.mcp.server_registry import MCPServerRegistry
 from luna_agent.plugins.core.context import PluginRuntimeContext
+from luna_agent.plugins.core.coordinator import GenerationCoordinator
 from luna_agent.plugins.core.models import (
     CommandEntry,
     HookRegistration,
@@ -36,6 +37,7 @@ from luna_agent.plugins.runtime import (
     CapabilityKind,
     CapabilityRouter,
     PluginRuntimeState,
+    RuntimeBackend,
 )
 from luna_agent.plugins.runtime.identity import (
     generation_id,
@@ -50,7 +52,7 @@ from luna_agent.plugins.runtime.importer import (
 from luna_agent.plugins.install import PluginInstaller, PluginInstallStore
 from luna_agent.plugins.runtime.external_service import ExternalPluginRuntimeService
 from luna_agent.plugins.active import (
-    ActivePluginRunner,
+    ActiveSupervisor,
     PluginDataRevisionStore,
     PluginGenerationScope,
 )
@@ -58,6 +60,10 @@ from luna_agent.plugins.active import (
 logger = logging.getLogger(__name__)
 
 CORE_SLASH_COMMANDS = set(CORE_COMMAND_NAMES)
+BOOT_SCOPED_CAPABILITY_KINDS = frozenset({
+    CapabilityKind.PLATFORM,
+    CapabilityKind.MEMORY_PROVIDER,
+})
 
 _BUILTIN_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "builtin"
 
@@ -85,6 +91,8 @@ class PluginManager:
         self._runtime_records: dict[str, LoadedPlugin] = {}
         self._active_runtime_by_plugin: dict[str, str] = {}
         self._mcp_manager = None
+        self._boot_scope_sealed = False
+        self._pending_boot_scope: dict[str, set[CapabilityKind]] = {}
         install_root = Path(getattr(settings, "agent_data_dir", "data")) / "plugins"
         self.install_store = PluginInstallStore(install_root / "install-state.json")
         self.installer = PluginInstaller(install_root)
@@ -98,15 +106,14 @@ class PluginManager:
         self._control_store = PluginControlStateStore(install_root / "control-state.json")
         self.events = PluginEventJournal(self._control_store)
         self.operations = PluginOperationTracker(self._control_store, self.events)
+        self.active_supervisor = ActiveSupervisor(self)
+        self.generation_coordinator = GenerationCoordinator(self)
         from luna_agent.plugins.dependencies import PluginDependencyResolver
 
         self.dependencies = PluginDependencyResolver(self)
         self._pending_package_removals: dict[str, dict[str, Any]] = {}
         self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
-        self._active_owner_running = False
-        self._active_lifecycle_lock = asyncio.Lock()
         self._environment_gc_lock = asyncio.Lock()
-        self._active_watch_tasks: dict[str, asyncio.Task] = {}
         self._capability_view: ContextVar[Any | None] = ContextVar(
             f"plugin-capability-view:{id(self)}",
             default=None,
@@ -137,26 +144,57 @@ class PluginManager:
     def hooks(self) -> dict[str, list[HookRegistration]]:
         return {name: list(items) for name, items in self._hooks.items()}
 
+    @property
+    def _active_owner_running(self) -> bool:
+        """Compatibility view; ownership lives in ActiveSupervisor."""
+        return self.active_supervisor.owner_running
+
+    @property
+    def boot_scope_sealed(self) -> bool:
+        return self._boot_scope_sealed
+
+    @property
+    def boot_scoped_capability_kinds(self) -> frozenset[CapabilityKind]:
+        return BOOT_SCOPED_CAPABILITY_KINDS
+
+    def boot_scope_preserve_kinds(self, plugin_key: str) -> frozenset[CapabilityKind]:
+        """Return boot-scoped kinds that must survive a generation change.
+
+        Memory providers are consumed by the process-wide memory manager once it
+        is constructed. Platform adapters are slightly different: deferred
+        adapters may still be loaded during the first Gateway assembly, so a
+        platform kind is frozen only after that plugin already has an active
+        route.
+        """
+        if not self._boot_scope_sealed:
+            return frozenset()
+        preserved = {CapabilityKind.MEMORY_PROVIDER}
+        if any(
+            binding.kind is CapabilityKind.PLATFORM
+            for binding in self.capability_router.active_bindings.get(plugin_key, ())
+        ):
+            preserved.add(CapabilityKind.PLATFORM)
+        return frozenset(preserved)
+
+    def seal_boot_scope(self) -> None:
+        """Freeze capabilities whose consumers are constructed once per process boot."""
+        self._boot_scope_sealed = True
+
+    def boot_scope_report(self, plugin_key: str) -> dict[str, Any]:
+        pending = self._pending_boot_scope.get(plugin_key, set())
+        return {
+            "sealed": self._boot_scope_sealed,
+            "pending_restart": bool(pending),
+            "capabilities": sorted(kind.value for kind in pending),
+        }
+
     def close(self) -> None:
         """Release generation-owned processes for short-lived CLI managers."""
-        for task in tuple(self.external_runtime._recovery_tasks.values()):
-            if not task.done():
-                task.cancel()
-        for plugin in tuple(self._runtime_records.values()):
-            self.external_runtime.stop(plugin)
+        self.external_runtime.close(self._runtime_records.values())
 
     async def aclose(self) -> None:
         """Release Workers without blocking the host event loop they call back into."""
-        recovery_tasks = tuple(self.external_runtime._recovery_tasks.values())
-        for task in recovery_tasks:
-            if not task.done():
-                task.cancel()
-        if recovery_tasks:
-            await asyncio.gather(*recovery_tasks, return_exceptions=True)
-        await asyncio.gather(*(
-            asyncio.to_thread(self.external_runtime.stop, plugin)
-            for plugin in tuple(self._runtime_records.values())
-        ))
+        await self.external_runtime.aclose(self._runtime_records.values())
 
     def bind_application_ports(
         self,
@@ -292,7 +330,6 @@ class PluginManager:
         dependency_report = self.dependencies.report(key)
         if not dependency_report.ok:
             plugin.status = PluginStatus.BLOCKED
-            plugin.runtime_state = PluginRuntimeState.DISCOVERED
             plugin.error = "; ".join(
                 item.message for item in dependency_report.issues if item.severity == "error"
             )
@@ -306,7 +343,6 @@ class PluginManager:
                 dependency = self.load_plugin(dependency.key, publish=publish)
             if dependency.status is not PluginStatus.LOADED:
                 plugin.status = PluginStatus.BLOCKED
-                plugin.runtime_state = PluginRuntimeState.DISCOVERED
                 plugin.error = (
                     f"Plugin dependency is not loaded: {dependency.key} "
                     f"({dependency.status.value})"
@@ -322,10 +358,15 @@ class PluginManager:
             return plugin
 
         plugin.status = PluginStatus.LOADING
-        plugin.runtime_state = PluginRuntimeState.PREPARING
+        self.generation_coordinator.transition(
+            plugin,
+            PluginRuntimeState.PREPARING,
+            reason="load_started",
+        )
         plugin.error = None
         plugin.error_traceback = None
         before = self._registration_snapshot()
+        data_commit = None
         try:
             plugin.generation_scope = PluginGenerationScope()
             all_config = getattr(self.settings, "plugins_config", {}) or {}
@@ -334,6 +375,11 @@ class PluginManager:
             environment = None
             if self._is_external_isolation_enabled(plugin):
                 environment = self.external_runtime.prepare_environment(plugin)
+            plugin.runtime_backend = (
+                RuntimeBackend.WORKER
+                if environment is not None
+                else RuntimeBackend.IN_PROCESS
+            )
             plugin.generation_id = generation_id(
                 plugin.key,
                 plugin.package_digest,
@@ -372,24 +418,41 @@ class PluginManager:
                 plugin.active_enabled = self._resolve_active_enabled(plugin.key)
                 if not publish and plugin.data_path is None:
                     self.data_revisions.prepare(plugin, candidate=True)
-                plugin.active_runner = ActivePluginRunner(
-                    plugin=plugin,
-                    registration=plugin.active_registration,
-                    context=plugin.ctx,
-                    scope=plugin.generation_scope,
-                )
-            if environment is not None and publish:
-                self.data_revisions.commit(plugin)
+                plugin.active_runner = self.active_supervisor.create_execution(plugin)
             after = self._registration_snapshot()
-            self._assert_no_registry_replacements(before, after, plugin.key)
+            self._assert_no_registry_replacements(before, after, plugin.key, plugin)
+            transaction = plugin.registration_transaction
+            if transaction is None:
+                raise RuntimeError(f"plugin registration transaction is unavailable: {key}")
             if plugin.manifest.record_import_delta:
-                self._record_registry_delta(plugin, before["names"], after["names"])
-            plugin.prepare_rollback_snapshot = before if not publish else None
-            self._publish_plugin_capabilities(plugin, after, publish=publish)
+                transaction.capture_import_delta(before, after)
+            self._restore_registration_snapshot(before)
+            if publish:
+                if environment is not None:
+                    data_commit = self.data_revisions.commit(plugin)
+                preserve_kinds = self.boot_scope_preserve_kinds(plugin.key)
+                transaction.activate(preserve_kinds=preserve_kinds)
+                self._publish_plugin_capabilities(
+                    plugin,
+                    self._registration_snapshot(),
+                    publish=True,
+                )
+                self._record_boot_scope_pending(
+                    plugin,
+                    preserve_kinds=preserve_kinds,
+                )
+                transaction.finalize()
+                if data_commit is not None:
+                    data_commit.finalize()
+            else:
+                self._publish_plugin_capabilities(plugin, before, publish=False)
             plugin.status = PluginStatus.LOADED
-            plugin.runtime_state = (
-                PluginRuntimeState.ACTIVE if publish else PluginRuntimeState.PREPARING
-            )
+            if publish:
+                self.generation_coordinator.transition(
+                    plugin,
+                    PluginRuntimeState.ACTIVE,
+                    reason="initial_generation_published",
+                )
             self._runtime_records[plugin.runtime_instance_id] = plugin
             if publish:
                 self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
@@ -403,8 +466,17 @@ class PluginManager:
                 counts["commands"],
             )
         except Exception as exc:
+            transaction = plugin.registration_transaction
+            if transaction is not None:
+                transaction.rollback()
+            if data_commit is not None and not data_commit.finalized:
+                try:
+                    data_commit.rollback()
+                except Exception:
+                    logger.exception("Failed to roll back plugin data revision: %s", key)
             self.external_runtime.stop(plugin)
             self.data_revisions.discard(plugin)
+            self.capability_router.discard_runtime(plugin.runtime_instance_id)
             self.hook_manager.unregister_owner(plugin.runtime_instance_id)
             self._restore_registration_snapshot(before)
             self._clear_plugin_registrations(plugin)
@@ -413,7 +485,11 @@ class PluginManager:
             plugin.module = None
             plugin.ctx = None
             plugin.status = PluginStatus.ERROR
-            plugin.runtime_state = PluginRuntimeState.FAILED
+            self.generation_coordinator.transition(
+                plugin,
+                PluginRuntimeState.FAILED,
+                reason="load_failed",
+            )
             plugin.error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             plugin.error_traceback = traceback.format_exc()
             logger.exception("Plugin '%s' failed to load", key)
@@ -444,7 +520,11 @@ class PluginManager:
 
     def unload_plugin(self, key: str) -> LoadedPlugin:
         plugin = self._plugins[key]
-        plugin.runtime_state = PluginRuntimeState.DRAINING
+        self.generation_coordinator.transition(
+            plugin,
+            PluginRuntimeState.DRAINING,
+            reason="unload_requested",
+        )
         self._remove_plugin_commands(key)
         self._remove_plugin_hooks(key)
         from luna_agent.platforms.core import platform_registry
@@ -459,11 +539,18 @@ class PluginManager:
             skill_registry.unregister(name)
         for name in list(plugin.workflows_registered):
             workflow_registry.unregister(name)
-        for name in list(plugin.platforms_registered):
-            platform_registry.unregister(name)
+        preserve_kinds = self.boot_scope_preserve_kinds(plugin.key)
+        self._record_boot_scope_pending(
+            plugin,
+            preserve_kinds=preserve_kinds,
+        )
+        if CapabilityKind.PLATFORM not in preserve_kinds:
+            for name in list(plugin.platforms_registered):
+                platform_registry.unregister(name)
 
         self.mcp_server_registry.unregister_plugin(key)
-        memory_provider_registry.unregister_plugin(key)
+        if CapabilityKind.MEMORY_PROVIDER not in preserve_kinds:
+            memory_provider_registry.unregister_plugin(key)
         self._clear_plugin_registrations(plugin)
         plugin.module = None
         plugin.ctx = None
@@ -514,10 +601,20 @@ class PluginManager:
         if loaded.status != PluginStatus.LOADED:
             if previous is not None:
                 self._plugins[manifest.key] = previous
-                previous.runtime_state = PluginRuntimeState.ACTIVE
+                self.generation_coordinator.transition(
+                    previous,
+                    PluginRuntimeState.ACTIVE,
+                    reason="candidate_prepare_failed",
+                )
             return loaded
+        if previous is not None and not publish:
+            self._plugins[manifest.key] = previous
         if previous is not None and publish:
-            previous.runtime_state = PluginRuntimeState.DRAINING
+            self.generation_coordinator.transition(
+                previous,
+                PluginRuntimeState.DRAINING,
+                reason="synchronous_reload_published",
+            )
         return loaded
 
     async def reload_plugin_runtime(self, key: str) -> LoadedPlugin:
@@ -545,10 +642,19 @@ class PluginManager:
         previous: LoadedPlugin,
     ) -> LoadedPlugin:
         previous_quiesced = False
+        data_commit = None
+        publication = None
+        transaction = candidate.registration_transaction
+        if transaction is None:
+            raise RuntimeError(
+                f"plugin registration transaction is unavailable: {candidate.key}"
+            )
         try:
             if self._mcp_manager is not None:
                 self.operations.stage("waiting_mcp")
-                await self._mcp_manager.reconcile(self._desired_mcp_configs())
+                await self._mcp_manager.reconcile(
+                    self._desired_mcp_configs(candidate=candidate)
+                )
             should_start = (
                 self._active_owner_running
                 and candidate.active_enabled
@@ -569,9 +675,31 @@ class PluginManager:
                 await candidate.active_runner.wait_ready()
 
             if candidate.data_revision_id:
-                self.data_revisions.commit(candidate)
+                data_commit = self.data_revisions.commit(candidate)
             self.operations.stage("publishing")
-            self._publish_staged_plugin(candidate)
+            publication = self.generation_coordinator.publish_candidate(
+                candidate,
+                previous,
+                data_commit=data_commit,
+            )
+            if should_start:
+                candidate.active_runner.control.commit()
+                self._watch_active_plugin(candidate, candidate.active_runner)
+            publication.finalize()
+        except Exception:
+            if publication is not None:
+                publication.rollback()
+            else:
+                transaction.rollback()
+                if data_commit is not None and not data_commit.finalized:
+                    data_commit.rollback()
+            await self._discard_staged_plugin(candidate, previous)
+            if previous_quiesced and previous.active_runner is not None:
+                await previous.active_runner.resume()
+            if self._mcp_manager is not None:
+                await self._mcp_manager.reconcile(self._desired_mcp_configs())
+            raise
+        try:
             self.events.record(
                 candidate.key,
                 "generation_published",
@@ -581,21 +709,15 @@ class PluginManager:
                     "runtime_instance_id": candidate.runtime_instance_id,
                 },
             )
-            previous.runtime_state = PluginRuntimeState.DRAINING
-            if should_start:
-                candidate.active_runner.control.commit()
-                self._watch_active_plugin(candidate, candidate.active_runner)
-            if previous.active_runner is not None:
-                self.operations.stage("draining")
-                await self._stop_active_plugin(previous)
-            return candidate
         except Exception:
-            await self._discard_staged_plugin(candidate, previous)
-            if previous_quiesced and previous.active_runner is not None:
-                await previous.active_runner.resume()
-            if self._mcp_manager is not None:
-                await self._mcp_manager.reconcile(self._desired_mcp_configs())
-            raise
+            logger.exception(
+                "Failed to record plugin generation publication: %s",
+                candidate.key,
+            )
+        if previous.active_runner is not None:
+            self.operations.stage("draining")
+            await self._stop_active_plugin(previous)
+        return candidate
 
     async def _discard_staged_plugin(
         self,
@@ -606,9 +728,6 @@ class PluginManager:
         if runner is not None:
             runner.control.abort(candidate.active_error or "candidate activation failed")
             await runner.stop()
-        rollback = candidate.prepare_rollback_snapshot
-        if rollback is not None:
-            self._restore_registration_snapshot(rollback)
         self.data_revisions.discard(candidate)
         self.capability_router.discard_runtime(candidate.runtime_instance_id)
         self._runtime_records.pop(candidate.runtime_instance_id, None)
@@ -620,9 +739,17 @@ class PluginManager:
         self.external_runtime.stop(candidate)
         candidate.module = None
         candidate.ctx = None
-        candidate.runtime_state = PluginRuntimeState.FAILED
+        self.generation_coordinator.transition(
+            candidate,
+            PluginRuntimeState.FAILED,
+            reason="candidate_discarded",
+        )
         self._plugins[previous.key] = previous
-        previous.runtime_state = PluginRuntimeState.ACTIVE
+        self.generation_coordinator.transition(
+            previous,
+            PluginRuntimeState.ACTIVE,
+            reason="candidate_rollback",
+        )
         self._active_runtime_by_plugin[previous.key] = previous.runtime_instance_id
         old_bindings = self.capability_router.runtime_bindings.get(
             previous.runtime_instance_id, ()
@@ -671,28 +798,10 @@ class PluginManager:
 
     async def start_active_plugins(self) -> None:
         """Start enabled active runners. Gateway is the sole owner of this call."""
-        async with self._active_lifecycle_lock:
-            if self._active_owner_running:
-                return
-            self._active_owner_running = True
-            for plugin in list(self._plugins.values()):
-                if plugin.status is not PluginStatus.LOADED:
-                    continue
-                if plugin.active_enabled and plugin.active_runner is not None:
-                    await self._start_active_plugin(plugin)
+        await self.active_supervisor.start_all()
 
     async def stop_active_plugins(self) -> None:
-        async with self._active_lifecycle_lock:
-            self._active_owner_running = False
-            runners = [
-                plugin
-                for plugin in self._runtime_records.values()
-                if plugin.active_runner is not None
-            ]
-            await asyncio.gather(
-                *(self._stop_active_plugin(plugin) for plugin in runners),
-                return_exceptions=True,
-            )
+        await self.active_supervisor.stop_all()
 
     async def set_active_enabled(self, key: str, enabled: bool) -> LoadedPlugin:
         action = "active_enable" if enabled else "active_disable"
@@ -712,11 +821,11 @@ class PluginManager:
             self._state[target].append(key)
         self._state[opposite] = [item for item in self._state[opposite] if item != key]
         self._save_state()
-        if self._active_owner_running:
+        if self.active_supervisor.owner_running:
             if enabled:
-                await self._start_active_plugin(plugin)
+                await self.active_supervisor.start(plugin)
             else:
-                await self._stop_active_plugin(plugin)
+                await self.active_supervisor.stop(plugin)
         return plugin
 
     async def restart_active_plugin(self, key: str) -> LoadedPlugin:
@@ -733,13 +842,7 @@ class PluginManager:
         plugin = self._plugins.get(key)
         if plugin is None:
             raise KeyError(f"unknown plugin: {key}")
-        if plugin.active_registration is None or plugin.active_runner is None:
-            raise ValueError(f"plugin does not register an active runner: {key}")
-        if not plugin.active_enabled:
-            raise ValueError(f"active plugin is disabled: {key}")
-        if not self._active_owner_running:
-            raise RuntimeError("active plugin owner is not running")
-        plugin.active_runner.control.wake(reason)
+        self.active_supervisor.trigger(plugin, reason)
         self.events.record(
             key,
             "active_wakeup_requested",
@@ -752,195 +855,25 @@ class PluginManager:
         plugin = self._plugins[key]
         if not plugin.active_enabled:
             raise ValueError(f"active plugin is disabled: {key}")
-        await self._stop_active_plugin(plugin)
-        plugin.active_circuit_open = False
-        plugin.active_failure_times.clear()
-        plugin.active_error = ""
-        plugin.active_runner = ActivePluginRunner(
-            plugin=plugin,
-            registration=plugin.active_registration,
-            context=plugin.ctx,
-            scope=plugin.generation_scope,
-        )
-        if self._active_owner_running:
+        if self.active_supervisor.owner_running:
             self.operations.stage("waiting_ready")
-            await self._start_active_plugin(plugin)
+        await self.active_supervisor.restart(plugin)
         return plugin
 
     async def _start_active_plugin(self, plugin: LoadedPlugin) -> None:
-        runner = plugin.active_runner
-        if runner is None or not plugin.active_enabled:
-            return
-        if runner.root_task is not None and not runner.root_task.done():
-            return
-        if runner.root_task is not None:
-            runner = ActivePluginRunner(
-                plugin=plugin,
-                registration=plugin.active_registration,
-                context=plugin.ctx,
-                scope=plugin.generation_scope,
-            )
-            plugin.active_runner = runner
-        prepared_data = plugin.data_path is None
-        if prepared_data:
-            self.data_revisions.prepare(plugin, candidate=True)
-        plugin.active_error = ""
-        try:
-            await self._wait_required_mcp(plugin)
-            runner.start()
-            await runner.wait_ready()
-            if prepared_data:
-                self.data_revisions.commit(plugin)
-            runner.control.commit()
-            self._watch_active_plugin(plugin, runner)
-            self.events.record(
-                plugin.key,
-                "active_started",
-                operation_id=self.operations.current_operation_id(),
-                details={"runtime_instance_id": plugin.runtime_instance_id},
-            )
-            logger.info("Active plugin started: %s", plugin.key)
-        except Exception as exc:
-            plugin.active_error = f"{type(exc).__name__}: {exc}"
-            runner.control.abort(plugin.active_error)
-            await runner.stop()
-            if prepared_data:
-                self.data_revisions.discard(plugin)
-                plugin.data_revision_id = ""
-                plugin.data_path = None
-            self.events.record(
-                plugin.key,
-                "active_start_failed",
-                operation_id=self.operations.current_operation_id(),
-                level="error",
-                details={"error": plugin.active_error},
-            )
-            logger.exception("Active plugin failed to start: %s", plugin.key)
+        await self.active_supervisor.start(plugin)
 
     async def _stop_active_plugin(self, plugin: LoadedPlugin) -> None:
-        runner = plugin.active_runner
-        if runner is None or runner.root_task is None:
-            return
-        try:
-            await runner.stop()
-            self.events.record(
-                plugin.key,
-                "active_stopped",
-                operation_id=self.operations.current_operation_id(),
-                details={"runtime_instance_id": plugin.runtime_instance_id},
-            )
-        except Exception as exc:
-            plugin.active_error = f"{type(exc).__name__}: {exc}"
-            logger.exception("Active plugin failed to stop: %s", plugin.key)
+        await self.active_supervisor.stop(plugin)
 
-    def _watch_active_plugin(self, plugin: LoadedPlugin, runner: ActivePluginRunner) -> None:
-        existing = self._active_watch_tasks.get(plugin.runtime_instance_id)
-        if existing is not None and not existing.done():
-            return
-        task = asyncio.create_task(
-            self._supervise_active_plugin(plugin, runner),
-            name=f"plugin-active-watch:{plugin.key}:{plugin.runtime_instance_id}",
-        )
-        self._active_watch_tasks[plugin.runtime_instance_id] = task
-        task.add_done_callback(
-            lambda done, runtime_id=plugin.runtime_instance_id: self._discard_active_watch(
-                runtime_id,
-                done,
-            )
-        )
-
-    def _discard_active_watch(self, runtime_id: str, task: asyncio.Task) -> None:
-        if self._active_watch_tasks.get(runtime_id) is task:
-            self._active_watch_tasks.pop(runtime_id, None)
-
-    async def _supervise_active_plugin(
-        self,
-        plugin: LoadedPlugin,
-        runner: ActivePluginRunner,
-    ) -> None:
-        task = runner.root_task
-        if task is None:
-            return
-        results = await asyncio.gather(task, return_exceptions=True)
-        if runner.control.stop_requested or not self._active_owner_running:
-            return
-        if self._plugins.get(plugin.key) is not plugin or not plugin.active_enabled:
-            return
-        failed = bool(results and isinstance(results[0], BaseException))
-        policy = runner.registration.restart_policy.value
-        if policy == "never" or (policy == "on_failure" and not failed):
-            return
-
-        loop = asyncio.get_running_loop()
-        now = loop.time()
-        plugin.active_failure_times = [
-            value for value in plugin.active_failure_times if now - value <= 300.0
-        ]
-        plugin.active_failure_times.append(now)
-        if len(plugin.active_failure_times) >= 5:
-            plugin.active_circuit_open = True
-            plugin.active_error = "active runner circuit opened after repeated failures"
-            self.events.record(
-                plugin.key,
-                "active_circuit_opened",
-                level="error",
-                details={"restart_count": plugin.active_restart_count},
-            )
-            logger.error("Active plugin circuit opened: %s", plugin.key)
-            return
-        delays = self._active_restart_delays(plugin.key)
-        delay = delays[min(plugin.active_restart_count, len(delays) - 1)]
-        plugin.active_restart_count += 1
-        await asyncio.sleep(delay)
-        if not self._active_owner_running or self._plugins.get(plugin.key) is not plugin:
-            return
-        plugin.active_runner = ActivePluginRunner(
-            plugin=plugin,
-            registration=plugin.active_registration,
-            context=plugin.ctx,
-            scope=plugin.generation_scope,
-        )
-        plugin.active_runner.control.restart_count = plugin.active_restart_count
-        self._active_watch_tasks.pop(plugin.runtime_instance_id, None)
-        await self._start_active_plugin(plugin)
+    def _watch_active_plugin(self, plugin: LoadedPlugin, runner) -> None:
+        self.active_supervisor.watch(plugin, runner)
 
     def _active_restart_delays(self, key: str) -> tuple[float, ...]:
-        all_config = getattr(self.settings, "plugins_config", {}) or {}
-        plugin_config = all_config.get(key, {}) if isinstance(all_config, dict) else {}
-        active = plugin_config.get("active", {}) if isinstance(plugin_config, dict) else {}
-        configured = active.get("restart_backoff_seconds", ()) if isinstance(active, dict) else ()
-        if isinstance(configured, (list, tuple)):
-            values = tuple(float(value) for value in configured if float(value) >= 0)
-            if values:
-                return values
-        return (1.0, 2.0, 5.0, 10.0, 30.0)
+        return self.active_supervisor.restart_delays(key)
 
     async def _wait_required_mcp(self, plugin: LoadedPlugin) -> None:
-        registration = plugin.active_registration
-        required = tuple(registration.resources.required_mcp_servers)
-        if not required:
-            return
-        if self._mcp_manager is None:
-            raise RuntimeError(
-                "required MCP runtime is unavailable: " + ", ".join(required)
-            )
-        deadline = asyncio.get_running_loop().time() + registration.startup_timeout
-        while True:
-            health = self._mcp_manager.health_snapshot()
-            servers = {item["name"]: item for item in health.get("servers", [])}
-            missing = [name for name in required if name not in servers]
-            if missing:
-                raise RuntimeError(
-                    "required MCP server is not configured: " + ", ".join(missing)
-                )
-            pending = [name for name in required if not servers[name].get("connected")]
-            if not pending:
-                return
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(
-                    "required MCP server did not become ready: " + ", ".join(pending)
-                )
-            await asyncio.sleep(0.05)
+        await self.active_supervisor.wait_required_mcp(plugin)
 
     async def install_plugin_runtime(
         self,
@@ -1971,28 +1904,43 @@ class PluginManager:
             payloads[binding.binding_id] = payload
 
         entries = snapshot["entries"]
+        transaction = plugin.registration_transaction
         for name in plugin.tools_registered:
-            entry = entries["tools"].get(name)
+            entry = (
+                transaction.named("tools", name) if transaction is not None else None
+            ) or entries["tools"].get(name)
             if entry is not None:
                 add(CapabilityKind.TOOL, name, entry, contract=_tool_contract(entry))
         for name in plugin.skills_registered:
-            entry = entries["skills"].get(name)
+            entry = (
+                transaction.named("skills", name) if transaction is not None else None
+            ) or entries["skills"].get(name)
             if entry is not None:
                 add(CapabilityKind.SKILL, name, entry, contract=_skill_contract(entry))
         for name in plugin.workflows_registered:
-            entry = entries["workflows"].get(name)
+            entry = (
+                transaction.named("workflows", name) if transaction is not None else None
+            ) or entries["workflows"].get(name)
             if entry is not None:
                 add(CapabilityKind.WORKFLOW, name, entry, contract=_workflow_contract(entry))
         for name in plugin.platforms_registered:
-            entry = entries["platforms"].get(name)
+            entry = (
+                transaction.named("platforms", name) if transaction is not None else None
+            ) or entries["platforms"].get(name)
             if entry is not None:
                 add(CapabilityKind.PLATFORM, name, entry, contract=_platform_contract(entry))
         for name in plugin.memory_providers_registered:
-            entry = entries["memory_providers"].get(name)
+            entry = (
+                transaction.memory_providers.get(name)
+                if transaction is not None
+                else None
+            ) or entries["memory_providers"].get(name)
             if entry is not None:
                 add(CapabilityKind.MEMORY_PROVIDER, name, entry, contract=name)
         for name in plugin.commands_registered:
-            entry = self._commands.get(name)
+            entry = (
+                transaction.commands.get(name) if transaction is not None else None
+            ) or self._commands.get(name)
             if entry is not None:
                 add(
                     CapabilityKind.COMMAND,
@@ -2001,10 +1949,14 @@ class PluginManager:
                     contract={"description": entry.description, "scope": entry.scope},
                 )
 
-        typed_hooks = [
-            item for item in self.hook_manager.registrations(include_inactive=True)
-            if item.owner == plugin.runtime_instance_id
-        ]
+        typed_hooks = (
+            list(transaction.typed_hooks)
+            if transaction is not None
+            else [
+                item for item in self.hook_manager.registrations(include_inactive=True)
+                if item.owner == plugin.runtime_instance_id
+            ]
+        )
         for ordinal, registration in enumerate(typed_hooks):
             add(
                 CapabilityKind.HOOK,
@@ -2019,14 +1971,18 @@ class PluginManager:
                 },
                 metadata={
                     "priority": registration.priority,
-                    "order": registration.order,
+                    "order": getattr(registration, "order", ordinal),
                     "matcher": registration.matcher,
                 },
                 ordinal=ordinal,
             )
         mcp_entries, _revision = self.mcp_server_registry.snapshot()
         for name in plugin.mcp_servers_registered:
-            registration = mcp_entries.get(name)
+            registration = (
+                transaction.mcp_servers.get(name)
+                if transaction is not None
+                else None
+            ) or mcp_entries.get(name)
             if registration is not None:
                 add(
                     CapabilityKind.MCP_SERVER,
@@ -2044,15 +2000,8 @@ class PluginManager:
             runtime_instance_id=plugin.runtime_instance_id,
             core_bindings=core_bindings,
             core_payloads=core_payloads,
+            preserve_kinds=self.boot_scope_preserve_kinds(plugin.key),
         )
-
-    def _publish_staged_plugin(self, plugin: LoadedPlugin) -> None:
-        self._plugins[plugin.key] = plugin
-        self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
-        plugin.runtime_state = PluginRuntimeState.ACTIVE
-        plugin.status = PluginStatus.LOADED
-        plugin.prepare_rollback_snapshot = None
-        self.capability_router.publish_staged(plugin.key, plugin.runtime_instance_id)
 
     def _capture_core_bindings(
         self,
@@ -2093,6 +2042,13 @@ class PluginManager:
             if group not in kind_map:
                 continue
             for name, payload in entries.items():
+                payload_owner = str(
+                    getattr(payload, "_plugin_key", "")
+                    or getattr(payload, "plugin_key", "")
+                    or ""
+                )
+                if payload_owner:
+                    continue
                 if name in plugin_names[group] or name in known_plugin_names[group]:
                     continue
                 if group == "tools" and name.startswith("mcp__"):
@@ -2117,7 +2073,32 @@ class PluginManager:
         return bindings, payloads
 
     def _publish_without_owner(self, owner: str) -> None:
-        self.capability_router.publish_without_owner(owner)
+        self.capability_router.publish_without_owner(
+            owner,
+            preserve_kinds=self.boot_scope_preserve_kinds(owner),
+        )
+
+    def _record_boot_scope_pending(
+        self,
+        plugin: LoadedPlugin,
+        *,
+        preserve_kinds: Iterable[CapabilityKind] = (),
+    ) -> None:
+        preserved = set(preserve_kinds)
+        if not preserved:
+            return
+        candidate = self.capability_router.runtime_bindings.get(
+            plugin.runtime_instance_id,
+            (),
+        )
+        live = self.capability_router.active_bindings.get(plugin.key, ())
+        kinds = {
+            binding.kind
+            for binding in (*candidate, *live)
+            if binding.kind in preserved
+        }
+        if kinds:
+            self._pending_boot_scope.setdefault(plugin.key, set()).update(kinds)
 
     def _publish_current_bindings(self) -> None:
         self.capability_router.publish_current()
@@ -2152,8 +2133,12 @@ class PluginManager:
             cleanup_generation_namespace(plugin.module_namespace)
             plugin.ctx = None
             plugin.module = None
-            plugin.runtime_state = PluginRuntimeState.STOPPED
-            self.capability_router.runtime_bindings.pop(runtime_id, None)
+            self.generation_coordinator.transition(
+                plugin,
+                PluginRuntimeState.STOPPED,
+                reason="snapshot_retired",
+            )
+            self.capability_router.discard_runtime(runtime_id)
         if self._mcp_manager is not None:
             for runtime_id in runtime_ids - retained_runtimes:
                 if not runtime_id.startswith("mcp:"):
@@ -2212,10 +2197,21 @@ class PluginManager:
                 self._plugins.pop(plugin_key, None)
             self._pending_package_removals.pop(plugin_key, None)
 
-    def _desired_mcp_configs(self) -> list[Any]:
+    def _desired_mcp_configs(self, *, candidate: LoadedPlugin | None = None) -> list[Any]:
+        plugin_configs: list[Any]
+        if candidate is None or candidate.registration_transaction is None:
+            plugin_configs = self.get_mcp_servers()
+        else:
+            entries, _revision = self.mcp_server_registry.snapshot()
+            plugin_configs = [
+                registration.config
+                for registration in entries.values()
+                if registration.plugin_key != candidate.key
+            ]
+            plugin_configs.extend(candidate.registration_transaction.mcp_configs())
         return [
             *list(getattr(self.settings, "mcp_servers", []) or []),
-            *self.get_mcp_servers(),
+            *plugin_configs,
         ]
 
     def _rollback_to_runtime(self, plugin_key: str, runtime_id: str) -> None:
@@ -2226,13 +2222,25 @@ class PluginManager:
         current_id = self._active_runtime_by_plugin.get(plugin_key, "")
         current = self._runtime_records.get(current_id)
         if current is not None:
-            current.runtime_state = PluginRuntimeState.DRAINING
+            self.generation_coordinator.transition(
+                current,
+                PluginRuntimeState.DRAINING,
+                reason="rollback_replaced_current",
+            )
         self._plugins[plugin_key] = previous
-        previous.runtime_state = PluginRuntimeState.ACTIVE
+        self.generation_coordinator.transition(
+            previous,
+            PluginRuntimeState.ACTIVE,
+            reason="rollback_restored_runtime",
+        )
         previous.status = PluginStatus.LOADED
         self._active_runtime_by_plugin[plugin_key] = runtime_id
         self._activate_binding_payloads(bindings)
-        self.capability_router.restore_owner(plugin_key, runtime_id)
+        self.capability_router.restore_owner(
+            plugin_key,
+            runtime_id,
+            preserve_kinds=self.boot_scope_preserve_kinds(plugin_key),
+        )
 
     def _activate_binding_payloads(self, bindings) -> None:
         from luna_agent.memory.provider_registry import memory_provider_registry
@@ -2252,7 +2260,9 @@ class PluginManager:
             elif binding.kind is CapabilityKind.WORKFLOW:
                 workflow_registry.register(payload)
             elif binding.kind is CapabilityKind.PLATFORM:
-                platform_registry.register(payload)
+                preserve_kinds = self.boot_scope_preserve_kinds(binding.owner)
+                if CapabilityKind.PLATFORM not in preserve_kinds:
+                    platform_registry.register(payload)
             elif binding.kind is CapabilityKind.COMMAND:
                 self._commands[binding.public_name] = payload
             elif binding.kind is CapabilityKind.MCP_SERVER:
@@ -2262,12 +2272,14 @@ class PluginManager:
                     runtime_instance_id=payload.runtime_instance_id,
                 )
             elif binding.kind is CapabilityKind.MEMORY_PROVIDER:
-                memory_provider_registry.register(
-                    name=payload.name,
-                    plugin_key=payload.plugin_key,
-                    factory=payload.factory,
-                    validator=payload.validator,
-                )
+                preserve_kinds = self.boot_scope_preserve_kinds(binding.owner)
+                if CapabilityKind.MEMORY_PROVIDER not in preserve_kinds:
+                    memory_provider_registry.register(
+                        name=payload.name,
+                        plugin_key=payload.plugin_key,
+                        factory=payload.factory,
+                        validator=payload.validator,
+                    )
 
     def _restore_registration_snapshot(self, snapshot: dict[str, Any]) -> None:
         from luna_agent.memory.provider_registry import memory_provider_registry
@@ -2333,11 +2345,25 @@ class PluginManager:
         before: dict[str, Any],
         after: dict[str, Any],
         plugin_key: str,
+        plugin: LoadedPlugin | None = None,
     ) -> None:
+        registered_names = {
+            "tools": set(getattr(plugin, "tools_registered", ())) if plugin else set(),
+            "skills": set(getattr(plugin, "skills_registered", ())) if plugin else set(),
+            "workflows": set(getattr(plugin, "workflows_registered", ())) if plugin else set(),
+            "platforms": set(getattr(plugin, "platforms_registered", ())) if plugin else set(),
+            "memory_providers": (
+                set(getattr(plugin, "memory_providers_registered", ()))
+                if plugin
+                else set()
+            ),
+        }
         for kind, previous in before["entries"].items():
             current = after["entries"].get(kind, {})
             for name, entry in previous.items():
                 if name in current and current[name] is not entry:
+                    if name in registered_names.get(kind, set()):
+                        continue
                     previous_owner = str(
                         getattr(entry, "_plugin_key", "") or getattr(entry, "plugin_key", "")
                     )
@@ -2349,17 +2375,6 @@ class PluginManager:
                     if previous_owner == plugin_key or current_owner == plugin_key:
                         continue
                     raise ValueError(f"Plugin replaced existing {kind.rstrip('s')} registration: {name}")
-
-    def _record_registry_delta(
-        self,
-        plugin: LoadedPlugin,
-        before: dict[str, set[str]],
-        after: dict[str, set[str]],
-    ) -> None:
-        self._extend_unique(plugin.tools_registered, sorted(after["tools"] - before["tools"]))
-        self._extend_unique(plugin.skills_registered, sorted(after["skills"] - before["skills"]))
-        self._extend_unique(plugin.workflows_registered, sorted(after["workflows"] - before["workflows"]))
-        self._extend_unique(plugin.platforms_registered, sorted(after["platforms"] - before["platforms"]))
 
     def _registration_owner(self, kind: str, name: str) -> str:
         attribute = {
@@ -2386,11 +2401,6 @@ class PluginManager:
         plugin.commands_registered.clear()
         plugin.middleware_registered.clear()
         plugin.memory_providers_registered.clear()
-    def _extend_unique(self, target: list[str], values: list[str]) -> None:
-        for value in values:
-            if value not in target:
-                target.append(value)
-
     def _remove_plugin_commands(self, plugin_key: str) -> None:
         for name, entry in list(self._commands.items()):
             if entry.plugin_key == plugin_key:

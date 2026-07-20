@@ -543,6 +543,83 @@ async def test_active_reload_failure_restores_previous_runtime_and_data(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_active_reload_publish_failure_rolls_back_registry_and_data(
+    tmp_path,
+    monkeypatch,
+):
+    plugin_root = tmp_path / "plugins" / "active-reload"
+    _write_reload_active_plugin(plugin_root, "v1")
+    manager = _manager(
+        tmp_path,
+        plugin_root,
+        plugins_config={"user/active-reload": {"active": {"enabled": True}}},
+    )
+    first = manager.load_plugin("user/active-reload")
+    await manager.start_active_plugins()
+    old_data_revision = manager.data_revisions.current_revision(first.key)
+    old_entry = tool_registry.get("active_reload_value")
+
+    def fail_publish(*_args, **_kwargs):
+        raise RuntimeError("synthetic capability publication failure")
+
+    monkeypatch.setattr(manager.capability_router, "publish_staged", fail_publish)
+    _write_reload_active_plugin(plugin_root, "v2")
+
+    with pytest.raises(RuntimeError, match="synthetic capability publication failure"):
+        await manager.reload_plugin_runtime("user/active-reload")
+
+    assert manager._plugins[first.key] is first
+    assert manager.data_revisions.current_revision(first.key) == old_data_revision
+    assert tool_registry.get("active_reload_value") is old_entry
+    assert first.ctx.resources.storage.read_text("runner.txt") == "v1"
+    assert first.active_runner.control.state is ActiveRunnerState.ACTIVE
+
+    await manager.stop_active_plugins()
+
+
+@pytest.mark.asyncio
+async def test_active_reload_post_publish_failure_restores_previous_generation(
+    tmp_path,
+    monkeypatch,
+):
+    plugin_root = tmp_path / "plugins" / "active-reload"
+    _write_reload_active_plugin(plugin_root, "v1")
+    manager = _manager(
+        tmp_path,
+        plugin_root,
+        plugins_config={"user/active-reload": {"active": {"enabled": True}}},
+    )
+    first = manager.load_plugin("user/active-reload")
+    await manager.start_active_plugins()
+    old_data_revision = manager.data_revisions.current_revision(first.key)
+    old_entry = tool_registry.get("active_reload_value")
+
+    def fail_candidate_watch(plugin, runner):
+        if plugin is not first:
+            raise RuntimeError("synthetic active publication failure")
+        manager.active_supervisor.watch(plugin, runner)
+
+    monkeypatch.setattr(manager, "_watch_active_plugin", fail_candidate_watch)
+    _write_reload_active_plugin(plugin_root, "v2")
+
+    with pytest.raises(RuntimeError, match="synthetic active publication failure"):
+        await manager.reload_plugin_runtime("user/active-reload")
+
+    route = manager.capability_store.current.view().resolve(
+        CapabilityKind.TOOL,
+        "active_reload_value",
+    )
+    assert manager._plugins[first.key] is first
+    assert route.runtime_instance_id == first.runtime_instance_id
+    assert manager.data_revisions.current_revision(first.key) == old_data_revision
+    assert tool_registry.get("active_reload_value") is old_entry
+    assert await manager.capability_payload(route.binding_id).handler() == "v1"
+    assert first.active_runner.control.state is ActiveRunnerState.ACTIVE
+
+    await manager.stop_active_plugins()
+
+
+@pytest.mark.asyncio
 async def test_active_runner_restarts_after_runtime_failure(tmp_path):
     plugin_root = tmp_path / "plugins" / "active-reload"
     _write_reload_active_plugin(plugin_root, "v1", crash_once_after_ready=True)
