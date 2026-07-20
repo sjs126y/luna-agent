@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1249%20passed-2EA44F" alt="1249 tests passed">
+  <img src="https://img.shields.io/badge/tests-1250%20passed-2EA44F" alt="1250 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--20-555555" alt="Updated 2026-07-20">
 </p>
 
@@ -38,7 +38,7 @@
 - `29b8a27` Add external plugin resource exchange
 - `246026d` Add controlled plugin host resources
 
-阶段验证：Worker/RPC/Bubblewrap、Codex Bridge 与外置插件兼容测试通过；聚焦回归 `91 passed`，完整回归 `1249 passed, 1 warning`，唯一警告仍来自飞书 SDK 的既有弃用 API。
+阶段验证：Worker/RPC/Bubblewrap、Codex Bridge 与外置插件兼容测试通过；聚焦回归 `91 passed`，完整回归 `1250 passed, 1 warning`，唯一警告仍来自飞书 SDK 的既有弃用 API。
 
 ## 2026-07-20：Codex Bridge 事件降噪与 Provider 绑定
 

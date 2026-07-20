@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/phases-21-7C3AED" alt="21 phases">
   <img src="https://img.shields.io/badge/Python%20LOC-90%2C887-0A84FF" alt="90887 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1249%20passed-2EA44F" alt="1249 tests passed">
+  <img src="https://img.shields.io/badge/tests-1250%20passed-2EA44F" alt="1250 tests passed">
 </p>
 
 <p>
@@ -42,7 +42,7 @@
 
 - 分支：`main`
 - 本次统计基准：v0.22 外置插件 Worker 隔离
-- 最近全量验证：`uv run pytest -q`，结果 `1249 passed, 1 warning`
+- 最近全量验证：`uv run pytest -q`，结果 `1250 passed, 1 warning`
 
 ## v0.21 Bash 最小进程文件系统
 
