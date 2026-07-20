@@ -8,7 +8,7 @@ kind: integration
 entrypoint: codex_bridge:register
 requires:
   sdk: ">=0.1,<1"
-provides: [mcp, hook, tool, active]
+provides: [mcp, hook, tool, skill, active]
 tags: [codex, mcp, app-server, plugin-development, coding]
 enabled_by_default: false
 source: local

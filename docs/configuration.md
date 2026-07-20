@@ -311,6 +311,8 @@ Codex 需要可写的状态目录。插件首次加载时将 `source_codex_home/
 
 Codex Bridge 还提供 App Server 驱动的插件开发会话。每个 `plugin_id` 对应一个外部开发工作区和一个持久 Codex Thread；工作区默认位于 `~/.local/share/luna-agent/plugin-workspaces/`，并且配置校验会拒绝任何位于宿主 `cwd` 内的开发目录。该专用目录不加入 Luna 普通工具的 `sandbox.roots`。首次创建时会写入脚手架、`PLUGIN_BRIEF.md` 和只读的 `LUNA_PLUGIN_DEVELOPMENT.md` 开发规范副本。`plugin_dev_message` 只负责提交或排队消息。完整 App Server 事件会持久化供 `plugin_dev_events` 查询，但普通进度、Turn 开始和自动重试不会提交 Conversation；只有等待输入、审批、聚合后的最终结果、不可恢复错误和活动 Turn 丢失才异步投递给 `active.sessions`。同一列表同时是宿主 Conversation Port 的会话授权白名单。
 
+插件还发布 `plugin-development-workflow` Skill。显式加载后，小鹿会先与 Codex 讨论初步方案和待确认问题，再收敛最终方案与执行计划；只有用户确认计划后才进入编码。审查、打包和安装分别处理，加载 Skill 本身不会启动 Codex Turn 或修改开发工作区。`plugin_dev_events` 存储 UTC，展示时的 `created_at` 使用本机时区，`created_at_utc` 保留原值。
+
 ```yaml
 integrations/codex-bridge:
   development_root: "~/.local/share/luna-agent/plugin-workspaces"

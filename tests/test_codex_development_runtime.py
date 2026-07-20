@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -90,6 +91,28 @@ async def test_events_are_bounded_and_turn_completion_delivers_last_message(runt
     assert "本轮 Codex 交流已经结束" in conversation.intents[0].instruction
     assert "message 54" in conversation.intents[0].instruction
     assert runtime.status("demo")["last_result"] == "message 54"
+
+
+@pytest.mark.asyncio
+async def test_event_output_exposes_local_time_and_preserves_utc(runtime):
+    await runtime.create("timestamps", "demo plugin")
+    session = runtime.store.get("timestamps")
+    session.events.append({
+        "event_id": "event-1",
+        "event_type": "progress",
+        "text": "working",
+        "created_at": "2026-07-20T04:27:57+00:00",
+        "turn_id": "turn-1",
+        "metadata": {},
+    })
+    runtime.store.put(session)
+
+    event = runtime.events("timestamps", limit=1)["events"][0]
+
+    assert event["created_at_utc"] == "2026-07-20T04:27:57+00:00"
+    local = datetime.fromisoformat(event["created_at"])
+    assert local.utcoffset() is not None
+    assert local == datetime.fromisoformat(event["created_at_utc"]).astimezone()
 
 
 @pytest.mark.asyncio

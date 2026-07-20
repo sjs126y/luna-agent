@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1228%20passed-2EA44F" alt="1228 tests passed">
+  <img src="https://img.shields.io/badge/tests-1231%20passed-2EA44F" alt="1231 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--20-555555" alt="Updated 2026-07-20">
 </p>
 
@@ -28,6 +28,20 @@
 - App Server 初始化后调用 `config/read`，把有效 model/provider 显式传给 `thread/start` 和 `thread/resume`，并对返回配置执行 fail-closed 校验。
 - 真实恢复既有 Thread `019f7d94-...`，保留 Thread ID 并将内置 `openai` 覆盖为当前自定义 `OpenAI` provider；未启动模型 Turn。
 - Codex Bridge 聚焦验证 `16 passed`，主动插件与 Conversation 宽回归 `58 passed`；完整回归 `1228 passed, 1 warning`，唯一警告来自飞书 SDK 的弃用 API。
+
+## 2026-07-20：Responses 工具调用合并与事件时间展示
+
+- Responses 传输层按稳定 `call_id` 合并 `response.output_item.done` 与 `response.completed` 的同一函数调用；中转站隐藏或重排 reasoning item 导致 output index 不一致时，不再制造重复工具调用 warning。
+- `plugin_dev_events` 保持 UTC 原值用于审计，并在展示字段 `created_at` 转换为本机时区（当前环境为 UTC+8），同时增加 `created_at_utc`。
+- 新增索引不一致的 Responses 回归和事件时间展示回归；全量测试 `1231 passed, 1 warning`，警告仍来自飞书 SDK 的既有弃用 API。
+
+## 2026-07-20：插件开发协作 Skill
+
+- Codex Bridge 新增可加载的 `plugin-development-workflow` Skill，把用户、小鹿与 Codex 的协作职责固化为方案探索、讨论、最终方案、执行计划、用户授权、实现和独立审查阶段。
+- 用户只需描述功能目标；小鹿负责与 Codex 收敛常规技术问题，只把产品取舍、风险接受和授权问题交给用户。
+- 方案和计划阶段显式禁止修改文件；实现不自动包含安装，打包与安装继续分别经过 `plugin_build` 和 `plugin_manage`。
+- Skill 通过现有插件 Skill Registry 发布，不给 Codex Bridge 核心增加固定工作流状态，`plugin_dev_message` 保持通用异步消息语义。
+- Skill 格式校验通过；Codex Bridge 与集成插件聚焦回归 `10 passed`，完整回归 `1229 passed, 1 warning`，唯一警告来自飞书 SDK 的既有弃用 API。
 
 ## 2026-07-20：主动插件唤醒与 Luna Companion
 

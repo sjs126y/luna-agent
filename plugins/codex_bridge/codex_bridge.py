@@ -79,6 +79,7 @@ def register(ctx) -> None:
         "development_spec_path": development_spec_path,
     }), ctx=ctx)
 
+    ctx.register.skills("skills")
     ctx.register.mcp_server({
         "name": "codex",
         "transport": "stdio",

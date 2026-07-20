@@ -71,6 +71,7 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
     assert plugin["status"] == "LOADED"
     assert plugin["registered"]["mcp_servers"] == 1
     assert plugin["registered"]["hooks"] == 1
+    assert plugin["registered"]["skills"] == 1
     server = manager.get_mcp_servers()[0]
     assert server.name == "codex"
     assert server.command == sys.executable
@@ -88,6 +89,13 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
     status_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_status")
     events_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_events")
     assert all(route is not None for route in (list_route, create_route, status_route, events_route))
+    skill_view = manager.capability_store.current.view({CapabilityKind.SKILL})
+    skill_route = skill_view.resolve(CapabilityKind.SKILL, "plugin-development-workflow")
+    assert skill_route is not None
+    skill_entry = manager.capability_payload(skill_route.binding_id)
+    assert skill_entry.plugin_key == "integrations/codex-bridge"
+    assert "协调用户、小鹿与 Codex" in skill_entry.description
+    assert "[阶段：方案探索]" in Path(skill_entry.path).read_text(encoding="utf-8")
     list_entry = manager.capability_payload(list_route.binding_id)
     create_entry = manager.capability_payload(create_route.binding_id)
     status_entry = manager.capability_payload(status_route.binding_id)

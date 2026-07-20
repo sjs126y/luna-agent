@@ -132,6 +132,8 @@ src/luna_agent/plugins/
 
 `codex_bridge` 的插件开发能力是异步的：一个插件对应一个 Codex Thread，普通交流是 Thread 内的多个 Turn。开发工作区和 Codex 状态放在宿主机数据目录，Codex 只读取一次 `LUNA_PLUGIN_DEVELOPMENT.md` 规范副本；每个事件按类型封装后再通过 `ActiveConversationIntent` 交给 Luna，不把 Codex 的协议事件直接伪装成用户消息。事件和审批请求在 Bridge 内有界持久化，工具只返回最近事件，避免把完整 Codex 日志塞进上下文。
 
+Bridge 同时注册 `plugin-development-workflow` Skill，供小鹿在接收插件需求时显式加载。它约束的是协作顺序：先由 Codex 给出初步方案和待确认问题，经小鹿组织讨论后形成最终方案与执行计划，用户明确授权后才实现；代码审查、打包和安装保持独立边界。Skill 不向 Bridge 核心增加固定工作流状态，`plugin_dev_message` 仍是通用的异步 Thread 消息端口。
+
 仓库里也保留了一个最小示例插件：
 
 ```text

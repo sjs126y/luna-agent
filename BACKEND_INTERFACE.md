@@ -1221,6 +1221,10 @@ QQ 插件的 `plugins.config.platforms/qq.runtime.mode` 可为 `external` 或 `m
 - `plugin_dev_cancel(plugin_id)`：中断当前 Turn，清理排队消息并标记会话 cancelled。
 - `codex_approval_list(plugin_id?)`、`codex_approval_decide(request_id, decision)`：查看并允许一次或拒绝 App Server 请求；`decision` 为 `allow_once` 或 `deny`。
 
+`plugin_dev_events` 的事件存储始终使用带时区的 UTC。返回给 Agent/前端的 `created_at` 是本机展示时区，`created_at_utc` 保留规范化 UTC 值；不要用展示字段进行跨时区排序或持久化。
+
+同一插件发布 `plugin-development-workflow` Skill。前端或 Agent 可按名称发现并加载；加载只向当前模型上下文注入协作规则，不创建 Workspace、不启动 Codex Turn，也不改变会话状态。Skill 规定方案探索、方案讨论、最终方案、执行计划、用户授权、实现、审查、打包和安装的边界；底层仍统一使用上述通用工具。
+
 Codex Bridge 只通过 `ActiveConversationIntent` 投递需要 Luna 处理的关键事件，不把事件写成普通用户输入。持久事件流仍包含 `turn_started`、`assistant_message`、`progress`、`request_user_input`、`approval_requested`、`turn_completed`、`error` 和 `process_restarted`；普通进度、Turn 开始及 `willRetry=true` 的自动重试不会创建 Conversation Turn。中间 `assistant_message` 会暂存，随 `turn_completed` 合并为一次最终通知；同一 Turn 的不可恢复错误和失败完成只通知一次。`active.sessions` 同时决定授权会话与通知目标；为空时只持久化事件，不主动唤醒会话。每个插件工作区保存一次只读 `LUNA_PLUGIN_DEVELOPMENT.md`，后续 Turn 不重复注入规范。
 
 开发会话状态存储在插件私有 `development-sessions.json`，并公开最近一次有效 `model` 与 `model_provider`；Codex Thread 历史仍由 Codex `CODEX_HOME` 管理。App Server 使用 `config/read` 解析隔离配置，并在 `thread/start` / `thread/resume` 显式覆盖 model/provider；响应失配时失败关闭。重启只恢复 Thread，不静默恢复中断 Turn；未处理审批默认拒绝。旧 `mcp__codex__codex` MCP 与 Hook 注册继续兼容。

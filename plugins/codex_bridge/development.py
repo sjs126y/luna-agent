@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 import json
 import logging
 import re
@@ -163,6 +164,8 @@ class CodexDevelopmentRuntime:
         page = values[bounded_offset: bounded_offset + bounded_limit]
         if detail == "summary":
             page = [_event_summary(event) for event in page]
+        else:
+            page = [_event_for_output(event) for event in page]
         next_offset = bounded_offset + len(page)
         return {
             "plugin_id": session.plugin_id,
@@ -491,15 +494,38 @@ def _dict_text(value: dict[str, Any]) -> str:
 
 
 def _event_summary(event: dict[str, Any]) -> dict[str, Any]:
-    metadata = event.get("metadata") or {}
+    output = _event_for_output(event)
+    metadata = output.get("metadata") or {}
     return {
-        "event_id": event.get("event_id", ""),
-        "event_type": event.get("event_type", ""),
-        "text": str(event.get("text", ""))[:2000],
-        "created_at": event.get("created_at", ""),
-        "turn_id": event.get("turn_id", ""),
+        "event_id": output.get("event_id", ""),
+        "event_type": output.get("event_type", ""),
+        "text": str(output.get("text", ""))[:2000],
+        "created_at": output.get("created_at", ""),
+        "created_at_utc": output.get("created_at_utc", ""),
+        "turn_id": output.get("turn_id", ""),
         "method": metadata.get("method", "") if isinstance(metadata, dict) else "",
     }
+
+
+def _event_for_output(event: dict[str, Any]) -> dict[str, Any]:
+    """Expose local time while retaining UTC as the canonical audit value."""
+    output = dict(event)
+    raw_timestamp = str(event.get("created_at", "") or "")
+    output["created_at_utc"] = raw_timestamp
+    output["created_at"] = _local_timestamp(raw_timestamp)
+    return output
+
+
+def _local_timestamp(value: str) -> str:
+    if not value:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone().isoformat()
+    except (TypeError, ValueError):
+        return value
 
 
 def _initial_development_prompt(feature_request: str) -> str:

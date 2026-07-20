@@ -453,6 +453,43 @@ async def test_responses_transport_parses_completed_event_function_call():
 
 
 @pytest.mark.asyncio
+async def test_responses_transport_merges_done_and_completed_call_when_indexes_differ():
+    transport = OpenAIResponsesTransport(_provider())
+
+    async def events():
+        yield {
+            "type": "response.output_item.done",
+            "output_index": 1,
+            "item": {
+                "type": "function_call",
+                "call_id": "call_same",
+                "name": "read",
+                "arguments": '{"path":"README.md"}',
+            },
+        }
+        yield {
+            "type": "response.completed",
+            "response": {
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_same",
+                    "name": "read",
+                    "arguments": {"path": "README.md"},
+                }],
+            },
+        }
+
+    response = await transport.parse_stream(events())
+
+    assert response.tool_calls == [{
+        "id": "call_same",
+        "name": "read",
+        "input": {"path": "README.md"},
+    }]
+
+
+@pytest.mark.asyncio
 async def test_responses_call_streams_when_delta_callback_is_present(monkeypatch):
     transport = OpenAIResponsesTransport(_provider())
     seen: dict[str, object] = {}
