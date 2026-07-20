@@ -8,6 +8,7 @@ from luna_agent.plugins.runtime.models import (
     PluginRuntimeState,
 )
 from luna_agent.plugins.runtime.mapper import CapabilityMapper
+from luna_agent.plugins.runtime.router import CapabilityRouter
 from luna_agent.plugins.runtime.snapshot import (
     CapabilityLease,
     CapabilitySnapshot,
@@ -21,6 +22,7 @@ __all__ = [
     "CapabilityKind",
     "CapabilityLease",
     "CapabilityMapper",
+    "CapabilityRouter",
     "CapabilityRoute",
     "CapabilitySnapshot",
     "CapabilitySnapshotBuilder",

@@ -33,11 +33,8 @@ from luna_agent.plugins.core.models import (
 )
 from luna_agent.hooks import HookEvent, HookManager, HookSource
 from luna_agent.plugins.runtime import (
-    CandidateCatalog,
     CapabilityKind,
-    CapabilityMapper,
-    CapabilitySnapshotBuilder,
-    CapabilityStore,
+    CapabilityRouter,
     PluginRuntimeState,
 )
 from luna_agent.plugins.runtime.identity import (
@@ -85,13 +82,7 @@ class PluginManager:
         self._delivery_service = None
         self._artifact_store = None
         self._event_port_factory = None
-        self._capability_mapper = CapabilityMapper()
-        self._capability_builder = CapabilitySnapshotBuilder()
-        self._active_bindings: dict[str, tuple[Any, ...]] = {}
-        self._dynamic_bindings: dict[str, tuple[Any, ...]] = {}
-        self._binding_payloads: dict[str, Any] = {}
         self._runtime_records: dict[str, LoadedPlugin] = {}
-        self._runtime_bindings: dict[str, tuple[Any, ...]] = {}
         self._active_runtime_by_plugin: dict[str, str] = {}
         self._mcp_manager = None
         install_root = Path(getattr(settings, "agent_data_dir", "data")) / "plugins"
@@ -120,7 +111,11 @@ class PluginManager:
             f"plugin-capability-view:{id(self)}",
             default=None,
         )
-        self.capability_store = CapabilityStore(on_retire=self._retire_snapshot)
+        self.capability_router = CapabilityRouter(
+            on_publish=self._activate_snapshot_routes,
+            on_retire=self._retire_snapshot,
+        )
+        self.capability_store = self.capability_router.store
         from luna_agent.plugins.query import PluginQueryService
 
         self.queries = PluginQueryService(self)
@@ -615,9 +610,7 @@ class PluginManager:
         if rollback is not None:
             self._restore_registration_snapshot(rollback)
         self.data_revisions.discard(candidate)
-        bindings = self._runtime_bindings.pop(candidate.runtime_instance_id, ())
-        for binding in bindings:
-            self._binding_payloads.pop(binding.binding_id, None)
+        self.capability_router.discard_runtime(candidate.runtime_instance_id)
         self._runtime_records.pop(candidate.runtime_instance_id, None)
         self.hook_manager.unregister_owner(candidate.runtime_instance_id)
         scope = candidate.generation_scope
@@ -631,7 +624,9 @@ class PluginManager:
         self._plugins[previous.key] = previous
         previous.runtime_state = PluginRuntimeState.ACTIVE
         self._active_runtime_by_plugin[previous.key] = previous.runtime_instance_id
-        old_bindings = self._runtime_bindings.get(previous.runtime_instance_id, ())
+        old_bindings = self.capability_router.runtime_bindings.get(
+            previous.runtime_instance_id, ()
+        )
         self._activate_binding_payloads(old_bindings)
 
     async def unload_plugin_runtime(self, key: str) -> LoadedPlugin:
@@ -1146,7 +1141,7 @@ class PluginManager:
         return plugin
 
     def capability_payload(self, binding_id: str) -> Any | None:
-        return self._binding_payloads.get(binding_id)
+        return self.capability_router.payload(binding_id)
 
     def plugin_environment_report(self) -> dict[str, Any]:
         retained: dict[tuple[str, str], set[str]] = {}
@@ -1241,7 +1236,7 @@ class PluginManager:
             entry = tool_registry.get(name)
             if entry is None:
                 continue
-            binding = self._capability_mapper.binding(
+            binding = self.capability_router.mapper.binding(
                 kind=CapabilityKind.TOOL,
                 public_name=name,
                 owner=owner,
@@ -1252,16 +1247,11 @@ class PluginManager:
             )
             bindings.append(binding)
             payloads[binding.binding_id] = entry
-        source_key = f"mcp:{server_name}"
-        previous = self._dynamic_bindings.get(source_key, ())
-        if tuple(bindings) == previous:
-            return
-        if bindings:
-            self._dynamic_bindings[source_key] = tuple(bindings)
-        else:
-            self._dynamic_bindings.pop(source_key, None)
-        self._binding_payloads.update(payloads)
-        self._publish_current_bindings()
+        self.capability_router.replace_dynamic_source(
+            f"mcp:{server_name}",
+            bindings,
+            payloads,
+        )
 
     @contextmanager
     def bind_capability_view(self, view):
@@ -1966,7 +1956,7 @@ class PluginManager:
         payloads: dict[str, Any] = {}
 
         def add(kind, name, payload, *, manager_key=None, contract=None, metadata=None, ordinal=0):
-            binding = self._capability_mapper.binding(
+            binding = self.capability_router.mapper.binding(
                 kind=kind,
                 public_name=name,
                 owner=plugin.key,
@@ -2046,53 +2036,23 @@ class PluginManager:
                 )
 
         core_bindings, core_payloads = self._capture_core_bindings(snapshot, plugin)
-        self._binding_payloads.update(core_payloads)
-        self._binding_payloads.update(payloads)
-        self._runtime_bindings[plugin.runtime_instance_id] = tuple(bindings)
+        self.capability_router.stage(plugin.runtime_instance_id, bindings, payloads)
         if not publish:
             return
-        active = {
-            owner: values
-            for owner, values in self._active_bindings.items()
-            if owner not in {plugin.key, "core"}
-        }
-        active["core"] = tuple(core_bindings)
-        active[plugin.key] = tuple(bindings)
-        catalog = CandidateCatalog([
-            binding
-            for owner_bindings in active.values()
-            for binding in owner_bindings
-        ] + [
-            binding
-            for dynamic_bindings in self._dynamic_bindings.values()
-            for binding in dynamic_bindings
-        ])
-        next_snapshot = self._capability_builder.build(
-            catalog,
-            revision=self.capability_store.current.revision + 1,
+        self.capability_router.publish_plugin(
+            owner=plugin.key,
+            runtime_instance_id=plugin.runtime_instance_id,
+            core_bindings=core_bindings,
+            core_payloads=core_payloads,
         )
-        self._active_bindings = active
-        self.capability_store.publish_nowait(next_snapshot)
-        active_hook_ids = {
-            route.manager_key
-            for routes in next_snapshot.routes.get(CapabilityKind.HOOK, {}).values()
-            for route in routes
-        }
-        self.hook_manager.activate_managed_routes(active_hook_ids)
 
     def _publish_staged_plugin(self, plugin: LoadedPlugin) -> None:
-        bindings = self._runtime_bindings.get(plugin.runtime_instance_id)
-        if bindings is None:
-            raise RuntimeError(f"staged plugin bindings are unavailable: {plugin.key}")
-        active = dict(self._active_bindings)
-        active[plugin.key] = bindings
-        self._active_bindings = active
         self._plugins[plugin.key] = plugin
         self._active_runtime_by_plugin[plugin.key] = plugin.runtime_instance_id
         plugin.runtime_state = PluginRuntimeState.ACTIVE
         plugin.status = PluginStatus.LOADED
         plugin.prepare_rollback_snapshot = None
-        self._publish_current_bindings()
+        self.capability_router.publish_staged(plugin.key, plugin.runtime_instance_id)
 
     def _capture_core_bindings(
         self,
@@ -2143,7 +2103,7 @@ class PluginManager:
                     "workflows": _workflow_contract,
                     "platforms": _platform_contract,
                 }.get(group, lambda item: name)
-                binding = self._capability_mapper.binding(
+                binding = self.capability_router.mapper.binding(
                     kind=kind_map[group],
                     public_name=name,
                     owner="core",
@@ -2157,46 +2117,12 @@ class PluginManager:
         return bindings, payloads
 
     def _publish_without_owner(self, owner: str) -> None:
-        if owner not in self._active_bindings:
-            return
-        active = {
-            key: bindings for key, bindings in self._active_bindings.items() if key != owner
-        }
-        catalog = CandidateCatalog([
-            binding for owner_bindings in active.values() for binding in owner_bindings
-        ] + [
-            binding
-            for dynamic_bindings in self._dynamic_bindings.values()
-            for binding in dynamic_bindings
-        ])
-        snapshot = self._capability_builder.build(
-            catalog,
-            revision=self.capability_store.current.revision + 1,
-        )
-        self._active_bindings = active
-        self.capability_store.publish_nowait(snapshot)
-        active_hook_ids = {
-            route.manager_key
-            for routes in snapshot.routes.get(CapabilityKind.HOOK, {}).values()
-            for route in routes
-        }
-        self.hook_manager.activate_managed_routes(active_hook_ids)
+        self.capability_router.publish_without_owner(owner)
 
     def _publish_current_bindings(self) -> None:
-        catalog = CandidateCatalog([
-            binding
-            for owner_bindings in self._active_bindings.values()
-            for binding in owner_bindings
-        ] + [
-            binding
-            for dynamic_bindings in self._dynamic_bindings.values()
-            for binding in dynamic_bindings
-        ])
-        snapshot = self._capability_builder.build(
-            catalog,
-            revision=self.capability_store.current.revision + 1,
-        )
-        self.capability_store.publish_nowait(snapshot)
+        self.capability_router.publish_current()
+
+    def _activate_snapshot_routes(self, snapshot) -> None:
         active_hook_ids = {
             route.manager_key
             for routes in snapshot.routes.get(CapabilityKind.HOOK, {}).values()
@@ -2205,9 +2131,6 @@ class PluginManager:
         self.hook_manager.activate_managed_routes(active_hook_ids)
 
     def _retire_snapshot(self, snapshot) -> None:
-        retained_ids = self.capability_store.retained_binding_ids()
-        for binding_id in snapshot.binding_ids - retained_ids:
-            self._binding_payloads.pop(binding_id, None)
         retained_runtimes = self.capability_store.retained_runtime_ids()
         runtime_ids = {
             route.runtime_instance_id
@@ -2230,7 +2153,7 @@ class PluginManager:
             plugin.ctx = None
             plugin.module = None
             plugin.runtime_state = PluginRuntimeState.STOPPED
-            self._runtime_bindings.pop(runtime_id, None)
+            self.capability_router.runtime_bindings.pop(runtime_id, None)
         if self._mcp_manager is not None:
             for runtime_id in runtime_ids - retained_runtimes:
                 if not runtime_id.startswith("mcp:"):
@@ -2297,7 +2220,7 @@ class PluginManager:
 
     def _rollback_to_runtime(self, plugin_key: str, runtime_id: str) -> None:
         previous = self._runtime_records.get(runtime_id)
-        bindings = self._runtime_bindings.get(runtime_id)
+        bindings = self.capability_router.runtime_bindings.get(runtime_id)
         if previous is None or bindings is None:
             return
         current_id = self._active_runtime_by_plugin.get(plugin_key, "")
@@ -2308,9 +2231,8 @@ class PluginManager:
         previous.runtime_state = PluginRuntimeState.ACTIVE
         previous.status = PluginStatus.LOADED
         self._active_runtime_by_plugin[plugin_key] = runtime_id
-        self._active_bindings[plugin_key] = bindings
         self._activate_binding_payloads(bindings)
-        self._publish_current_bindings()
+        self.capability_router.restore_owner(plugin_key, runtime_id)
 
     def _activate_binding_payloads(self, bindings) -> None:
         from luna_agent.memory.provider_registry import memory_provider_registry

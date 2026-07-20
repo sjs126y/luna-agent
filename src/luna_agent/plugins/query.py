@@ -122,9 +122,9 @@ class PluginQueryService:
             runtime_counts[state] = runtime_counts.get(state, 0) + 1
         data.update({
             "active_plugin_owners": sorted(
-                owner for owner in manager._active_bindings if owner != "core"
+                owner for owner in manager.capability_router.active_bindings if owner != "core"
             ),
-            "payload_count": len(manager._binding_payloads),
+            "payload_count": len(manager.capability_router.payloads),
             "runtime_counts": runtime_counts,
             "install_revision": manager.install_store.revision,
             "installed_packages": len(manager.install_store.packages()),
