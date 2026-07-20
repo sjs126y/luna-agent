@@ -21,6 +21,25 @@
 
 ---
 
+## 2026-07-20：外置插件进程隔离与宿主资源端口
+
+- 外置插件按 generation 创建独立 Worker，使用分帧 stdin/stdout RPC；插件依赖按 manifest 构建独立 Python 环境。
+- Linux/WSL 的 `auto` 使用 Bubblewrap，并对文件系统、网络和 Worker 数据目录 fail-closed；`process-only` 仅保留开发兼容用途。
+- 新增声明式 `process` / `workspace` 宿主资源端口，Codex Bridge 的 App Server 与脚手架写入已迁出宿主插件代码；资源仍经过 allowlist、路径边界和 generation 回收。
+- 插件诊断增加 `external_runtime`，可查看 Worker PID、运行状态、sandbox 后端、环境 ID、错误和 stderr 尾部。
+- 原生 Windows 严格 AppContainer 启动器仍 fail-closed，未实现前不会静默降级为宿主进程内执行。
+
+阶段提交：
+
+- `46bca09` Add isolated plugin dependency environments
+- `b187e34` Add framed external plugin worker protocol
+- `bdca2eb` Add fail-closed plugin worker sandbox
+- `4511f70` Route external plugins through isolated workers
+- `29b8a27` Add external plugin resource exchange
+- `246026d` Add controlled plugin host resources
+
+阶段验证：Worker/RPC/Bubblewrap、Codex Bridge 与外置插件兼容测试通过；当前聚焦回归 `26 passed`，插件诊断与 CLI 回归 `86 passed`。
+
 ## 2026-07-20：Codex Bridge 事件降噪与 Provider 绑定
 
 - App Server 的完整事件继续持久化，但普通进度、Turn 开始和自动重试不再提交 `ActiveConversationIntent`；中间 assistant message 聚合到 Turn 完成，只唤醒 Luna 一次。

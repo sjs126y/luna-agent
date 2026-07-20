@@ -25,6 +25,9 @@ README.md
 The manifest declares the plugin key, version, entrypoint, SDK range, provided
 capabilities, dependencies, and configuration shape. A plugin must not modify
 the host application's source tree or install itself while it is being built.
+Python dependencies belong in `requires.python`; the host builds an immutable
+environment for that exact dependency set and installs wheel distributions
+only. Do not run pip, uv, npm, or another package manager from plugin code.
 
 ## Registration
 
@@ -51,6 +54,14 @@ release them from `on_stop` or normal cancellation.
 - Do not start detached processes or write outside the declared development
   workspace.
 - Do not change sandbox, approval, or MCP configuration from model input.
+
+External plugins run in a generation-scoped Worker. The Worker has no direct
+host filesystem or network access by default. A tool that accepts a local file
+must declare a `ToolResourceBinding`; the host permission pipeline validates the
+original path and stages an immutable copy for that invocation. Active plugins
+request Tool, MCP, conversation, LLM, process, or workspace capabilities through
+`ActiveResourceRequest`. Process and workspace names are declarations, not
+arbitrary commands or paths: the host must have a matching allowlisted config.
 
 ## Development and verification
 

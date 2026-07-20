@@ -1556,6 +1556,14 @@ class PluginManager:
             hints.append(f"修复插件加载错误: {plugin.error}")
         if plugin.status == PluginStatus.DEFERRED:
             hints.append(self._deferred_reason(plugin))
+        external = self.external_runtime.summary(plugin)
+        worker = external.get("worker") or {}
+        if external.get("isolated") and not worker.get("running"):
+            detail = str(worker.get("last_error") or worker.get("stderr_tail") or "").strip()
+            hints.append(
+                "外置 Worker 已停止"
+                + (f": {detail[-500:]}" if detail else "")
+            )
         if not plugin.enabled:
             hints.append("插件已被配置或状态禁用")
         hints.extend(self._manifest_warnings(plugin))

@@ -170,6 +170,10 @@ async def test_external_codex_bridge_registers_without_host_imports(tmp_path: Pa
         assert plugin.active_registration is not None
         assert "codex-app-server" in plugin.active_registration.resources.processes
         assert "development" in plugin.active_registration.resources.workspaces
+        runtime = manager.queries.plugin_info(plugin.key)["external_runtime"]
+        assert runtime["isolated"] is True
+        assert runtime["worker"]["running"] is True
+        assert runtime["worker"]["pid"]
     finally:
         manager.unload_plugin("integrations/codex-bridge")
 

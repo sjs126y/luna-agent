@@ -2855,6 +2855,7 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
         f"Runtime Instance: {report.get('runtime_instance_id') or '-'}",
         f"Snapshot Revision: {report.get('snapshot_revision', 0)}",
         f"Package Digest: {report.get('package_digest') or '-'}",
+        _format_external_plugin_runtime(report.get("external_runtime") or {}),
         f"主动运行: {'启用' if report.get('active_enabled') else '关闭'} 状态={(report.get('active') or {}).get('state') or 'passive'}",
         f"提供能力: {_list_or_none(report['provides'])}",
         f"标签: {_list_or_none(report.get('tags', []))}",
@@ -2881,6 +2882,18 @@ def format_plugin_report(report: dict[str, Any], *, include_traceback: bool) -> 
     if include_traceback and report["error_traceback"]:
         lines.extend(["", "Traceback:", report["error_traceback"].strip()])
     return "\n".join(lines)
+
+
+def _format_external_plugin_runtime(runtime: dict[str, Any]) -> str:
+    if not runtime.get("isolated"):
+        return "外置 Worker: 未运行"
+    worker = runtime.get("worker") or {}
+    state = "运行中" if worker.get("running") else "已停止"
+    return (
+        f"外置 Worker: {state} pid={worker.get('pid') or '-'} "
+        f"sandbox={runtime.get('sandbox_backend') or '-'} "
+        f"environment={runtime.get('environment_id') or '-'}"
+    )
 
 
 def format_plugin_validation_report(report: dict[str, Any], *, include_traceback: bool) -> str:

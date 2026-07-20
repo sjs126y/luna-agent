@@ -1129,6 +1129,8 @@ Review worker payload 提供：
 - `active_error: string`
 - `active_circuit_open: boolean`
 - `active_resources: object`，主动 generation 声明的 Tool、MCP 和应用端口安全摘要
+- `external_runtime: object`，外置 Worker 诊断；包含 `isolated`、`environment_id`、`environment_path`、`sandbox_backend` 和 `worker`
+  - `worker` 常见字段为 `pid`、`running`、`returncode`、`last_error`、`stderr_tail`
 - 主动会话端口使用 SDK 的 `ActiveConversationIntent` 和 `ConversationStatus` 契约：
   - `ActiveConversationIntent`：`intent_id`、`session_key`、`kind`、`instruction`、`evidence`、`request_id`、`metadata`。
   - `ConversationStatus`：`session_key`、`busy`、`queued_count`、`last_user_at`、`last_assistant_at`、`recent_user_messages`（有界列表）。

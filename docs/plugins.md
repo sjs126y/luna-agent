@@ -40,6 +40,8 @@ flowchart LR
 
 Luna Agent 的被动插件系统不要求插件继承基类。插件通过同步 `register(ctx)` 声明当前 generation 的能力；宿主构建不可变 `CapabilitySnapshot` 并原子发布。现有 Tool、Skill、Hook、MCP 等 manager 继续负责执行，快照只负责稳定路由和生命周期一致性。
 
+外置通用插件按 generation 运行在独立 Worker 中，内置插件仍留在宿主进程。Worker 只负责执行插件代码；Tool、MCP、Conversation、LLM、文件交换、受控进程和开发工作区均通过宿主资源端口调用，因此仍经过原有 manager、安全边界和审计链路。Linux/WSL 使用 Bubblewrap 隔离文件系统与网络；缺少安全后端时默认拒绝加载，不会回退为宿主进程内执行。当前原生 Windows 的严格 AppContainer 后端仍保持 fail-closed，`process-only` 仅用于开发。
+
 <table>
   <tr>
     <td width="50%"><strong>插件负责</strong><br><br>声明能力、注册资源、读取自己的配置、响应稳定 Hook。</td>

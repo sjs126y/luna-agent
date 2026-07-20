@@ -153,6 +153,12 @@ plugins:
     - ./data/plugins
   enabled: []
   disabled: []
+  runtime:
+    isolate_external: true
+    sandbox_backend: auto
+    allow_network: false
+    startup_timeout_seconds: 45
+    shutdown_timeout_seconds: 10
   config:
     examples/hello:
       greeting: hello
@@ -214,6 +220,10 @@ auth:
   enabled: false
   admins: []
 ```
+
+`plugins.runtime.isolate_external` 只影响外置通用插件；内置插件仍在宿主进程中运行。Linux/WSL 的 `auto` 要求 Bubblewrap 可用，并将插件包和依赖环境设为只读、只开放当前 generation 的数据目录写入。当前构建在原生 Windows 上对 `auto` / `appcontainer` 保持 fail-closed，直到 AppContainer 启动器落地；不会静默退回进程内执行。`process-only` 可在 Windows 用于本地开发，但只提供生命周期隔离，不是生产安全边界。
+
+Worker 默认没有网络权限，也不能直接读取宿主工作区。需要文件、MCP、长期进程或开发目录的插件应声明资源，由宿主端口校验并代理。每个激活 generation 拥有独立 Worker；热重载先启动候选 Worker，成功切换能力快照后才回收旧 generation。
 
 Luna Agent 内部通过独立 Backend 组装检索链路。`embedding`、`vector`、`keyword`、`fusion` 和 `reranker` 都采用 `provider + provider-specific options`；只有被选中的 Backend 会校验配置和可选依赖。当前内置实现为 `openai_compatible`、`qdrant`、`sqlite_fts5`、`weighted_rrf` 和 `none`。
 

@@ -187,6 +187,12 @@ plugins:
   dirs: ["./plugins", "./data/plugins"]
   enabled: []
   disabled: []
+  runtime:
+    isolate_external: true         # 外置通用插件按 generation 运行在独立 Worker
+    sandbox_backend: auto          # Linux/WSL 使用 bwrap；当前原生 Windows 严格模式 fail-closed
+    allow_network: false           # Worker 默认不能直连网络，应使用声明式宿主资源端口
+    startup_timeout_seconds: 45
+    shutdown_timeout_seconds: 10
   config:
     automation/luna-companion:
       active:

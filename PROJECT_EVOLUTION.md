@@ -21,6 +21,21 @@
 
 ---
 
+## v0.22 外置插件 Worker 隔离与宿主资源端口
+
+时间：2026-07-20
+
+目标：让通用插件真正脱离宿主进程，同时保留 Tool、MCP、Conversation、LLM、文件和开发工作区等能力的统一安全管道。
+
+主要变化：
+
+- 外置插件按 generation 运行在独立 Worker，使用分帧 RPC；每个插件依赖集拥有独立环境，热重载只切换能力快照，不复用旧 Worker。
+- Linux/WSL 通过 Bubblewrap 隔离插件包、依赖、数据目录和网络；安全后端不可用时拒绝加载。原生 Windows 严格 AppContainer 当前保持 fail-closed。
+- 新增声明式 `process` / `workspace` 宿主资源端口；Codex Bridge 的 App Server 与插件脚手架不再由外置插件直接创建宿主进程或写宿主路径。
+- `plugins info/doctor` 暴露 Worker PID、sandbox、环境和 stderr 诊断；插件数据仍按原有 generation revision 保留，运行时进程随 generation 回收。
+
+代表提交：`46bca09`、`b187e34`、`bdca2eb`、`4511f70`、`29b8a27`、`246026d`。
+
 本文记录 Luna Agent 从最初原型到当前 Agent Runtime 的主要结构变化。它不是逐 commit changelog，也不再只描述 Windows 到 Linux/WSL 的迁移，而是按阶段梳理架构、能力和工程边界的演进，并标注代表提交。
 
 当前主分支状态：

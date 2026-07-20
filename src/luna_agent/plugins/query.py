@@ -96,6 +96,7 @@ class PluginQueryService:
             "error_traceback": plugin.error_traceback or "",
             "registered": plugin.registration_counts(),
             "registered_items": manager._registered_items(plugin),
+            "external_runtime": manager.external_runtime.summary(plugin),
             "diagnostic_hints": manager._diagnostic_hints(
                 plugin,
                 missing_env,

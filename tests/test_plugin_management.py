@@ -76,6 +76,7 @@ async def test_plugin_queries_include_versions_and_latest_operation(tmp_path):
     report = manager.queries.plugin_info(plugin.key)
 
     assert report["management_schema_version"] == 1
+    assert report["external_runtime"]["isolated"] is False
     assert report["latest_operation"]["action"] == "install"
     assert report["installed_versions"][0]["active"] is True
     assert report["latest_event"]["event"] == "operation_completed"
