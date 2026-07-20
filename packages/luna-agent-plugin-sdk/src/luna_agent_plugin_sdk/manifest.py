@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
@@ -40,6 +41,7 @@ class PluginRequirement:
 class PluginDependencies:
     luna_agent: str = ""
     sdk: str = ""
+    python: tuple[str, ...] = ()
     plugins: tuple[PluginRequirement, ...] = ()
     capabilities: tuple[str, ...] = ()
     mcp_tools: dict[str, tuple[str, ...]] = field(default_factory=dict)
@@ -51,7 +53,10 @@ class PluginDependencies:
         if not isinstance(value, dict):
             raise ValueError("Plugin manifest field 'requires' must be an object")
         unknown = sorted(
-            set(value) - {"luna_agent", "lumora", "sdk", "plugins", "capabilities", "mcp_tools"}
+            set(value) - {
+                "luna_agent", "lumora", "sdk", "python", "plugins",
+                "capabilities", "mcp_tools",
+            }
         )
         if unknown:
             raise ValueError("Unknown plugin dependency field(s): " + ", ".join(unknown))
@@ -61,6 +66,7 @@ class PluginDependencies:
         sdk = str(value.get("sdk") or "").strip()
         _validate_specifier(luna_agent, "requires.luna_agent")
         _validate_specifier(sdk, "requires.sdk")
+        python = _python_requirements(value.get("python", []))
         raw_plugins = value.get("plugins", [])
         if not isinstance(raw_plugins, list):
             raise ValueError("Plugin manifest field 'requires.plugins' must be a list")
@@ -88,7 +94,7 @@ class PluginDependencies:
         keys = [item.key for item in plugins]
         if len(keys) != len(set(keys)):
             raise ValueError("Plugin dependency keys must be unique")
-        return cls(luna_agent, sdk, tuple(plugins), capabilities, mcp_tools)
+        return cls(luna_agent, sdk, python, tuple(plugins), capabilities, mcp_tools)
 
     @property
     def lumora(self) -> str:
@@ -99,6 +105,7 @@ class PluginDependencies:
         return {
             "luna_agent": self.luna_agent,
             "sdk": self.sdk,
+            "python": list(self.python),
             "plugins": [
                 {"key": item.key, "version": item.version}
                 for item in self.plugins
@@ -226,6 +233,28 @@ def _string_tuple(value: Any, field_name: str) -> tuple[str, ...]:
     if not all(isinstance(item, str) and item for item in value):
         raise ValueError(f"Plugin manifest field '{field_name}' must contain only non-empty strings")
     return tuple(dict.fromkeys(value))
+
+
+def _python_requirements(value: Any) -> tuple[str, ...]:
+    values = _string_tuple(value, "requires.python") if value else ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if raw.startswith(("-", ".", "/")):
+            raise ValueError(f"Unsupported Python dependency: {raw}")
+        try:
+            requirement = Requirement(raw)
+        except InvalidRequirement as exc:
+            raise ValueError(f"Invalid Python dependency: {raw}") from exc
+        if requirement.url:
+            raise ValueError(f"Direct URL Python dependencies are not supported: {raw}")
+        canonical = str(requirement)
+        key = requirement.name.lower().replace("_", "-")
+        if key in seen:
+            raise ValueError(f"Duplicate Python dependency: {requirement.name}")
+        seen.add(key)
+        normalized.append(canonical)
+    return tuple(sorted(normalized, key=str.lower))
 
 
 def _bool_field(data: dict[str, Any], field_name: str, default: bool) -> bool:

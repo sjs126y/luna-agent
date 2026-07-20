@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from luna_agent_plugin_sdk import PluginManifest
+from luna_agent_plugin_sdk import PluginDependencies, PluginManifest
 
 
 def test_manifest_parses_dependency_contracts() -> None:
@@ -60,3 +60,31 @@ def test_manifest_rejects_invalid_dependency_contracts(field, value) -> None:
 
     with pytest.raises(ValueError):
         PluginManifest.from_mapping(data)
+
+
+def test_manifest_normalizes_python_dependencies() -> None:
+    dependencies = PluginDependencies.from_mapping({
+        "python": [
+            "Markdown-It-Py==4.2.0",
+            "linkify-it-py>=2; python_version >= '3.12'",
+        ],
+    })
+
+    assert dependencies.python == (
+        'linkify-it-py>=2; python_version >= "3.12"',
+        "Markdown-It-Py==4.2.0",
+    )
+    assert dependencies.as_dict()["python"] == list(dependencies.python)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-r requirements.txt",
+        "git+https://example.com/x",
+        "demo @ https://example.com/demo.whl",
+    ],
+)
+def test_manifest_rejects_unsafe_python_dependencies(value: str) -> None:
+    with pytest.raises(ValueError):
+        PluginDependencies.from_mapping({"python": [value]})
