@@ -45,7 +45,7 @@ def runtime(tmp_path):
         sandbox="workspace-write",
         app_server_timeout_seconds=2.0,
         event_retention=1000,
-        notify_sessions=["wechat:test"],
+        active=SimpleNamespace(enabled=True, sessions=["wechat:test"]),
     )
     config.development_spec_path.write_text("# plugin contract\n", encoding="utf-8")
     ctx = SimpleNamespace(storage=storage)

@@ -1221,7 +1221,7 @@ QQ 插件的 `plugins.config.platforms/qq.runtime.mode` 可为 `external` 或 `m
 - `plugin_dev_cancel(plugin_id)`：中断当前 Turn，清理排队消息并标记会话 cancelled。
 - `codex_approval_list(plugin_id?)`、`codex_approval_decide(request_id, decision)`：查看并允许一次或拒绝 App Server 请求；`decision` 为 `allow_once` 或 `deny`。
 
-Codex Bridge 通过 `ActiveConversationIntent` 投递事件，不把事件写成普通用户输入。事件类型包括 `turn_started`、`assistant_message`、`progress`、`request_user_input`、`approval_requested`、`turn_completed`、`error` 和 `process_restarted`。`notify_sessions` 为空时只持久化事件，不主动唤醒会话。每个插件工作区保存一次只读 `LUNA_PLUGIN_DEVELOPMENT.md`，后续 Turn 不重复注入规范。
+Codex Bridge 通过 `ActiveConversationIntent` 投递事件，不把事件写成普通用户输入。事件类型包括 `turn_started`、`assistant_message`、`progress`、`request_user_input`、`approval_requested`、`turn_completed`、`error` 和 `process_restarted`。`active.sessions` 同时决定授权会话与通知目标；为空时只持久化事件，不主动唤醒会话。每个插件工作区保存一次只读 `LUNA_PLUGIN_DEVELOPMENT.md`，后续 Turn 不重复注入规范。
 
 开发会话状态存储在插件私有 `development-sessions.json`，Codex Thread 历史仍由 Codex `CODEX_HOME` 管理。重启时只执行 `thread/resume` 恢复线程，不静默恢复中断 Turn；未处理审批默认拒绝。旧 `mcp__codex__codex` MCP 与 Hook 注册继续兼容。
 

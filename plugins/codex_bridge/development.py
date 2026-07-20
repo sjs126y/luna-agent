@@ -289,7 +289,7 @@ class CodexDevelopmentRuntime:
     async def _notify(self, session, event_type, text) -> None:
         if self._active_ctx is None:
             return
-        sessions = set(self.config.notify_sessions or [])
+        sessions = set(self.config.active.sessions or [])
         if not sessions:
             return
         instruction = wrap_event(plugin_id=session.plugin_id, thread_id=session.thread_id, event_type=event_type.value, text=text)

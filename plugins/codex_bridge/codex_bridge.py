@@ -18,6 +18,7 @@ class ActiveConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
+    sessions: list[str] = Field(default_factory=list)
 
 
 class CodexBridgeConfig(BaseModel):
@@ -37,7 +38,6 @@ class CodexBridgeConfig(BaseModel):
     approvals_reviewer: Literal["user", "auto_review"] = "user"
     app_server_timeout_seconds: float = Field(default=60.0, gt=0)
     event_retention: int = Field(default=1000, ge=100, le=10000)
-    notify_sessions: list[str] = Field(default_factory=list)
     active: ActiveConfig = Field(default_factory=ActiveConfig)
 
 
