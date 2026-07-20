@@ -20,15 +20,19 @@ class PluginWorkerClient:
     def __init__(
         self,
         *,
-        python: Path,
+        python: Path | None = None,
         cwd: Path,
+        argv: tuple[str, ...] | list[str] | None = None,
         env: dict[str, str] | None = None,
         startup_timeout: float = 30.0,
         shutdown_timeout: float = 5.0,
         max_stderr_chars: int = 64 * 1024,
     ) -> None:
-        self.python = Path(python)
+        self.python = Path(python) if python is not None else None
         self.cwd = Path(cwd)
+        self.argv = tuple(str(item) for item in (argv or ()))
+        if not self.argv and self.python is None:
+            raise ValueError("Plugin worker requires python or argv")
         self.env = dict(env or {})
         self.startup_timeout = max(1.0, float(startup_timeout))
         self.shutdown_timeout = max(0.5, float(shutdown_timeout))
@@ -63,7 +67,9 @@ class PluginWorkerClient:
             self.host_loop = asyncio.get_running_loop()
         except RuntimeError:
             self.host_loop = None
-        command = [str(self.python), "-m", "luna_agent_plugin_sdk.worker"]
+        command = list(self.argv) or [
+            str(self.python), "-m", "luna_agent_plugin_sdk.worker"
+        ]
         self.process = subprocess.Popen(
             command,
             cwd=str(self.cwd),
