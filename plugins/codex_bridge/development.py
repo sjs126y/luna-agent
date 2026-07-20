@@ -186,7 +186,8 @@ class CodexDevelopmentRuntime:
             return
         method = str(message.get("method") or "")
         params = message.get("params") or {}
-        if "id" in message and method and method not in {"initialize"}:
+        approval_request = "requestApproval" in method or "approval" in method.lower()
+        if "id" in message and method and approval_request:
             self.pending_approvals[str(message["id"])] = (plugin_id, message)
             event_type = DevelopmentEventType.APPROVAL_REQUESTED
         else:

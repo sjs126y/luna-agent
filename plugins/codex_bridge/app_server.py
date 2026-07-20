@@ -218,6 +218,10 @@ class CodexAppServer:
                 if method:
                     await self._emit(message)
             if not self._closed:
+                error = CodexAppServerError("Codex App Server exited before replying")
+                for future in self._pending.values():
+                    if not future.done():
+                        future.set_exception(error)
                 await self._emit({
                     "method": "codex/processExited",
                     "params": {"returncode": process.returncode, "stderr": self.last_stderr},
