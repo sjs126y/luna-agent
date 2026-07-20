@@ -9,6 +9,7 @@ import pytest
 from luna_agent.config import Settings
 from luna_agent.hooks import HookEnvelope, HookEvent, HookScope
 from luna_agent.plugins import PluginManager
+from luna_agent.plugins.runtime.models import CapabilityKind
 
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1] / "plugins"
@@ -72,6 +73,20 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
     assert server.env["CODEX_HOME"] == str(runtime_home.resolve())
     assert (runtime_home / "auth.json").read_text(encoding="utf-8") == "{}"
     assert (runtime_home / "auth.json").stat().st_mode & 0o777 == 0o600
+
+    view = manager.capability_store.current.view({CapabilityKind.TOOL})
+    list_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_list")
+    create_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_create")
+    status_route = view.resolve(CapabilityKind.TOOL, "plugin_dev_status")
+    assert list_route is not None and create_route is not None and status_route is not None
+    list_entry = manager.capability_payload(list_route.binding_id)
+    create_entry = manager.capability_payload(create_route.binding_id)
+    status_entry = manager.capability_payload(status_route.binding_id)
+    assert await list_entry.handler() == []
+    created = await create_entry.handler("contract-test", "A small plugin")
+    status = await status_entry.handler("contract-test")
+    assert created["plugin_id"] == "contract-test"
+    assert status["status"] == "created"
 
     outcome = await manager.hook_manager.dispatch(HookEnvelope(
         event_name=HookEvent.PRE_TOOL_USE,

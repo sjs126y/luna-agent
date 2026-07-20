@@ -130,6 +130,30 @@ def register(ctx) -> None:
 
 
 def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
+    async def create_handler(plugin_id: str, description: str, brief: str = ""):
+        return await runtime.create(plugin_id, description, brief)
+
+    async def message_handler(plugin_id: str, text: str):
+        return await runtime.message(plugin_id, text)
+
+    async def list_handler():
+        return runtime.list_sessions()
+
+    async def status_handler(plugin_id: str):
+        return runtime.status(plugin_id)
+
+    async def events_handler(plugin_id: str, limit: int = 5):
+        return runtime.events(plugin_id, limit)
+
+    async def cancel_handler(plugin_id: str):
+        return await runtime.cancel(plugin_id)
+
+    async def approval_list_handler(plugin_id: str = ""):
+        return runtime.approvals(plugin_id)
+
+    async def approval_decide_handler(request_id: str, decision: str):
+        return await runtime.decide_approval(request_id, decision)
+
     ctx.register.tool(ToolEntry(
         name="plugin_dev_create",
         description=(
@@ -140,7 +164,7 @@ def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
         schema={"type": "object", "properties": {
             "plugin_id": {"type": "string"}, "description": {"type": "string"}, "brief": {"type": "string"},
         }, "required": ["plugin_id", "description"], "additionalProperties": False},
-        handler=lambda plugin_id, description, brief="": runtime.create(plugin_id, description, brief),
+        handler=create_handler,
         toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
         tags=["plugin", "codex", "development"], idempotent=True, is_parallel_safe=False,
     ))
@@ -152,7 +176,7 @@ def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
             "immediately when accepted or queued."
         ),
         schema={"type": "object", "properties": {"plugin_id": {"type": "string"}, "text": {"type": "string"}}, "required": ["plugin_id", "text"], "additionalProperties": False},
-        handler=lambda plugin_id, text: runtime.message(plugin_id, text),
+        handler=message_handler,
         toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
         tags=["plugin", "codex", "message", "async"], idempotent=False, is_parallel_safe=False,
     ))
@@ -160,42 +184,42 @@ def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
         name="plugin_dev_list",
         description="List persistent Codex plugin development sessions and their current status.",
         schema={"type": "object", "properties": {}, "additionalProperties": False},
-        handler=lambda: runtime.list_sessions(), toolset="plugin", permission_category="read", approval_mode="auto",
+        handler=list_handler, toolset="plugin", permission_category="read", approval_mode="auto",
         tags=["plugin", "codex", "sessions"], idempotent=True,
     ))
     ctx.register.tool(ToolEntry(
         name="plugin_dev_status",
         description="Show one plugin development session status, thread, workspace, and last result.",
         schema={"type": "object", "properties": {"plugin_id": {"type": "string"}}, "required": ["plugin_id"], "additionalProperties": False},
-        handler=lambda plugin_id: runtime.status(plugin_id), toolset="plugin", permission_category="read", approval_mode="auto",
+        handler=status_handler, toolset="plugin", permission_category="read", approval_mode="auto",
         tags=["plugin", "codex", "status"], idempotent=True,
     ))
     ctx.register.tool(ToolEntry(
         name="plugin_dev_events",
         description="Show the most recent bounded Codex development events for one plugin.",
         schema={"type": "object", "properties": {"plugin_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, "required": ["plugin_id"], "additionalProperties": False},
-        handler=lambda plugin_id, limit=5: runtime.events(plugin_id, limit), toolset="plugin", permission_category="read", approval_mode="auto",
+        handler=events_handler, toolset="plugin", permission_category="read", approval_mode="auto",
         tags=["plugin", "codex", "events"], idempotent=True,
     ))
     ctx.register.tool(ToolEntry(
         name="plugin_dev_cancel",
         description="Interrupt the active Codex turn for one plugin and mark the session cancelled.",
         schema={"type": "object", "properties": {"plugin_id": {"type": "string"}}, "required": ["plugin_id"], "additionalProperties": False},
-        handler=lambda plugin_id: runtime.cancel(plugin_id), toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
+        handler=cancel_handler, toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
         tags=["plugin", "codex", "cancel"], idempotent=False, is_parallel_safe=False,
     ))
     ctx.register.tool(ToolEntry(
         name="codex_approval_list",
         description="List pending Codex App Server approval requests; Codex remains responsible for its own approval policy.",
         schema={"type": "object", "properties": {"plugin_id": {"type": "string"}}, "additionalProperties": False},
-        handler=lambda plugin_id="": runtime.approvals(plugin_id), toolset="plugin", permission_category="read", approval_mode="auto",
+        handler=approval_list_handler, toolset="plugin", permission_category="read", approval_mode="auto",
         tags=["codex", "approval", "events"], idempotent=True,
     ))
     ctx.register.tool(ToolEntry(
         name="codex_approval_decide",
         description="Allow once or deny a pending Codex approval request after Luna has obtained the user's decision.",
         schema={"type": "object", "properties": {"request_id": {"type": "string"}, "decision": {"type": "string", "enum": ["allow_once", "deny"]}}, "required": ["request_id", "decision"], "additionalProperties": False},
-        handler=lambda request_id, decision: runtime.decide_approval(request_id, decision), toolset="plugin", permission_category="write", approval_mode="cached", risk_level="high",
+        handler=approval_decide_handler, toolset="plugin", permission_category="write", approval_mode="cached", risk_level="high",
         tags=["codex", "approval", "decision"], idempotent=False, is_parallel_safe=False,
     ))
 
