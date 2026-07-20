@@ -54,7 +54,7 @@ def register(ctx) -> None:
         raise ValueError("Codex Bridge runtime_codex_home must be within sandbox.roots")
     _prepare_runtime_home(source_codex_home, runtime_codex_home)
     development_root = Path(
-        config.development_root or (runtime_codex_home.parent / "plugin-workspaces")
+        config.development_root or (runtime_codex_home / "plugin-workspaces")
     ).expanduser().resolve()
     development_spec_path = Path(
         config.development_spec_path or (Path(__file__).resolve().parents[2] / "docs" / "plugin-development.md")
