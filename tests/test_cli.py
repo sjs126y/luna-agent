@@ -394,7 +394,7 @@ enabled_by_default: false
     )
     (plugin_dir / "__init__.py").write_text(
         """
-from luna_agent.plugins.models import CommandEntry
+    from luna_agent_plugin_sdk import CommandEntry
 
 def hello(args="", **kwargs):
     return "hello"

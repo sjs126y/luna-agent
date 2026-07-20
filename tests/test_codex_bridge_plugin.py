@@ -45,6 +45,7 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
     runtime_home.mkdir(parents=True)
     (runtime_home / "config.toml").write_text('model_provider = "Old"\n', encoding="utf-8")
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         sandbox_roots=[workspace],
         plugins_dirs=[PLUGIN_DIR],
@@ -141,6 +142,7 @@ def test_codex_bridge_rejects_cwd_outside_writable_roots(tmp_path, monkeypatch):
     source_home.mkdir()
     (source_home / "auth.json").write_text("{}", encoding="utf-8")
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         sandbox_roots=[workspace],
         plugins_dirs=[PLUGIN_DIR],
@@ -176,6 +178,7 @@ def test_codex_bridge_rejects_development_inside_host_workspace(tmp_path, monkey
     source_home.mkdir()
     (source_home / "auth.json").write_text("{}", encoding="utf-8")
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=workspace / "data",
         sandbox_roots=[workspace],
         plugins_dirs=[PLUGIN_DIR],

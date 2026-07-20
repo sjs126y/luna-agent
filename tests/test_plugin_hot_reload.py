@@ -84,7 +84,11 @@ async def test_reload_publishes_new_routes_and_drains_old_runtime(tmp_path):
     plugin_dir = tmp_path / "plugins" / "hot_reload"
     _write_plugin(plugin_dir, "version-one")
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugin_dir.parent]),
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[plugin_dir.parent],
+            plugin_worker_isolation=False,
+        ),
         plugin_dirs=[plugin_dir.parent],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -135,7 +139,11 @@ async def test_package_generations_keep_relative_imports_isolated_until_lease_re
     plugin_dir = tmp_path / "plugins" / "isolated"
     _write_package_plugin(plugin_dir, "version-one")
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugin_dir.parent]),
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[plugin_dir.parent],
+            plugin_worker_isolation=False,
+        ),
         plugin_dirs=[plugin_dir.parent],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -174,7 +182,7 @@ async def test_package_generations_keep_relative_imports_isolated_until_lease_re
 
 def test_mcp_tool_list_changes_publish_snapshot_without_health_churn(tmp_path):
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data"),
+        Settings(agent_data_dir=tmp_path / "data", plugin_worker_isolation=False),
         plugin_dirs=[],
         state_path=tmp_path / "state.json",
         include_builtin=False,

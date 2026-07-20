@@ -39,7 +39,11 @@ def _source(root: Path, *, version: str, value: str) -> Path:
 
 def _manager(tmp_path: Path) -> PluginManager:
     return PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[]),
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[],
+            plugin_worker_isolation=False,
+        ),
         plugin_dirs=[],
         state_path=tmp_path / "plugin-state.json",
         include_builtin=False,
@@ -153,6 +157,7 @@ async def test_installed_package_shadows_its_local_development_source(tmp_path):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[source.parent],
+        plugin_worker_isolation=False,
     )
     installer = PluginManager(
         settings,
@@ -188,6 +193,7 @@ async def test_disabled_installed_package_still_shadows_local_source(tmp_path):
     settings = Settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[source.parent],
+        plugin_worker_isolation=False,
     )
     installer = PluginManager(
         settings,
@@ -220,3 +226,24 @@ def test_installer_rejects_archive_path_traversal(tmp_path):
 
     with pytest.raises(ValueError, match="escapes package root"):
         _manager(tmp_path).installer.prepare(archive)
+
+
+def test_install_store_repairs_stale_paths_after_data_root_move(tmp_path):
+    from luna_agent.plugins.install.store import PluginInstallStore
+
+    state = tmp_path / "plugins" / "install-state.json"
+    packages = tmp_path / "plugins" / "packages"
+    current = packages / "user__demo" / "digest-one"
+    current.mkdir(parents=True)
+    store = PluginInstallStore(state)
+    store.record_install(
+        plugin_key="user/demo",
+        digest="digest-one",
+        path=tmp_path / "old-root" / "digest-one",
+        version="1.0.0",
+        source="old-source",
+    )
+
+    assert store.repair_paths(packages) == 1
+    assert store.package_path("user/demo", "digest-one") == current.resolve()
+    assert store.repair_paths(packages) == 0

@@ -236,6 +236,7 @@ class AppRuntime:
             return
         self.closed = True
         await self.stop_gateway()
+        await self.plugin_manager.aclose()
         await self.conversation_coordinator.close(cancel_pending=True)
         await self.memory_review_service.close()
         await self.memory_manager.close()

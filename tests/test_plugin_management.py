@@ -67,7 +67,11 @@ async def test_plugin_queries_include_versions_and_latest_operation(tmp_path):
     )
     (source / "managed.py").write_text("def register(ctx):\n    pass\n", encoding="utf-8")
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[]),
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[],
+            plugin_worker_isolation=False,
+        ),
         plugin_dirs=[],
         include_builtin=False,
     )

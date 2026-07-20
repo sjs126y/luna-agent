@@ -16,6 +16,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins"
 def _manager(tmp_path, monkeypatch, key: str, config: dict):
     monkeypatch.setenv("GITHUB_MCP_AUTH", "Bearer test-token")
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[PLUGIN_ROOT],
         plugins_enabled=[key],

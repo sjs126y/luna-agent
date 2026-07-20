@@ -90,6 +90,25 @@ class PluginInstallStore:
             record["enabled"] = bool(enabled)
             self._save()
 
+    def repair_paths(self, packages_root: Path) -> int:
+        """Rebase stale absolute paths after a repository/data-root move."""
+        repaired = 0
+        root = Path(packages_root)
+        for plugin_key, record in self._state.get("packages", {}).items():
+            versions = record.get("versions", {}) if isinstance(record, dict) else {}
+            for digest, item in versions.items():
+                if not isinstance(item, dict):
+                    continue
+                current = Path(str(item.get("path") or ""))
+                candidate = root / plugin_key.replace("/", "__") / str(digest)
+                if current.exists() or not candidate.is_dir():
+                    continue
+                item["path"] = str(candidate.resolve())
+                repaired += 1
+        if repaired:
+            self._save()
+        return repaired
+
     def remove(self, plugin_key: str) -> dict[str, Any]:
         record = self._state.setdefault("packages", {}).pop(plugin_key, {})
         self._save()

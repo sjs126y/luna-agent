@@ -97,6 +97,7 @@ class PluginManager:
         install_root = Path(getattr(settings, "agent_data_dir", "data")) / "plugins"
         self.install_store = PluginInstallStore(install_root / "install-state.json")
         self.installer = PluginInstaller(install_root)
+        self.install_store.repair_paths(self.installer.packages_root)
         self.external_runtime = ExternalPluginRuntimeService(self, install_root)
         self.data_revisions = PluginDataRevisionStore(self.installer.data_root)
         from luna_agent.plugins.control_state import PluginControlStateStore
@@ -113,6 +114,7 @@ class PluginManager:
         self._plugin_tasks: dict[str, set[asyncio.Task]] = {}
         self._active_owner_running = False
         self._active_lifecycle_lock = asyncio.Lock()
+        self._environment_gc_lock = asyncio.Lock()
         self._active_watch_tasks: dict[str, asyncio.Task] = {}
         self._capability_view: ContextVar[Any | None] = ContextVar(
             f"plugin-capability-view:{id(self)}",
@@ -139,6 +141,27 @@ class PluginManager:
     @property
     def hooks(self) -> dict[str, list[HookRegistration]]:
         return {name: list(items) for name, items in self._hooks.items()}
+
+    def close(self) -> None:
+        """Release generation-owned processes for short-lived CLI managers."""
+        for task in tuple(self.external_runtime._recovery_tasks.values()):
+            if not task.done():
+                task.cancel()
+        for plugin in tuple(self._runtime_records.values()):
+            self.external_runtime.stop(plugin)
+
+    async def aclose(self) -> None:
+        """Release Workers without blocking the host event loop they call back into."""
+        recovery_tasks = tuple(self.external_runtime._recovery_tasks.values())
+        for task in recovery_tasks:
+            if not task.done():
+                task.cancel()
+        if recovery_tasks:
+            await asyncio.gather(*recovery_tasks, return_exceptions=True)
+        await asyncio.gather(*(
+            asyncio.to_thread(self.external_runtime.stop, plugin)
+            for plugin in tuple(self._runtime_records.values())
+        ))
 
     def bind_application_ports(
         self,
@@ -1124,6 +1147,77 @@ class PluginManager:
 
     def capability_payload(self, binding_id: str) -> Any | None:
         return self._binding_payloads.get(binding_id)
+
+    def plugin_environment_report(self) -> dict[str, Any]:
+        retained: dict[tuple[str, str], set[str]] = {}
+        conservative_keys: set[str] = set()
+
+        def retain(key: str, environment_id: str, reason: str) -> None:
+            retained.setdefault((str(key), str(environment_id)), set()).add(str(reason))
+
+        for plugin in self._runtime_records.values():
+            environment_id = str(getattr(plugin, "environment_id", "") or "")
+            if environment_id:
+                retain(plugin.key, environment_id, "runtime_generation")
+
+        for key, record in self.install_store.packages().items():
+            versions = record.get("versions", {}) if isinstance(record, dict) else {}
+            for digest, item in versions.items():
+                if not isinstance(item, dict) or not item.get("path"):
+                    continue
+                try:
+                    manifest_path = self._resolve_plugin_manifest_path(Path(item["path"]))
+                    manifest = PluginManifest.from_mapping(
+                        self._read_manifest_file(manifest_path),
+                        source="installed",
+                        path=Path(item["path"]),
+                    )
+                    environment_id = self.external_runtime.environments.environment_id(
+                        str(key), manifest.requires.python
+                    )
+                    retain(str(key), environment_id, f"installed_package:{digest}")
+                except Exception:
+                    conservative_keys.add(str(key))
+
+        report = self.external_runtime.environments.collect_garbage(
+            retained=retained,
+            retain_plugin_keys=conservative_keys,
+            dry_run=True,
+        )
+        report["conservative_plugin_keys"] = sorted(conservative_keys)
+        return report
+
+    async def gc_plugin_environments(self, *, dry_run: bool = True) -> dict[str, Any]:
+        async with self._environment_gc_lock:
+            async with self.operations.track("__plugin_runtime__", "environment_gc"):
+                self.operations.stage("scanning", details={"dry_run": bool(dry_run)})
+                report = self.plugin_environment_report()
+                if not dry_run:
+                    retained: dict[tuple[str, str], set[str]] = {}
+                    conservative_keys: set[str] = set()
+                    for item in report.get("retained", []):
+                        retained.setdefault(
+                            (str(item.get("plugin_key") or ""), str(item.get("environment_id") or "")),
+                            set(),
+                        ).update(item.get("reasons") or [])
+                    conservative_keys.update(report.get("conservative_plugin_keys") or [])
+                    # Recompute from the same source of truth immediately before
+                    # deletion; this keeps apply mode conservative if a generation
+                    # changed while a dry-run report was being inspected.
+                    fresh = self.plugin_environment_report()
+                    for item in fresh.get("retained", []):
+                        retained.setdefault(
+                            (str(item.get("plugin_key") or ""), str(item.get("environment_id") or "")),
+                            set(),
+                        ).update(item.get("reasons") or [])
+                    conservative_keys.update(fresh.get("conservative_plugin_keys") or [])
+                    report = self.external_runtime.environments.collect_garbage(
+                        retained=retained,
+                        retain_plugin_keys=conservative_keys,
+                        dry_run=False,
+                    )
+                self.operations.stage("completed")
+                return report
 
     def refresh_mcp_tools(
         self,

@@ -16,6 +16,7 @@ PLUGIN_KEY = "automation/reminder"
 
 def _manager(tmp_path) -> PluginManager:
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[PLUGIN_ROOT],
         plugins_enabled=[PLUGIN_KEY],

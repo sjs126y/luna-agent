@@ -47,6 +47,14 @@ class LoadedPlugin:
     environment_path: Any | None = None
     sandbox_backend: str = ""
     worker: Any | None = None
+    worker_capabilities: Any | None = None
+    worker_state: str = "stopped"
+    worker_restart_count: int = 0
+    worker_failure_times: list[float] = field(default_factory=list)
+    worker_circuit_open: bool = False
+    worker_last_error: str = ""
+    worker_last_exit_at: str = ""
+    worker_next_retry_at: str = ""
     runtime_state: PluginRuntimeState = PluginRuntimeState.DISCOVERED
     generation_scope: Any | None = None
     active_registration: Any | None = None

@@ -11,7 +11,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 from luna_agent_plugin_sdk import SDK_VERSION
@@ -37,6 +37,25 @@ class PluginEnvironment:
             "dependencies": list(self.dependencies),
             "status": self.status,
         }
+
+
+class PluginEnvironmentLease:
+    def __init__(self, path: Path, handle) -> None:
+        self.path = path
+        self.handle = handle
+        self.closed = False
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        _unlock_file(self.handle)
+        self.handle.close()
+        try:
+            self.path.unlink()
+            self.path.parent.rmdir()
+        except OSError:
+            pass
 
 
 class PluginEnvironmentManager:
@@ -144,6 +163,89 @@ class PluginEnvironmentManager:
     def remove(self, plugin_key: str, environment_id: str) -> None:
         shutil.rmtree(self.path_for(plugin_key, environment_id), ignore_errors=True)
 
+    def acquire_lease(
+        self,
+        plugin_key: str,
+        environment_id: str,
+        runtime_instance_id: str,
+    ) -> PluginEnvironmentLease:
+        lease_root = self.path_for(plugin_key, environment_id) / ".leases"
+        lease_root.mkdir(parents=True, exist_ok=True)
+        safe_runtime = hashlib.sha256(runtime_instance_id.encode("utf-8")).hexdigest()[:24]
+        path = lease_root / f"{os.getpid()}-{safe_runtime}.lock"
+        handle = path.open("a+b")
+        if path.stat().st_size == 0:
+            handle.write(b"1")
+            handle.flush()
+        _lock_file(handle, blocking=True)
+        return PluginEnvironmentLease(path, handle)
+
+    def collect_garbage(
+        self,
+        *,
+        retained: Mapping[tuple[str, str], Iterable[str]],
+        retain_plugin_keys: Iterable[str] = (),
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Report or remove environments with no package, runtime, or lease reference."""
+        retained_reasons = {
+            (str(key), str(environment_id)): sorted({str(reason) for reason in reasons})
+            for (key, environment_id), reasons in retained.items()
+        }
+        conservative_keys = {str(key) for key in retain_plugin_keys}
+        kept: list[dict[str, Any]] = []
+        removable: list[dict[str, Any]] = []
+        removed: list[dict[str, Any]] = []
+        if not self.root.is_dir():
+            return {
+                "dry_run": bool(dry_run),
+                "retained": kept,
+                "removable": removable,
+                "removed": removed,
+                "bytes_reclaimable": 0,
+            }
+        root = self.root.resolve()
+        for plugin_dir in sorted(self.root.iterdir()):
+            if plugin_dir.name == ".staging" or not plugin_dir.is_dir() or plugin_dir.is_symlink():
+                continue
+            for environment_dir in sorted(plugin_dir.iterdir()):
+                if not environment_dir.is_dir() or environment_dir.is_symlink():
+                    continue
+                resolved = environment_dir.resolve()
+                if root not in resolved.parents:
+                    continue
+                metadata = _read_environment_metadata(environment_dir)
+                plugin_key = str(metadata.get("plugin_key") or "")
+                environment_id = str(metadata.get("environment_id") or environment_dir.name)
+                size_bytes = _directory_size(environment_dir)
+                item = {
+                    "plugin_key": plugin_key,
+                    "environment_id": environment_id,
+                    "path": str(environment_dir),
+                    "size_bytes": size_bytes,
+                }
+                reasons = retained_reasons.get((plugin_key, environment_id), [])
+                if _has_active_lease(environment_dir):
+                    reasons = sorted({*reasons, "active_process_lease"})
+                if not plugin_key:
+                    reasons = ["invalid_metadata"]
+                elif plugin_key in conservative_keys:
+                    reasons = ["installed_manifest_unavailable"]
+                if reasons:
+                    kept.append({**item, "reasons": reasons})
+                    continue
+                removable.append(item)
+                if not dry_run:
+                    shutil.rmtree(environment_dir)
+                    removed.append(item)
+        return {
+            "dry_run": bool(dry_run),
+            "retained": kept,
+            "removable": removable,
+            "removed": removed,
+            "bytes_reclaimable": sum(item["size_bytes"] for item in removable),
+        }
+
     @staticmethod
     def _run(argv: list[str]) -> None:
         completed = subprocess.run(
@@ -181,3 +283,87 @@ def _safe_key(plugin_key: str) -> str:
 
 def _default_sdk_source() -> Path:
     return Path(__file__).resolve().parents[4] / "packages" / "luna-agent-plugin-sdk"
+
+
+def _read_environment_metadata(root: Path) -> dict[str, Any]:
+    try:
+        value = json.loads((root / "environment.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _directory_size(root: Path) -> int:
+    total = 0
+    for path in root.rglob("*"):
+        try:
+            if path.is_file() and not path.is_symlink():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _lock_file(handle, *, blocking: bool) -> bool:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+        try:
+            msvcrt.locking(handle.fileno(), mode, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+    try:
+        fcntl.flock(handle.fileno(), flags)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _unlock_file(handle) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+def _has_active_lease(environment_root: Path) -> bool:
+    lease_root = environment_root / ".leases"
+    if not lease_root.is_dir():
+        return False
+    active = False
+    for path in lease_root.glob("*.lock"):
+        try:
+            handle = path.open("r+b")
+        except OSError:
+            active = True
+            continue
+        try:
+            if _lock_file(handle, blocking=False):
+                _unlock_file(handle)
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            else:
+                active = True
+        finally:
+            handle.close()
+    try:
+        lease_root.rmdir()
+    except OSError:
+        pass
+    return active

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,9 @@ async def test_worker_registers_and_invokes_tool_without_stdout_pollution(tmp_pa
         "config": {},
     })
     try:
+        if os.name != "nt":
+            assert client.pid is not None
+            assert os.getsid(client.pid) != os.getsid(0)
         descriptor = result["capabilities"]["tools"][0]
         assert descriptor["name"] == "worker_echo"
         invoked = await client.call("invoke", {
@@ -86,3 +90,83 @@ def test_worker_rejects_unsupported_host_callbacks(tmp_path: Path) -> None:
             "entrypoint": "bad:register",
             "config": {},
         })
+
+
+def test_worker_loads_plugin_root_package(tmp_path: Path) -> None:
+    plugin = tmp_path / "root_package"
+    plugin.mkdir()
+    (plugin / "__init__.py").write_text(
+        "def register(ctx):\n    pass\n",
+        encoding="utf-8",
+    )
+    client = PluginWorkerClient(
+        python=Path(sys.executable),
+        cwd=plugin,
+        env=_worker_env(),
+    )
+    try:
+        result = client.start({
+            "plugin_key": "external/root-package",
+            "generation_id": "external/root-package@g1",
+            "runtime_instance_id": "external-root-package:r1",
+            "plugin_root": str(plugin),
+            "data_root": str(tmp_path / "data"),
+            "entrypoint": "root_package:register",
+            "config": {},
+        })
+        assert result["capabilities"]["tools"] == []
+    finally:
+        client.stop()
+
+
+@pytest.mark.asyncio
+async def test_worker_reports_only_unexpected_exit(tmp_path: Path) -> None:
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    (plugin / "demo.py").write_text(
+        "def register(ctx):\n    pass\n",
+        encoding="utf-8",
+    )
+    exits: list[dict] = []
+    client = PluginWorkerClient(
+        python=Path(sys.executable),
+        cwd=plugin,
+        env=_worker_env(),
+        on_exit=lambda _client, summary: exits.append(summary),
+    )
+    client.start({
+        "plugin_key": "external/demo",
+        "generation_id": "external/demo@g1",
+        "runtime_instance_id": "external-demo:r1",
+        "plugin_root": str(plugin),
+        "data_root": str(tmp_path / "data"),
+        "entrypoint": "demo:register",
+        "config": {},
+    })
+    assert client.process is not None
+    client.process.kill()
+    for _ in range(100):
+        if exits:
+            break
+        await asyncio.sleep(0.01)
+    assert exits and exits[0]["running"] is False
+
+    normal_exits: list[dict] = []
+    normal = PluginWorkerClient(
+        python=Path(sys.executable),
+        cwd=plugin,
+        env=_worker_env(),
+        on_exit=lambda _client, summary: normal_exits.append(summary),
+    )
+    normal.start({
+        "plugin_key": "external/demo",
+        "generation_id": "external/demo@g2",
+        "runtime_instance_id": "external-demo:r2",
+        "plugin_root": str(plugin),
+        "data_root": str(tmp_path / "data-two"),
+        "entrypoint": "demo:register",
+        "config": {},
+    })
+    normal.stop()
+    await asyncio.sleep(0.05)
+    assert normal_exits == []

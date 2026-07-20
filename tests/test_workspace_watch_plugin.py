@@ -17,6 +17,7 @@ PLUGIN_KEY = "integrations/workspace-watch"
 
 def _manager(tmp_path, config: dict) -> PluginManager:
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[PLUGIN_ROOT],
         plugins_enabled=[PLUGIN_KEY],
@@ -57,6 +58,7 @@ def test_workspace_watch_registers_active_runner_and_status_command(tmp_path):
 @pytest.mark.asyncio
 async def test_workspace_watch_can_be_uninstalled_and_reinstalled(tmp_path):
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[],
         plugins_config={PLUGIN_KEY: {"active": {"enabled": False}}},

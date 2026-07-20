@@ -7,7 +7,9 @@ description: Proactively asks Luna Agent to review stable changes to configured 
 kind: integration
 entrypoint: workspace_watch:register
 requires:
-  sdk: ">=0.1,<1"
+  sdk: ">=0.3,<1"
+  python:
+    - "pydantic>=2.8,<3"
 provides: [active, command]
 tags: [active, workspace, monitoring]
 enabled_by_default: false

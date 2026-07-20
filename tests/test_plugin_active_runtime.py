@@ -64,6 +64,7 @@ def _manager(
 ) -> PluginManager:
     return PluginManager(
         Settings(
+            plugin_worker_isolation=False,
             agent_data_dir=tmp_path / "data",
             plugins_dirs=[plugin_root.parent],
             plugins_config=plugins_config or {},

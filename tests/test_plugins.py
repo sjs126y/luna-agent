@@ -13,8 +13,12 @@ from luna_agent.skills.registry import skill_registry
 from luna_agent.tools.registry import tool_registry
 
 
+def _inprocess_settings(**kwargs):
+    return Settings(plugin_worker_isolation=False, **kwargs)
+
+
 def _settings(tmp_path, plugins_dir):
-    return Settings(
+    return _inprocess_settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[plugins_dir],
         plugins_enabled=["user/sample", "user/protected", "user/missing-env"],
@@ -81,7 +85,7 @@ enabled_by_default: true
     )
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
     )
@@ -134,7 +138,7 @@ def register(ctx):
 """.strip(),
         encoding="utf-8",
     )
-    settings = Settings(
+    settings = _inprocess_settings(
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[plugins_dir],
         plugins_config={
@@ -166,7 +170,7 @@ def test_non_object_manifest_is_preserved_for_doctor(tmp_path):
     (plugin_dir / "plugin.yaml").write_text("- not-an-object\n", encoding="utf-8")
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
     )
@@ -210,7 +214,7 @@ def register(ctx):
     )
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[]),
         plugin_dirs=[plugin_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -225,7 +229,7 @@ def register(ctx):
 
 
 def test_plugin_doctor_reports_deferred_reason_and_hint(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
@@ -266,7 +270,7 @@ def register(ctx):
     )
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -297,7 +301,7 @@ enabled_by_default: true
     (plugin_dir / "pretend_plugin.py").write_text("def register(ctx): pass\n", encoding="utf-8")
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -329,7 +333,7 @@ enabled_by_default: true
     (plugin_dir / "reserved_plugin.py").write_text("def register(ctx): pass\n", encoding="utf-8")
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -365,7 +369,7 @@ enabled_by_default: true
     (plugin_dir / "platformish.py").write_text("def register(ctx): pass\n", encoding="utf-8")
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -501,7 +505,7 @@ def register(ctx):
     )
 
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
     )
@@ -556,7 +560,7 @@ def register(ctx):
         encoding="utf-8",
     )
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -605,7 +609,7 @@ def register(ctx):
             encoding="utf-8",
         )
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -662,7 +666,7 @@ Inspect the diff before suggesting changes.
         encoding="utf-8",
     )
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -703,7 +707,7 @@ enabled_by_default: true
         encoding="utf-8",
     )
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -752,7 +756,7 @@ servers:
         encoding="utf-8",
     )
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -800,7 +804,7 @@ enabled_by_default: true
         encoding="utf-8",
     )
     manager = PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[plugins_dir]),
         plugin_dirs=[plugins_dir],
         state_path=tmp_path / "state.json",
         include_builtin=False,
@@ -890,7 +894,7 @@ def test_command_cannot_override_core_command(tmp_path):
 
 
 def test_builtin_manifests_are_discovered_from_project_plugins(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
@@ -933,7 +937,7 @@ def test_builtin_manifests_are_discovered_from_project_plugins(tmp_path):
 
 
 def test_builtin_tools_use_explicit_plugin_registration(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
@@ -964,7 +968,7 @@ def test_builtin_tool_delegate_setup_uses_agent_runtime_settings(tmp_path, monke
         "luna_agent.plugins.builtin.tools.builtin.delegate.setup_delegate",
         fake_setup_delegate,
     )
-    settings = Settings(
+    settings = _inprocess_settings(
         agent_data_dir=tmp_path / "data",
         agent_runtime_max_tokens=1234,
         agent_runtime_max_concurrent_runs=2,
@@ -987,7 +991,7 @@ def test_builtin_tool_delegate_setup_uses_agent_runtime_settings(tmp_path, monke
 
 
 def test_builtin_skills_use_explicit_plugin_registration(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
@@ -1000,7 +1004,7 @@ def test_disable_memory_provider_plugin_unregisters_provider(tmp_path):
     from luna_agent.memory.provider_registry import memory_provider_registry
 
     memory_provider_registry.clear()
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 
@@ -1015,7 +1019,7 @@ def test_memory_provider_doctor_reports_registered_provider(tmp_path):
     from luna_agent.memory.provider_registry import memory_provider_registry
 
     memory_provider_registry.clear()
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
     manager.load_plugin("memory/mem0")
@@ -1028,7 +1032,7 @@ def test_memory_provider_doctor_reports_registered_provider(tmp_path):
 
 
 def test_wechat_plugin_registers_login_hook(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
 

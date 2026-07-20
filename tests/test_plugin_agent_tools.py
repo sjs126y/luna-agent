@@ -59,7 +59,11 @@ def plugin_sandbox(tmp_path):
 
 def _manager(tmp_path: Path) -> PluginManager:
     return PluginManager(
-        Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[]),
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[],
+            plugin_worker_isolation=False,
+        ),
         plugin_dirs=[],
         state_path=tmp_path / "plugin-state.json",
         include_builtin=False,
@@ -78,9 +82,13 @@ async def test_plugin_tools_are_discoverable_but_not_core() -> None:
 
     assert {"plugin_inspect", "plugin_build", "plugin_manage"} <= names
     actions = plugin_manage_entry.schema["properties"]["action"]["enum"]
-    assert {"active_on", "active_off", "active_restart", "active_run"} <= set(actions)
+    assert {
+        "active_on", "active_off", "active_restart", "active_run", "environment_gc",
+    } <= set(actions)
     assert _manage_precheck({"action": "active_run", "plugin_key": "automation/luna-companion"}) is None
     assert _manage_approval({"action": "active_run"}) == "cached"
+    assert _manage_precheck({"action": "environment_gc", "apply": False}) is None
+    assert _manage_approval({"action": "environment_gc"}) == "prompt"
     assert plugin_inspect_entry.toolset == "plugin"
     assert prepare_tool_call(
         {"name": "plugin_build", "input": {"action": "validate"}},
@@ -152,7 +160,7 @@ async def test_plugin_manage_uses_live_manager_and_preserves_data(plugin_sandbox
         installed = _decode(await plugin_manage("install", source=str(source)))
         inspected = _decode(await plugin_inspect("info", plugin_key="user/agent-tool-demo"))
         data_path = manager.installer.data_root / "user__agent-tool-demo"
-        data_path.mkdir(parents=True)
+        data_path.mkdir(parents=True, exist_ok=True)
         (data_path / "state.json").write_text("{}", encoding="utf-8")
         disabled = _decode(await plugin_manage("disable", plugin_key="user/agent-tool-demo"))
         enabled = _decode(await plugin_manage("enable", plugin_key="user/agent-tool-demo"))
@@ -200,6 +208,31 @@ async def test_plugin_install_missing_package_explains_build_step(plugin_sandbox
     assert result.is_error is True
     payload = json.loads(result.text)
     assert "plugin_build(action='package'" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_plugin_environment_gc_is_inspectable_and_requires_apply(
+    plugin_sandbox: Path,
+) -> None:
+    manager = _manager(plugin_sandbox)
+    environment = manager.external_runtime.environments.inspect("external/orphan", [])
+    environment.root.mkdir(parents=True)
+    (environment.root / "environment.json").write_text(
+        json.dumps(environment.as_dict()),
+        encoding="utf-8",
+    )
+    token = set_current_tool_agent(SimpleNamespace(_plugin_manager=manager))
+    try:
+        inspected = _decode(await plugin_inspect("environments"))
+        preview = _decode(await plugin_manage("environment_gc", apply=False))
+        applied = _decode(await plugin_manage("environment_gc", apply=True))
+    finally:
+        reset_current_tool_agent(token)
+
+    assert inspected["environments"]["removable"][0]["environment_id"] == environment.environment_id
+    assert preview["environment_gc"]["removed"] == []
+    assert environment.root.exists() is False
+    assert applied["environment_gc"]["removed"][0]["environment_id"] == environment.environment_id
 
 
 def test_plugin_package_rejects_symlinks(plugin_sandbox: Path) -> None:

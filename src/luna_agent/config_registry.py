@@ -558,6 +558,34 @@ def _plugin_fields() -> tuple[ConfigField, ...]:
         _yaml_field("plugins.runtime.allow_network", "plugin_worker_allow_network", False, "bool", "plugins", "Allow direct network access inside external plugin workers."),
         _yaml_field("plugins.runtime.startup_timeout_seconds", "plugin_worker_startup_timeout", 45.0, "float", "plugins", "External plugin worker startup timeout.", minimum=1),
         _yaml_field("plugins.runtime.shutdown_timeout_seconds", "plugin_worker_shutdown_timeout", 10.0, "float", "plugins", "External plugin worker shutdown timeout.", minimum=0.5),
+        _yaml_field(
+            "plugins.runtime.restart_backoff_seconds",
+            "plugin_worker_restart_backoff",
+            [1, 2, 5, 10, 30],
+            "list[float]",
+            "plugins",
+            "External plugin worker restart backoff.",
+            minimum=0,
+        ),
+        _yaml_field(
+            "plugins.runtime.restart_failure_window_seconds",
+            "plugin_worker_restart_failure_window",
+            300.0,
+            "float",
+            "plugins",
+            "External plugin worker failure window.",
+            minimum=1,
+        ),
+        _yaml_field(
+            "plugins.runtime.restart_failure_limit",
+            "plugin_worker_restart_failure_limit",
+            5,
+            "int",
+            "plugins",
+            "External plugin worker failures before circuit breaker.",
+            minimum=1,
+            maximum=100,
+        ),
     )
 
 

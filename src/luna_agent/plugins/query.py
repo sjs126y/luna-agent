@@ -174,6 +174,9 @@ class PluginQueryService:
     def operations(self, *, key: str = "", limit: int = 50) -> list[dict[str, Any]]:
         return self._manager.operations.list(plugin_key=key, limit=limit)
 
+    def environments(self) -> dict[str, Any]:
+        return self._manager.plugin_environment_report()
+
     def operation(self, operation_id: str) -> dict[str, Any] | None:
         return self._manager.operations.get(operation_id)
 

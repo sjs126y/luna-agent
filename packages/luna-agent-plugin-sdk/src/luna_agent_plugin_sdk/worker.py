@@ -436,7 +436,10 @@ class PluginWorkerRuntime:
         package = ModuleType(namespace)
         package.__package__ = namespace
         package.__spec__ = ModuleSpec(namespace, loader=None, is_package=True)
-        package.__path__ = [str(root)]  # type: ignore[attr-defined]
+        search_paths = [root]
+        if (root / "__init__.py").is_file():
+            search_paths.append(root.parent)
+        package.__path__ = [str(path) for path in search_paths]  # type: ignore[attr-defined]
         sys.modules[namespace] = package
         try:
             module = importlib.import_module(f"{namespace}.{module_name}")

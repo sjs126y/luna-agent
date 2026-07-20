@@ -43,6 +43,7 @@ def _write_plugin(
 
 def _manager(tmp_path: Path, root: Path) -> PluginManager:
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[root],
         plugins_enabled=["a/consumer", "z/provider"],

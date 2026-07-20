@@ -6,7 +6,7 @@ import asyncio
 import os
 import subprocess
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,8 @@ from luna_agent_plugin_sdk.worker_protocol import FramedRPCPeer, WorkerProtocolE
 
 
 ResourceHandler = Callable[[dict[str, Any]], Awaitable[Any] | Any]
+ProcessFactory = Callable[[Sequence[str], Path, dict[str, str]], Any]
+WorkerExitCallback = Callable[["PluginWorkerClient", dict[str, Any]], Any]
 
 
 class PluginWorkerClient:
@@ -27,6 +29,9 @@ class PluginWorkerClient:
         startup_timeout: float = 30.0,
         shutdown_timeout: float = 5.0,
         max_stderr_chars: int = 64 * 1024,
+        process_factory: ProcessFactory | None = None,
+        on_exit: WorkerExitCallback | None = None,
+        host_loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self.python = Path(python) if python is not None else None
         self.cwd = Path(cwd)
@@ -37,10 +42,12 @@ class PluginWorkerClient:
         self.startup_timeout = max(1.0, float(startup_timeout))
         self.shutdown_timeout = max(0.5, float(shutdown_timeout))
         self.max_stderr_chars = max(1024, int(max_stderr_chars))
+        self.process_factory = process_factory
+        self.on_exit = on_exit
         self.process: subprocess.Popen[bytes] | None = None
         self.peer: FramedRPCPeer | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.host_loop: asyncio.AbstractEventLoop | None = None
+        self.host_loop = host_loop
         self.thread: threading.Thread | None = None
         self.stderr_thread: threading.Thread | None = None
         self.ready = threading.Event()
@@ -48,6 +55,9 @@ class PluginWorkerClient:
         self.start_error = ""
         self.last_stderr = ""
         self.resource_handler: ResourceHandler | None = None
+        self._stop_requested = False
+        self._initialized = False
+        self._exit_notified = False
 
     @property
     def pid(self) -> int | None:
@@ -63,22 +73,30 @@ class PluginWorkerClient:
     def start(self, initialize: dict[str, Any]) -> dict[str, Any]:
         if self.running:
             raise RuntimeError("Plugin worker is already running")
-        try:
-            self.host_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self.host_loop = None
+        self._stop_requested = False
+        self._initialized = False
+        self._exit_notified = False
+        if self.host_loop is None:
+            try:
+                self.host_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.host_loop = None
         command = list(self.argv) or [
             str(self.python), "-m", "luna_agent_plugin_sdk.worker"
         ]
-        self.process = subprocess.Popen(
-            command,
-            cwd=str(self.cwd),
-            env=self.env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=0,
-        )
+        if self.process_factory is not None:
+            self.process = self.process_factory(command, self.cwd, dict(self.env))
+        else:
+            self.process = subprocess.Popen(
+                command,
+                cwd=str(self.cwd),
+                env=self.env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+                start_new_session=os.name != "nt",
+            )
         self.thread = threading.Thread(
             target=self._thread_main,
             name=f"plugin-worker-rpc:{self.process.pid}",
@@ -105,6 +123,7 @@ class PluginWorkerClient:
         if not isinstance(result, dict):
             self._terminate()
             raise RuntimeError("Plugin worker returned an invalid initialization result")
+        self._initialized = True
         return result
 
     def call_sync(
@@ -141,6 +160,7 @@ class PluginWorkerClient:
         process = self.process
         if process is None:
             return
+        self._stop_requested = True
         if process.poll() is None and self.peer is not None and self.loop is not None:
             try:
                 self.call_sync("shutdown", {}, timeout=self.shutdown_timeout)
@@ -161,6 +181,21 @@ class PluginWorkerClient:
             "last_error": self.start_error or (self.peer.last_error if self.peer else ""),
             "stderr_tail": self.last_stderr,
         }
+
+    def _notify_unexpected_exit(self) -> None:
+        callback = self.on_exit
+        if callback is None or self._exit_notified or self._stop_requested or not self._initialized:
+            return
+        self._exit_notified = True
+        summary = self.safe_summary()
+        try:
+            if self.host_loop is not None and self.host_loop.is_running():
+                self.host_loop.call_soon_threadsafe(callback, self, summary)
+            else:
+                callback(self, summary)
+        except Exception:
+            # Diagnostics callbacks must never keep the worker monitor thread alive.
+            pass
 
     def _thread_main(self) -> None:
         process = self.process
@@ -189,6 +224,7 @@ class PluginWorkerClient:
             self.ready.set()
         finally:
             self.stopped.set()
+            self._notify_unexpected_exit()
             loop.close()
 
     async def _resource_call(self, payload: dict[str, Any]) -> Any:

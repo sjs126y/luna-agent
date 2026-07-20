@@ -241,6 +241,38 @@ sandbox:
         ConfigLoader(base_dir=tmp_path).load(strict=True)
 
 
+def test_config_loader_validates_plugin_worker_restart_backoff(tmp_path):
+    from luna_agent.config_loader import ConfigLoader
+
+    (tmp_path / "config.yaml").write_text(
+        """
+plugins:
+  runtime:
+    restart_backoff_seconds: [0, 0.5, 2]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    snapshot = ConfigLoader(base_dir=tmp_path).load()
+
+    assert snapshot.attr_values["plugin_worker_restart_backoff"] == [0.0, 0.5, 2.0]
+
+
+@pytest.mark.parametrize("value", ["[]", "[-1, 2]", "[1, nope]", "1,2"])
+def test_config_loader_rejects_invalid_plugin_worker_restart_backoff(tmp_path, value):
+    from luna_agent.config_loader import ConfigLoader
+
+    (tmp_path / "config.yaml").write_text(
+        f"plugins:\n  runtime:\n    restart_backoff_seconds: {value}\n",
+        encoding="utf-8",
+    )
+
+    snapshot = ConfigLoader(base_dir=tmp_path).load(strict=False)
+
+    assert snapshot.sources["plugins.runtime.restart_backoff_seconds"] == "invalid"
+    assert snapshot.errors
+
+
 def test_settings_uses_config_loader(tmp_path, monkeypatch):
     from luna_agent.config import Settings
 

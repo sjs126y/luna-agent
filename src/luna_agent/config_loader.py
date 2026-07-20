@@ -195,6 +195,8 @@ def convert_config_value(field: ConfigField, raw_value: Any) -> tuple[Any, list[
             value = _convert_dict(raw_value, label)
         elif value_type == "list[int]":
             value = _convert_int_list(raw_value, label, allow_csv=field.allow_csv)
+        elif value_type == "list[float]":
+            value = _convert_float_list(raw_value, label, allow_csv=field.allow_csv)
         elif value_type in {"list", "list[path]"}:
             value = _convert_list(raw_value, label, allow_csv=field.allow_csv)
         else:
@@ -224,9 +226,11 @@ def _validate_converted_value(field: ConfigField, value: Any) -> list[str]:
         errors.append(f"{field.path} 不支持: {value}，可选: {', '.join(str(item) for item in field.choices)}")
     if field.value_type in {"int", "float"}:
         _validate_number_range(field, value, errors)
-    if field.value_type == "list[int]":
+    if field.value_type in {"list[int]", "list[float]"}:
         for item in value:
             _validate_number_range(field, item, errors)
+    if field.value_type == "list[float]" and not value:
+        errors.append(f"{field.path} 至少需要一个数字。")
     return errors
 
 
@@ -266,6 +270,11 @@ def _convert_float(value: Any, label: str) -> float:
         except ValueError:
             pass
     raise ValueError(f"{label} 必须是数字。")
+
+
+def _convert_float_list(value: Any, label: str, *, allow_csv: bool) -> list[float]:
+    values = _convert_list(value, label, allow_csv=allow_csv)
+    return [_convert_float(item, label) for item in values]
 
 
 def _convert_str(value: Any, label: str) -> str:

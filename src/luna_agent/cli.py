@@ -614,9 +614,12 @@ def plugins_list(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    if load:
-        manager.load_enabled()
-    reports = manager.queries.list_plugins()
+    try:
+        if load:
+            manager.load_enabled()
+        reports = manager.queries.list_plugins()
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(reports, indent=2, ensure_ascii=False))
     else:
@@ -630,9 +633,12 @@ def plugins_info(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    if load:
-        manager.load_plugin(key)
-    report = manager.queries.plugin_info(key)
+    try:
+        if load:
+            manager.load_plugin(key)
+        report = manager.queries.plugin_info(key)
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
@@ -673,6 +679,46 @@ def plugins_versions(
         typer.echo(f"  - {item.get('version')} {str(item.get('digest') or '')[:12]} {marker}")
     if not items:
         typer.echo("  - 无已安装版本")
+
+
+@plugins_app.command("environments")
+def plugins_environments(
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    report = manager.queries.environments()
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+    typer.echo(
+        f"插件环境: retained={len(report.get('retained') or [])} "
+        f"removable={len(report.get('removable') or [])} "
+        f"bytes={int(report.get('bytes_reclaimable') or 0)}"
+    )
+    for item in report.get("removable") or []:
+        typer.echo(f"  - removable {item.get('plugin_key')} {item.get('environment_id')}")
+
+
+@plugins_app.command("gc-environments")
+def plugins_gc_environments(
+    apply: bool = typer.Option(False, "--apply", help="实际删除无引用环境；默认仅预览。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    manager = _plugin_manager()
+    try:
+        report = asyncio.run(manager.gc_plugin_environments(dry_run=not apply))
+    except Exception as exc:
+        _exit_error(f"插件环境清理失败: {exc}")
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+    mode = "applied" if apply else "dry-run"
+    typer.echo(
+        f"插件环境清理 ({mode}): retained={len(report.get('retained') or [])} "
+        f"removable={len(report.get('removable') or [])} "
+        f"removed={len(report.get('removed') or [])} "
+        f"bytes={int(report.get('bytes_reclaimable') or 0)}"
+    )
 
 
 @plugins_app.command("operations")
@@ -724,6 +770,8 @@ def plugins_enable(key: str) -> None:
         plugin = asyncio.run(manager.enable_plugin_runtime(key))
     except Exception as exc:
         _exit_error(f"插件启用失败: {exc}")
+    finally:
+        manager.close()
     typer.echo(f"已启用插件: {plugin.key}")
 
 
@@ -734,6 +782,8 @@ def plugins_disable(key: str) -> None:
         plugin = asyncio.run(manager.disable_plugin_runtime(key))
     except Exception as exc:
         _exit_error(f"插件禁用失败: {exc}")
+    finally:
+        manager.close()
     typer.echo(f"已禁用插件: {plugin.key}")
 
 
@@ -748,6 +798,8 @@ def plugins_install(
         plugin = asyncio.run(manager.install_plugin_runtime(source, enable=enable))
     except Exception as exc:
         _exit_error(f"插件安装失败: {exc}")
+    finally:
+        manager.close()
     typer.echo(
         f"已安装插件: {plugin.key} generation={plugin.generation_id} "
         f"runtime={plugin.runtime_instance_id}"
@@ -762,6 +814,8 @@ def plugins_reload(key: str) -> None:
         plugin = asyncio.run(manager.reload_plugin_runtime(key))
     except Exception as exc:
         _exit_error(f"插件重载失败: {exc}")
+    finally:
+        manager.close()
     typer.echo(f"已重载插件: {plugin.key} generation={plugin.generation_id}")
 
 
@@ -773,6 +827,8 @@ def plugins_rollback(key: str, digest: str) -> None:
         plugin = asyncio.run(manager.rollback_plugin_runtime(key, digest))
     except Exception as exc:
         _exit_error(f"插件回滚失败: {exc}")
+    finally:
+        manager.close()
     typer.echo(f"已回滚插件: {plugin.key} package={digest}")
 
 
@@ -792,6 +848,8 @@ def plugins_uninstall(
         ))
     except Exception as exc:
         _exit_error(f"插件卸载失败: {exc}")
+    finally:
+        manager.close()
     typer.echo(f"已卸载插件: {plugin.key}")
 
 
@@ -801,8 +859,11 @@ def plugins_doctor(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    plugin = manager.load_plugin(key)
-    report = manager.queries.plugin_info(plugin.key)
+    try:
+        plugin = manager.load_plugin(key)
+        report = manager.queries.plugin_info(plugin.key)
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
     else:
@@ -816,11 +877,15 @@ def plugins_validate(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     """Validate a local plugin directory or manifest file."""
+    manager = None
     try:
         manager = _plugin_validation_manager(path)
         report = manager.validate_plugin_path(path, load=not no_load)
     except Exception as exc:
         _exit_error(f"插件校验失败: {exc}")
+    finally:
+        if manager is not None:
+            manager.close()
 
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
@@ -902,7 +967,10 @@ def plugins_test(
             reports.append(contract_test(path))
         if integration_mode:
             manager = _plugin_validation_manager(path)
-            integration = manager.validate_plugin_path(path, load=True)
+            try:
+                integration = manager.validate_plugin_path(path, load=True)
+            finally:
+                manager.close()
             reports.append({
                 "ok": bool(integration["validation_ok"]),
                 "mode": "integration",

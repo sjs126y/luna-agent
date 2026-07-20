@@ -18,6 +18,7 @@ PLUGIN_KEY = "productivity/document-converter"
 @pytest.fixture
 def loaded_plugin(tmp_path):
     settings = Settings(
+        plugin_worker_isolation=False,
         agent_data_dir=tmp_path / "data",
         plugins_dirs=[PLUGIN_ROOT],
         plugins_enabled=[PLUGIN_KEY],

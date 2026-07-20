@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import signal
 import subprocess
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ from luna_agent_plugin_sdk import (
 
 from luna_agent.plugins.install import PluginEnvironment, PluginEnvironmentManager
 from luna_agent.plugins.runtime.sandbox import build_plugin_worker_launch
+from luna_agent.plugins.runtime.models import PluginRuntimeState
 from luna_agent.plugins.runtime.worker_client import PluginWorkerClient
 from luna_agent.skills.entry import SkillEntry
 from luna_agent.workflow.registry import WorkflowDef
@@ -35,6 +38,10 @@ class ExternalPluginRuntimeService:
         self.manager = manager
         self.environments = PluginEnvironmentManager(Path(root) / "environments")
         self.workers: dict[str, PluginWorkerClient] = {}
+        self._worker_specs: dict[str, dict[str, Any]] = {}
+        self._recovery_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._stopping: set[str] = set()
+        self._environment_leases: dict[str, Any] = {}
         self.processes = PluginHostProcessService(manager)
         self.workspaces = PluginHostWorkspaceService(manager)
 
@@ -52,6 +59,50 @@ class ExternalPluginRuntimeService:
             raise ValueError(f"Plugin package root is unavailable: {plugin.key}")
         if plugin.data_path is None:
             raise RuntimeError(f"Plugin data revision is unavailable: {plugin.key}")
+        self._stopping.discard(plugin.runtime_instance_id)
+        lease = self.environments.acquire_lease(
+            plugin.key,
+            environment.environment_id,
+            plugin.runtime_instance_id,
+        )
+        try:
+            worker, result, launch = self._spawn_worker(
+                plugin, environment=environment, config=config
+            )
+        except Exception:
+            lease.close()
+            raise
+        self.workers[plugin.runtime_instance_id] = worker
+        self._environment_leases[plugin.runtime_instance_id] = lease
+        self._worker_specs[plugin.runtime_instance_id] = {
+            "environment": environment,
+            "config": dict(config),
+            "capabilities": dict(result.get("capabilities") or {}),
+            "launch_backend": launch.backend,
+            "sandbox_cleanup": launch.cleanup,
+        }
+        plugin.worker = worker
+        plugin.environment_id = environment.environment_id
+        plugin.environment_path = environment.root
+        plugin.sandbox_backend = launch.backend
+        plugin.worker_capabilities = dict(result.get("capabilities") or {})
+        plugin.worker_state = "running"
+        plugin.worker_last_error = ""
+        plugin.worker_next_retry_at = ""
+        self._register_capabilities(plugin, plugin.worker_capabilities)
+
+    def _spawn_worker(
+        self,
+        plugin,
+        *,
+        environment: PluginEnvironment,
+        config: dict[str, Any],
+        host_loop: asyncio.AbstractEventLoop | None = None,
+    ):
+        if plugin.manifest.path is None:
+            raise ValueError(f"Plugin package root is unavailable: {plugin.key}")
+        if plugin.data_path is None:
+            raise RuntimeError(f"Plugin data revision is unavailable: {plugin.key}")
         backend = str(
             getattr(self.manager.settings, "plugin_sandbox_backend", "auto") or "auto"
         )
@@ -65,6 +116,8 @@ class ExternalPluginRuntimeService:
             data_root=Path(plugin.data_path),
             allow_network=allow_network,
             backend=backend,
+            plugin_key=plugin.key,
+            runtime_instance_id=plugin.runtime_instance_id,
         )
         worker = PluginWorkerClient(
             cwd=launch.cwd,
@@ -76,6 +129,11 @@ class ExternalPluginRuntimeService:
             shutdown_timeout=float(
                 getattr(self.manager.settings, "plugin_worker_shutdown_timeout", 10.0)
             ),
+            process_factory=launch.process_factory,
+            on_exit=lambda exited, summary, _plugin=plugin: self._worker_exited(
+                _plugin, exited, summary
+            ),
+            host_loop=host_loop,
         )
         worker.set_resource_handler(
             lambda payload: self._resource_call(plugin, payload)
@@ -90,28 +148,211 @@ class ExternalPluginRuntimeService:
                 "entrypoint": plugin.manifest.entrypoint,
                 "config": config,
             })
-            self.workers[plugin.runtime_instance_id] = worker
-            plugin.worker = worker
-            plugin.environment_id = environment.environment_id
-            plugin.environment_path = environment.root
-            plugin.sandbox_backend = launch.backend
-            self._register_capabilities(plugin, dict(result.get("capabilities") or {}))
+            return worker, result, launch
         except Exception as exc:
             detail = worker.last_stderr.strip()
             worker.stop()
+            if launch.cleanup is not None:
+                launch.cleanup()
             if detail:
                 raise RuntimeError(
                     f"External plugin worker failed: {exc}; stderr: {detail[-8000:]}"
                 ) from exc
             raise
 
+    def _worker_exited(
+        self,
+        plugin,
+        worker: PluginWorkerClient,
+        summary: dict[str, Any],
+    ) -> None:
+        runtime_id = str(getattr(plugin, "runtime_instance_id", "") or "")
+        if runtime_id in self._stopping or self.workers.get(runtime_id) is not worker:
+            return
+        task = self._recovery_tasks.get(runtime_id)
+        if task is not None and not task.done():
+            return
+        self._recovery_tasks[runtime_id] = asyncio.create_task(
+            self._recover_worker(plugin, worker, summary),
+            name=f"plugin-worker-recovery:{plugin.key}:{runtime_id}",
+        )
+
+    async def _recover_worker(
+        self,
+        plugin,
+        exited_worker: PluginWorkerClient,
+        summary: dict[str, Any],
+    ) -> None:
+        runtime_id = str(getattr(plugin, "runtime_instance_id", "") or "")
+        spec = self._worker_specs.get(runtime_id)
+        if spec is None or self.workers.get(runtime_id) is not exited_worker:
+            return
+        plugin.worker_state = "recovering"
+        plugin.runtime_state = PluginRuntimeState.FAILED
+        plugin.worker_last_error = str(
+            summary.get("last_error") or summary.get("stderr_tail") or "worker exited"
+        )[-8000:]
+        plugin.worker_last_exit_at = datetime.now(timezone.utc).isoformat()
+        self.manager.events.record(
+            plugin.key,
+            "worker_crashed",
+            level="error",
+            details={"runtime_instance_id": runtime_id, **summary},
+        )
+        should_restart_active = bool(
+            plugin.active_registration is not None
+            and plugin.active_enabled
+            and self.manager._active_owner_running
+        )
+        active_was_running = bool(
+            plugin.active_runner is not None
+            and plugin.active_runner.root_task is not None
+            and not plugin.active_runner.root_task.done()
+        )
+        if active_was_running:
+            await self.manager._stop_active_plugin(plugin)
+
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        window = float(
+            getattr(self.manager.settings, "plugin_worker_restart_failure_window", 300.0)
+        )
+        limit = int(getattr(self.manager.settings, "plugin_worker_restart_failure_limit", 5))
+        plugin.worker_failure_times = [
+            value for value in plugin.worker_failure_times if now - value <= window
+        ]
+        plugin.worker_failure_times.append(now)
+        if len(plugin.worker_failure_times) >= max(1, limit):
+            plugin.worker_state = "circuit_open"
+            plugin.worker_circuit_open = True
+            plugin.worker_next_retry_at = ""
+            self.manager.events.record(
+                plugin.key,
+                "worker_circuit_opened",
+                level="error",
+                details={"restart_count": plugin.worker_restart_count},
+            )
+            return
+
+        try:
+            configured_delays = getattr(
+                self.manager.settings,
+                "plugin_worker_restart_backoff",
+                (1.0, 2.0, 5.0, 10.0, 30.0),
+            )
+            delays = tuple(
+                float(value) for value in configured_delays if float(value) >= 0
+            ) or (1.0,)
+        except (TypeError, ValueError):
+            delays = (1.0, 2.0, 5.0, 10.0, 30.0)
+        delay = delays[min(plugin.worker_restart_count, len(delays) - 1)]
+        plugin.worker_restart_count += 1
+        plugin.worker_next_retry_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=delay)
+        ).isoformat()
+        self.manager.events.record(
+            plugin.key,
+            "worker_restart_scheduled",
+            details={"delay_seconds": delay, "restart_count": plugin.worker_restart_count},
+        )
+        await asyncio.sleep(delay)
+        if runtime_id in self._stopping or self.workers.get(runtime_id) is not exited_worker:
+            return
+        spawn_task = asyncio.create_task(
+            asyncio.to_thread(
+                self._spawn_worker,
+                plugin,
+                environment=spec["environment"],
+                config=spec["config"],
+                host_loop=loop,
+            ),
+            name=f"plugin-worker-spawn:{plugin.key}:{runtime_id}",
+        )
+        try:
+            worker, result, launch = await asyncio.shield(spawn_task)
+            capabilities = dict(result.get("capabilities") or {})
+            if _capability_fingerprint(capabilities) != _capability_fingerprint(
+                spec["capabilities"]
+            ):
+                worker.stop()
+                if launch.cleanup is not None:
+                    launch.cleanup()
+                raise RuntimeError("Worker capability contract changed during recovery")
+            self.workers[runtime_id] = worker
+            spec["sandbox_cleanup"] = launch.cleanup
+            plugin.worker = worker
+            plugin.sandbox_backend = launch.backend
+            plugin.worker_state = "running"
+            plugin.runtime_state = PluginRuntimeState.ACTIVE
+            plugin.worker_circuit_open = False
+            plugin.worker_last_error = ""
+            plugin.worker_next_retry_at = ""
+            self.manager._publish_current_bindings()
+            self.manager.events.record(
+                plugin.key,
+                "worker_restarted",
+                details={
+                    "runtime_instance_id": runtime_id,
+                    "restart_count": plugin.worker_restart_count,
+                },
+            )
+            if should_restart_active:
+                await self.manager._start_active_plugin(plugin)
+        except asyncio.CancelledError:
+            try:
+                late_worker, _result, _launch = await spawn_task
+            except Exception:
+                pass
+            else:
+                await asyncio.to_thread(late_worker.stop)
+            raise
+        except Exception as exc:
+            plugin.worker_last_error = f"{type(exc).__name__}: {exc}"
+            plugin.worker_state = "failed"
+            plugin.runtime_state = PluginRuntimeState.FAILED
+            self.manager.events.record(
+                plugin.key,
+                "worker_restart_failed",
+                level="error",
+                details={"error": plugin.worker_last_error},
+            )
+            # Re-enter the bounded recovery path with the exited worker as the
+            # current sentinel. Remove this completed task first so the callback
+            # can schedule the next attempt without overlapping recoveries.
+            self.workers[runtime_id] = exited_worker
+            self._recovery_tasks.pop(runtime_id, None)
+            self._worker_exited(plugin, exited_worker, {"last_error": plugin.worker_last_error})
+
+    def _current_worker(self, plugin) -> PluginWorkerClient:
+        runtime_id = str(getattr(plugin, "runtime_instance_id", "") or "")
+        worker = self.workers.get(runtime_id)
+        if worker is None or not worker.running or plugin.worker_state != "running":
+            raise RuntimeError(f"Plugin worker is unavailable: {plugin.key}")
+        return worker
+
+    async def _call_worker(self, plugin, method: str, payload: dict[str, Any], *, timeout: float = 30.0):
+        return await self._current_worker(plugin).call(method, payload, timeout=timeout)
+
     def stop(self, plugin) -> None:
         runtime_id = str(getattr(plugin, "runtime_instance_id", "") or "")
+        self._stopping.add(runtime_id)
+        recovery = self._recovery_tasks.pop(runtime_id, None)
+        if recovery is not None and not recovery.done():
+            recovery.cancel()
         worker = self.workers.pop(runtime_id, None) or getattr(plugin, "worker", None)
         if worker is not None:
             worker.stop()
         self.processes.stop_generation(plugin.runtime_instance_id)
+        spec = self._worker_specs.pop(runtime_id, None)
+        cleanup = spec.get("sandbox_cleanup") if isinstance(spec, dict) else None
+        if callable(cleanup):
+            cleanup()
+        lease = self._environment_leases.pop(runtime_id, None)
+        if lease is not None:
+            lease.close()
         plugin.worker = None
+        plugin.worker_state = "stopped"
+        plugin.worker_next_retry_at = ""
 
     def summary(self, plugin) -> dict[str, Any]:
         worker = self.workers.get(plugin.runtime_instance_id)
@@ -121,12 +362,18 @@ class ExternalPluginRuntimeService:
             "environment_path": str(getattr(plugin, "environment_path", "") or ""),
             "sandbox_backend": str(getattr(plugin, "sandbox_backend", "") or ""),
             "worker": worker.safe_summary() if worker is not None else {},
+            "state": str(getattr(plugin, "worker_state", "stopped") or "stopped"),
+            "restart_count": int(getattr(plugin, "worker_restart_count", 0) or 0),
+            "failure_count": len(getattr(plugin, "worker_failure_times", ()) or ()),
+            "circuit_open": bool(getattr(plugin, "worker_circuit_open", False)),
+            "last_exit_at": str(getattr(plugin, "worker_last_exit_at", "") or ""),
+            "next_retry_at": str(getattr(plugin, "worker_next_retry_at", "") or ""),
+            "last_error": str(getattr(plugin, "worker_last_error", "") or ""),
         }
 
     def _register_capabilities(self, plugin, capabilities: dict[str, Any]) -> None:
         ctx = plugin.ctx
-        worker = plugin.worker
-        if ctx is None or worker is None:
+        if ctx is None or plugin.worker is None:
             raise RuntimeError(f"Plugin host proxy context is unavailable: {plugin.key}")
         for descriptor in capabilities.get("tools", []):
             value = _plain(descriptor)
@@ -151,7 +398,8 @@ class ExternalPluginRuntimeService:
                 rewritten = dict(kwargs)
                 if _bindings:
                     rewritten = self._stage_tool_inputs(plugin, rewritten, _bindings)
-                return await worker.call(
+                return await self._call_worker(
+                    plugin,
                     "invoke",
                     {
                         "handler_id": _handler_id,
@@ -209,7 +457,8 @@ class ExternalPluginRuntimeService:
             handler_id = str(value.get("handler_id") or value.get("name") or "")
 
             async def workflow(args=None, _handler_id=handler_id):
-                return await worker.call(
+                return await self._call_worker(
+                    plugin,
                     "invoke",
                     {"handler_id": _handler_id, "args": [args]},
                 )
@@ -231,7 +480,7 @@ class ExternalPluginRuntimeService:
             value = _plain(descriptor)
 
             async def callback(*args, _handler_id=value["handler_id"], **kwargs):
-                return await worker.call("invoke", {
+                return await self._call_worker(plugin, "invoke", {
                     "handler_id": _handler_id,
                     "args": list(args),
                     "kwargs": kwargs,
@@ -249,7 +498,7 @@ class ExternalPluginRuntimeService:
             value = _plain(descriptor)
 
             async def command(_handler_id=value["handler_id"], **kwargs):
-                return await worker.call("invoke", {
+                return await self._call_worker(plugin, "invoke", {
                     "handler_id": _handler_id,
                     "kwargs": kwargs,
                 })
@@ -267,15 +516,19 @@ class ExternalPluginRuntimeService:
     def _register_active(self, plugin, descriptor: dict[str, Any]) -> None:
         if "active" not in set(plugin.manifest.provides or []):
             raise ValueError("Plugin must declare provides: [active] before registering a runner")
-        worker = plugin.worker
-        if worker is None:
+        if plugin.worker is None:
             raise RuntimeError("Plugin worker is unavailable")
         resources = _active_resources(_plain(descriptor.get("resources") or {}))
         run_id = str(descriptor["run"])
 
         async def run(_ctx) -> None:
-            await worker.call("active.start", {"handler_id": run_id})
-            await worker.call("active.wait", {}, timeout=365 * 24 * 3600.0)
+            await self._call_worker(plugin, "active.start", {"handler_id": run_id})
+            await self._call_worker(
+                plugin,
+                "active.wait",
+                {},
+                timeout=365 * 24 * 3600.0,
+            )
 
         def lifecycle(name: str):
             handler_id = str(descriptor.get(name) or "")
@@ -283,7 +536,7 @@ class ExternalPluginRuntimeService:
                 return None
 
             async def callback(_ctx) -> None:
-                await worker.call("invoke", {
+                await self._call_worker(plugin, "invoke", {
                     "handler_id": handler_id,
                     "context": True,
                 })
@@ -399,6 +652,11 @@ def _plain(value: Any) -> Any:
     if isinstance(value, list):
         return [_plain(item) for item in value]
     return value
+
+
+def _capability_fingerprint(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=True, sort_keys=True, default=str)
+    return payload
 
 
 def _active_resources(value: dict[str, Any]) -> ActiveResourceRequest:

@@ -7,7 +7,7 @@ import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Callable, Literal
 
 from luna_agent.tools.process_sandbox import (
     BASH_STRICT_POLICY,
@@ -26,6 +26,8 @@ class PluginWorkerLaunch:
     filesystem_isolated: bool
     network_isolated: bool
     warning: str = ""
+    process_factory: Any | None = None
+    cleanup: Callable[[], None] | None = None
 
 
 def build_plugin_worker_launch(
@@ -36,6 +38,8 @@ def build_plugin_worker_launch(
     data_root: Path,
     allow_network: bool = False,
     backend: PluginSandboxBackend | str = "auto",
+    plugin_key: str = "external/plugin",
+    runtime_instance_id: str = "",
 ) -> PluginWorkerLaunch:
     """Build a fail-closed launch for one external plugin generation."""
     requested = str(backend or "auto").strip().lower()
@@ -49,6 +53,8 @@ def build_plugin_worker_launch(
             data_root=data_root,
             allow_network=allow_network,
             backend=requested,
+            plugin_key=plugin_key,
+            runtime_instance_id=runtime_instance_id,
         )
     if not sys.platform.startswith("linux"):
         if requested != "process-only":
@@ -98,6 +104,8 @@ def _windows_launch(
     data_root: Path,
     allow_network: bool,
     backend: str,
+    plugin_key: str,
+    runtime_instance_id: str,
 ) -> PluginWorkerLaunch:
     if backend == "process-only":
         return _process_only_launch(python=python, data_root=data_root)
@@ -113,6 +121,8 @@ def _windows_launch(
         environment_root=environment_root,
         data_root=data_root,
         allow_network=allow_network,
+        plugin_key=plugin_key,
+        runtime_instance_id=runtime_instance_id,
     )
 
 

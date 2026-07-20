@@ -1,13 +1,13 @@
 schema_version: 1
 key: productivity/document-converter
 name: Document Converter
-version: "0.1.0"
+version: "0.1.1"
 plugin_api: ">=1,<2"
 description: Converts common local document formats into paged plain text or Markdown.
 kind: productivity
 entrypoint: document_converter:register
 requires:
-  sdk: ">=0.2,<1"
+  sdk: ">=0.3,<1"
   python:
     - "PyMuPDF>=1.24,<2"
     - "openpyxl>=3.1,<4"

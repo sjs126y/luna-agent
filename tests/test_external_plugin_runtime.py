@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -288,3 +289,122 @@ async def test_host_process_port_is_allowlisted_and_bidirectional(tmp_path: Path
         assert line["line"] == "hello"
     finally:
         await port.stop(process_id=process_id)
+
+
+@pytest.mark.asyncio
+async def test_passive_worker_recovers_without_replacing_tool_proxy(tmp_path: Path) -> None:
+    root = tmp_path / "plugins" / "recover"
+    root.mkdir(parents=True)
+    (root / "plugin.yaml").write_text(
+        "\n".join((
+            "schema_version: 1",
+            "key: user/worker-recover",
+            "name: Worker Recover",
+            "version: 1.0.0",
+            "entrypoint: recover:register",
+            "requires:",
+            "  sdk: '>=0.3,<1'",
+            "provides: [tools]",
+            "enabled_by_default: true",
+        )),
+        encoding="utf-8",
+    )
+    (root / "recover.py").write_text(
+        "from luna_agent_plugin_sdk import ToolEntry\n"
+        "async def pid():\n"
+        "    import os\n"
+        "    return os.getpid()\n"
+        "def register(ctx):\n"
+        "    ctx.register.tool(ToolEntry(name='worker_recover_pid', description='pid', "
+        "schema={'type':'object'}, handler=pid))\n",
+        encoding="utf-8",
+    )
+    manager = PluginManager(
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[root.parent],
+            plugins_enabled=["user/worker-recover"],
+            plugin_worker_isolation=True,
+            plugin_sandbox_backend="process-only",
+            plugin_worker_restart_backoff=[0],
+        ),
+        plugin_dirs=[root.parent],
+        include_builtin=False,
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    plugin = manager.load_plugin("user/worker-recover")
+    entry = tool_registry.get("worker_recover_pid")
+    assert entry is not None
+    first_pid = await entry.handler()
+    assert plugin.worker is not None and plugin.worker.process is not None
+    plugin.worker.process.kill()
+    for _ in range(300):
+        if plugin.worker_state == "running" and plugin.worker_restart_count == 1:
+            break
+        await asyncio.sleep(0.01)
+    try:
+        assert plugin.worker_state == "running"
+        assert plugin.worker_restart_count == 1
+        assert await entry.handler() != first_pid
+        assert manager.capability_store.current.revision >= 2
+    finally:
+        manager.unload_plugin("user/worker-recover")
+        tool_registry.unregister("worker_recover_pid")
+
+
+@pytest.mark.asyncio
+async def test_passive_worker_opens_circuit_after_repeated_restart_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "plugins" / "circuit"
+    root.mkdir(parents=True)
+    (root / "plugin.yaml").write_text(
+        "\n".join((
+            "schema_version: 1",
+            "key: user/worker-circuit",
+            "name: Worker Circuit",
+            "version: 1.0.0",
+            "entrypoint: circuit:register",
+            "requires:",
+            "  sdk: '>=0.3,<1'",
+            "provides: []",
+            "enabled_by_default: true",
+        )),
+        encoding="utf-8",
+    )
+    (root / "circuit.py").write_text("def register(ctx):\n    pass\n", encoding="utf-8")
+    manager = PluginManager(
+        Settings(
+            agent_data_dir=tmp_path / "data",
+            plugins_dirs=[root.parent],
+            plugins_enabled=["user/worker-circuit"],
+            plugin_worker_isolation=True,
+            plugin_sandbox_backend="process-only",
+            plugin_worker_restart_backoff=[0],
+            plugin_worker_restart_failure_limit=2,
+        ),
+        plugin_dirs=[root.parent],
+        include_builtin=False,
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    plugin = manager.load_plugin("user/worker-circuit")
+    assert plugin.worker is not None and plugin.worker.process is not None
+    monkeypatch.setattr(
+        manager.external_runtime,
+        "_spawn_worker",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("restart failed")),
+    )
+    plugin.worker.process.kill()
+    for _ in range(300):
+        if plugin.worker_circuit_open:
+            break
+        await asyncio.sleep(0.01)
+    try:
+        assert plugin.worker_state == "circuit_open"
+        assert plugin.worker_circuit_open is True
+        assert plugin.worker_restart_count == 1
+    finally:
+        manager.unload_plugin("user/worker-circuit")

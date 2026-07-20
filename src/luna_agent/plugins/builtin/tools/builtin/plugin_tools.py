@@ -169,6 +169,8 @@ async def plugin_inspect(
             return _result({"ok": True, "operation": operation})
         if action == "capabilities":
             return _result({"ok": True, "capabilities": capability_catalog()})
+        if action == "environments":
+            return _result({"ok": True, "environments": manager.queries.environments()})
         raise ValueError(f"Unsupported plugin_inspect action: {action}")
     except Exception as exc:
         return _error("plugin_inspect_failed", f"{type(exc).__name__}: {exc}")
@@ -227,6 +229,7 @@ async def plugin_manage(
     source: str = "",
     digest: str = "",
     enable: bool = True,
+    apply: bool = False,
 ) -> str | ToolHandlerOutput:
     try:
         manager = _live_manager()
@@ -278,6 +281,11 @@ async def plugin_manage(
         elif action == "active_run":
             _external_plugin(manager, plugin_key)
             plugin = await manager.trigger_active_plugin(plugin_key, reason="manual")
+        elif action == "environment_gc":
+            return _result({
+                "ok": True,
+                "environment_gc": await manager.gc_plugin_environments(dry_run=not apply),
+            })
         else:
             raise ValueError(f"Unsupported plugin_manage action: {action}")
         return _result(_plugin_summary(manager, plugin, removed=removed))
@@ -287,7 +295,7 @@ async def plugin_manage(
 
 def _inspect_precheck(input_: dict[str, Any]) -> str | None:
     if str(input_.get("action") or "") not in {
-        "list", "info", "versions", "operations", "operation", "capabilities",
+        "list", "info", "versions", "operations", "operation", "capabilities", "environments",
     }:
         return "Unsupported plugin_inspect action."
     return None
@@ -314,11 +322,12 @@ def _manage_precheck(input_: dict[str, Any]) -> str | None:
     if action not in {
         "install", "enable", "disable", "reload", "rollback", "uninstall",
         "active_on", "active_off", "active_restart", "active_run",
+        "environment_gc",
     }:
         return "Unsupported plugin_manage action."
     if action == "install" and not str(input_.get("source") or "").strip():
         return "A local plugin source path is required for install."
-    if action != "install" and not str(input_.get("plugin_key") or "").strip():
+    if action not in {"install", "environment_gc"} and not str(input_.get("plugin_key") or "").strip():
         return "plugin_key is required for this action."
     if action == "rollback" and not str(input_.get("digest") or "").strip():
         return "digest is required for rollback."
@@ -368,6 +377,7 @@ def _manage_approval(input_: dict[str, Any]) -> str:
         "active_off": "cached",
         "active_restart": "cached",
         "active_run": "cached",
+        "environment_gc": "prompt",
     }.get(str(input_.get("action") or "").strip().lower(), "prompt")
 
 
@@ -381,7 +391,7 @@ plugin_inspect_entry = ToolEntry(
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": [
-                "list", "info", "versions", "operations", "operation", "capabilities",
+                "list", "info", "versions", "operations", "operation", "capabilities", "environments",
             ]},
             "plugin_key": {"type": "string"},
             "operation_id": {"type": "string"},
@@ -443,11 +453,13 @@ plugin_manage_entry = ToolEntry(
             "action": {"type": "string", "enum": [
                 "install", "enable", "disable", "reload", "rollback", "uninstall",
                 "active_on", "active_off", "active_restart", "active_run",
+                "environment_gc",
             ]},
             "plugin_key": {"type": "string"},
             "source": {"type": "string", "description": "Local directory, ZIP, or TAR for install."},
             "digest": {"type": "string", "description": "Installed package digest for rollback."},
             "enable": {"type": "boolean", "default": True},
+            "apply": {"type": "boolean", "default": False, "description": "Apply environment GC; false performs a dry-run."},
         },
         "required": ["action"],
         "additionalProperties": False,
