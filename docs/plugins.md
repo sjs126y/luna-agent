@@ -40,7 +40,7 @@ flowchart LR
 
 Luna Agent 的被动插件系统不要求插件继承基类。插件通过同步 `register(ctx)` 声明当前 generation 的能力；宿主构建不可变 `CapabilitySnapshot` 并原子发布。现有 Tool、Skill、Hook、MCP 等 manager 继续负责执行，快照只负责稳定路由和生命周期一致性。
 
-外置通用插件按 generation 运行在独立 Worker 中，内置插件仍留在宿主进程。Worker 只负责执行插件代码；Tool、MCP、Conversation、LLM、文件交换、受控进程和开发工作区均通过宿主资源端口调用，因此仍经过原有 manager、安全边界和审计链路。Linux/WSL 使用 Bubblewrap 隔离文件系统与网络；缺少安全后端时默认拒绝加载，不会回退为宿主进程内执行。当前原生 Windows 的严格 AppContainer 后端仍保持 fail-closed，`process-only` 仅用于开发。
+外置通用插件按 generation 运行在独立 Worker 中，内置插件仍留在宿主进程。Worker 只负责执行插件代码；Tool、MCP、Conversation、LLM、文件交换、受控进程和开发工作区均通过宿主资源端口调用，因此仍经过原有 manager、安全边界和审计链路。Linux/WSL 使用 Bubblewrap 隔离文件系统与网络；原生 Windows 使用 AppContainer、受控 stdio 句柄和 Job Object。缺少安全后端或沙箱设置失败时默认拒绝加载，不会回退为宿主进程内执行；`process-only` 仅用于开发。
 
 <table>
   <tr>
@@ -187,9 +187,9 @@ uv run luna-agent plugins package ./my-plugin
 
 | 工具 | Action | 职责 |
 | --- | --- | --- |
-| `plugin_inspect` | `list/info/versions/operations/operation/capabilities` | 只读查询当前 live PluginManager |
+| `plugin_inspect` | `list/info/versions/operations/operation/capabilities/environments` | 只读查询当前 live PluginManager 与环境保留状态 |
 | `plugin_build` | `validate/test/package` | 静态校验、SDK contract test 与确定性 ZIP 打包，不编辑源码 |
-| `plugin_manage` | `install/enable/disable/reload/rollback/uninstall/active_on/active_off/active_restart/active_run` | 操作当前 Gateway 使用的同一个 PluginManager、active runner 和 Capability Snapshot |
+| `plugin_manage` | `install/enable/disable/reload/rollback/uninstall/active_on/active_off/active_restart/active_run/environment_gc` | 操作当前 Gateway 使用的同一个 PluginManager、active runner、环境和 Capability Snapshot |
 
 推荐链路：
 
@@ -204,7 +204,17 @@ tool_search("plugin package install")
   -> plugin_inspect(action="info")
 ```
 
-构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。审批按 action 决定：`validate` 自动执行；`package`、`enable`、`disable`、`reload`、`active_on`、`active_off`、`active_restart`、`active_run` 使用 `cached`（Local Auto 直接执行，Ask First 首次确认并复用 TTL）；`test`、`install`、`rollback`、`uninstall` 每次确认。当前 `approval_reviewer` 默认关闭，因此需要人工确认的操作不会自动交给模型审核；开启后仍受风险上限和 fallback 约束。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装源不存在时会提示先执行 `plugin_build(package)`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
+构建和管理工具只接受 sandbox 允许的本地路径；安装源限目录、ZIP 和 TAR，不下载 URL。审批按 action 决定：`validate` 自动执行；`package`、`enable`、`disable`、`reload`、`active_on`、`active_off`、`active_restart`、`active_run` 使用 `cached`（Local Auto 直接执行，Ask First 首次确认并复用 TTL）；`test`、`install`、`rollback`、`uninstall`、实际执行的 `environment_gc` 每次确认。`environment_gc` 的 `apply=false` 只是 dry-run，可先用 `plugin_inspect(action="environments")` 查看。当前 `approval_reviewer` 默认关闭，因此需要人工确认的操作不会自动交给模型审核；开启后仍受风险上限和 fallback 约束。管理工具拒绝操作内置插件，普通卸载固定保留插件数据，也不开放 `force` 或 `purge_data`。安装源不存在时会提示先执行 `plugin_build(package)`。安装、更新或卸载发布新 Capability Snapshot，但当前 Turn 继续使用原 lease，新能力从下一轮可见。
+
+环境运维也可直接通过 CLI 执行：
+
+```bash
+uv run luna-agent plugins environments --json
+uv run luna-agent plugins gc-environments --json
+uv run luna-agent plugins gc-environments --apply --json
+```
+
+GC 默认只预览。已安装的所有 package 版本、当前 generation 和跨进程 Worker lease 都会阻止删除；无法解析的 manifest/metadata 会保守保留。Worker 意外退出时，现有 Tool/Hook/Active 代理不会继续调用旧进程，而是报告 recovering/failed，按配置退避重启并在能力契约一致后发布新快照；连续失败后打开 circuit breaker。
 
 ## plugin.yaml
 

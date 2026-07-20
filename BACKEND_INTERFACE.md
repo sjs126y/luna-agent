@@ -63,7 +63,7 @@
 
 新增 Skill 命令名为 `/repo-summary`、`/review-pr`、`/triage-issues`、`/release-notes`、`/library-docs`、`/upgrade-library`、`/compare-library-api`、`/inspect-web-page`、`/test-web-page`、`/operate-web-page`。Skill 执行仍表现为普通 conversation turn，不新增前端事件类型。
 
-低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`tool_approval_mode` 由 action 解析：`validate=auto`，`package/enable/disable/reload/active_on/active_off/active_restart/active_run=cached`，`test/install/rollback/uninstall=prompt`。当前 `approval_reviewer` 默认关闭；开启后只对符合风险上限的人工确认请求进行模型审核，失败回退既定策略。前端仍只需展示后端事件给出的最终模式。
+低频插件控制面新增 `plugin_inspect`、`plugin_build`、`plugin_manage` 三个可检索工具。它们继续使用现有 `tool_start/tool_decision/tool_end` 与确认 payload，不新增事件类型；前端按普通工具展示即可。`plugin_inspect(action="environments")` 返回环境保留/回收预览；`plugin_manage(action="environment_gc", apply=false)` 也是只读预览，`apply=true` 才删除。`tool_approval_mode` 由 action 解析：`validate=auto`，`package/enable/disable/reload/active_on/active_off/active_restart/active_run=cached`，`test/install/rollback/uninstall` 及实际执行的 `environment_gc=prompt`。当前 `approval_reviewer` 默认关闭；开启后只对符合风险上限的人工确认请求进行模型审核，失败回退既定策略。前端仍只需展示后端事件给出的最终模式。
 
 ## 1. Conversation Event Stream
 
@@ -1129,7 +1129,7 @@ Review worker payload 提供：
 - `active_error: string`
 - `active_circuit_open: boolean`
 - `active_resources: object`，主动 generation 声明的 Tool、MCP 和应用端口安全摘要
-- `external_runtime: object`，外置 Worker 诊断；包含 `isolated`、`environment_id`、`environment_path`、`sandbox_backend` 和 `worker`
+- `external_runtime: object`，外置 Worker 诊断；包含 `isolated`、`environment_id`、`environment_path`、`sandbox_backend`、`state`、`restart_count`、`failure_count`、`circuit_open`、`last_exit_at`、`next_retry_at`、`last_error` 和 `worker`
   - `worker` 常见字段为 `pid`、`running`、`returncode`、`last_error`、`stderr_tail`
 - 主动会话端口使用 SDK 的 `ActiveConversationIntent` 和 `ConversationStatus` 契约：
   - `ActiveConversationIntent`：`intent_id`、`session_key`、`kind`、`instruction`、`evidence`、`request_id`、`metadata`。
@@ -1140,6 +1140,8 @@ Review worker payload 提供：
 - `mcp: list[object]`，该插件注册的 MCP server 运行状态
 - `installed_versions: list[object]`，字段为 `digest`、`version`、`source`、`path`、`active`、`status`
 - `latest_operation: object`、`latest_event: object`
+
+环境查询和 GC 返回同一报告结构：`dry_run`、`retained[]`、`removable[]`、`removed[]` 与 `bytes_reclaimable`。环境项包含 `plugin_key`、`environment_id`、`path`、`size_bytes`；保留项额外包含 `reasons[]`，常见值为 `installed_package`、`active_generation`、`active_process_lease`、`installed_manifest_unavailable` 或 `invalid_metadata`。前端必须把 `removable` 视为预览集合，只有 `removed` 表示本次实际删除。
 
 插件配置位于 `plugins.config.<plugin-key>`。配置诊断会递归遮蔽键名中的 token、secret、password、authorization 和 api key；前端不应尝试从诊断 payload 恢复真实密钥。
 

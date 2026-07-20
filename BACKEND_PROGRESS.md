@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1251%20passed-2EA44F" alt="1251 tests passed">
+  <img src="https://img.shields.io/badge/tests-1261%20passed-2EA44F" alt="1261 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--20-555555" alt="Updated 2026-07-20">
 </p>
 
@@ -21,13 +21,23 @@
 
 ---
 
+## 2026-07-20：插件隔离收尾、恢复与环境治理
+
+- 当前安装中的 `productivity/document-converter`、`external/markdown-structure-analyzer` 和 `integrations/workspace-watch` 已补齐 SDK `>=0.3`/Python 依赖并重新打包安装，旧 digest 与数据保留；当前 `config.yaml` 已启用 `isolate_external: true`、`sandbox_backend: auto` 和默认禁网。
+- 普通 Worker 意外退出会进入 failed/recovering，拒绝新调用，按可配置退避重建并校验 capability contract；连续失败打开 circuit breaker。诊断与事件公开重启次数、失败窗口、最近退出/错误和下次重试时间，主动 runner 随 Worker 恢复。
+- 原生 Windows AppContainer 启动器已实现 profile/SID、最小目录 ACL、`SECURITY_CAPABILITIES`、stdio handle allowlist、suspended launch 和 kill-on-close Job Object；任何失败均拒绝加载。当前仅完成 WSL 静态/单元验证，仍需原生 Windows smoke。
+- 环境 GC 新增安装版本、活动 generation 和跨进程文件 lease 引用；CLI/Agent 均支持环境报告及 dry-run-first 清理，无法确认的 metadata/manifest 保守保留。
+- `AppRuntime.close()` 现在异步取消恢复任务并并发回收所有被动 Worker，释放环境 lease 时不阻塞 Worker 回调所需的宿主事件循环；短生命周期 CLI manager 也显式关闭 Worker。
+- WSL 实机验证三个迁移插件均以 Bubblewrap Worker 加载；Document Converter、Markdown Analyzer、被动 Worker 崩溃恢复、热重载、Codex Bridge 和 Workspace Watch 主动启动均通过。Unix Worker 使用独立 session，终端信号由 Gateway 统一收尾。
+- 最终验证：`python -m compileall -q src/luna_agent packages/luna-agent-plugin-sdk/src`、`git diff --check` 通过；完整回归 `1261 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
+
 ## 2026-07-20：外置插件进程隔离与宿主资源端口
 
 - 外置插件按 generation 创建独立 Worker，使用分帧 stdin/stdout RPC；插件依赖按 manifest 构建独立 Python 环境。
 - Linux/WSL 的 `auto` 使用 Bubblewrap，并对文件系统、网络和 Worker 数据目录 fail-closed；`process-only` 仅保留开发兼容用途。
 - 新增声明式 `process` / `workspace` 宿主资源端口，Codex Bridge 的 App Server 与脚手架写入已迁出宿主插件代码；资源仍经过 allowlist、路径边界和 generation 回收。
 - 插件诊断增加 `external_runtime`，可查看 Worker PID、运行状态、sandbox 后端、环境 ID、错误和 stderr 尾部。
-- 原生 Windows 严格 AppContainer 启动器仍 fail-closed，未实现前不会静默降级为宿主进程内执行。
+- 原生 Windows 严格 AppContainer 启动器在后续收尾中已实现，设置失败仍不会静默降级为宿主进程内执行。
 
 阶段提交：
 

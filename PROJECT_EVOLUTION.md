@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/phases-21-7C3AED" alt="21 phases">
   <img src="https://img.shields.io/badge/Python%20LOC-90%2C887-0A84FF" alt="90887 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1251%20passed-2EA44F" alt="1251 tests passed">
+  <img src="https://img.shields.io/badge/tests-1261%20passed-2EA44F" alt="1261 tests passed">
 </p>
 
 <p>
@@ -30,9 +30,11 @@
 主要变化：
 
 - 外置插件按 generation 运行在独立 Worker，使用分帧 RPC；每个插件依赖集拥有独立环境，热重载只切换能力快照，不复用旧 Worker。
-- Linux/WSL 通过 Bubblewrap 隔离插件包、依赖、数据目录和网络；安全后端不可用时拒绝加载。原生 Windows 严格 AppContainer 当前保持 fail-closed。
+- Linux/WSL 通过 Bubblewrap 隔离插件包、依赖、数据目录和网络；原生 Windows 使用 AppContainer、受控句柄继承和 Job Object，安全后端不可用时拒绝加载。
 - 新增声明式 `process` / `workspace` 宿主资源端口；Codex Bridge 的 App Server 与插件脚手架不再由外置插件直接创建宿主进程或写宿主路径。
-- `plugins info/doctor` 暴露 Worker PID、sandbox、环境和 stderr 诊断；插件数据仍按原有 generation revision 保留，运行时进程随 generation 回收。
+- Worker 崩溃会把 generation 标为失败并拒绝新调用，随后按退避策略重建、校验能力契约、发布新快照；连续失败打开 circuit breaker，主动 runner 随 Worker 恢复。
+- `plugins info/doctor` 暴露 Worker PID、sandbox、环境、重启/circuit 和 stderr 诊断；跨进程 lease 保护运行环境，`plugins environments` 与 dry-run-first GC 清理未引用环境。
+- 当前安装中的 Document Converter、Markdown Structure Analyzer 和 Workspace Watch 已迁移到 SDK 0.3 generation，并正式启用外置隔离。
 
 代表提交：`46bca09`、`b187e34`、`bdca2eb`、`4511f70`、`29b8a27`、`246026d`。
 
@@ -42,7 +44,7 @@
 
 - 分支：`main`
 - 本次统计基准：v0.22 外置插件 Worker 隔离
-- 最近全量验证：`uv run pytest -q`，结果 `1251 passed, 1 warning`
+- 最近全量验证：`uv run pytest -q`，结果 `1261 passed, 1 warning`
 
 ## v0.21 Bash 最小进程文件系统
 
