@@ -200,9 +200,15 @@ class CodexDevelopmentRuntime:
         elif event_type == DevelopmentEventType.TURN_COMPLETED:
             session.current_turn_id = ""
             session.status = DevelopmentStatus.WAITING_CODEX.value
-            queued = self._queued.pop(plugin_id, [])
+            server = self.servers.get(plugin_id)
+            if server is not None:
+                server.active_turn_id = ""
+            queued = self._queued.get(plugin_id, [])
             if queued:
-                asyncio.create_task(self.message(plugin_id, queued.pop(0)))
+                next_message = queued.pop(0)
+                if not queued:
+                    self._queued.pop(plugin_id, None)
+                asyncio.create_task(self.message(plugin_id, next_message))
         elif event_type in {DevelopmentEventType.ERROR, DevelopmentEventType.PROCESS_RESTARTED}:
             session.status = DevelopmentStatus.FAILED.value if event_type == DevelopmentEventType.ERROR else DevelopmentStatus.STALE.value
             session.last_error = text
@@ -267,8 +273,11 @@ class CodexDevelopmentRuntime:
 def _event_type(method: str) -> DevelopmentEventType | None:
     if method in {"turn/started", "turn.started"}:
         return DevelopmentEventType.TURN_STARTED
-    if method in {"item/agentMessage/delta", "item/agentMessage/completed", "item/completed"}:
+    if method in {"item/agentMessage/completed", "item/completed"}:
         return DevelopmentEventType.ASSISTANT_MESSAGE
+    if method == "item/agentMessage/delta":
+        # Deltas are intentionally not submitted as separate active intents.
+        return None
     if "requestUserInput" in method or "request_user_input" in method:
         return DevelopmentEventType.REQUEST_USER_INPUT
     if "requestApproval" in method or "approval" in method.lower():

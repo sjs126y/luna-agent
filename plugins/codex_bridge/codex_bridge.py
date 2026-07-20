@@ -57,7 +57,7 @@ def register(ctx) -> None:
         config.development_root or (runtime_codex_home.parent / "plugin-workspaces")
     ).expanduser().resolve()
     development_spec_path = Path(
-        config.development_spec_path or (Path(__file__).resolve().parent.parent / ".." / "docs" / "plugin-development.md")
+        config.development_spec_path or (Path(__file__).resolve().parents[2] / "docs" / "plugin-development.md")
     ).expanduser().resolve()
     if not any(_is_within(development_root, root) for root in writable_roots):
         raise ValueError("Codex Bridge development_root must be within sandbox.roots")
