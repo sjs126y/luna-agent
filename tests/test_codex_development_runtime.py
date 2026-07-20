@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.codex_bridge.development import CodexDevelopmentRuntime
+from plugins.codex_bridge.development import CodexDevelopmentRuntime, _app_server_sandbox
 
 
 class MemoryStorage:
@@ -83,3 +83,8 @@ async def test_approval_requests_are_not_auto_approved(runtime):
         "params": {"command": "pytest"},
     })
     assert runtime.approvals("approval-demo")[0]["request_id"] == "approval-1"
+
+
+def test_luna_sandbox_names_map_to_codex_app_server_protocol():
+    assert _app_server_sandbox("read-only") == "readOnly"
+    assert _app_server_sandbox("workspace-write") == "workspaceWrite"

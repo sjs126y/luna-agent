@@ -162,7 +162,7 @@ class CodexDevelopmentRuntime:
                 codex_home=self.config.runtime_codex_home,
                 approval_policy=self.config.approval_policy,
                 approvals_reviewer=self.config.approvals_reviewer,
-                sandbox=self.config.sandbox,
+                sandbox=_app_server_sandbox(self.config.sandbox),
                 timeout_seconds=self.config.app_server_timeout_seconds,
                 on_event=lambda message: self._on_message(session.plugin_id, message),
             )
@@ -316,3 +316,10 @@ def _compact(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value if not isinstance(value, str) else value[:1000]
     return str(value)
+
+
+def _app_server_sandbox(value: str) -> str:
+    return {
+        "read-only": "readOnly",
+        "workspace-write": "workspaceWrite",
+    }.get(str(value), str(value))
