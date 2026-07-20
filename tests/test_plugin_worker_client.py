@@ -68,7 +68,7 @@ def test_worker_rejects_unsupported_host_callbacks(tmp_path: Path) -> None:
         "async def run(): return 'ok'\n"
         "def register(ctx):\n"
         "    ctx.register.tool(ToolEntry(name='bad', description='bad', schema={}, "
-        "handler=run, precheck=lambda value: None))\n",
+        "handler=run, check_fn=lambda: True))\n",
         encoding="utf-8",
     )
     client = PluginWorkerClient(

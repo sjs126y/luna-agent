@@ -214,7 +214,7 @@ class WorkerRegistrationPort:
     def tool(self, entry: ToolEntry) -> None:
         unsupported = [
             name for name in (
-                "check_fn", "availability_reason_fn", "precheck",
+                "check_fn", "availability_reason_fn",
                 "approval_mode_resolver", "resource_resolver", "timeout_resolver",
             )
             if getattr(entry, name, None) is not None

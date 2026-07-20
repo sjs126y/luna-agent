@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/registration-transactional-2EA44F" alt="Transactional registration">
   <img src="https://img.shields.io/badge/hot%20reload-snapshot%20leased-0A84FF" alt="Snapshot leased hot reload">
   <img src="https://img.shields.io/badge/config-isolated-0A84FF" alt="Isolated config">
-  <img src="https://img.shields.io/badge/SDK-0.2.0-7C3AED" alt="Plugin SDK 0.2.0">
+  <img src="https://img.shields.io/badge/SDK-0.3.0-7C3AED" alt="Plugin SDK 0.3.0">
   <img src="https://img.shields.io/badge/core-lightweight-555555" alt="Lightweight core">
 </p>
 

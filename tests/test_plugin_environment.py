@@ -29,3 +29,13 @@ def test_ready_environment_requires_metadata_and_python(tmp_path: Path) -> None:
     expected.python.parent.mkdir(parents=True, exist_ok=True)
     expected.python.write_text("", encoding="utf-8")
     assert manager.inspect("external/demo", []).status == "ready"
+
+
+def test_environment_identity_changes_with_sdk_version(tmp_path: Path, monkeypatch) -> None:
+    import luna_agent.plugins.install.environment as environment_module
+
+    manager = PluginEnvironmentManager(tmp_path)
+    current = manager.environment_id("external/demo", [])
+    monkeypatch.setattr(environment_module, "SDK_VERSION", "999.0.0")
+
+    assert manager.environment_id("external/demo", []) != current

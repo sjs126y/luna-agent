@@ -62,6 +62,10 @@ original path and stages an immutable copy for that invocation. Active plugins
 request Tool, MCP, conversation, LLM, process, or workspace capabilities through
 `ActiveResourceRequest`. Process and workspace names are declarations, not
 arbitrary commands or paths: the host must have a matching allowlisted config.
+Synchronous `precheck` callbacks do not cross the Worker boundary; encode simple
+validation in JSON Schema and repeat semantic validation in the handler. Security
+must never depend on `precheck`: host resource bindings and the permission pipeline
+remain the enforcement boundary.
 
 ## Development and verification
 
