@@ -4,6 +4,11 @@ This document is the canonical development contract for plugins created by the
 Codex Bridge. It is copied as a read-only snapshot into each plugin workspace
 when a development session is created.
 
+The user supplies functional intent, not framework boilerplate. Codex must read
+this file and `PLUGIN_BRIEF.md` before the first edit, infer routine engineering
+details from this contract and the SDK, and only surface decisions that change
+public behavior, permissions, data formats, or architecture.
+
 ## Package contract
 
 A plugin package contains one root `plugin.yaml` and an entrypoint module. The

@@ -99,13 +99,16 @@ class CodexDevelopmentRuntime:
         text = str(text or "").strip()
         if not text:
             raise ValueError("text is required")
+        first_turn = not session.thread_id
         server = await self._server(session)
         if server.active_turn_id:
             self._queued.setdefault(session.plugin_id, []).append(text)
             session.status = DevelopmentStatus.WAITING_CODEX.value
             self.store.put(session)
             return {"ok": True, "queued": True, "plugin_id": session.plugin_id, "thread_id": session.thread_id}
-        turn_id = await server.start_turn(text)
+        turn_id = await server.start_turn(
+            _initial_development_prompt(text) if first_turn else text
+        )
         session.current_turn_id = turn_id
         session.status = DevelopmentStatus.RUNNING.value
         self.store.put(session)
@@ -323,3 +326,17 @@ def _app_server_sandbox(value: str) -> str:
         "read-only": "readOnly",
         "workspace-write": "workspaceWrite",
     }.get(str(value), str(value))
+
+
+def _initial_development_prompt(feature_request: str) -> str:
+    return (
+        "You are developing a Luna Agent plugin in an isolated plugin workspace.\n"
+        "Before editing anything, read LUNA_PLUGIN_DEVELOPMENT.md and PLUGIN_BRIEF.md "
+        "from the current directory. Those files are the authoritative engineering, "
+        "security, package, SDK, testing, and lifecycle contract. Do not ask the user to "
+        "repeat routine implementation details already covered there. Use sound engineering "
+        "judgment, implement the requested feature, and run the relevant validation and tests. "
+        "Do not install the plugin into the host application.\n\n"
+        "User's feature requirement:\n"
+        f"{feature_request.strip()}"
+    )

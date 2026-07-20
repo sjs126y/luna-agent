@@ -309,11 +309,11 @@ GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 
 Codex 需要可写的状态目录。插件首次加载时只将 `source_codex_home/auth.json` 复制到 `runtime_codex_home`，权限设为 `0600`；后续数据库、会话和 token 更新均留在该隔离目录。默认建议把它放在已忽略的 `data/codex-bridge/`，不要提交其中内容。官方服务的实验性 `codex/event` 通知由插件内 stdio 适配器过滤，标准 MCP 请求、响应和错误保持原样。
 
-Codex Bridge 还提供 App Server 驱动的插件开发会话。每个 `plugin_id` 对应一个外部开发工作区和一个持久 Codex Thread；工作区默认位于 `data/codex-bridge/plugin-workspaces/`，不会在 Luna Agent workspace 内生成源码。首次创建时会写入脚手架、`PLUGIN_BRIEF.md` 和只读的 `LUNA_PLUGIN_DEVELOPMENT.md` 开发规范副本。`plugin_dev_message` 只负责提交或排队消息，Codex 的后续事件由 active runtime 异步投递给配置的 `notify_sessions`。
+Codex Bridge 还提供 App Server 驱动的插件开发会话。每个 `plugin_id` 对应一个外部开发工作区和一个持久 Codex Thread；工作区默认位于 `~/.local/share/luna-agent/plugin-workspaces/`，并且配置校验会拒绝任何位于宿主 `cwd` 内的开发目录。该专用目录不加入 Luna 普通工具的 `sandbox.roots`。首次创建时会写入脚手架、`PLUGIN_BRIEF.md` 和只读的 `LUNA_PLUGIN_DEVELOPMENT.md` 开发规范副本。`plugin_dev_message` 只负责提交或排队消息，Codex 的后续事件由 active runtime 异步投递给配置的 `notify_sessions`。
 
 ```yaml
 integrations/codex-bridge:
-  development_root: "./data/codex-bridge/plugin-workspaces"
+  development_root: "~/.local/share/luna-agent/plugin-workspaces"
   approval_policy: "on-request"
   approvals_reviewer: "user"       # 也可显式使用 auto_review
   notify_sessions: []               # 例如 ["wechat:<chat-id>"]

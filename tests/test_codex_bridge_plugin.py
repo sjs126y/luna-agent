@@ -46,6 +46,7 @@ async def test_codex_bridge_registers_mcp_and_enforces_session_policy(tmp_path, 
             "integrations/codex-bridge": {
                 "source_codex_home": str(source_home),
                 "runtime_codex_home": str(runtime_home),
+                "development_root": str(tmp_path / "plugin-workspaces"),
                 "cwd": str(workspace),
             }
         },
@@ -112,6 +113,7 @@ def test_codex_bridge_rejects_cwd_outside_writable_roots(tmp_path, monkeypatch):
             "integrations/codex-bridge": {
                 "source_codex_home": str(source_home),
                 "runtime_codex_home": str(workspace / "codex-home"),
+                "development_root": str(tmp_path / "plugin-workspaces"),
                 "cwd": str(tmp_path / "outside"),
             }
         },
@@ -128,3 +130,38 @@ def test_codex_bridge_rejects_cwd_outside_writable_roots(tmp_path, monkeypatch):
     report = manager.queries.plugin_info("integrations/codex-bridge")
     assert report["status"] == "ERROR"
     assert "cwd must be within sandbox.roots" in report["error"]
+
+
+def test_codex_bridge_rejects_development_inside_host_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda command: "/usr/bin/codex")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source_home = tmp_path / ".codex"
+    source_home.mkdir()
+    (source_home / "auth.json").write_text("{}", encoding="utf-8")
+    settings = Settings(
+        agent_data_dir=workspace / "data",
+        sandbox_roots=[workspace],
+        plugins_dirs=[PLUGIN_DIR],
+        plugins_enabled=["integrations/codex-bridge"],
+        plugins_config={
+            "integrations/codex-bridge": {
+                "source_codex_home": str(source_home),
+                "runtime_codex_home": str(workspace / "data" / "codex-home"),
+                "development_root": str(workspace / "plugin-workspaces"),
+                "cwd": str(workspace),
+            }
+        },
+    )
+    manager = PluginManager(
+        settings,
+        plugin_dirs=[PLUGIN_DIR],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+
+    manager.load_enabled()
+
+    report = manager.queries.plugin_info("integrations/codex-bridge")
+    assert report["status"] == "ERROR"
+    assert "development_root must be outside the host workspace" in report["error"]

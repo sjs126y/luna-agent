@@ -54,13 +54,16 @@ def register(ctx) -> None:
         raise ValueError("Codex Bridge runtime_codex_home must be within sandbox.roots")
     _prepare_runtime_home(source_codex_home, runtime_codex_home)
     development_root = Path(
-        config.development_root or (runtime_codex_home / "plugin-workspaces")
+        config.development_root
+        or (Path.home() / ".local" / "share" / "luna-agent" / "plugin-workspaces")
     ).expanduser().resolve()
     development_spec_path = Path(
         config.development_spec_path or (Path(__file__).resolve().parents[2] / "docs" / "plugin-development.md")
     ).expanduser().resolve()
-    if not any(_is_within(development_root, root) for root in writable_roots):
-        raise ValueError("Codex Bridge development_root must be within sandbox.roots")
+    if _is_within(development_root, cwd):
+        raise ValueError("Codex Bridge development_root must be outside the host workspace")
+    if development_root in {Path(development_root.anchor), Path.home().resolve()}:
+        raise ValueError("Codex Bridge development_root is too broad")
     development_root.mkdir(parents=True, exist_ok=True)
     runtime = CodexDevelopmentRuntime(config=config.model_copy(update={
         "runtime_codex_home": runtime_codex_home,
@@ -129,7 +132,11 @@ def register(ctx) -> None:
 def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
     ctx.register.tool(ToolEntry(
         name="plugin_dev_create",
-        description="Create an external Luna plugin development workspace and one persistent Codex thread.",
+        description=(
+            "Create an external Luna plugin development workspace and one persistent Codex thread. "
+            "The user only needs to provide the plugin's functional goal; the generated development "
+            "contract supplies SDK, package, security, testing, and lifecycle requirements."
+        ),
         schema={"type": "object", "properties": {
             "plugin_id": {"type": "string"}, "description": {"type": "string"}, "brief": {"type": "string"},
         }, "required": ["plugin_id", "description"], "additionalProperties": False},
@@ -139,7 +146,11 @@ def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
     ))
     ctx.register.tool(ToolEntry(
         name="plugin_dev_message",
-        description="Send an asynchronous message to the Codex thread assigned to one plugin; returns immediately when accepted or queued.",
+        description=(
+            "Send a functional requirement or follow-up to the Codex thread assigned to one plugin; "
+            "the first turn automatically loads the generated Luna development contract. Returns "
+            "immediately when accepted or queued."
+        ),
         schema={"type": "object", "properties": {"plugin_id": {"type": "string"}, "text": {"type": "string"}}, "required": ["plugin_id", "text"], "additionalProperties": False},
         handler=lambda plugin_id, text: runtime.message(plugin_id, text),
         toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
