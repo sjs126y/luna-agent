@@ -8,6 +8,7 @@ kind: integration
 entrypoint: browser_operator:register
 requires:
   sdk: ">=0.1,<1"
+  python: ["pydantic>=2.8,<3"]
 provides: [mcp, skill, command, hook]
 tags: [browser, playwright, testing, automation]
 enabled_by_default: false

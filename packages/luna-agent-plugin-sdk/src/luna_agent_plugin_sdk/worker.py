@@ -8,6 +8,7 @@ import inspect
 import json
 import os
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -95,6 +96,22 @@ class WorkerTaskPort:
             task.cancel()
         if self.tasks:
             await asyncio.gather(*self.tasks, return_exceptions=True)
+
+
+class WorkerInvocationPort:
+    def __init__(self, context: ContextVar[dict[str, Any]]) -> None:
+        self._context = context
+
+    @property
+    def session_key(self) -> str:
+        return str(self._context.get().get("session_key") or "")
+
+    @property
+    def operation_id(self) -> str:
+        return str(self._context.get().get("operation_id") or "")
+
+    def safe_summary(self) -> dict[str, str]:
+        return {"session_key": self.session_key, "operation_id": self.operation_id}
 
 
 class RemoteResourceNamespace:
@@ -198,6 +215,7 @@ class WorkerRegistrationPort:
                 "approval_mode_resolver", "resource_resolver", "timeout_resolver",
             )
             if getattr(entry, name, None) is not None
+            and not (name == "resource_resolver" and entry.resource_bindings)
         ]
         if unsupported:
             raise ValueError(
@@ -220,6 +238,7 @@ class WorkerRegistrationPort:
             "is_destructive": entry.is_destructive,
             "report_as_tool": entry.report_as_tool,
             "timeout_seconds": entry.timeout_seconds,
+            "resource_bindings": to_wire(entry.resource_bindings),
         })
 
     def skill(self, entry: Any) -> None:
@@ -315,6 +334,7 @@ class WorkerPluginContext:
         config: dict[str, Any],
     ) -> None:
         self.plugin_key = plugin_key
+        self.is_isolated = True
         self.generation_id = generation_id
         self.runtime_instance_id = runtime_instance_id
         self.root = root.resolve()
@@ -324,6 +344,7 @@ class WorkerPluginContext:
         self.resources = RemoteResources(runtime.peer, self.storage)
         self.register = WorkerRegistrationPort(runtime)
         self.runtime = RemoteRuntimeControl(runtime.peer)
+        self.invocation = WorkerInvocationPort(runtime.invocation_context)
 
     def parse_config(self, model_type: Any) -> Any:
         validator = getattr(model_type, "model_validate", None)
@@ -361,6 +382,10 @@ class PluginWorkerRuntime:
             "active": [],
         }
         self.active_task: asyncio.Task[Any] | None = None
+        self.invocation_context: ContextVar[dict[str, Any]] = ContextVar(
+            "plugin-worker-invocation",
+            default={},
+        )
         peer.register("initialize", self.initialize)
         peer.register("invoke", self.invoke)
         peer.register("active.start", self.active_start)
@@ -421,10 +446,14 @@ class PluginWorkerRuntime:
             if self.context is None:
                 raise RuntimeError("Plugin worker is not initialized")
             args.insert(0, self.context)
-        result = handler(*args, **kwargs)
-        if inspect.isawaitable(result):
-            result = await result
-        return result
+        token = self.invocation_context.set(dict(payload.get("invocation") or {}))
+        try:
+            result = handler(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+        finally:
+            self.invocation_context.reset(token)
 
     async def health(self, _payload: dict[str, Any]) -> dict[str, Any]:
         return {

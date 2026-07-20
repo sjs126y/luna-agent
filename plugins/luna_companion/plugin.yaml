@@ -8,6 +8,7 @@ kind: automation
 entrypoint: luna_companion:register
 requires:
   sdk: ">=0.2,<1"
+  python: ["pydantic>=2.8,<3"]
 provides: [active, command]
 tags: [active, companion, conversation]
 enabled_by_default: false

@@ -32,11 +32,16 @@ async def test_external_plugin_loads_and_invokes_through_worker(
         encoding="utf-8",
     )
     (root / "demo.py").write_text(
-        "from luna_agent_plugin_sdk import ToolEntry\n"
+        "from pathlib import Path\n"
+        "from luna_agent_plugin_sdk import ToolEntry, ToolResourceBinding\n"
         "async def echo(text=''): return {'worker': True, 'text': text}\n"
+        "async def read_path(path): return Path(path).read_text(encoding='utf-8')\n"
         "def register(ctx):\n"
         "    ctx.register.tool(ToolEntry(name='worker_demo_echo', description='echo', "
-        "schema={'type':'object'}, handler=echo))\n",
+        "schema={'type':'object'}, handler=echo))\n"
+        "    ctx.register.tool(ToolEntry(name='worker_demo_read', description='read', "
+        "schema={'type':'object'}, handler=read_path, resource_bindings=("
+        "ToolResourceBinding('filesystem', 'path', 'read', 'test input'),)))\n",
         encoding="utf-8",
     )
     settings = Settings(
@@ -63,9 +68,16 @@ async def test_external_plugin_loads_and_invokes_through_worker(
         entry = tool_registry.get("worker_demo_echo")
         assert entry is not None
         assert await entry.handler(text="ok") == {"worker": True, "text": "ok"}
+        source = tmp_path / "outside.txt"
+        source.write_text("approved input", encoding="utf-8")
+        read_entry = tool_registry.get("worker_demo_read")
+        assert read_entry is not None
+        assert read_entry.resource_resolver({"path": str(source)})[0].resource == str(source)
+        assert await read_entry.handler(path=str(source)) == "approved input"
     finally:
         manager.unload_plugin("user/worker-demo")
         tool_registry.unregister("worker_demo_echo")
+        tool_registry.unregister("worker_demo_read")
 
 
 @pytest.mark.asyncio

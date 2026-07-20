@@ -13,12 +13,9 @@ from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 from xml.etree import ElementTree
 
-import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from luna_agent_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
-from luna_agent.tools.runtime_context import current_tool_agent
-from luna_agent.tools.url_safety import check_url
 
 _MAX_FEED_BYTES = 2 * 1024 * 1024
 _MAX_REDIRECTS = 5
@@ -239,6 +236,8 @@ async def _feed_fetch(
     *,
     trusted_private_hosts: frozenset[str] = frozenset(),
 ) -> str:
+    import httpx
+
     current = str(url or "").strip()
     if not current:
         raise ValueError("feed URL must not be empty")
@@ -299,35 +298,41 @@ def register(ctx) -> None:
         return repository_ref["value"]
 
     async def add_feed(name: str, url: str, keywords: list[str] | None = None) -> str:
-        session_key = _current_session_key()
+        session_key = _current_session_key(ctx)
         if not _session_allowed(session_key, config.active.sessions):
             raise PermissionError("feed session is not allowed by plugin configuration")
-        error = await asyncio.to_thread(_check_feed_url, url, trusted_private_hosts)
-        if error:
-            raise PermissionError(error)
         item = await repository().add(name=name, url=url, keywords=list(keywords or []), session_key=session_key)
         return json.dumps(item, ensure_ascii=False)
 
     async def remove_feed(subscription_id: str) -> str:
-        removed = await repository().remove(subscription_id, session_key=_current_session_key())
+        removed = await repository().remove(subscription_id, session_key=_current_session_key(ctx))
         if not removed:
             raise KeyError(f"feed subscription not found: {subscription_id}")
         return json.dumps({"subscription_id": subscription_id, "removed": True})
 
     async def list_feeds() -> str:
-        return json.dumps(await repository().subscriptions(session_key=_current_session_key()), ensure_ascii=False)
+        return json.dumps(await repository().subscriptions(session_key=_current_session_key(ctx)), ensure_ascii=False)
 
     async def fetch_feed(
         url: str,
         if_none_match: str = "",
         if_modified_since: str = "",
     ) -> str:
-        return await _feed_fetch(
-            url,
-            if_none_match,
-            if_modified_since,
-            trusted_private_hosts=trusted_private_hosts,
-        )
+        if not bool(getattr(ctx, "is_isolated", False)):
+            return await _feed_fetch(
+                url,
+                if_none_match,
+                if_modified_since,
+                trusted_private_hosts=trusted_private_hosts,
+            )
+        result = await ctx.resources.mcp.call("fetch", "fetch", {
+            "url": url,
+            "if_none_match": if_none_match,
+            "if_modified_since": if_modified_since,
+        })
+        if str(getattr(result, "status", "")) not in {"", "success"}:
+            raise RuntimeError(str(getattr(result, "error", "") or getattr(result, "content", result)))
+        return str(getattr(result, "content", result) or "")
 
     ctx.register.tool(ToolEntry(
         name="feed_fetch",
@@ -381,7 +386,12 @@ def register(ctx) -> None:
 
     ctx.register.active(
         run=run,
-        resources=ActiveResourceRequest(tools=("feed_fetch",), conversation=True),
+        resources=ActiveResourceRequest(
+            tools=("feed_fetch",),
+            mcp={"fetch": ("fetch",)},
+            optional_mcp_servers=("fetch",),
+            conversation=True,
+        ),
         restart_policy="on_failure",
         startup_timeout=15,
         shutdown_timeout=15,
@@ -389,6 +399,8 @@ def register(ctx) -> None:
 
 
 def _check_feed_url(url: str, trusted_private_hosts: frozenset[str]) -> str | None:
+    from luna_agent.tools.url_safety import check_url
+
     hostname = str(urlparse(str(url or "")).hostname or "").lower().rstrip(".")
     return check_url(url, allow_private=bool(hostname and hostname in trusted_private_hosts))
 
@@ -472,10 +484,8 @@ def _feed_event(subscription: dict[str, Any], item: dict[str, Any]) -> dict[str,
     }
 
 
-def _current_session_key() -> str:
-    agent = current_tool_agent()
-    security = getattr(agent, "_security_context", None)
-    value = str(getattr(security, "session_key", "") or getattr(agent, "_memory_session_key", "") or "")
+def _current_session_key(ctx) -> str:
+    value = str(getattr(ctx.invocation, "session_key", "") or "")
     if not value:
         raise RuntimeError("current session is unavailable")
     return value

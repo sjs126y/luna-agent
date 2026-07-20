@@ -37,6 +37,7 @@ from luna_agent_plugin_sdk.testing import (
 from luna_agent_plugin_sdk.tools import (
     ResourceKind,
     ResourceRequirement,
+    ToolResourceBinding,
     ToolArtifact,
     ToolEntry,
     ToolHandlerOutput,

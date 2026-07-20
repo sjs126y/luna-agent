@@ -8,6 +8,7 @@ kind: integration
 entrypoint: github_assistant:register
 requires:
   sdk: ">=0.1,<1"
+  python: ["pydantic>=2.8,<3"]
 requires_env: [GITHUB_MCP_AUTH]
 provides: [mcp, skill, command, hook, active]
 tags: [github, mcp, development, review, active]

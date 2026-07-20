@@ -11,7 +11,6 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from luna_agent_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
-from luna_agent.tools.runtime_context import current_tool_agent
 
 
 class ActiveConfig(BaseModel):
@@ -232,13 +231,13 @@ def register(ctx) -> None:
 
     async def list_reminders(include_completed: bool = False) -> str:
         items = await repository().list(
-            session_key=_current_session_key(),
+            session_key=_current_session_key(ctx),
             include_completed=include_completed,
         )
         return json.dumps(items, ensure_ascii=False)
 
     async def cancel_reminder(reminder_id: str) -> str:
-        item = await repository().cancel(reminder_id, session_key=_current_session_key())
+        item = await repository().cancel(reminder_id, session_key=_current_session_key(ctx))
         if item is None:
             raise KeyError(f"reminder not found: {reminder_id}")
         return json.dumps(item, ensure_ascii=False)
@@ -326,10 +325,8 @@ def _parse_time(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _current_session_key() -> str:
-    agent = current_tool_agent()
-    security = getattr(agent, "_security_context", None)
-    value = str(getattr(security, "session_key", "") or getattr(agent, "_memory_session_key", "") or "")
+def _current_session_key(ctx) -> str:
+    value = str(getattr(ctx.invocation, "session_key", "") or "")
     if not value:
         raise RuntimeError("current session is unavailable")
     return value

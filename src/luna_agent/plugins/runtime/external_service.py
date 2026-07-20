@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,8 @@ from luna_agent_plugin_sdk import (
     ActiveResourceRequest,
     ActiveRestartPolicy,
     CommandEntry,
+    ResourceRequirement,
+    ToolResourceBinding,
     ToolEntry,
 )
 
@@ -120,17 +124,49 @@ class ExternalPluginRuntimeService:
         for descriptor in capabilities.get("tools", []):
             value = _plain(descriptor)
             timeout = float(value.get("timeout_seconds") or 120.0)
+            bindings = tuple(
+                ToolResourceBinding(
+                    kind=str(item.get("kind") or "filesystem"),
+                    argument=str(item.get("argument") or ""),
+                    access=str(item.get("access") or "read"),
+                    reason=str(item.get("reason") or ""),
+                )
+                for item in (value.get("resource_bindings") or [])
+            )
 
             async def handler(
                 _handler_id=value["handler_id"],
                 _timeout=timeout,
+                _bindings=bindings,
                 **kwargs,
             ):
+                invocation = _invocation_metadata()
+                rewritten = dict(kwargs)
+                if _bindings:
+                    rewritten = self._stage_tool_inputs(plugin, rewritten, _bindings)
                 return await worker.call(
                     "invoke",
-                    {"handler_id": _handler_id, "kwargs": kwargs},
+                    {
+                        "handler_id": _handler_id,
+                        "kwargs": rewritten,
+                        "invocation": invocation,
+                    },
                     timeout=_timeout,
                 )
+
+            def resource_resolver(input_: dict[str, Any], _bindings=bindings):
+                requirements = []
+                for binding in _bindings:
+                    raw = input_.get(binding.argument)
+                    if raw in (None, ""):
+                        continue
+                    requirements.append(ResourceRequirement(
+                        kind=binding.kind,
+                        resource=str(raw),
+                        access=binding.access,
+                        reason=binding.reason,
+                    ))
+                return requirements
 
             ctx._register_tool(ToolEntry(
                 name=str(value["name"]),
@@ -148,6 +184,8 @@ class ExternalPluginRuntimeService:
                 is_destructive=bool(value.get("is_destructive", False)),
                 report_as_tool=bool(value.get("report_as_tool", True)),
                 timeout_seconds=value.get("timeout_seconds"),
+                resource_resolver=resource_resolver if bindings else None,
+                resource_bindings=bindings,
             ))
         for relative_path in capabilities.get("skill_directories", []):
             ctx._register_skills(str(relative_path))
@@ -283,6 +321,37 @@ class ExternalPluginRuntimeService:
                 env[name] = str(value)
         return env
 
+    def _stage_tool_inputs(
+        self,
+        plugin,
+        kwargs: dict[str, Any],
+        bindings: tuple[ToolResourceBinding, ...],
+    ) -> dict[str, Any]:
+        if plugin.data_path is None:
+            raise RuntimeError("Plugin data exchange directory is unavailable")
+        exchange = Path(plugin.data_path) / ".exchange" / uuid4().hex
+        exchange.mkdir(parents=True, exist_ok=True)
+        rewritten = dict(kwargs)
+        for binding in bindings:
+            if binding.kind != "filesystem" or binding.access != "read":
+                raise PermissionError(
+                    f"Unsupported external plugin resource binding: {binding.kind}:{binding.access}"
+                )
+            raw = kwargs.get(binding.argument)
+            if raw in (None, ""):
+                continue
+            source = Path(str(raw)).expanduser()
+            if not source.is_absolute():
+                source = (Path.cwd() / source).resolve()
+            else:
+                source = source.resolve()
+            if source.is_symlink() or not source.is_file():
+                raise ValueError(f"External plugin input is not a regular file: {source}")
+            target = exchange / source.name
+            shutil.copyfile(source, target)
+            rewritten[binding.argument] = str(target.relative_to(Path(plugin.data_path)))
+        return rewritten
+
 
 def _plain(value: Any) -> Any:
     if isinstance(value, dict):
@@ -306,3 +375,21 @@ def _active_resources(value: dict[str, Any]) -> ActiveResourceRequest:
         events=bool(value.get("events", False)),
         artifacts=bool(value.get("artifacts", False)),
     )
+
+
+def _invocation_metadata() -> dict[str, str]:
+    try:
+        from luna_agent.tools.runtime_context import current_tool_agent
+
+        agent = current_tool_agent()
+    except Exception:
+        return {}
+    security = getattr(agent, "_security_context", None)
+    return {
+        "session_key": str(
+            getattr(security, "session_key", "")
+            or getattr(agent, "_memory_session_key", "")
+            or ""
+        ),
+        "operation_id": str(getattr(agent, "_hook_turn_id", "") or ""),
+    }

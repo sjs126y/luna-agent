@@ -102,6 +102,10 @@ class PluginRuntimeContext:
         return self.plugin.generation_id
 
     @property
+    def is_isolated(self) -> bool:
+        return bool(getattr(self.plugin, "worker", None))
+
+    @property
     def runtime_instance_id(self) -> str:
         return self.plugin.runtime_instance_id
 
@@ -155,6 +159,23 @@ class PluginRuntimeContext:
     @property
     def tasks(self):
         return self.manager.plugin_task_port(self.plugin)
+
+    @property
+    def invocation(self):
+        try:
+            from luna_agent.tools.runtime_context import current_tool_agent
+            agent = current_tool_agent()
+        except Exception:
+            agent = None
+        security = getattr(agent, "_security_context", None)
+        return type("Invocation", (), {
+            "session_key": str(
+                getattr(security, "session_key", "")
+                or getattr(agent, "_memory_session_key", "")
+                or ""
+            ),
+            "operation_id": str(getattr(agent, "_hook_turn_id", "") or ""),
+        })()
 
     def parse_config(self, model_type):
         """Validate plugin configuration with a Pydantic model type."""

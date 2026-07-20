@@ -8,6 +8,7 @@ kind: automation
 entrypoint: inbox_watch:register
 requires:
   sdk: ">=0.1,<1"
+  python: ["pydantic>=2.8,<3"]
 provides: [active, command]
 tags: [active, inbox, artifact, file, monitoring]
 enabled_by_default: false

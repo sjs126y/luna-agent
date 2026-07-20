@@ -8,6 +8,7 @@ kind: automation
 entrypoint: reminder:register
 requires:
   sdk: ">=0.1,<1"
+  python: ["pydantic>=2.8,<3"]
 provides: [active, tools, command]
 tags: [active, reminder, scheduling, productivity]
 enabled_by_default: false

@@ -8,6 +8,7 @@ kind: automation
 entrypoint: feed_watch:register
 requires:
   sdk: ">=0.1,<1"
+  python: ["pydantic>=2.8,<3"]
 provides: [active, tools, command]
 tags: [active, rss, atom, feed, monitoring]
 enabled_by_default: false

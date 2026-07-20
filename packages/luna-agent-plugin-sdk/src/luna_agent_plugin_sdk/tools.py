@@ -11,6 +11,20 @@ ResourceKind = Literal["filesystem", "network"]
 
 
 @dataclass(frozen=True)
+class ToolResourceBinding:
+    """Declaratively bind one tool argument to a host-approved resource."""
+
+    kind: ResourceKind
+    argument: str
+    access: str = "read"
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not str(self.argument or "").strip():
+            raise ValueError("Tool resource binding argument is required")
+
+
+@dataclass(frozen=True)
 class ResourceRequirement:
     kind: ResourceKind
     resource: str
@@ -83,3 +97,4 @@ class ToolEntry:
     report_as_tool: bool = True
     timeout_seconds: float | None = None
     timeout_resolver: Callable[[dict[str, Any]], float | None] | None = None
+    resource_bindings: tuple[ToolResourceBinding, ...] = ()

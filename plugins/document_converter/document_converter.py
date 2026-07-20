@@ -17,6 +17,7 @@ from typing import Any
 
 from luna_agent_plugin_sdk import (
     ResourceRequirement,
+    ToolResourceBinding,
     ToolEntry,
     ToolHandlerOutput,
 )
@@ -473,8 +474,13 @@ def register(ctx) -> None:
         tags=["document", "convert", "read", "pdf", "docx", "pptx", "xlsx", "markdown"],
         risk_level="low",
         approval_mode="auto",
-        precheck=_precheck,
         resource_resolver=_resources,
+        resource_bindings=(ToolResourceBinding(
+            kind="filesystem",
+            argument="path",
+            access="read",
+            reason="document source",
+        ),),
         idempotent=True,
         is_parallel_safe=True,
         timeout_seconds=70,
