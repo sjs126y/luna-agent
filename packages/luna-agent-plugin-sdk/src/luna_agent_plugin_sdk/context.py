@@ -26,6 +26,7 @@ class PluginRuntimeContext(Protocol):
     plugin_key: str
     generation_id: str
     runtime_instance_id: str
+    is_isolated: bool
     register: RegistrationPort
 
     @property

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,7 +11,8 @@ from plugins.codex_bridge.app_server import CodexAppServer, CodexAppServerError
 
 def _server(tmp_path: Path) -> CodexAppServer:
     return CodexAppServer(
-        command="codex",
+        process_port=SimpleNamespace(),
+        process_name="codex-app-server",
         cwd=tmp_path,
         codex_home=tmp_path / "codex-home",
         approval_policy="on-request",

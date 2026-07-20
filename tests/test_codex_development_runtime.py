@@ -32,6 +32,28 @@ class Conversation:
         return object()
 
 
+class Workspace:
+    def __init__(self, root: Path):
+        self.root = root
+
+    async def create(self, *, workspace: str):
+        path = self.root / workspace
+        path.mkdir(parents=True, exist_ok=True)
+        return {"path": str(path)}
+
+    async def write(self, *, path: str, text: str):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return {"path": str(target)}
+
+    async def copy(self, *, source: str, path: str):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(Path(source).read_bytes())
+        return {"path": str(target)}
+
+
 @pytest.fixture
 def runtime(tmp_path):
     storage = MemoryStorage()
@@ -49,7 +71,10 @@ def runtime(tmp_path):
         active=SimpleNamespace(enabled=True, sessions=["wechat:test"]),
     )
     config.development_spec_path.write_text("# plugin contract\n", encoding="utf-8")
-    ctx = SimpleNamespace(storage=storage)
+    ctx = SimpleNamespace(
+        storage=storage,
+        resources=SimpleNamespace(workspace=Workspace(config.development_root)),
+    )
     return CodexDevelopmentRuntime(config=config, ctx=ctx)
 
 
