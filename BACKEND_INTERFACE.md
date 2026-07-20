@@ -1210,7 +1210,21 @@ QQ 平台现要求 `.env` 配置 `QQ_BOT_WS_URL`。`QQ_BOT_BASE_URL` 为可选 H
 
 QQ 插件的 `plugins.config.platforms/qq.runtime.mode` 可为 `external` 或 `managed`。受管模式只执行用户明确配置的绝对可执行路径，不经过 shell；前端或诊断界面不应提供任意命令编辑与立即执行能力。
 
-## 16. Compatibility Notes
+## 16. Codex Plugin Development Bridge
+
+启用 `integrations/codex-bridge` 后，Codex Bridge 暴露以下 Agent 工具：
+
+- `plugin_dev_create(plugin_id, description, brief?)`：在外部 development workspace 创建脚手架、插件简报和规范副本，并建立持久会话记录；重复调用同一 `plugin_id` 幂等返回已有会话。
+- `plugin_dev_message(plugin_id, text)`：向该插件唯一 Codex Thread 提交一条消息；已有 Turn 时进入有界内存队列并立即返回 accepted/queued。
+- `plugin_dev_list()`、`plugin_dev_status(plugin_id)`、`plugin_dev_events(plugin_id, limit?)`：查询会话、Thread、工作区、状态和最近最多 20 条事件。
+- `plugin_dev_cancel(plugin_id)`：中断当前 Turn，清理排队消息并标记会话 cancelled。
+- `codex_approval_list(plugin_id?)`、`codex_approval_decide(request_id, decision)`：查看并允许一次或拒绝 App Server 请求；`decision` 为 `allow_once` 或 `deny`。
+
+Codex Bridge 通过 `ActiveConversationIntent` 投递事件，不把事件写成普通用户输入。事件类型包括 `turn_started`、`assistant_message`、`progress`、`request_user_input`、`approval_requested`、`turn_completed`、`error` 和 `process_restarted`。`notify_sessions` 为空时只持久化事件，不主动唤醒会话。每个插件工作区保存一次只读 `LUNA_PLUGIN_DEVELOPMENT.md`，后续 Turn 不重复注入规范。
+
+开发会话状态存储在插件私有 `development-sessions.json`，Codex Thread 历史仍由 Codex `CODEX_HOME` 管理。重启时只执行 `thread/resume` 恢复线程，不静默恢复中断 Turn；未处理审批默认拒绝。旧 `mcp__codex__codex` MCP 与 Hook 注册继续兼容。
+
+## 17. Compatibility Notes
 
 - 前端不要依赖事件字段顺序。
 - `message` 是给人看的摘要，机器逻辑优先读 `data`。

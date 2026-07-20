@@ -130,6 +130,8 @@ src/luna_agent/plugins/
 
 当前根目录通用插件包括 `github_assistant`、`developer_docs`、`browser_operator`、`codex_bridge` 和 `document_converter`。前四者组合 Skill、MCP、Hook 和状态命令；Document Converter 则演示只有一个按需工具的轻量外置插件。它们用于验证插件装配边界，不会把 MCP 生命周期或安全策略搬进插件私有实现。
 
+`codex_bridge` 的插件开发能力是异步的：一个插件对应一个 Codex Thread，普通交流是 Thread 内的多个 Turn。开发工作区和 Codex 状态放在宿主机数据目录，Codex 只读取一次 `LUNA_PLUGIN_DEVELOPMENT.md` 规范副本；每个事件按类型封装后再通过 `ActiveConversationIntent` 交给 Luna，不把 Codex 的协议事件直接伪装成用户消息。事件和审批请求在 Bridge 内有界持久化，工具只返回最近事件，避免把完整 Codex 日志塞进上下文。
+
 仓库里也保留了一个最小示例插件：
 
 ```text

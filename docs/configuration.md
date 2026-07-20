@@ -309,6 +309,18 @@ GITHUB_MCP_AUTH="Bearer github_pat_xxx"
 
 Codex 需要可写的状态目录。插件首次加载时只将 `source_codex_home/auth.json` 复制到 `runtime_codex_home`，权限设为 `0600`；后续数据库、会话和 token 更新均留在该隔离目录。默认建议把它放在已忽略的 `data/codex-bridge/`，不要提交其中内容。官方服务的实验性 `codex/event` 通知由插件内 stdio 适配器过滤，标准 MCP 请求、响应和错误保持原样。
 
+Codex Bridge 还提供 App Server 驱动的插件开发会话。每个 `plugin_id` 对应一个外部开发工作区和一个持久 Codex Thread；工作区默认位于 `data/codex-bridge/plugin-workspaces/`，不会在 Luna Agent workspace 内生成源码。首次创建时会写入脚手架、`PLUGIN_BRIEF.md` 和只读的 `LUNA_PLUGIN_DEVELOPMENT.md` 开发规范副本。`plugin_dev_message` 只负责提交或排队消息，Codex 的后续事件由 active runtime 异步投递给配置的 `notify_sessions`。
+
+```yaml
+integrations/codex-bridge:
+  development_root: "./data/codex-bridge/plugin-workspaces"
+  approval_policy: "on-request"
+  approvals_reviewer: "user"       # 也可显式使用 auto_review
+  notify_sessions: []               # 例如 ["wechat:<chat-id>"]
+```
+
+相关工具分为开发会话和审批两组：`plugin_dev_create`、`plugin_dev_message`、`plugin_dev_list`、`plugin_dev_status`、`plugin_dev_events`、`plugin_dev_cancel`，以及 `codex_approval_list`、`codex_approval_decide`。后两者只映射 Codex App Server 的待处理请求；重启、插件卸载或 generation 变化时不会自动批准，未处理请求默认拒绝。插件打包、安装、启停仍由 `plugin_build` / `plugin_manage` 完成。
+
 ## 执行模式与权限
 
 `execution.mode` 是默认执行模式，启动时生效；运行中可以用 `/mode` 临时切换当前会话的执行模式。可选值：
