@@ -9,7 +9,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from luna_agent_plugin_sdk import HookEvent, PreToolUseOutcome
+from luna_agent_plugin_sdk import ActiveResourceRequest, HookEvent, PreToolUseOutcome, ToolEntry
+
+from .development import CodexDevelopmentRuntime
 
 
 class CodexBridgeConfig(BaseModel):
@@ -22,6 +24,13 @@ class CodexBridgeConfig(BaseModel):
     sandbox: Literal["read-only", "workspace-write"] = "workspace-write"
     connect_timeout_seconds: float = Field(default=60.0, gt=0)
     call_timeout_seconds: float = Field(default=1800.0, gt=0)
+    development_root: Path | None = None
+    development_spec_path: Path | None = None
+    development_spec_revision: str = "1"
+    approval_policy: Literal["on-request", "never"] = "on-request"
+    approvals_reviewer: Literal["user", "auto_review"] = "user"
+    app_server_timeout_seconds: float = Field(default=60.0, gt=0)
+    notify_sessions: list[str] = Field(default_factory=list)
 
 
 def register(ctx) -> None:
@@ -44,6 +53,20 @@ def register(ctx) -> None:
     if not any(_is_within(runtime_codex_home, root) for root in writable_roots):
         raise ValueError("Codex Bridge runtime_codex_home must be within sandbox.roots")
     _prepare_runtime_home(source_codex_home, runtime_codex_home)
+    development_root = Path(
+        config.development_root or (runtime_codex_home.parent / "plugin-workspaces")
+    ).expanduser().resolve()
+    development_spec_path = Path(
+        config.development_spec_path or (Path(__file__).resolve().parent.parent / ".." / "docs" / "plugin-development.md")
+    ).expanduser().resolve()
+    if not any(_is_within(development_root, root) for root in writable_roots):
+        raise ValueError("Codex Bridge development_root must be within sandbox.roots")
+    development_root.mkdir(parents=True, exist_ok=True)
+    runtime = CodexDevelopmentRuntime(config=config.model_copy(update={
+        "runtime_codex_home": runtime_codex_home,
+        "development_root": development_root,
+        "development_spec_path": development_spec_path,
+    }), ctx=ctx)
 
     ctx.register.mcp_server({
         "name": "codex",
@@ -92,6 +115,78 @@ def register(ctx) -> None:
         matcher=r"^mcp__codex__(?:codex|codex-reply)$",
         priority=10,
     )
+
+    _register_development_tools(ctx, runtime)
+    ctx.register.active(
+        run=runtime.run,
+        resources=ActiveResourceRequest(conversation=True),
+        restart_policy="on_failure",
+        startup_timeout=20,
+        shutdown_timeout=20,
+    )
+
+
+def _register_development_tools(ctx, runtime: CodexDevelopmentRuntime) -> None:
+    ctx.register.tool(ToolEntry(
+        name="plugin_dev_create",
+        description="Create an external Luna plugin development workspace and one persistent Codex thread.",
+        schema={"type": "object", "properties": {
+            "plugin_id": {"type": "string"}, "description": {"type": "string"}, "brief": {"type": "string"},
+        }, "required": ["plugin_id", "description"], "additionalProperties": False},
+        handler=lambda plugin_id, description, brief="": runtime.create(plugin_id, description, brief),
+        toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
+        tags=["plugin", "codex", "development"], idempotent=True, is_parallel_safe=False,
+    ))
+    ctx.register.tool(ToolEntry(
+        name="plugin_dev_message",
+        description="Send an asynchronous message to the Codex thread assigned to one plugin; returns immediately when accepted or queued.",
+        schema={"type": "object", "properties": {"plugin_id": {"type": "string"}, "text": {"type": "string"}}, "required": ["plugin_id", "text"], "additionalProperties": False},
+        handler=lambda plugin_id, text: runtime.message(plugin_id, text),
+        toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
+        tags=["plugin", "codex", "message", "async"], idempotent=False, is_parallel_safe=False,
+    ))
+    ctx.register.tool(ToolEntry(
+        name="plugin_dev_list",
+        description="List persistent Codex plugin development sessions and their current status.",
+        schema={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=lambda: runtime.list_sessions(), toolset="plugin", permission_category="read", approval_mode="auto",
+        tags=["plugin", "codex", "sessions"], idempotent=True,
+    ))
+    ctx.register.tool(ToolEntry(
+        name="plugin_dev_status",
+        description="Show one plugin development session status, thread, workspace, and last result.",
+        schema={"type": "object", "properties": {"plugin_id": {"type": "string"}}, "required": ["plugin_id"], "additionalProperties": False},
+        handler=lambda plugin_id: runtime.status(plugin_id), toolset="plugin", permission_category="read", approval_mode="auto",
+        tags=["plugin", "codex", "status"], idempotent=True,
+    ))
+    ctx.register.tool(ToolEntry(
+        name="plugin_dev_events",
+        description="Show the most recent bounded Codex development events for one plugin.",
+        schema={"type": "object", "properties": {"plugin_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, "required": ["plugin_id"], "additionalProperties": False},
+        handler=lambda plugin_id, limit=5: runtime.events(plugin_id, limit), toolset="plugin", permission_category="read", approval_mode="auto",
+        tags=["plugin", "codex", "events"], idempotent=True,
+    ))
+    ctx.register.tool(ToolEntry(
+        name="plugin_dev_cancel",
+        description="Interrupt the active Codex turn for one plugin and mark the session cancelled.",
+        schema={"type": "object", "properties": {"plugin_id": {"type": "string"}}, "required": ["plugin_id"], "additionalProperties": False},
+        handler=lambda plugin_id: runtime.cancel(plugin_id), toolset="plugin", permission_category="write", approval_mode="cached", risk_level="medium",
+        tags=["plugin", "codex", "cancel"], idempotent=False, is_parallel_safe=False,
+    ))
+    ctx.register.tool(ToolEntry(
+        name="codex_approval_list",
+        description="List pending Codex App Server approval requests; Codex remains responsible for its own approval policy.",
+        schema={"type": "object", "properties": {"plugin_id": {"type": "string"}}, "additionalProperties": False},
+        handler=lambda plugin_id="": runtime.approvals(plugin_id), toolset="plugin", permission_category="read", approval_mode="auto",
+        tags=["codex", "approval", "events"], idempotent=True,
+    ))
+    ctx.register.tool(ToolEntry(
+        name="codex_approval_decide",
+        description="Allow once or deny a pending Codex approval request after Luna has obtained the user's decision.",
+        schema={"type": "object", "properties": {"request_id": {"type": "string"}, "decision": {"type": "string", "enum": ["allow_once", "deny"]}}, "required": ["request_id", "decision"], "additionalProperties": False},
+        handler=lambda request_id, decision: runtime.decide_approval(request_id, decision), toolset="plugin", permission_category="write", approval_mode="cached", risk_level="high",
+        tags=["codex", "approval", "decision"], idempotent=False, is_parallel_safe=False,
+    ))
 
 
 def _is_within(path: Path, root: Path) -> bool:
