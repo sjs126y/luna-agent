@@ -23,6 +23,7 @@ from luna_agent.context_budget import build_context_budget
 from luna_agent.cli_chat import run_cli_once_sync
 from luna_agent.main import boot
 from luna_agent.plugins.core.manager import PluginManager
+from luna_agent.platform_paths import default_data_dir
 from luna_agent.platforms.core import platform_registry
 from luna_agent.platforms.setup import PlatformSetupContext
 
@@ -365,6 +366,22 @@ _PROFILE_LIST = ", ".join(sorted(_CONFIG_TEMPLATES))
 _CONFIG_TEMPLATE = _CONFIG_TEMPLATE_LOCAL
 
 
+def _config_template(profile: str) -> str:
+    """Return a profile template with the native Windows data root."""
+    content = _CONFIG_TEMPLATES[profile]
+    if os.name != "nt":
+        return content
+    data_dir = str(default_data_dir()).replace("\\", "/")
+    quoted = json.dumps(data_dir, ensure_ascii=False)
+    plugins_dir = json.dumps(f"{data_dir}/plugins", ensure_ascii=False)
+    return content.replace("  data_dir: ./data", f"  data_dir: {quoted}").replace(
+        "  bash_work_dir: ./data",
+        f"  bash_work_dir: {quoted}",
+    ).replace("    - ./data/plugins", f"    - {plugins_dir}").replace(
+        "    - ./data\n", f"    - {quoted}\n"
+    )
+
+
 _ENV_EXAMPLE_TEMPLATE = """# LLM
 LLM_PROVIDER=deepseek
 LLM_API_KEY=
@@ -585,7 +602,7 @@ def init_project(
 
     target_dir.mkdir(parents=True, exist_ok=True)
     results = [
-        _write_template(target_dir / "config.yaml", _CONFIG_TEMPLATES[profile], force=force),
+        _write_template(target_dir / "config.yaml", _config_template(profile), force=force),
         _write_template(target_dir / ".env.example", _env_example_template(profile), force=force),
     ]
     if copy_env:
@@ -740,7 +757,7 @@ def _ensure_platform_setup_files(target: Path, platform: str) -> list[str]:
     actions.extend(f"创建目录: {path}" for path in created_dirs)
     config_path = target / "config.yaml"
     if not config_path.exists():
-        _write_template(config_path, _CONFIG_TEMPLATES[platform], force=False)
+        _write_template(config_path, _config_template(platform), force=False)
         actions.append(f"生成配置: {config_path}")
     else:
         if _ensure_platform_enabled(config_path, platform):
@@ -752,12 +769,14 @@ def _ensure_platform_setup_files(target: Path, platform: str) -> list[str]:
         _write_template(env_example, _env_example_template(platform), force=False)
         actions.append(f"生成环境模板: {env_example}")
     env_path = target / ".env"
+    from luna_agent.tools.file_security import secure_file
+
     if not env_path.exists():
         _write_template(env_path, _env_example_template(platform), force=False)
-        os.chmod(env_path, 0o600)
+        secure_file(env_path)
         actions.append(f"生成环境文件: {env_path}")
     else:
-        os.chmod(env_path, 0o600)
+        secure_file(env_path)
         actions.append(f"保留环境文件: {env_path}")
     return actions
 
@@ -2460,6 +2479,20 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
     lines.append(
         "  filesystem isolation: "
         f"{_yes(process_sandbox.get('filesystem_isolated', False))}"
+    )
+    lines.append(
+        "  tool security level: "
+        f"{process_sandbox.get('security_level', 'none')}"
+    )
+    lines.append(
+        "  process tree managed: "
+        f"{_yes(process_sandbox.get('process_tree_managed', False))}"
+    )
+    if process_sandbox.get("powershell_path"):
+        lines.append(f"  PowerShell 7: {process_sandbox['powershell_path']}")
+    lines.append(
+        "  Windows Job Object: "
+        f"{_yes(process_sandbox.get('job_object_available', False))}"
     )
     lines.append(
         "  network namespace: "

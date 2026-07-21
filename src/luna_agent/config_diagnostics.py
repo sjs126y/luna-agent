@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import yaml
 
 from luna_agent.config_loader import ConfigLoader
+from luna_agent.platform_paths import default_data_dir
 from luna_agent.config_registry import (
     CONFIG_REGISTRY,
     registry_coverage,
@@ -649,11 +650,12 @@ def _directory_report(base: Path, config: dict[str, Any]) -> list[dict[str, Any]
     plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
     sandbox = config.get("sandbox") if isinstance(config.get("sandbox"), dict) else {}
 
-    data_dir = storage.get("data_dir", "./data")
-    plugin_dirs = _string_or_list(plugins.get("dirs", ["./plugins", "./data/plugins"]))
-    sandbox_roots = _string_or_list(sandbox.get("roots", ["./data"]))
+    default_root = str(default_data_dir()) if os.name == "nt" else "./data"
+    data_dir = storage.get("data_dir", default_root)
+    plugin_dirs = _string_or_list(plugins.get("dirs", ["./plugins", str(Path(default_root) / "plugins")]))
+    sandbox_roots = _string_or_list(sandbox.get("roots", [default_root]))
     sandbox_read_roots = _string_or_list(sandbox.get("read_roots", []))
-    bash_work_dir = sandbox.get("bash_work_dir", "./data")
+    bash_work_dir = sandbox.get("bash_work_dir", default_root)
 
     result = [
         _dir_item(base, "data_dir", data_dir, required=True),

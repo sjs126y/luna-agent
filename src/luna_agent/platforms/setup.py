@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from luna_agent.tools.file_security import secure_file
+
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -110,10 +112,9 @@ def _atomic_write(path: Path, text: str, *, mode: int) -> None:
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     temporary_path = Path(temporary)
     try:
-        os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+        secure_file(temporary_path, mode=mode)
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)
-

@@ -686,12 +686,16 @@ class PluginHostProcessService:
         for name in ("auth.json", "config.toml"):
             source_file = source / name
             target = destination / name
-            if source_file.is_file() and not target.exists():
+            if not source_file.is_file():
+                continue
+            if not target.exists():
                 shutil.copyfile(source_file, target)
-                try:
-                    target.chmod(0o600)
-                except OSError:
-                    pass
+            try:
+                from luna_agent.tools.file_security import secure_file
+
+                secure_file(target)
+            except OSError:
+                pass
 
     def _record(self, plugin, process_id: str) -> dict[str, Any]:
         record = self._processes.get(process_id)

@@ -282,12 +282,14 @@ def _prepare_runtime_home(source: Path, runtime: Path) -> None:
     if not source_auth.is_file():
         raise ValueError(f"Codex auth file was not found: {source_auth}")
     runtime.mkdir(parents=True, exist_ok=True)
+    from luna_agent.tools.file_security import secure_file
+
     runtime_auth = runtime / "auth.json"
     if not runtime_auth.exists():
         shutil.copyfile(source_auth, runtime_auth)
-        runtime_auth.chmod(0o600)
+    secure_file(runtime_auth)
     source_config = source / "config.toml"
     if source_config.is_file():
         runtime_config = runtime / "config.toml"
         shutil.copyfile(source_config, runtime_config)
-        runtime_config.chmod(0o600)
+        secure_file(runtime_config)
