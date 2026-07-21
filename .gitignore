@@ -7,9 +7,6 @@ build/
 .venv/
 venv/
 
-# uv
-uv.lock
-
 # Runtime data
 checkpoints/
 .playwright-mcp/

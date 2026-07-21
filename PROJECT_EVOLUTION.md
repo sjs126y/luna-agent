@@ -596,6 +596,6 @@
 
 截至本文更新时间：
 
-- `.env`、`data/`、`.venv/`、`__pycache__/`、`.pytest_cache/`、`uv.lock` 均不应进入提交。
+- `.env`、`data/`、`.venv/`、`__pycache__/` 和 `.pytest_cache/` 不应进入提交；`uv.lock` 是 CI `--frozen` 和可复现安装所需的受版本控制文件。
 - 如果运行测试后 `src/luna_agent/skills/builtin/.usage.json` 改动，需要恢复后再提交。
 - 结构性变化继续追加到本文；逐提交细节由 Git history 和各专项进度文档承担。
