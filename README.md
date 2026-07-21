@@ -174,15 +174,15 @@ uv run luna-agent serve
 ## 项目状态
 
 <p>
-  <img src="https://img.shields.io/badge/Python%20files-402-3776AB" alt="402 Python files">
-  <img src="https://img.shields.io/badge/Python%20LOC-90%2C887-555555" alt="90887 Python lines">
-  <img src="https://img.shields.io/badge/runtime%20LOC-54%2C815-0A84FF" alt="54815 runtime lines">
-  <img src="https://img.shields.io/badge/test%20LOC-31%2C850-2EA44F" alt="31850 test lines">
+  <img src="https://img.shields.io/badge/Python%20files-437-3776AB" alt="437 Python files">
+  <img src="https://img.shields.io/badge/Python%20LOC-102%2C796-555555" alt="102796 Python lines">
+  <img src="https://img.shields.io/badge/runtime%20LOC-53%2C482-0A84FF" alt="53482 runtime lines">
+  <img src="https://img.shields.io/badge/test%20LOC-34%2C489-2EA44F" alt="34489 test lines">
 </p>
 
 ```bash
 python -m compileall -q src/luna_agent
-uv run pytest -q  # 1201 passed, 1 warning
+uv run pytest -q  # 1282 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。
@@ -197,6 +197,7 @@ uv run pytest -q  # 1201 passed, 1 warning
 | 如何配置模型、记忆、MCP 和安全模式 | [配置说明](docs/configuration.md) |
 | 如何连接微信、QQ、Telegram、飞书 | [平台接入](docs/platforms.md) |
 | 如何编写和组合插件 | [插件系统](docs/plugins.md) |
+| 插件架构还有哪些已知技术债 | [插件架构技术债](PLUGIN_ARCHITECTURE_DEBT.md) |
 | 如何启动、诊断和排错 | [运维与排错](docs/operations.md) |
 | 项目这段时间发生了什么 | [项目演进记录](PROJECT_EVOLUTION.md) |
 | 后续准备推进什么 | [架构方向](luna-agent-roadmap.zh-CN.md) |

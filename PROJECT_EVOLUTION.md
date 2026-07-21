@@ -5,9 +5,9 @@
 <p><strong>从原型到完整个人 Agent Runtime</strong></p>
 
 <p>
-  <img src="https://img.shields.io/badge/phases-21-7C3AED" alt="21 phases">
-  <img src="https://img.shields.io/badge/Python%20LOC-90%2C887-0A84FF" alt="90887 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1261%20passed-2EA44F" alt="1261 tests passed">
+  <img src="https://img.shields.io/badge/phases-22-7C3AED" alt="22 phases">
+  <img src="https://img.shields.io/badge/Python%20LOC-102%2C796-0A84FF" alt="102796 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1282%20passed-2EA44F" alt="1282 tests passed">
 </p>
 
 <p>
@@ -20,6 +20,24 @@
 </div>
 
 ---
+
+## v0.23 插件 Generation 架构收口与跨平台 CI
+
+时间：2026-07-21
+
+目标：在热重载、主动插件和进程隔离连续落地后，重新明确插件状态所有权、提交边界和生命周期恢复责任，并把 Linux/Windows 验证固化为持续集成门禁。
+
+主要变化：
+
+- 插件状态拆为不可变 `PluginDefinition`、运行中的 `PluginGeneration` 与只读 `PluginView`；`LoadedPlugin` 降为兼容 facade，不再承担新架构职责。
+- `RegistrationTransaction` 统一候选 generation 的 Tool、Skill、Workflow、Platform、Hook、Command、MCP、Memory 与数据 revision 注册和回滚。
+- `GenerationCoordinator` 管理状态迁移，`CapabilityRouter` 管理候选 binding 与原子快照发布；提交失败会恢复旧 generation 的路由、registry、数据指针和主动 runner。
+- `WorkerSupervisor` 与 `ActiveSupervisor` 分别拥有外置 Worker 和主动 runner 生命周期；Worker 崩溃恢复、退避、熔断和运行诊断进入稳定边界。
+- Memory/Platform 明确为 boot-scoped capability：运行中重载只记录 `pending_restart`，不会制造宿主已经应用新实例的假象。
+- 新增 GitHub Actions：Ubuntu 执行 compileall 与完整 pytest，原生 Windows 执行 AppContainer smoke；工作流锁定 Python、uv 和 Action 版本，并保持只读仓库权限。
+- 插件架构剩余兼容层、稳定性验证和发布治理集中记录到 `PLUGIN_ARCHITECTURE_DEBT.md`，不再散落在阶段交接文档中。
+
+代表提交：`05b2d02`、`40f615e`、`010694d`。
 
 ## v0.22 外置插件 Worker 隔离与宿主资源端口
 
@@ -43,8 +61,8 @@
 当前主分支状态：
 
 - 分支：`main`
-- 本次统计基准：v0.22 外置插件 Worker 隔离
-- 最近全量验证：`uv run pytest -q`，结果 `1261 passed, 1 warning`
+- 本次统计基准：v0.23 插件 Generation 架构收口与跨平台 CI
+- 最近全量验证：`uv run pytest -q`，结果 `1282 passed, 1 warning`
 
 ## v0.21 Bash 最小进程文件系统
 
@@ -538,17 +556,16 @@
 
 ## 当前代码规模
 
-统计口径：v0.19 完成时 Git 已跟踪 Python 文件的物理行数；包含空行和注释，不等同于有效代码行。
+统计口径：v0.23 完成时 Git 已跟踪 Python 文件的物理行数；包含空行和注释，不等同于有效代码行。
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/luna_agent/**/*.py` | 255 | 54,815 |
-| `tests/**/*.py` | 104 | 31,850 |
-| Plugins / Examples / Scripts / SDK | 34 | 4,212 |
-| 旧命名兼容包装与 `src/__init__.py` | 9 | 10 |
-| Python 合计 | 402 | 90,887 |
+| `src/luna_agent/**/*.py` | 253 | 53,482 |
+| `tests/**/*.py` | 117 | 34,489 |
+| Plugins / Packages / Examples / Scripts / 其他 | 67 | 14,825 |
+| Python 合计 | 437 | 102,796 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.48 万行，测试约 3.19 万行，测试代码占 Python 总量约 35.0%。当前完整测试套件为 `1201 passed, 1 warning`。
+项目规模更适合拆开理解：运行时与内置能力约 5.35 万行，测试约 3.45 万行，测试代码占 Python 总量约 33.6%。当前完整测试套件为 `1282 passed, 1 warning`。
 
 ### 2026-07-18 文档收敛
 

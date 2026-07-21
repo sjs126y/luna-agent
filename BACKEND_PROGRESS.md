@@ -29,6 +29,8 @@
 - Memory manager 构造后 seal boot scope；Memory provider 立即冻结，deferred Platform 可完成 Gateway 首次装配，已有 Platform 路由随后冻结。两者在后续热重载中保留当前绑定并标记 `pending_restart`，下一次完整启动应用；Tool/Skill/Hook/Command/MCP 仍可在当前进程切换。
 - 原生 Windows smoke 已通过：AppContainer 文件/网络/子进程边界、受控 stdio、kill-on-close Job Object 和 profile mapping 清理均验证成功。WSL/Linux 继续使用 Bubblewrap，Windows `process-only` 仍仅用于开发。
 - GitHub Actions CI 使用锁定的 Python 3.12、uv 和 Action commit；每次 main push/PR 自动在 Ubuntu 运行 compileall 与完整 pytest，并在原生 Windows runner 运行 AppContainer smoke。Workflow 只有 `contents: read` 权限，不接触项目密钥或执行发布。
+- 新增 `PLUGIN_ARCHITECTURE_DEBT.md`，延后记录 `LoadedPlugin`/全局 registry 兼容层、Manager 编排规模、soak/fault-injection、Windows 持续验证、Release 治理和功能扩张约束；这些事项不重新打开当前已收口的 generation/runtime 重构。
+- 文档入口重新收口：总体、前后端、路线图和 TODO 已同步当前状态；删除已失效的分支交接快照与热重载手工清单，完成历史以本文和 `PROJECT_EVOLUTION.md` 为准。
 - 验证：`python -m compileall -q src/luna_agent packages/luna-agent-plugin-sdk/src scripts`、`git diff --check`、原生 Windows smoke；完整回归 `1282 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
 
 ## 2026-07-20：插件隔离收尾、恢复与环境治理
@@ -434,7 +436,7 @@
 
 - `BACKEND_INTERFACE.md`：前端消费后端事件、slash commands、tool metadata、tool runs 等接口的主文档。
 - `FRONTEND_INTERFACE_REQUIREMENTS.md`：前端提出的后端字段/接口需求入口。
-- `CODEX_HANDOFF.md`：总交接文档，记录前后端分工和整体状态。
+- `docs/README.md`：当前文档职责与权威入口索引。
 
 ## 当前后端状态
 

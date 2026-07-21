@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/blocking%20requirements-0-2EA44F" alt="No blocking requirements">
   <img src="https://img.shields.io/badge/artifact%20UI-optional-0A84FF" alt="Artifact UI optional">
-  <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
+  <img src="https://img.shields.io/badge/updated-2026--07--21-555555" alt="Updated 2026-07-21">
 </p>
 
 <p>
@@ -25,7 +25,7 @@
 
 ## 当前状态
 
-Luna Agent 命名迁移没有产生新的前端接口需求：事件协议仍为 v1，字段、命令结果和确认语义均未变化。仓库内前端代码使用 `luna_agent.*`，启动命令使用 `luna-agent`；旧 `personal-agent` 仅作为迁移期兼容入口。
+插件 generation 架构收口没有产生新的阻塞性前端接口需求：事件协议仍为 v1，字段、命令结果和确认语义均未变化。`plugins info/doctor` 已提供 `runtime_backend`、Worker/active 状态、boot scope 和 supervisor 摘要；未来若制作插件诊断面板，可以直接消费 `BACKEND_INTERFACE.md` 中的稳定字段。
 
 inline TUI 已消费：
 

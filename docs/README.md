@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/docs-current-2EA44F" alt="Docs current">
   <img src="https://img.shields.io/badge/runtime-tested-0A84FF" alt="Runtime tested">
-  <img src="https://img.shields.io/badge/updated-2026--07--19-555555" alt="Updated 2026-07-19">
+  <img src="https://img.shields.io/badge/updated-2026--07--21-555555" alt="Updated 2026-07-21">
 </p>
 
 <p>
@@ -61,6 +61,7 @@ flowchart TD
 | 前端可消费事件、命令和字段 | [BACKEND_INTERFACE.md](../BACKEND_INTERFACE.md) |
 | 前端向后端提出的新需求 | [FRONTEND_INTERFACE_REQUIREMENTS.md](../FRONTEND_INTERFACE_REQUIREMENTS.md) |
 | 后端当前进度 | [BACKEND_PROGRESS.md](../BACKEND_PROGRESS.md) |
+| 插件架构技术债与稳定化清单 | [PLUGIN_ARCHITECTURE_DEBT.md](../PLUGIN_ARCHITECTURE_DEBT.md) |
 | 前端当前进度 | [FRONTEND_PROGRESS.md](../FRONTEND_PROGRESS.md) |
 | 阶段性项目变化与代码规模 | [PROJECT_EVOLUTION.md](../PROJECT_EVOLUTION.md) |
 

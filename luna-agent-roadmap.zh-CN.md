@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/MCP-core%20complete-2EA44F" alt="MCP complete">
   <img src="https://img.shields.io/badge/memory-refactor%20complete-2EA44F" alt="Memory complete">
-  <img src="https://img.shields.io/badge/plugin%20runtime-hot%20reload%20ready-2EA44F" alt="Plugin runtime ready">
+  <img src="https://img.shields.io/badge/plugin%20runtime-generation%20isolated-2EA44F" alt="Plugin generation runtime isolated">
   <img src="https://img.shields.io/badge/multimodal-foundation%20complete-2EA44F" alt="Multimodal complete">
   <img src="https://img.shields.io/badge/active%20decision-planned-7C3AED" alt="Active decision planned">
 </p>
@@ -29,7 +29,7 @@
 | --- | :---: | --- |
 | MCP Runtime | Core complete | OAuth / sampling / elicitation 按需求补充 |
 | Memory | Refactor complete | 知识 RAG 独立成插件，reranker 按需实现 |
-| 插件 Runtime | Active runtime complete | 插件生态、第三方依赖与系统级沙箱按需推进 |
+| 插件 Runtime | Generation / isolation complete | Soak、兼容层收敛与发布治理按触发条件推进 |
 | 出站多模态 | Foundation complete | 微信/QQ 实机反馈与格式体验 |
 | Conversation Runtime | Complete | 继续 Benchmark、长会话与平台投递观测 |
 | 主动决策 | Planned | 候选、冷却、静默时间、预算与反馈 |
@@ -165,7 +165,7 @@ RAG 检索原始外部证据；长期记忆保存会影响 Agent 行为、且可
 | 方向 | 当前基础 | 主要缺口 | 状态 |
 | --- | --- | --- | --- |
 | MCP runtime | stdio、Streamable HTTP、重连、动态工具、结构化结果、诊断 | OAuth、sampling、elicitation 仅按需补充 | 核心完成 |
-| 插件 Runtime | `PluginRuntimeContext`、`ctx.register.*`、主动 runner、资源 facade、版本安装、快照路由、Turn lease、MCP reconcile、数据 revision、资源排空、回滚和卸载 | 插件索引、第三方依赖策略与系统级沙箱按需求推进 | Active Runtime 完成 |
+| 插件 Runtime | Definition/Generation/View、事务注册、主动 runner、Worker 隔离与恢复、资源 facade、版本安装、快照路由、Turn lease、数据 revision、回滚和环境 GC | Soak/fault-injection、兼容 facade/全局 registry 退场、Release 治理 | Generation Runtime 完成 |
 | 出站多模态 | ArtifactStore、`artifact_from_file`、`response_attach`、结构化 Outcome、能力规划、分片 Outbox 和四平台原生发送 | caption、格式转换和真实平台限制按使用反馈补充 | 基础完成 |
 | 主动能力 | Cron、插件 submit、统一 Coordinator、Delivery/Outbox 已完成 | 候选生成、去重、冷却、静默时间和决策策略 | 基础完成 |
 | Memory / RAG | internal snapshot、buffer、Luna Agent/Mem0、backend factory、local/remote Qdrant、fallback、混合检索和审计 | 知识 RAG 后续作为独立插件，reranker 按需实现 | 记忆重构完成 |
@@ -187,4 +187,4 @@ Memory / RAG 拆分（独立领域）
   -> 外部知识证据检索
 ```
 
-出站多模态、插件热重载与主动插件运行底座都已经完成。下一步更自然的产品方向是用真实插件验证主动决策策略，或继续依据长对话、第三方插件和平台联调反馈做稳定化。主动策略可直接复用现有 `PluginRuntimeContext`、generation scope、资源 facade、CapabilitySnapshot、Coordinator、Artifact、Delivery 和 Outbox。
+出站多模态、插件热重载、主动插件与进程隔离底座都已经完成。当前优先用 soak、fault-injection 和真实插件验证稳定性，不继续扩大插件核心职责；具体触发条件和退出标准见 `PLUGIN_ARCHITECTURE_DEBT.md`。后续主动策略可直接复用现有 `PluginRuntimeContext`、generation scope、资源 facade、CapabilitySnapshot、Coordinator、Artifact、Delivery 和 Outbox。
