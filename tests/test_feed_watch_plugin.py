@@ -49,6 +49,8 @@ def test_feed_watch_registers_tools_command_and_active_runner(tmp_path):
     assert set(plugin.tools_registered) == {"feed_fetch", "feed_add", "feed_remove", "feed_list"}
     assert plugin.commands_registered == ["feeds"]
     assert plugin.active_registration.resources.tools == ("feed_fetch",)
+    assert plugin.active_registration.resources.required_mcp_servers == ("fetch",)
+    assert plugin.active_registration.resources.optional_mcp_servers == ()
     assert plugin.active_registration.resources.conversation is True
     manager.unload_plugin(plugin.key)
 

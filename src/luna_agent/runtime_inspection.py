@@ -15,6 +15,13 @@ class RuntimeInspectionPort:
     async def runtime_summary(self) -> dict[str, Any]:
         health = self._runtime.health_snapshot()
         memory = await self._runtime.memory_manager.health_snapshot()
+        memory_maintenance = dict(memory.get("maintenance") or {})
+        migration_maintenance = dict(memory_maintenance.get("migration") or {})
+        index_maintenance = dict(memory_maintenance.get("index") or {})
+        memory_maintenance_failed = (
+            int(migration_maintenance.get("failed") or 0)
+            + int(index_maintenance.get("failed") or 0)
+        )
         plugin_runtime = dict(health.get("plugin_runtime") or {})
         runtime_counts = dict(plugin_runtime.get("runtime_counts") or {})
         gateway = dict(health.get("gateway") or {})
@@ -32,6 +39,8 @@ class RuntimeInspectionPort:
             warnings.append("plugins_degraded")
         if plugin_runtime.get("degraded_mcp_count"):
             warnings.append("plugin_mcp_degraded")
+        if memory_maintenance_failed:
+            warnings.append("memory_maintenance_failed")
         status = "failed" if not health.get("core_ready") else "degraded" if warnings else "healthy"
         return {
             "ok": status != "failed",
@@ -77,6 +86,7 @@ class RuntimeInspectionPort:
                     "provider": memory.get("effective_provider", ""),
                     "pending_migration": int((memory.get("migration") or {}).get("global_pending", 0)),
                     "pending_index": int((memory.get("index") or {}).get("global_pending", 0)),
+                    "maintenance_failed": memory_maintenance_failed,
                 },
             },
             "warnings": warnings,

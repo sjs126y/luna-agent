@@ -58,6 +58,43 @@ async def test_runtime_summary_projects_worker_and_plugin_mcp_health():
     assert "plugins_degraded" in result["warnings"]
 
 
+@pytest.mark.asyncio
+async def test_runtime_summary_degrades_on_memory_maintenance_failure():
+    health = {
+        "core_ready": True,
+        "closed": False,
+        "gateway_running": True,
+        "boot_ok": True,
+        "mcp": {"enabled": True, "running": True, "connected_count": 1, "failed_count": 0},
+        "plugin_runtime": {"worker_supervisor": {}, "runtime_counts": {}},
+        "plugins": 1,
+        "gateway": {"platforms": []},
+        "coordinator": {"active_count": 0, "queued_count": 0},
+    }
+
+    async def memory_health_with_failure():
+        return {
+            "effective_provider": "luna",
+            "migration": {"global_pending": 15},
+            "index": {"global_pending": 129},
+            "maintenance": {
+                "migration": {"failed": 4},
+                "index": {"failed": 0},
+            },
+        }
+
+    runtime = SimpleNamespace(
+        health_snapshot=lambda: health,
+        memory_manager=SimpleNamespace(health_snapshot=memory_health_with_failure),
+    )
+
+    result = await RuntimeInspectionPort(runtime).runtime_summary()
+
+    assert result["status"] == "degraded"
+    assert "memory_maintenance_failed" in result["warnings"]
+    assert result["runtime"]["memory"]["maintenance_failed"] == 4
+
+
 async def _memory_health():
     return {
         "effective_provider": "luna",

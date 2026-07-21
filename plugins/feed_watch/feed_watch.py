@@ -425,7 +425,7 @@ def register(ctx) -> None:
         resources=ActiveResourceRequest(
             tools=("feed_fetch",),
             mcp={"fetch": ("fetch",)},
-            optional_mcp_servers=("fetch",),
+            required_mcp_servers=("fetch",),
             conversation=True,
         ),
         restart_policy="on_failure",
