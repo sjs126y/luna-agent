@@ -64,6 +64,7 @@ def appcontainer_launch(
             env=worker_env,
             readable_roots=(plugin_root, environment_root, *runtime_roots),
             writable_roots=(data_root,),
+            denied_roots=((profile.lease_root,) if profile.lease_root else ()),
             allow_network=allow_network,
         )
 
@@ -106,4 +107,3 @@ def _python_runtime_roots(python: Path, environment_root: Path) -> tuple[Path, .
     if not candidate.is_dir():
         raise RuntimeError(f"Windows plugin Python home does not exist: {candidate}")
     return (candidate,)
-

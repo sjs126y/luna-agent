@@ -133,7 +133,7 @@ async def spawn_process(
             **kwargs,
         )
 
-    if os.name == "nt" and launch.backend != "windows-appcontainer":
+    if os.name == "nt":
         from luna_agent.tools import windows_job
 
         if not windows_job.attach(proc.pid):

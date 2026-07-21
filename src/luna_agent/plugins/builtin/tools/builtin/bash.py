@@ -103,13 +103,10 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
         return
     try:
         if _is_windows():
-            if getattr(proc, "_luna_appcontainer_broker", False):
-                proc.kill()
-            else:
-                from luna_agent.tools import windows_job
+            from luna_agent.tools import windows_job
 
-                if not windows_job.terminate(proc.pid):
-                    proc.kill()
+            if not windows_job.terminate(proc.pid):
+                proc.kill()
         else:
             os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -271,8 +268,10 @@ async def _bash(
         return f"Error: {e}"
     finally:
         if proc is not None and getattr(proc, "_luna_appcontainer_broker", False):
+            from luna_agent.tools import windows_job
             from luna_agent.tools.process_sandbox import cleanup_shell_broker_request
 
+            windows_job.release(proc.pid)
             cleanup_shell_broker_request(getattr(proc, "_luna_broker_request", None))
         elif proc is not None and _is_windows():
             from luna_agent.tools import windows_job

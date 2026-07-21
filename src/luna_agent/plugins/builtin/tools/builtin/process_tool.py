@@ -90,16 +90,15 @@ async def _waiter(pid: int, proc: asyncio.subprocess.Process) -> None:
                 tp.status = "done"
         import os
         if os.name == "nt":
+            from luna_agent.tools import windows_job
+
+            windows_job.release(proc.pid)
             if getattr(proc, "_luna_appcontainer_broker", False):
                 from luna_agent.tools.process_sandbox import cleanup_shell_broker_request
 
                 cleanup_shell_broker_request(
                     getattr(proc, "_luna_broker_request", None)
                 )
-            else:
-                from luna_agent.tools import windows_job
-
-                windows_job.release(proc.pid)
     except Exception as exc:
         logger.debug("Process %d waiter error: %s", pid, exc)
 

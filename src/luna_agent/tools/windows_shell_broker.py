@@ -212,7 +212,12 @@ def _run(request: BrokerRequest) -> int:
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env["PATH"] = _safe_path(env.get("PATH", ""), runtime_roots)
 
-    acl_roots = tuple(dict.fromkeys((*request.acl_roots, *runtime_roots, temp_root)))
+    denied_roots = tuple(dict.fromkeys((*request.masked_paths, request.lease_root)))
+    acl_roots = tuple(
+        dict.fromkeys(
+            (*request.acl_roots, *runtime_roots, temp_root, *denied_roots)
+        )
+    )
     lease = AppContainerLease(
         profile_name=request.profile_name,
         roots=acl_roots,
@@ -227,6 +232,7 @@ def _run(request: BrokerRequest) -> int:
             env=env,
             readable_roots=tuple(dict.fromkeys((*request.read_roots, *runtime_roots))),
             writable_roots=tuple(dict.fromkeys((*request.write_roots, temp_root))),
+            denied_roots=denied_roots,
             allow_network=request.allow_network,
         )
         # Built-in commands do not receive an interactive stdin.  EOF is less

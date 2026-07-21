@@ -246,9 +246,14 @@ class AppContainerLease:
         lease_root: Path | None = None,
     ) -> None:
         self.profile_name = profile_name
-        self.roots = tuple(Path(root).resolve() for root in roots)
+        normalized_roots = tuple(Path(root).resolve() for root in roots)
         self.active_process_limit = max(1, int(active_process_limit))
         self.lease_root = Path(lease_root).resolve() if lease_root else None
+        self.roots = tuple(
+            dict.fromkeys(
+                (*normalized_roots, self.lease_root) if self.lease_root else normalized_roots
+            )
+        )
         self.info = AppContainerLaunchInfo(
             profile_name=profile_name,
             active_process_limit=self.active_process_limit,
@@ -271,6 +276,7 @@ class AppContainerLease:
         env: dict[str, str],
         readable_roots: Sequence[Path] = (),
         writable_roots: Sequence[Path] = (),
+        denied_roots: Sequence[Path] = (),
         allow_network: bool = False,
     ) -> AppContainerProcess:
         if os.name != "nt":
@@ -285,6 +291,7 @@ class AppContainerLease:
             profile_name=self.profile_name,
             readable_roots=tuple(Path(root).resolve() for root in readable_roots),
             writable_roots=tuple(Path(root).resolve() for root in writable_roots),
+            denied_roots=tuple(Path(root).resolve() for root in denied_roots),
             allow_network=allow_network,
             active_process_limit=self.active_process_limit,
         )
@@ -452,6 +459,7 @@ def _spawn_appcontainer(
     profile_name: str,
     readable_roots: Sequence[Path],
     writable_roots: Sequence[Path],
+    denied_roots: Sequence[Path],
     allow_network: bool,
     active_process_limit: int,
 ) -> AppContainerProcess:
@@ -495,6 +503,8 @@ def _spawn_appcontainer(
             _grant_appcontainer_access(Path(root), sid_text.value, write=False)
         for root in writable_roots:
             _grant_appcontainer_access(Path(root), sid_text.value, write=True)
+        for root in denied_roots:
+            _deny_appcontainer_access(Path(root), sid_text.value)
 
         capabilities: Any = None
         capability_count = 0
@@ -784,7 +794,7 @@ def _revoke_appcontainer_access(path: Path, sid: str) -> None:
     if not path.exists():
         return
     completed = subprocess.run(
-        ["icacls", str(path), "/remove:g", f"*{sid}", "/C"],
+        ["icacls", str(path), "/remove", f"*{sid}", "/C"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -795,6 +805,26 @@ def _revoke_appcontainer_access(path: Path, sid: str) -> None:
     if completed.returncode != 0:
         raise RuntimeError(
             f"Failed to revoke AppContainer access from {path}: "
+            f"{(completed.stdout or '')[-2000:]}"
+        )
+
+
+def _deny_appcontainer_access(path: Path, sid: str) -> None:
+    if not path.exists():
+        return
+    permission = "(OI)(CI)(F)" if path.is_dir() else "(F)"
+    completed = subprocess.run(
+        ["icacls", str(path), "/deny", f"*{sid}:{permission}", "/C"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Failed to deny AppContainer access to {path}: "
             f"{(completed.stdout or '')[-2000:]}"
         )
 
