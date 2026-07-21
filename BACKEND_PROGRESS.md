@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1286%20passed-2EA44F" alt="1286 tests passed">
+  <img src="https://img.shields.io/badge/tests-1296%20passed-2EA44F" alt="1296 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--21-555555" alt="Updated 2026-07-21">
 </p>
 
@@ -20,6 +20,15 @@
 </div>
 
 ---
+
+## 2026-07-21：Live 观察故障收尾与阶段性修复
+
+- 基线提交为 `44449f7`，修复分支为 `fix/live-observability-repairs`；基线包含个人 Agent 身份、领域 live inspection、审计/结构化日志和测试手册。
+- `9b3724e` 修复隔离 Codex Bridge 的宿主相对路径：宿主统一解析并种子化 `CODEX_HOME`，Worker 和 MCP 使用同一绝对路径；Runtime inspection 改为读取真实 WorkerSupervisor 计数，并能将插件内部 MCP 重连标记为 `degraded`。
+- `3f2dce7` 稳定观察契约：`tool_call` 兼容扁平参数、未知插件返回 `plugin_not_found`、owner ID 只返回配置形状、installed/local provenance 不再产生伪边界 warning；Runtime live schema 升为 `2`。
+- `0450025` 为 Memory 增加只读维护积压计数，为 Feed Watch 增加 Fetch MCP/robots/network 错误分类和指数退避；不引入全局自动迁移，也不绕过 MCP 网络边界。
+- 当前仍需在重启 Gateway 后做一次 WSL live smoke，确认真实 Codex MCP 已 `ready`；Feed Watch 的 GitHub 网络可用性仍属于外部依赖，不将其误判为 Worker 崩溃。
+- 验证：受影响子系统 `81 passed`，`compileall` 通过；完整回归 `1296 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
 
 ## 2026-07-21：个人 Agent 身份边界与领域观察端口
 
