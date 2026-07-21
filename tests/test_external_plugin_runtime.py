@@ -8,9 +8,53 @@ import pytest
 
 from luna_agent.config import Settings
 from luna_agent.plugins import PluginManager, PluginStatus
+from luna_agent.plugins.runtime.external_service import PluginHostWorkspaceService
 from luna_agent.skills.registry import skill_registry
 from luna_agent.tools.registry import tool_registry
 from luna_agent.workflow.registry import workflow_registry
+
+
+class _WorkspacePlugin:
+    key = "integrations/codex-bridge"
+    manifest = SimpleNamespace(path=Path(__file__))
+
+    def __init__(self, workspaces):
+        self.active_registration = SimpleNamespace(
+            resources=SimpleNamespace(workspaces=tuple(workspaces)),
+        )
+
+
+class _WorkspaceManager:
+    def __init__(self, config):
+        self.settings = SimpleNamespace(plugins_config={
+            "integrations/codex-bridge": config,
+        })
+
+
+@pytest.mark.asyncio
+async def test_workspace_service_infers_the_only_declared_name(tmp_path):
+    service = PluginHostWorkspaceService(_WorkspaceManager({
+        "development_root": str(tmp_path / "workspaces"),
+    }))
+    plugin = _WorkspacePlugin(["development"])
+
+    result = await service.call(plugin, "create", [], {"workspace": "demo"})
+
+    assert Path(result["path"]) == (tmp_path / "workspaces" / "demo").resolve()
+
+
+@pytest.mark.asyncio
+async def test_workspace_service_requires_name_for_multiple_declarations(tmp_path):
+    service = PluginHostWorkspaceService(_WorkspaceManager({
+        "host_workspaces": {
+            "development": {"root": str(tmp_path / "development")},
+            "artifacts": {"root": str(tmp_path / "artifacts")},
+        },
+    }))
+    plugin = _WorkspacePlugin(["development", "artifacts"])
+
+    with pytest.raises(PermissionError, match="Plugin workspace is not declared"):
+        await service.call(plugin, "create", [], {"workspace": "demo"})
 
 
 def test_external_runtime_normalizes_codex_paths_on_host(tmp_path: Path, monkeypatch) -> None:

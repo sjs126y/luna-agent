@@ -791,8 +791,13 @@ class PluginHostWorkspaceService:
         return BoundPluginWorkspacePort(self, plugin)
 
     async def call(self, plugin, operation: str, args: list[Any], kwargs: dict[str, Any]) -> Any:
-        declared = set(plugin.active_registration.resources.workspaces)
+        declared = tuple(plugin.active_registration.resources.workspaces)
         name = str(kwargs.get("name") or (args[0] if args else ""))
+        if not name and len(declared) == 1:
+            # Older external SDKs did not forward the bound workspace name.
+            # A single declaration is unambiguous; multiple declarations must
+            # continue to provide an explicit name.
+            name = str(declared[0])
         if name not in declared:
             raise PermissionError(f"Plugin workspace is not declared: {plugin.key}:{name}")
         spec = self._spec(plugin, name)

@@ -88,6 +88,8 @@ class CodexDevelopmentRuntime:
                 return self.summary(existing)
             workspace = await self.ctx.resources.workspace.create(workspace=plugin_id)
             workspace_path = str(_value(workspace, "path") or "")
+            if not workspace_path:
+                raise RuntimeError("Declared development workspace did not provide a path")
             await self._write_scaffold(plugin_id, description, brief)
             session = DevelopmentSession(
                 plugin_id=plugin_id,
