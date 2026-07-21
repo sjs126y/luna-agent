@@ -116,6 +116,40 @@ async def test_memory_archive_tracks_pending_index_retries(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_memory_archive_reports_bounded_maintenance_backlog(tmp_path) -> None:
+    archive = MemoryArchive(tmp_path / "memory.db")
+    await archive.initialize()
+    scope = MemoryScope(user_id="u1")
+    observation = Observation(kind=ObservationKind.EVENT, content="pending migration")
+    await archive.save_observations(scope, (observation,), migration_status="pending")
+    await archive.mark_observation_migration_failed(observation.id, "provider timeout")
+
+    await archive.upsert_memory(
+        scope,
+        MemoryRecord(id="m1", content="pending index", provider="luna", scope=scope),
+    )
+    await archive.set_backend_index_status(
+        "m1",
+        "vector",
+        backend="qdrant",
+        fingerprint="embedding:v1",
+        status="pending",
+        error="index timeout",
+    )
+
+    backlog = await archive.maintenance_backlog()
+
+    assert backlog["migration"]["pending"] == 1
+    assert backlog["migration"]["failed"] == 1
+    assert backlog["index"]["pending"] == 1
+    assert backlog["index"]["failed"] == 1
+    assert backlog["scope_count"] == 1
+    assert backlog["migration"]["oldest_pending_at"]
+    assert backlog["index"]["oldest_pending_at"]
+    await archive.close()
+
+
+@pytest.mark.asyncio
 async def test_memory_archive_tracks_vector_and_keyword_backends_independently(tmp_path) -> None:
     archive = MemoryArchive(tmp_path / "memory.db")
     await archive.initialize()

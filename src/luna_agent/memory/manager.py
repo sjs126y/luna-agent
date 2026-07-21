@@ -232,6 +232,11 @@ class MemoryManager:
                 if self.archive and hasattr(self.archive, "index_backend_metadata")
                 else {}
             )
+            maintenance = (
+                await self.archive.maintenance_backlog()
+                if self.archive and hasattr(self.archive, "maintenance_backlog")
+                else {}
+            )
             index_pending = sum(values.get("pending", 0) for values in index.values())
             index_global_pending = sum(values.get("pending", 0) for values in index_global.values())
             return {
@@ -260,6 +265,7 @@ class MemoryManager:
                     "global_pending": int(index_global_pending),
                     "backends": index_metadata,
                 },
+                "maintenance": maintenance,
                 "providers": {"internal": {"available": self.internal is not None}, "external": external},
                 "last_errors": dict(self._last_errors),
             }

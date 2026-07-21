@@ -19,6 +19,14 @@ from luna_agent_plugin_sdk import ActiveResourceRequest, CommandEntry, ToolEntry
 
 _MAX_FEED_BYTES = 2 * 1024 * 1024
 _MAX_REDIRECTS = 5
+_MAX_FETCH_RETRY_DELAY = 3600
+
+
+class FeedFetchError(RuntimeError):
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = str(code or "fetch_failed")
+        self.detail = str(detail or self.code)
+        super().__init__(self.detail)
 
 
 class ActiveConfig(BaseModel):
@@ -151,9 +159,22 @@ class FeedWatcher:
                 discovered.extend(await self._poll_subscription(subscription))
             except Exception as exc:
                 state = await self.repository.fetch_state(subscription["subscription_id"])
+                failure_count = int(state.get("failure_count") or 0) + 1
+                error_code = (
+                    exc.code
+                    if isinstance(exc, FeedFetchError)
+                    else _classify_fetch_error(str(exc))
+                )
+                retry_at = datetime.fromtimestamp(
+                    datetime.now(UTC).timestamp() + _fetch_retry_delay(failure_count),
+                    UTC,
+                ).isoformat()
                 state.update({
                     "last_checked_at": datetime.now(UTC).isoformat(),
                     "last_error": f"{type(exc).__name__}: {exc}",
+                    "last_error_code": error_code,
+                    "failure_count": failure_count,
+                    "next_retry_at": retry_at,
                 })
                 await self.repository.update_fetch_state(subscription["subscription_id"], state)
         if discovered:
@@ -164,16 +185,28 @@ class FeedWatcher:
     async def _poll_subscription(self, subscription: dict[str, Any]) -> list[dict[str, Any]]:
         subscription_id = subscription["subscription_id"]
         previous = await self.repository.fetch_state(subscription_id)
-        result = await self.ctx.resources.tool.call("feed_fetch", {
-            "url": subscription["url"],
-            "if_none_match": str(previous.get("etag") or ""),
-            "if_modified_since": str(previous.get("last_modified") or ""),
-        })
+        if not _retry_is_due(str(previous.get("next_retry_at") or "")):
+            return []
+        try:
+            result = await self.ctx.resources.tool.call("feed_fetch", {
+                "url": subscription["url"],
+                "if_none_match": str(previous.get("etag") or ""),
+                "if_modified_since": str(previous.get("last_modified") or ""),
+            })
+        except Exception as exc:
+            raise FeedFetchError(_classify_fetch_error(str(exc)), str(exc)) from exc
         if str(getattr(result, "status", "")) != "success":
-            raise RuntimeError(str(getattr(result, "error", "") or getattr(result, "content", "")))
+            detail = str(getattr(result, "error", "") or getattr(result, "content", ""))
+            raise FeedFetchError(_classify_fetch_error(detail), detail)
         payload = json.loads(str(getattr(result, "content", "") or "{}"))
         if payload.get("not_modified"):
-            previous.update({"last_checked_at": datetime.now(UTC).isoformat(), "last_error": ""})
+            previous.update({
+                "last_checked_at": datetime.now(UTC).isoformat(),
+                "last_error": "",
+                "last_error_code": "",
+                "failure_count": 0,
+                "next_retry_at": "",
+            })
             await self.repository.update_fetch_state(subscription_id, previous)
             return []
         entries = _parse_feed(str(payload.get("content") or ""), limit=self.config.max_items_per_feed)
@@ -186,6 +219,9 @@ class FeedWatcher:
             "seen_ids": list(dict.fromkeys([item["entry_id"] for item in entries] + list(seen)))[:500],
             "last_checked_at": datetime.now(UTC).isoformat(),
             "last_error": "",
+            "last_error_code": "",
+            "failure_count": 0,
+            "next_retry_at": "",
         }
         await self.repository.update_fetch_state(subscription_id, state)
         if first_run:
@@ -403,6 +439,38 @@ def _check_feed_url(url: str, trusted_private_hosts: frozenset[str]) -> str | No
 
     hostname = str(urlparse(str(url or "")).hostname or "").lower().rstrip(".")
     return check_url(url, allow_private=bool(hostname and hostname in trusted_private_hosts))
+
+
+def _fetch_retry_delay(failure_count: int) -> int:
+    exponent = max(0, min(int(failure_count) - 1, 10))
+    return min(_MAX_FETCH_RETRY_DELAY, 30 * (2 ** exponent))
+
+
+def _retry_is_due(value: str) -> bool:
+    if not value:
+        return True
+    try:
+        retry_at = datetime.fromisoformat(value)
+    except ValueError:
+        return True
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return datetime.now(UTC) >= retry_at
+
+
+def _classify_fetch_error(detail: str) -> str:
+    text = str(detail or "").lower()
+    if "robots" in text:
+        return "robots_check_failed"
+    if "unavailable" in text or "not allowlisted" in text or "mcp__fetch" in text:
+        return "fetch_tool_unavailable"
+    if any(token in text for token in ("network", "connection", "connect", "timeout", "dns")):
+        return "fetch_network_error"
+    if any(token in text for token in ("http", "status code", "response")):
+        return "feed_http_error"
+    if any(token in text for token in ("xml", "parse", "atom", "rss")):
+        return "feed_parse_error"
+    return "fetch_failed"
 
 
 def _subscription(name: str, url: str, keywords: list[str], sessions: list[str], source: str) -> dict[str, Any]:

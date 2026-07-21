@@ -493,6 +493,54 @@ class MemoryArchive:
             result.setdefault(str(row["index_kind"]), {})[str(row["status"])] = int(row["count"])
         return result
 
+    async def maintenance_backlog(self, scope: MemoryScope | None = None) -> dict[str, Any]:
+        """Return bounded maintenance counters without exposing memory content."""
+        scope_clause = " AND scope_key = ?" if scope is not None else ""
+        index_scope_clause = scope_clause.replace("scope_key", "m.scope_key")
+        scope_params = (_scope_key(scope),) if scope is not None else ()
+        migration = await self._fetchone(
+            f"""SELECT COUNT(*) AS pending,
+                SUM(CASE WHEN migration_error <> '' THEN 1 ELSE 0 END) AS failed,
+                MIN(COALESCE(NULLIF(migration_updated_at, ''), created_at)) AS oldest_pending_at
+                FROM observations
+                WHERE migration_status = 'pending'{scope_clause}""",
+            scope_params,
+        )
+        index = await self._fetchone(
+            f"""SELECT COUNT(*) AS pending,
+                SUM(CASE WHEN s.error <> '' THEN 1 ELSE 0 END) AS failed,
+                MIN(s.updated_at) AS oldest_pending_at
+                FROM memory_index_state s JOIN memories m ON m.id = s.memory_id
+                WHERE s.status = 'pending'{index_scope_clause}""",
+            scope_params,
+        )
+        scope_count_row = await self._fetchone(
+            f"""SELECT COUNT(*) AS count FROM (
+                SELECT scope_key FROM observations WHERE migration_status = 'pending'{scope_clause}
+                UNION
+                SELECT m.scope_key FROM memory_index_state s JOIN memories m ON m.id = s.memory_id
+                WHERE s.status = 'pending'{index_scope_clause}
+            )""",
+            scope_params + scope_params,
+        )
+
+        def _counter(row, name: str) -> int:
+            return int((row[name] if row is not None else 0) or 0)
+
+        return {
+            "migration": {
+                "pending": _counter(migration, "pending"),
+                "failed": _counter(migration, "failed"),
+                "oldest_pending_at": str((migration["oldest_pending_at"] if migration else "") or ""),
+            },
+            "index": {
+                "pending": _counter(index, "pending"),
+                "failed": _counter(index, "failed"),
+                "oldest_pending_at": str((index["oldest_pending_at"] if index else "") or ""),
+            },
+            "scope_count": _counter(scope_count_row, "count"),
+        }
+
     async def index_backend_metadata(self) -> dict[str, dict[str, str]]:
         rows = await self._fetchall("SELECT * FROM memory_index_backends ORDER BY index_kind")
         return {str(row["index_kind"]): dict(row) for row in rows}

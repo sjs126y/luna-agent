@@ -97,6 +97,7 @@
 - `status`、`runtime_state`、generation 和 Worker 状态一致。
 - 外置插件显示 sandbox backend、environment、PID/Worker 状态和最近错误摘要。
 - 主动插件显示 active runner 是否启用、最近心跳/事件/错误和目标 session。
+- Feed Watch 抓取失败时检查 `last_error_code`、`failure_count`、`next_retry_at`；网络或 Fetch MCP 失败不能直接判定 Worker 崩溃。
 - `markdown-structure-analyzer`、`document-converter`、`workspace-watch` 等已迁移插件版本和状态正确。
 - 看到 `ERROR` 时，继续用 `info` 查看依赖、manifest、environment 和最近错误，不直接判定为代码故障。
 
@@ -156,6 +157,7 @@
 - 当前 effective provider 是否符合配置。
 - external/builtin provider 是否 ready 或明确 degraded。
 - pending migration、pending index、review 状态和最近错误是否持续增长。
+- `maintenance` 中的 pending/failed/oldest_pending_at 是否能解释积压来源；pending 本身不是 Runtime 故障。
 - canonical owner 字段存在且没有按每个外部 user ID 无限分裂的迹象。
 
 小鹿不读取记忆原文、不执行 owner scope 迁移、不修改索引；发现 pending 或 provider 错误时只汇报数量、状态和 reason，不自行修复。

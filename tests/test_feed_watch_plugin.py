@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import socket
 from pathlib import Path
 from types import SimpleNamespace
@@ -120,6 +121,36 @@ async def test_feed_watch_baselines_then_delivers_new_entry(tmp_path):
     manager.unload_plugin(plugin.key)
 
 
+@pytest.mark.asyncio
+async def test_feed_watch_classifies_unavailable_fetch_and_backs_off(tmp_path):
+    manager = _manager(tmp_path)
+    plugin = manager.list_plugins()[0]
+    module = plugin.module
+    config = module.FeedWatchConfig.model_validate({
+        "feeds": [{"name": "Example", "url": "https://example.com/feed.xml"}],
+        "active": {"sessions": ["wechat:c1:u1"]},
+    })
+    storage = _Storage()
+    repository = module.FeedRepository(storage, config)
+    tool = _FailingTool()
+    watcher = module.FeedWatcher(
+        SimpleNamespace(resources=SimpleNamespace(tool=tool, conversation=_Conversation())),
+        config,
+        repository,
+    )
+
+    assert await watcher.poll_once() == []
+    state = await repository.fetch_state("feed_" + hashlib.sha256(
+        b"https://example.com/feed.xml"
+    ).hexdigest()[:16])
+    assert state["last_error_code"] == "fetch_tool_unavailable"
+    assert state["failure_count"] == 1
+    assert state["next_retry_at"]
+    assert await watcher.poll_once() == []
+    assert len(tool.calls) == 1
+    manager.unload_plugin(plugin.key)
+
+
 def _rss(*items):
     body = "".join(
         f"<item><guid>{identifier}</guid><title>{title}</title>"
@@ -159,6 +190,17 @@ class _Tool:
         assert name == "feed_fetch"
         self.calls.append(dict(arguments))
         return SimpleNamespace(status="success", content=self.payloads.pop(0), error="")
+
+
+class _FailingTool:
+    def __init__(self):
+        self.calls = []
+
+    async def call(self, name, arguments):
+        self.calls.append((name, dict(arguments)))
+        raise RuntimeError(
+            "WorkerProtocolError: active plugin tool is unavailable: mcp__fetch__fetch"
+        )
 
 
 class _Conversation:

@@ -1087,6 +1087,7 @@ Memory doctor/health payload 提供：
 - `index.status_counts: object`，按 `vector`、`keyword` 分组的状态计数。
 - `index.global_status_counts: object`，所有 scope 的分组状态计数。
 - `index.backends: object`，当前索引 Backend、fingerprint、generation 与更新时间。
+- `maintenance.migration` / `maintenance.index`：只读的 pending、failed、oldest_pending_at 维护计数；`maintenance.scope_count` 表示存在积压的 scope 数量，不包含记忆正文或 scope 原值。
 
 Memory `search` / `list` 的每条外部记录额外提供：
 
