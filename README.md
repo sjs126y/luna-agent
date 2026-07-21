@@ -2,129 +2,122 @@
 
 <h1>Luna Agent</h1>
 
-<p><strong>一个真正长期运行、会使用工具、拥有记忆、连接多平台的个人 AI 助手</strong></p>
+<p><strong>一个能长期替你做事的私人 Agent</strong></p>
+
+<p>
+  会记住你、使用工具、处理任务、主动工作，<br>
+  并在你的授权范围内不断扩展能力。
+</p>
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <a href="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml"><img src="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <img src="https://img.shields.io/badge/tests-1297%20passed-2EA44F?logo=pytest&logoColor=white" alt="1297 tests passed">
-  <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
-  <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
-  <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
   <img src="https://img.shields.io/github/last-commit/sjs126y/luna-agent?label=last%20commit" alt="Last commit">
-  <img src="https://img.shields.io/github/repo-size/sjs126y/luna-agent" alt="Repository size">
 </p>
 
 <p>
   <a href="#快速开始">快速开始</a> ·
+  <a href="#核心亮点">核心亮点</a> ·
   <a href="docs/README.md">文档中心</a> ·
-  <a href="docs/capabilities-and-boundaries.md">功能全景</a> ·
-  <a href="docs/platforms.md">平台接入</a> ·
-  <a href="docs/plugins.md">插件开发</a> ·
-  <a href="docs/architecture.md">实现原理</a>
+  <a href="docs/capabilities-and-boundaries.md">能力与边界</a> ·
+  <a href="docs/plugins.md">插件开发</a>
 </p>
 
 </div>
 
 ---
 
-Luna Agent 不是套在模型外面的一层聊天界面。它可以在终端与你对话，也可以长期运行在微信、QQ、Telegram 和飞书；它会真实调用工具、记住重要信息、处理文件和图片，并在执行敏感操作前向你确认。
+Luna Agent 不只是一个等待你提问的聊天窗口。它可以长期运行，理解你的上下文，调用合适的工具完成工作，把结果交付给你，并在之后继续记得重要信息。
 
-> 你面对的是同一个助手。换到另一个平台、隔几天再回来，工具、记忆、会话和行为边界仍然保持一致。
+它能做什么，取决于当前拥有的工具和插件，而不是固定在一组聊天功能里。只要有对应能力，它就可以查询信息、处理文件、运行任务、编写代码、观察工作区，或者完成一整套自动化流程。
 
-## 它能做什么
+## 核心亮点
 
 <table>
   <tr>
-    <td width="33%" valign="top"><strong>使用电脑与工具</strong><br><br>读写文件、搜索内容、执行命令、运行代码、管理后台进程，并保留真实工具记录。</td>
-    <td width="33%" valign="top"><strong>连接外部世界</strong><br><br>通过 MCP 使用 GitHub、浏览器、开发文档和其他外部服务，工具可按需发现。</td>
-    <td width="33%" valign="top"><strong>记住长期信息</strong><br><br>保存偏好、经历、关系、承诺和行为信息，在后续会话中自然召回。</td>
+    <td width="50%" valign="top">
+      <h3>安全地替你做事</h3>
+      <p>重要操作可以先询问你，文件、命令、网络和个人信息都有清晰的授权边界。每次工具调用、拒绝和结果都可以追溯，插件也不会直接和主程序混在一起。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>能力几乎没有固定上限</h3>
+      <p>给它一个工具，它就能多做一类工作；接入一个插件，它就能获得一组新的能力。工具、服务和工作流程可以按你的需要组合起来。</p>
+    </td>
   </tr>
   <tr>
-    <td valign="top"><strong>跨平台陪伴</strong><br><br>支持 CLI、inline TUI、微信、QQ、Telegram 与飞书，不需要为每个平台配置一套人格。</td>
-    <td valign="top"><strong>发送图片与文件</strong><br><br>理解用户附件，也能把截图、文档和工具产物作为真正的平台附件发回，而不是返回本地路径。</td>
-    <td valign="top"><strong>完成复杂任务</strong><br><br>支持工作流、子 Agent、后台任务、运行中修正和停止，适合多步骤任务。</td>
+    <td valign="top">
+      <h3>增加能力时不用停机</h3>
+      <p>插件可以在运行中更新、重新加载和回到上一版本。插件出错时，影响范围会被限制在自己的运行环境里，不会拖垮整个 Agent。</p>
+    </td>
+    <td valign="top">
+      <h3>可以连接 Codex 一起开发</h3>
+      <p>你可以让 Codex 协助创建、编写、测试和打包新的插件，把“想增加一个能力”变成一条可以持续迭代的工作流程。</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>会随着使用积累记忆</h3>
+      <p>它不只保存聊天记录，还能整理你的偏好、项目背景、重要决定和长期目标，并在后续工作中找回真正有用的信息。</p>
+    </td>
+    <td valign="top">
+      <h3>不需要等你每次提醒</h3>
+      <p>它可以执行提醒、定时任务、收件箱处理和工作区观察，在有变化时再把结果带回正式会话。</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>能看见自己正在发生什么</h3>
+      <p>运行状态、会话进度、记忆维护、插件状态和错误原因都有独立的观察入口，排查问题时不必只猜测发生了什么。</p>
+    </td>
+    <td valign="top">
+      <h3>从一个入口持续工作</h3>
+      <p>终端对话、已配置的平台、后台任务和主动事件使用同一套会话、工具、记忆和交付能力，不需要为每种入口重新设计一个助手。</p>
+    </td>
   </tr>
 </table>
 
-## 使用方式
-
-| 入口 | 适合场景 | 当前能力 |
-| --- | --- | --- |
-| **Inline TUI** | 本地开发、连续工作 | 流式回答、工具轨迹、命令菜单、权限确认、上下文状态 |
-| **微信** | 日常对话与轻量任务 | 私聊、附件输入、图片/文件/视频发送 |
-| **QQ / NapCat** | 长期在线与丰富媒体 | 私聊、群聊、图片、文件、音频、视频 |
-| **Telegram** | Bot 与远程使用 | 文本、图片、文件、音频、视频 |
-| **飞书** | 工作沟通 | 长连接消息、图片和文件 |
-| **Cron / Plugin** | 定时与外部触发 | 使用正式会话、工具、记忆和投递链路 |
+## 它怎样完成一件事
 
 ```mermaid
 flowchart LR
-    You([You]) --> TUI[Terminal]
-    You --> Apps[WeChat · QQ · Telegram · Feishu]
-    TUI --> LunaAgent[Luna Agent]
-    Apps --> LunaAgent
-    LunaAgent --> Tools[Tools & MCP]
-    LunaAgent --> Memory[Long-term Memory]
-    LunaAgent --> Tasks[Workflows & Sub-agents]
-    LunaAgent --> Reply[Text · Images · Files · Media]
+    You([你提出目标]) --> Understand[理解需求和上下文]
+    Understand --> Remember[找回相关记忆]
+    Remember --> Act[选择工具、插件或后台任务]
+    Act --> Confirm{需要确认吗？}
+    Confirm -- 是 --> Approval[向你请求授权]
+    Confirm -- 否 --> Execute[执行并记录结果]
+    Approval --> Execute
+    Execute --> Deliver[返回结果或主动通知]
+    Deliver --> Keep[保留值得记住的信息]
 ```
 
-## 典型任务
+一次任务可以只是回答问题，也可以跨越多个工具、文件和后台步骤。执行过程中可以查看进度、停止任务，或者根据新的信息继续修正方向。
 
-<table>
-  <tr>
-    <td><strong>项目协作</strong></td>
-    <td>“检查这个仓库最近的改动，找出风险并整理成报告发给我。”</td>
-  </tr>
-  <tr>
-    <td><strong>网页操作</strong></td>
-    <td>“打开这个页面，检查实际内容，截一张图并发给我。”</td>
-  </tr>
-  <tr>
-    <td><strong>长期记忆</strong></td>
-    <td>“记住我偏好的工作方式，下次给方案时继续按这个习惯。”</td>
-  </tr>
-  <tr>
-    <td><strong>后台任务</strong></td>
-    <td>“启动这个长任务，我需要时查看进度；现在先处理另一件事。”</td>
-  </tr>
-  <tr>
-    <td><strong>多平台文件</strong></td>
-    <td>“生成一份结果文件，然后直接通过当前聊天发给我。”</td>
-  </tr>
-</table>
+## 你可以让它做什么
 
-## 安全不是一个开关
-
-你可以按场景选择自动化程度：
-
-| Mode | 行为 |
+| 目标 | 示例 |
 | --- | --- |
-| **Read Only** | 只读取允许范围内的内容，扩权请求直接拒绝 |
-| **Ask First** | 读取优先，写入和网络等资源按需确认 |
-| **Local Auto** | 在工作目录内自主读写并使用网络，越界文件或显式高风险工具仍询问 |
-| **Full Auto** | 最大化自动执行，但受保护路径等硬限制仍然有效 |
+| 处理项目 | 检查仓库改动、分析风险、运行测试、整理报告 |
+| 使用信息 | 查询资料、阅读网页、比较文档、提取长文档内容 |
+| 管理文件 | 读取和整理文件，生成文档、表格、图片或其他结果 |
+| 编写代码 | 设计功能、修改代码、验证结果，并通过 Codex 协助开发插件 |
+| 自动执行 | 设置提醒、运行定时任务、观察工作区或处理收件箱 |
+| 连接服务 | 按需接入 GitHub、浏览器、文档服务和其他外部工具 |
+| 长期协作 | 记住你的偏好、项目背景、决定和后续计划 |
 
-授权可以只允许一次，也可以在当前会话内限时生效。工具调用、拒绝原因和真实结果都有记录，不需要只相信模型声称做过什么。
+## 从哪里使用
 
-[查看完整能力与安全边界](docs/capabilities-and-boundaries.md)
+Luna Agent 可以在本地终端中使用，也可以连接已经配置好的平台。无论从哪里进入，核心的会话、工具、记忆和权限规则保持一致。
 
-## 功能全景
-
-| 能力 | 状态 | 说明 |
-| --- | :---: | --- |
-| 多轮会话与流式输出 | Ready | 会话切换、上下文统计、运行中停止与修正 |
-| 模型与协议适配 | Ready | 自动选择 provider 协议、识别模型限制并保护长上下文 |
-| 文件、Shell、网络与进程工具 | Ready | 核心工具直接可用，低频能力按需发现，扫描和输出有界 |
-| MCP Client Runtime | Ready | stdio / Streamable HTTP、后台启动、断线恢复 |
-| 长期个人记忆 | Ready | Luna Memory、Mem0、混合检索和本地 Qdrant |
-| 插件与 Skill | Ready | 独立 SDK、依赖解析、AI 脚手架、安装/回滚/卸载、热重载与主动 runner |
-| 多平台 Gateway | Ready | 微信、QQ、Telegram、飞书 |
-| 入站与出站多模态 | Ready | 图片、文件、音频、视频按平台能力处理 |
-| Workflow 与 Sub-agent | Ready | 并行、流水线、配额、活动状态 |
-| 主动决策系统 | Planned | 已有正式触发入口，决策策略后续推进 |
-| Desktop / Web | Reserved | 后端契约已预留，前端尚未实现 |
+```mermaid
+flowchart LR
+    Entry[终端或已配置的平台] --> Agent[Luna Agent]
+    Agent --> Tools[工具与外部服务]
+    Agent --> Memory[长期记忆]
+    Agent --> Jobs[后台任务与主动工作]
+    Agent --> Result[文字、文件、图片或其他结果]
+```
 
 ## 快速开始
 
@@ -138,73 +131,63 @@ uv sync
 uv run luna-agent init --profile local --copy-env --fix-dirs
 ```
 
-在 `.env` 中填写至少一个模型 API Key，然后检查环境：
+在 `.env` 中填写至少一个模型 API Key，然后检查环境并开始对话：
 
 ```bash
 uv run luna-agent doctor
 uv run luna-agent chat
 ```
 
-启动微信、QQ、Telegram 或飞书 Gateway：
+需要长期运行 Gateway 时：
 
 ```bash
 uv run luna-agent serve
 ```
 
-平台 Token、NapCat、MCP、Memory 和安全模式配置见 [配置说明](docs/configuration.md) 与 [平台接入](docs/platforms.md)。
+模型、记忆、安全模式、MCP 和平台连接配置见[配置说明](docs/configuration.md)。
 
 ## 扩展 Luna Agent
 
-插件可以组合工具、Skill、MCP Server、Hook、命令和工作流，也可以注册由 Gateway 托管的主动 runner；generation snapshot 支持在运行中安装、更新、回滚或卸载。小鹿能够通过 `tool_search` 按需查询、验证、测试、打包和管理外置插件，操作继续经过 sandbox、按 action 风险分级的审批和审计。外置插件只依赖 `luna-agent-plugin-sdk` 公共契约，manifest 可以声明宿主、SDK、插件、能力和 MCP 工具依赖；稳定 `request_id` 的主动提交在重启后仍保持幂等。当前仓库已经包含：
+你可以从一个小工具开始，也可以做一个完整的插件。插件能够为 Agent 增加工具、命令、知识、外部服务、自动任务和工作流程；更新时可以重新加载，失败时可以恢复，普通任务不会因为某个插件异常而全部停止。
 
-| 插件 | 提供能力 |
-| --- | --- |
-| **GitHub Assistant** | 仓库概览、PR Review、Issue 分类、Release Notes，以及 PR/Issue/Commit/CI 主动监视 |
-| **Developer Docs** | 查询库文档、比较 API、辅助版本升级 |
-| **Browser Operator** | 网页检查、网页测试、受控页面操作 |
-| **Codex Bridge** | 通过受限 MCP/Hook 连接外部 Codex 能力 |
-| **Workspace Watch** | 主动观察工作区文件变化，稳定后请求主 Agent 分析并投递结果 |
-| **Reminder** | 持久提醒、重启恢复、取消和到期后通过正式会话链路提醒 |
-| **Feed Watch** | RSS/Atom 条件抓取、关键词过滤、更新去重和批量摘要 |
-| **Inbox Watch** | 监视受控收件箱目录，将稳定文件物化为 Artifact 后交给主 Agent |
-| **Document Converter** | 将 PDF、DOCX、PPTX、XLSX、HTML 等本地文档按页转换成文本或 Markdown |
+如果你不想从零开始，可以让 Codex 协助完成插件开发流程：提出需求、生成代码、运行测试、打包安装，再由 Luna Agent 在受控环境中加载它。
 
-[查看插件格式与注册能力](docs/plugins.md)
+开始阅读：[插件开发指南](docs/plugins.md)
 
-## 项目状态
+## 运行状态与项目状态
 
-<p>
-  <img src="https://img.shields.io/badge/Python%20files-442-3776AB" alt="442 Python files">
-  <img src="https://img.shields.io/badge/Python%20LOC-104%2C214-555555" alt="104214 Python lines">
-  <img src="https://img.shields.io/badge/runtime%20LOC-62%2C125-0A84FF" alt="62125 runtime lines">
-  <img src="https://img.shields.io/badge/test%20LOC-34%2C896-2EA44F" alt="34896 test lines">
-</p>
+遇到问题时，可以先运行：
 
 ```bash
-python -m compileall -q src/luna_agent
-uv run pytest -q  # 1297 passed, 1 warning
+uv run luna-agent doctor
+uv run luna-agent doctor --verbose
 ```
 
-项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。
+项目还提供运行时、会话、记忆、插件、审计和日志等观察入口，方便确认 Agent 当前是否正常工作。
+
+当前测试基线为 `1297 passed, 1 warning`。执行完整测试：
+
+```bash
+uv run pytest -q
+```
 
 ## 继续阅读
 
 | 想了解 | 文档 |
 | --- | --- |
-| Luna Agent 到底有哪些能力 | [功能、边界与配置化](docs/capabilities-and-boundaries.md) |
-| 输入如何变成工具调用和回复 | [架构说明](docs/architecture.md) |
-| 哪些工具常驻、哪些能力按需发现 | [核心工具](docs/core-tools.md) |
+| Luna Agent 能做什么、不能做什么 | [功能、边界与配置化](docs/capabilities-and-boundaries.md) |
 | 如何配置模型、记忆、MCP 和安全模式 | [配置说明](docs/configuration.md) |
+| 如何编写、测试和安装插件 | [插件系统](docs/plugins.md) |
 | 如何连接微信、QQ、Telegram、飞书 | [平台接入](docs/platforms.md) |
-| 如何编写和组合插件 | [插件系统](docs/plugins.md) |
-| 插件架构还有哪些已知技术债 | [插件架构技术债](PLUGIN_ARCHITECTURE_DEBT.md) |
 | 如何启动、诊断和排错 | [运维与排错](docs/operations.md) |
-| 项目这段时间发生了什么 | [项目演进记录](PROJECT_EVOLUTION.md) |
-| 后续准备推进什么 | [架构方向](luna-agent-roadmap.zh-CN.md) |
+| 输入如何变成工具调用和回复 | [架构说明](docs/architecture.md) |
+| 核心工具如何组织和按需发现 | [核心工具](docs/core-tools.md) |
+| 插件架构有哪些已知问题 | [插件架构技术债](PLUGIN_ARCHITECTURE_DEBT.md) |
+| 项目如何一路演进到现在 | [项目演进记录](PROJECT_EVOLUTION.md) |
 
 ---
 
 <div align="center">
   <strong>Luna Agent</strong><br>
-  Tools, memory and conversations that stay with you.
+  一个会记住你、能替你做事、并且可以不断成长的私人 Agent。
 </div>
