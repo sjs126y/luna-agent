@@ -28,6 +28,7 @@
 - 主动插件由 `ActiveSupervisor` 管理，外置 Worker 由 `WorkerSupervisor` 管理；Worker 崩溃恢复保留 capability proxy、校验 contract、按退避重启并清理完成的 recovery task。Runtime health 新增 generation coordinator、active supervisor、worker supervisor 和 boot scope 诊断。
 - Memory manager 构造后 seal boot scope；Memory provider 立即冻结，deferred Platform 可完成 Gateway 首次装配，已有 Platform 路由随后冻结。两者在后续热重载中保留当前绑定并标记 `pending_restart`，下一次完整启动应用；Tool/Skill/Hook/Command/MCP 仍可在当前进程切换。
 - 原生 Windows smoke 已通过：AppContainer 文件/网络/子进程边界、受控 stdio、kill-on-close Job Object 和 profile mapping 清理均验证成功。WSL/Linux 继续使用 Bubblewrap，Windows `process-only` 仍仅用于开发。
+- GitHub Actions CI 使用锁定的 Python 3.12、uv 和 Action commit；每次 main push/PR 自动在 Ubuntu 运行 compileall 与完整 pytest，并在原生 Windows runner 运行 AppContainer smoke。Workflow 只有 `contents: read` 权限，不接触项目密钥或执行发布。
 - 验证：`python -m compileall -q src/luna_agent packages/luna-agent-plugin-sdk/src scripts`、`git diff --check`、原生 Windows smoke；完整回归 `1282 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
 
 ## 2026-07-20：插件隔离收尾、恢复与环境治理

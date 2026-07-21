@@ -6,12 +6,13 @@
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-1201%20passed-2EA44F?logo=pytest&logoColor=white" alt="1201 tests passed">
+  <a href="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml"><img src="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <img src="https://img.shields.io/badge/tests-1282%20passed-2EA44F?logo=pytest&logoColor=white" alt="1282 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
-  <img src="https://img.shields.io/github/last-commit/sujinsheng123/luna-agent?label=last%20commit" alt="Last commit">
-  <img src="https://img.shields.io/github/repo-size/sujinsheng123/luna-agent" alt="Repository size">
+  <img src="https://img.shields.io/github/last-commit/sjs126y/luna-agent?label=last%20commit" alt="Last commit">
+  <img src="https://img.shields.io/github/repo-size/sjs126y/luna-agent" alt="Repository size">
 </p>
 
 <p>
