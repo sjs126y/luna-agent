@@ -78,7 +78,7 @@ jobs:
         run: pwsh --version
 
       - name: Run Windows runtime tests
-        run: uv run --frozen pytest -q tests/test_windows_runtime.py
+        run: uv run --frozen pytest -q tests/test_windows_runtime.py tests/test_windows_shell_broker.py
 
       - name: Run native AppContainer smoke gate
         run: uv run --frozen python scripts/windows_plugin_appcontainer_smoke.py

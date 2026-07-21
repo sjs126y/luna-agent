@@ -101,6 +101,22 @@ def test_explicit_bwrap_fails_closed_when_unavailable(tmp_path, monkeypatch):
     assert "unavailable" in launch.warning
 
 
+def test_appcontainer_is_explicitly_unavailable_off_windows(tmp_path, monkeypatch):
+    from luna_agent.tools import process_sandbox
+
+    monkeypatch.setattr(process_sandbox, "_is_windows", lambda: False)
+    launch = process_sandbox.build_process_launch(
+        "pwd",
+        cwd=tmp_path,
+        writable_roots=[tmp_path],
+        allow_network=False,
+        requested_backend="appcontainer",
+    )
+
+    assert launch.backend == "unavailable"
+    assert "native Windows" in launch.warning
+
+
 def test_process_sandbox_snapshot_reports_degraded_network(monkeypatch):
     from luna_agent.tools import process_sandbox
 

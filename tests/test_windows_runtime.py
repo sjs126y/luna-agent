@@ -11,12 +11,15 @@ def _windows_capabilities(path: str = r"C:\Program Files\PowerShell\7\pwsh.exe")
         "bwrap_available": False,
         "powershell_path": path,
         "powershell_available": bool(path),
+        "appcontainer_available": bool(path),
+        "shell_broker_available": bool(path),
+        "lease_recovery_available": bool(path),
         "job_object_available": True,
         "network_namespace_available": False,
     }
 
 
-def test_windows_shell_launch_uses_pwsh_and_encoded_utf8_command(tmp_path, monkeypatch):
+def test_windows_shell_auto_uses_appcontainer_broker(tmp_path, monkeypatch):
     from luna_agent.tools import process_sandbox
 
     monkeypatch.setattr(process_sandbox, "_is_windows", lambda: True)
@@ -33,8 +36,34 @@ def test_windows_shell_launch_uses_pwsh_and_encoded_utf8_command(tmp_path, monke
         allow_network=False,
     )
 
+    assert launch.backend == "windows-appcontainer"
+    assert launch.argv[1:] == ("-m", "luna_agent.tools.windows_shell_broker")
+    assert launch.broker_request["schema_version"] == 1
+    assert launch.broker_request["command"] == "Write-Output '你好'"
+    assert launch.security_level == "os-isolated"
+    assert launch.process_tree_managed is True
+    assert launch.filesystem_isolated is True
+
+
+def test_windows_legacy_launch_keeps_controlled_host_behavior(tmp_path, monkeypatch):
+    from luna_agent.tools import process_sandbox
+
+    monkeypatch.setattr(process_sandbox, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        process_sandbox,
+        "process_sandbox_capabilities",
+        lambda: _windows_capabilities(),
+    )
+
+    launch = process_sandbox.build_shell_process_launch(
+        "Write-Output '你好'",
+        cwd=tmp_path,
+        writable_roots=[tmp_path],
+        allow_network=False,
+        requested_backend="legacy",
+    )
+
     assert launch.backend == "windows-powershell"
-    assert launch.argv[0].endswith("pwsh.exe")
     assert launch.argv[1:5] == (
         "-NoLogo",
         "-NoProfile",
@@ -44,7 +73,6 @@ def test_windows_shell_launch_uses_pwsh_and_encoded_utf8_command(tmp_path, monke
     decoded = base64.b64decode(launch.argv[5]).decode("utf-16-le")
     assert "Write-Output '你好'" in decoded
     assert launch.security_level == "controlled-host"
-    assert launch.process_tree_managed is True
     assert launch.filesystem_isolated is False
 
 
@@ -69,7 +97,7 @@ def test_windows_shell_requires_powershell7(tmp_path, monkeypatch):
     assert "PowerShell 7" in launch.warning
 
 
-def test_windows_snapshot_reports_controlled_host(monkeypatch):
+def test_windows_snapshot_reports_appcontainer(monkeypatch):
     from luna_agent.tools import process_sandbox
 
     monkeypatch.setattr(process_sandbox, "_is_windows", lambda: True)
@@ -81,12 +109,13 @@ def test_windows_snapshot_reports_controlled_host(monkeypatch):
 
     snapshot = process_sandbox.process_sandbox_snapshot("auto")
 
-    assert snapshot["effective_backend"] == "windows-powershell"
-    assert snapshot["bash_effective_backend"] == "windows-powershell"
-    assert snapshot["security_level"] == "controlled-host"
+    assert snapshot["effective_backend"] == "windows-appcontainer"
+    assert snapshot["bash_effective_backend"] == "windows-appcontainer"
+    assert snapshot["security_level"] == "os-isolated"
     assert snapshot["process_tree_managed"] is True
+    assert snapshot["lease_recovery_available"] is True
     assert snapshot["bash_fail_closed"] is False
-    assert "controlled-host" in " ".join(snapshot["warnings"])
+    assert snapshot["warnings"] == []
 
 
 def test_windows_snapshot_fails_closed_without_powershell(monkeypatch):
@@ -218,3 +247,28 @@ async def test_native_windows_shell_executes_power_shell7(tmp_path):
 
     assert "Command finished" in result
     assert "windows-runtime-ok" in result
+    assert not list((tmp_path / ".luna-agent-leases").glob("*.json"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "nt", reason="native Windows runtime only")
+async def test_native_windows_process_start_uses_same_broker(tmp_path):
+    from luna_agent.plugins.builtin.tools.builtin import bash
+    from luna_agent.plugins.builtin.tools.builtin.process_tool import (
+        _process_start,
+        _process_wait,
+    )
+    from luna_agent.tools.sandbox import init_sandbox
+
+    init_sandbox([tmp_path], [])
+    bash.set_work_dir(tmp_path)
+    bash.set_process_backend("auto")
+    bash.set_allow_network(False)
+    bash.set_restrict_paths(True)
+
+    started = await _process_start("Write-Output 'background-runtime-ok'", cwd=str(tmp_path))
+    pid = int(started.split("Process [", 1)[1].split("]", 1)[0])
+    result = await _process_wait(pid, timeout=15)
+
+    assert "background-runtime-ok" in result
+    assert not list((tmp_path / ".luna-agent-leases").glob("*.json"))
