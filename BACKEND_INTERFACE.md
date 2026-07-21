@@ -43,7 +43,11 @@
 
 运行中的 Agent 通过领域归属的只读工具提供观察能力，不聚合成一个跨模块诊断对象。内置工具为 `runtime_inspect`、`conversation_inspect`、`platform_inspect`、`config_inspect`、`memory_inspect`、`audit_inspect` 和 `logs_query`。它们只在 live runtime 中可用；离线 `doctor` 继续消费 probe/snapshot，不调用这些工具。
 
-`runtime_inspect` 返回 `source=live`、`captured_at`、`status`、核心/MCP/插件/会话/投递/记忆摘要及各领域工具引用。`config_inspect` 只返回来源、有效性和脱敏字段，不能读取原始 secret。`audit_inspect` 与 `logs_query` 都限制时间/条数窗口并过滤 malformed 行。
+`runtime_inspect` 返回 `source=live`、`captured_at`、`status`、核心/MCP/插件/会话/投递/记忆摘要及各领域工具引用，当前 `schema_version` 为 `2`。插件 runtime 摘要中的 `worker_count`、`running_count`、`recovery_task_count` 和 `environment_lease_count` 来自 WorkerSupervisor；`active_workers`、`unhealthy_workers` 是兼容别名。启用插件的 MCP 处于 `degraded`、`reconnecting`、`failed` 或 `circuit_open` 时，Runtime 返回 `degraded` 并列出对应插件/MCP。
+
+`config_inspect` 只返回来源、有效性和脱敏字段，不能读取原始 secret 或 owner ID。`auth.owner_ids` 只返回 configured、platforms 和 owner_count。`plugin_inspect` 查询不存在的插件返回 `reason_code=plugin_not_found`，不暴露 `KeyError`。安装包的 `source` 以实际安装边界为准，`declared_source` 仅表示 manifest provenance。
+
+`audit_inspect` 与 `logs_query` 都限制时间/条数窗口并过滤 malformed 行；`tool_call` 同时兼容嵌套 `arguments` 和 provider 扁平参数，二者同时出现时以嵌套参数为准。
 
 事件、Tool Run、Turn Report、Audit 和 structured log 可以使用共同的 `trace_id`、`session_key`、`turn_id`、`request_id`、`operation_id` 关联。事件协议版本仍为 `1`；新增事件元数据字段为可选字段，旧消费者只读取 `protocol_version/type/message/data` 即可。
 

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +24,39 @@ def test_owner_policy_is_platform_scoped_and_rejects_groups():
     assert not policy.is_allowed(_source(user_id="other"))
     assert not policy.is_allowed(_source(chat_type="group"))
     assert policy.is_allowed(_source(platform="cli", user_id="any"))
+
+
+@pytest.mark.asyncio
+async def test_config_inspect_masks_owner_ids_but_reports_shape(monkeypatch):
+    from luna_agent.config import Settings
+    from luna_agent.plugins.builtin.tools.builtin import observability_tools
+
+    settings = Settings(auth_owner_ids={"wechat": ["private-owner"]})
+    monkeypatch.setattr(
+        observability_tools,
+        "_port",
+        lambda: SimpleNamespace(settings=lambda: settings),
+    )
+
+    result = await observability_tools.config_inspect(action="field", key="auth.owner_ids")
+    payload = json.loads(result)
+
+    assert payload["ok"] is True
+    assert "private-owner" not in result
+    assert payload["field"]["value"] == {
+        "configured": True,
+        "platforms": ["wechat"],
+        "owner_count": 1,
+    }
+
+
+def test_unknown_plugin_query_uses_stable_error():
+    from luna_agent.plugins.query import PluginNotFoundError, PluginQueryService
+
+    manager = SimpleNamespace(_plugins={}, discover=lambda: None)
+
+    with pytest.raises(PluginNotFoundError, match="Plugin not found"):
+        PluginQueryService(manager).plugin_info("invalid/missing")
 
 
 def test_trace_context_restores_nested_values():

@@ -38,8 +38,7 @@ async def _tool_call(name: str, arguments: dict | None = None, **flat_arguments)
     # Some providers flatten discovered-tool arguments beside ``name`` even
     # though the bridge schema advertises an ``arguments`` object. Normalize
     # both shapes before entering the shared executor pipeline.
-    normalized_arguments = dict(arguments or {})
-    normalized_arguments.update(flat_arguments)
+    normalized_arguments = _normalize_tool_arguments(arguments, flat_arguments)
     entry = _tr.get(name)
     if entry is None:
         return f"Error: unknown tool '{name}'"
@@ -62,6 +61,16 @@ async def _tool_call(name: str, arguments: dict | None = None, **flat_arguments)
     if agent is None and confirm is None and event_sink is None:
         return format_tool_result(result)
     return result
+
+
+def _normalize_tool_arguments(
+    arguments: dict | None,
+    flat_arguments: dict,
+) -> dict:
+    """Accept provider-flattened calls while keeping nested input canonical."""
+    normalized = dict(flat_arguments or {})
+    normalized.update(dict(arguments or {}))
+    return normalized
 
 
 def _nested_tool_timeout(arguments: dict) -> float | None:

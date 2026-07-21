@@ -376,6 +376,40 @@ enabled_by_default: true
     assert any("builtin/*" in item for item in report["boundary_warnings"])
 
 
+def test_installed_plugin_declared_local_source_is_not_boundary_warning(tmp_path):
+    installed_root = tmp_path / "data" / "plugins" / "installed-local"
+    installed_root.mkdir(parents=True)
+    (installed_root / "plugin.yaml").write_text(
+        """
+key: user/installed-local
+name: Installed Local Declaration
+version: 1.0.0
+entrypoint: installed_local:register
+source: local
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (installed_root / "installed_local.py").write_text(
+        "def register(ctx): pass\n",
+        encoding="utf-8",
+    )
+
+    manager = PluginManager(
+        _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[installed_root]),
+        plugin_dirs=[installed_root],
+        state_path=tmp_path / "state.json",
+        include_builtin=False,
+    )
+    manager.discover()
+    report = manager.queries.plugin_info("user/installed-local")
+
+    assert report["source"] == "installed"
+    assert report["declared_source"] == "local"
+    assert report["source_boundary"] == "installed"
+    assert not any("声明 source" in item for item in report["boundary_warnings"])
+
+
 def test_plugin_doctor_reports_manifest_warnings(tmp_path):
     plugins_dir = tmp_path / "plugins"
     plugin_dir = plugins_dir / "platformish"

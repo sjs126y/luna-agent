@@ -49,6 +49,7 @@
 检查：
 
 - `source` 必须是 `live`。
+- 当前 `schema_version` 为 `2`；插件 runtime 中的 Worker 数应与 `plugin_inspect` 一致。
 - `captured_at` 应接近当前时间。
 - `status` 为 `healthy` 或有明确 `warnings` 的 `degraded`。
 - `runtime.core_ready` 为真。
@@ -72,6 +73,7 @@
 - 配置 summary 没有未解释的 error。
 - `auth.enabled`、owner 平台数量和当前项目约定一致。
 - 配置字段只显示脱敏状态、来源和有效性，不出现 token 或完整 secret。
+- `auth.owner_ids` 只能显示已配置平台和数量，不显示实际 owner ID。
 - 平台状态区分 `connected`、`disabled`、`error` 和“未配置”，不能把未配置说成运行故障。
 
 不能由小鹿验证的认证项：非 owner、群聊、未授权平台的拒绝顺序。小鹿只报告当前配置和当前会话实际表现，不推断未测试结论。

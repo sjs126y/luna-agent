@@ -111,6 +111,18 @@ async def config_inspect(action: str = "summary", key: str = "") -> str | ToolHa
             return _json({"ok": True, "section": section, "fields": snapshot.get("sections", {}).get(section, [])})
         if action == "field":
             field = next((item for item in snapshot.get("fields", []) if item.get("path") == key), None)
+            if key == "auth.owner_ids" and field is not None:
+                owner_ids = getattr(_port().settings(), "auth_owner_ids", {}) or {}
+                if isinstance(owner_ids, dict):
+                    field = dict(field)
+                    field["value"] = {
+                        "configured": bool(owner_ids),
+                        "platforms": sorted(str(platform) for platform in owner_ids),
+                        "owner_count": sum(
+                            len(values) if isinstance(values, (list, tuple, set, frozenset)) else 0
+                            for values in owner_ids.values()
+                        ),
+                    }
             return _json({"ok": field is not None, "field": field or {}, "key": key})
         raise ValueError(f"unsupported config_inspect action: {action}")
     except Exception as exc:

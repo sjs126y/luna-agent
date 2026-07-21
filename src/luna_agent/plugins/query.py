@@ -7,6 +7,14 @@ from typing import Any
 from luna_agent.plugins.core.models import PluginStatus
 
 
+class PluginNotFoundError(LookupError):
+    """Stable read-only query error for an unknown plugin key."""
+
+    def __init__(self, key: str) -> None:
+        self.key = str(key)
+        super().__init__(f"Plugin not found: {self.key}")
+
+
 class PluginQueryService:
     """Stable read-only views attached to the owning PluginManager."""
 
@@ -27,7 +35,9 @@ class PluginQueryService:
         manager = self._manager
         if not manager._plugins:
             manager.discover()
-        plugin = manager._plugins[key]
+        plugin = manager._plugins.get(key)
+        if plugin is None:
+            raise PluginNotFoundError(key)
         view = plugin.view()
         missing_env = manager._missing_env(plugin.manifest)
         manifest_error = (plugin.error or "") if plugin.manifest.entrypoint == "invalid" else ""

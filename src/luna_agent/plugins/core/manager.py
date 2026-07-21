@@ -1616,7 +1616,9 @@ class PluginManager:
         warnings: list[str] = []
         boundary = self._source_boundary(plugin)
         declared = manifest.declared_source or manifest.source
-        if declared != manifest.source:
+        if declared != manifest.source and not (
+            manifest.source == "installed" and declared == "local"
+        ):
             warnings.append(
                 f"Manifest 声明 source={declared}，实际按扫描边界识别为 {manifest.source}。"
             )

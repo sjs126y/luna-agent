@@ -14,6 +14,7 @@ from luna_agent.plugins.devtools import (
     package_plugin,
     validate_plugin_source,
 )
+from luna_agent.plugins.query import PluginNotFoundError
 from luna_agent.tools.entry import ToolEntry, ToolHandlerOutput
 from luna_agent.tools.registry import tool_registry
 from luna_agent.tools.runtime_context import current_tool_agent
@@ -172,6 +173,8 @@ async def plugin_inspect(
         if action == "environments":
             return _result({"ok": True, "environments": manager.queries.environments()})
         raise ValueError(f"Unsupported plugin_inspect action: {action}")
+    except PluginNotFoundError as exc:
+        return _error("plugin_not_found", str(exc))
     except Exception as exc:
         return _error("plugin_inspect_failed", f"{type(exc).__name__}: {exc}")
 
