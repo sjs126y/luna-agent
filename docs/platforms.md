@@ -50,10 +50,10 @@ Gateway.start()
 
 ## Telegram
 
-初始化：
+一条命令生成配置、环境文件并填写 Bot Token：
 
 ```bash
-uv run luna-agent init --profile telegram --copy-env --fix-dirs
+uv run luna-agent setup --platform telegram
 ```
 
 `.env`：
@@ -63,20 +63,14 @@ LLM_API_KEY=
 TELEGRAM_BOT_TOKEN=
 ```
 
-插件 key：
-
-```yaml
-plugins:
-  enabled:
-    - platforms/telegram
-```
+命令会安全提示输入 `TELEGRAM_BOT_TOKEN`，写入 `.env`，并检查平台配置。
 
 ## 飞书
 
-初始化：
+一条命令生成配置、环境文件并填写应用凭据：
 
 ```bash
-uv run luna-agent init --profile feishu --copy-env --fix-dirs
+uv run luna-agent setup --platform feishu
 ```
 
 `.env`：
@@ -87,20 +81,14 @@ FEISHU_APP_ID=
 FEISHU_APP_SECRET=
 ```
 
-插件 key：
-
-```yaml
-plugins:
-  enabled:
-    - platforms/feishu
-```
+命令会提示输入 App ID 和 App Secret，并将 Secret 安全写入 `.env`。
 
 ## 微信
 
-初始化：
+一条命令生成配置、环境文件并启动扫码配对：
 
 ```bash
-uv run luna-agent init --profile wechat --copy-env --fix-dirs
+uv run luna-agent setup --platform wechat
 ```
 
 `.env`：
@@ -113,13 +101,7 @@ WEIXIN_USER_ID=
 WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
 ```
 
-插件 key：
-
-```yaml
-plugins:
-  enabled:
-    - platforms/wechat
-```
+扫码成功后凭据保存到 `data/wechat/creds.json`，文件权限为 `0600`。
 
 ## QQ（NapCat）
 
@@ -138,14 +120,22 @@ QQ_BOT_BASE_URL=
 QQ_BOT_TOKEN=replace-with-the-same-napcat-token
 ```
 
+完成 NapCat WebSocket 配置后，运行：
+
+```bash
+uv run luna-agent setup --platform qq
+```
+
+命令会提示输入 WebSocket 地址和 Token，写入 `.env` 并检查配置。
+
 Luna Agent 在 WSL、NapCat 在 Windows 时，先尝试 `127.0.0.1`（WSL mirrored networking）。无法连接时，在 WSL 执行 `ip route show default`，将默认网关 IP 用作 Windows 主机地址，例如 `ws://172.20.64.1:16611`。Windows 防火墙需允许对应端口的本地网络访问，不要把未鉴权的 NapCat 端口暴露到公网。
 
-插件 key：
+如果使用 `mode: managed`，仍需在 `config.yaml` 的 `plugins.config.platforms/qq.runtime` 中配置 NapCat 伴随进程；`setup` 不会安装或启动 NapCat。
+
+示例：
 
 ```yaml
 plugins:
-  enabled:
-    - platforms/qq
   config:
     platforms/qq:
       runtime:
@@ -165,11 +155,26 @@ plugins:
 检查并启动：
 
 ```bash
-uv run luna-agent serve --check-platform qq
 uv run luna-agent serve
 ```
 
 启动日志应出现 `QQ adapter connected via OneBot WebSocket`。`doctor` 的 QQ `adapter_health` 会显示 `ws_connected`、`action_transport`、`ws_reconnect_attempts`、`last_ws_event_at`、`self_id` 和 `companion`。
+
+## 初始化辅助命令
+
+重新配对已有平台，不重新生成配置：
+
+```bash
+uv run luna-agent setup --platform wechat --pair-only
+```
+
+只检查配置和凭据，不写文件、不配对：
+
+```bash
+uv run luna-agent setup --platform wechat --check
+```
+
+`luna-agent init` 仍可用于 CI 或非交互生成基础配置，但平台首次接入统一使用 `setup`。
 
 ## Gateway 状态
 

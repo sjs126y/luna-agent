@@ -739,8 +739,9 @@ uv run pytest -q
 
 - 新增 `config.yaml.example` 作为可发布模板，当前 `config.yaml` 保留本机路径配置。
 - `luna-agent chat` 默认启动 inline TUI；`--simple` 旧 REPL 和 classic `TerminalRenderer` 已移除。
-- `python -m luna_agent` 统一转发 Typer CLI，不再维护 `--cli` / `--ingest` / `--wechat-login` 旧参数分发。
-- 微信登录迁移为 `luna-agent wechat-login`；文件记忆导入迁移为 `luna-agent memory ingest <path>`。
+- `python -m luna_agent` 统一转发 Typer CLI，不再维护 `--cli` / `--ingest` 旧参数分发。
+- 平台初始化统一使用 `luna-agent setup --platform <wechat|telegram|feishu|qq>`；微信扫码配对也由该命令触发。
+- 文件记忆导入继续使用 `luna-agent memory ingest <path>`。
 - Skill usage 运行数据迁到 `data/skills/usage.json`，源码目录不再跟踪 `.usage.json`。
 
 已验证：

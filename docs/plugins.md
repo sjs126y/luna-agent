@@ -591,7 +591,7 @@ def register(ctx) -> None:
 - Hook 附加上下文只进入当前 turn 的模型请求，不写入 transcript；`PostToolUse` 也不会覆盖真实 tool result 和审计记录。
 - 禁用时新快照立即移除 Hook；旧 Turn 仍使用自己的 lease，最后一个 lease 释放后才移除旧 generation 的 Hook。
 
-`configure`、`on_agent_created`、`on_session_selected`、`wechat_qr_login` 目前仍是宿主内部使用的专用生命周期回调，不属于正式运行时事件。旧的 `on_before_llm_call`、`on_after_llm_call`、`on_before_tool_exec`、`on_after_tool_exec`、`on_message_received`、`on_before_send` 已移除；插件注册这些名称会直接报错。主 Agent 不开放 LLM request/response 改写 Hook。
+`configure`、`on_agent_created`、`on_session_selected` 目前仍是宿主内部使用的专用生命周期回调，不属于正式运行时事件。平台配对由 `PlatformEntry.setup_fn` 提供给 `luna-agent setup --platform`，不再通过专用 Hook 暴露。旧的 `on_before_llm_call`、`on_after_llm_call`、`on_before_tool_exec`、`on_after_tool_exec`、`on_message_received`、`on_before_send` 已移除；插件注册这些名称会直接报错。主 Agent 不开放 LLM request/response 改写 Hook。
 
 Memory provider 使用专用 registry 注册，不通过通用 hook 创建，避免多个插件互相覆盖。
 

@@ -619,6 +619,68 @@ def test_init_command_force_overwrites_existing_files(tmp_path):
     assert "LLM_PROVIDER" in env.read_text(encoding="utf-8")
 
 
+def test_setup_telegram_creates_files_and_stores_secret(tmp_path, monkeypatch):
+    monkeypatch.setattr("getpass.getpass", lambda _prompt: "telegram-secret")
+
+    result = runner.invoke(app, [
+        "setup", "--platform", "telegram", "--dir", str(tmp_path),
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert "telegram-secret" not in result.output
+    assert "平台 telegram 初始化完成" in result.output
+    config = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "platforms/telegram" in config
+    assert "TELEGRAM_BOT_TOKEN=telegram-secret" in env
+    assert (tmp_path / ".env").stat().st_mode & 0o777 == 0o600
+
+
+def test_setup_platform_callbacks_write_expected_env_fields(tmp_path, monkeypatch):
+    from luna_agent.platforms.setup import PlatformSetupContext
+    from luna_agent.plugins.builtin.platforms.feishu import _setup as setup_feishu
+    from luna_agent.plugins.builtin.platforms.qq import _setup as setup_qq
+
+    env_path = tmp_path / ".env"
+    context = PlatformSetupContext(
+        root_dir=tmp_path,
+        config_path=tmp_path / "config.yaml",
+        env_path=env_path,
+        data_dir=tmp_path / "data",
+        input_fn=lambda prompt: "app-id" if "ID" in prompt else "ws://127.0.0.1:16611",
+        secret_input_fn=lambda _prompt: "app-secret",
+    )
+    result = setup_feishu(context)
+    assert result.platform == "feishu"
+    assert "FEISHU_APP_ID=app-id" in env_path.read_text(encoding="utf-8")
+    assert "FEISHU_APP_SECRET=app-secret" in env_path.read_text(encoding="utf-8")
+
+    qq_context = PlatformSetupContext(
+        root_dir=tmp_path,
+        config_path=tmp_path / "config.yaml",
+        env_path=env_path,
+        data_dir=tmp_path / "data",
+        input_fn=lambda _prompt: "ws://127.0.0.1:16611",
+        secret_input_fn=lambda _prompt: "napcat-secret",
+    )
+    result = setup_qq(qq_context)
+    assert result.platform == "qq"
+    env = env_path.read_text(encoding="utf-8")
+    assert "QQ_BOT_WS_URL=ws://127.0.0.1:16611" in env
+    assert "QQ_BOT_TOKEN=napcat-secret" in env
+
+
+def test_setup_check_does_not_create_files(tmp_path):
+    result = runner.invoke(app, [
+        "setup", "--platform", "telegram", "--dir", str(tmp_path), "--check",
+    ])
+
+    assert result.exit_code == 1
+    assert "平台检查: 未完成" in result.output
+    assert not (tmp_path / "config.yaml").exists()
+    assert not (tmp_path / ".env").exists()
+
+
 def test_format_config_report_shows_next_steps():
     report = {
         "ok": False,

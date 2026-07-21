@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 import json
+import os
 import shutil
 import tempfile
 from dataclasses import asdict, is_dataclass
@@ -12,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
+import yaml
 
 from luna_agent.config import Settings
 from luna_agent.config_diagnostics import build_config_report, ensure_config_dirs
@@ -20,6 +23,8 @@ from luna_agent.context_budget import build_context_budget
 from luna_agent.cli_chat import run_cli_once_sync
 from luna_agent.main import boot
 from luna_agent.plugins.core.manager import PluginManager
+from luna_agent.platforms.core import platform_registry
+from luna_agent.platforms.setup import PlatformSetupContext
 
 app = typer.Typer(help="Luna Agent")
 plugins_app = typer.Typer(help="Manage plugins")
@@ -533,21 +538,6 @@ def serve(
     asyncio.run(boot())
 
 
-@app.command("wechat-login")
-def wechat_login() -> None:
-    """Run the WeChat QR login helper."""
-    async def _run() -> None:
-        settings = Settings()
-        plugin_manager = PluginManager(settings)
-        plugin_manager.discover()
-        plugin_manager.load_plugin("platforms/wechat")
-        result = await plugin_manager.invoke_hook("wechat_qr_login", settings=settings)
-        if result is None:
-            _exit_error("WeChat login plugin is unavailable.")
-
-    asyncio.run(_run())
-
-
 @app.command()
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
@@ -605,6 +595,189 @@ def init_project(
     typer.echo(f"初始化 Luna Agent 配置: {target_dir} ({profile})")
     for path, action in results:
         typer.echo(f"  - {action}: {path}")
+
+
+@app.command("setup")
+def setup_platform(
+    platform: str = typer.Option(..., "--platform", "-p", help="平台: wechat|telegram|feishu|qq。"),
+    target_dir: Path = typer.Option(Path("."), "--dir", "-d", help="项目目录。"),
+    check: bool = typer.Option(False, "--check", help="只检查，不写配置或执行配对。"),
+    pair_only: bool = typer.Option(False, "--pair-only", help="只重新执行平台配对。"),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="缺少凭据时直接失败，不提示输入。"),
+) -> None:
+    """Initialize one platform and run its credential pairing flow."""
+    if check and pair_only:
+        _exit_error("--check 和 --pair-only 不能同时使用。")
+    try:
+        result = asyncio.run(_setup_platform(
+            platform,
+            target_dir=target_dir,
+            check=check,
+            pair_only=pair_only,
+            non_interactive=non_interactive,
+        ))
+    except Exception as exc:
+        _exit_error(f"平台初始化失败: {exc}")
+    for item in result.get("actions", []):
+        typer.echo(f"  - {item}")
+    typer.echo(result["message"])
+    if result.get("ok") is False:
+        raise typer.Exit(1)
+
+
+async def _setup_platform(
+    platform: str,
+    *,
+    target_dir: Path,
+    check: bool,
+    pair_only: bool,
+    non_interactive: bool,
+) -> dict[str, Any]:
+    platform = str(platform or "").strip().lower()
+    if platform not in {"wechat", "telegram", "feishu", "qq"}:
+        raise ValueError("可选平台: wechat|telegram|feishu|qq")
+    target = target_dir.expanduser().resolve()
+    if not pair_only:
+        actions = [] if check else _ensure_platform_setup_files(target, platform)
+    else:
+        if not (target / "config.yaml").is_file():
+            raise FileNotFoundError(f"配置文件不存在: {target / 'config.yaml'}")
+        actions = ["保留现有配置文件和环境文件"]
+    if check:
+        return _check_platform_setup(target, platform)
+
+    previous_dir = Path.cwd()
+    os.chdir(target)
+    manager = None
+    plugin_key = f"platforms/{platform}"
+    try:
+        settings = Settings()
+        manager = _plugin_manager(settings)
+        plugin = manager.load_plugin(plugin_key, allow_missing_env=True)
+        plugin_status = getattr(getattr(plugin, "status", None), "value", getattr(plugin, "status", ""))
+        if plugin is None or str(plugin_status) != "LOADED":
+            detail = getattr(plugin, "error", "") if plugin is not None else "插件未找到"
+            raise RuntimeError(f"{plugin_key} 加载失败: {detail or 'unknown error'}")
+        entry = platform_registry.get(platform)
+        if entry is None or entry.setup_fn is None:
+            raise RuntimeError(f"平台未提供初始化能力: {platform}")
+        if non_interactive:
+            def fail_input(_label: str) -> str:
+                raise ValueError("非交互模式下缺少平台凭据")
+
+            input_fn = fail_input
+            secret_input_fn = fail_input
+        else:
+            input_fn = input
+            from getpass import getpass
+            secret_input_fn = getpass
+        context = PlatformSetupContext(
+            root_dir=target,
+            config_path=target / "config.yaml",
+            env_path=target / ".env",
+            data_dir=Path(settings.agent_data_dir).resolve() / platform,
+            input_fn=input_fn,
+            secret_input_fn=secret_input_fn,
+        )
+        result = entry.setup_fn(context)
+        if inspect.isawaitable(result):
+            result = await result
+        if result is None:
+            raise RuntimeError(f"平台初始化未返回结果: {platform}")
+        updated_settings = Settings()
+        if not entry.check_fn(updated_settings):
+            raise RuntimeError("凭据已写入，但平台配置检查未通过")
+        return {
+            "actions": actions,
+            "message": (
+                f"平台 {platform} 初始化完成。\n"
+                f"下一步: uv run luna-agent serve"
+            ),
+            "result": result,
+        }
+    finally:
+        if manager is not None:
+            try:
+                manager.unload_plugin(plugin_key)
+            except Exception:
+                pass
+        os.chdir(previous_dir)
+
+
+def _check_platform_setup(target: Path, platform: str) -> dict[str, Any]:
+    previous_dir = Path.cwd()
+    os.chdir(target)
+    try:
+        config_path = target / "config.yaml"
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+        enabled = ((config or {}).get("plugins") or {}).get("enabled", []) if isinstance(config, dict) else []
+        plugin_enabled = f"platforms/{platform}" in enabled if isinstance(enabled, list) else False
+        settings = Settings()
+        configured = {
+            "wechat": bool(
+                settings.weixin_token
+                and settings.weixin_account_id
+                or (settings.agent_data_dir / "wechat" / "creds.json").is_file()
+            ),
+            "telegram": bool(settings.telegram_bot_token),
+            "feishu": bool(settings.feishu_app_id and settings.feishu_app_secret),
+            "qq": bool(settings.qq_bot_ws_url and settings.qq_bot_token),
+        }
+        ok = plugin_enabled and configured[platform]
+        return {
+            "actions": [],
+            "message": f"平台检查: {'通过' if ok else '未完成'} ({platform})",
+            "ok": ok,
+        }
+    finally:
+        os.chdir(previous_dir)
+
+
+def _ensure_platform_setup_files(target: Path, platform: str) -> list[str]:
+    target.mkdir(parents=True, exist_ok=True)
+    actions: list[str] = []
+    created_dirs = ensure_config_dirs(target)
+    actions.extend(f"创建目录: {path}" for path in created_dirs)
+    config_path = target / "config.yaml"
+    if not config_path.exists():
+        _write_template(config_path, _CONFIG_TEMPLATES[platform], force=False)
+        actions.append(f"生成配置: {config_path}")
+    else:
+        if _ensure_platform_enabled(config_path, platform):
+            actions.append(f"启用平台插件: platforms/{platform}")
+        else:
+            actions.append(f"平台插件已启用: platforms/{platform}")
+    env_example = target / ".env.example"
+    if not env_example.exists():
+        _write_template(env_example, _env_example_template(platform), force=False)
+        actions.append(f"生成环境模板: {env_example}")
+    env_path = target / ".env"
+    if not env_path.exists():
+        _write_template(env_path, _env_example_template(platform), force=False)
+        os.chmod(env_path, 0o600)
+        actions.append(f"生成环境文件: {env_path}")
+    else:
+        os.chmod(env_path, 0o600)
+        actions.append(f"保留环境文件: {env_path}")
+    return actions
+
+
+def _ensure_platform_enabled(path: Path, platform: str) -> bool:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError("config.yaml 顶层必须是对象")
+    plugins = data.setdefault("plugins", {})
+    if not isinstance(plugins, dict):
+        raise ValueError("config.yaml 的 plugins 必须是对象")
+    enabled = plugins.setdefault("enabled", [])
+    if not isinstance(enabled, list):
+        raise ValueError("config.yaml 的 plugins.enabled 必须是列表")
+    key = f"platforms/{platform}"
+    if key in enabled:
+        return False
+    enabled.append(key)
+    _write_yaml_atomic(path, data)
+    return True
 
 
 @plugins_app.command("list")
@@ -1565,6 +1738,19 @@ def _write_template(path: Path, content: str, *, force: bool) -> tuple[Path, str
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content.rstrip() + "\n", encoding="utf-8")
     return path, "已覆盖" if existed else "已生成"
+
+
+def _write_yaml_atomic(path: Path, value: dict[str, Any]) -> None:
+    content = yaml.safe_dump(value, sort_keys=False, allow_unicode=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def _env_example_template(profile: str) -> str:

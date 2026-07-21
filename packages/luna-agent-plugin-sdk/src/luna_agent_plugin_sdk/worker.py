@@ -118,9 +118,16 @@ class WorkerInvocationPort:
 
 
 class RemoteResourceNamespace:
-    def __init__(self, peer: FramedRPCPeer, resource: str) -> None:
+    def __init__(
+        self,
+        peer: FramedRPCPeer,
+        resource: str,
+        *,
+        rpc_timeout: float = 30.0,
+    ) -> None:
         self.peer = peer
         self.resource = resource
+        self.rpc_timeout = max(0.1, float(rpc_timeout))
 
     def __getattr__(self, operation: str):
         async def call(*args, **kwargs):
@@ -129,7 +136,7 @@ class RemoteResourceNamespace:
                 "operation": operation,
                 "args": list(args),
                 "kwargs": kwargs,
-            })
+            }, timeout=self.rpc_timeout)
             return _remote_value(result)
 
         return call
@@ -139,7 +146,11 @@ class RemoteResources:
     def __init__(self, peer: FramedRPCPeer, storage: WorkerStorage) -> None:
         self.storage = storage
         for name in ("tool", "mcp", "llm", "conversation", "delivery", "events", "artifacts", "process", "workspace"):
-            setattr(self, name, RemoteResourceNamespace(peer, name))
+            # Process reads intentionally wait for a child process to emit a
+            # line. Codex App Server can take longer than the generic RPC
+            # timeout during startup or provider initialization.
+            timeout = 120.0 if name == "process" else 30.0
+            setattr(self, name, RemoteResourceNamespace(peer, name, rpc_timeout=timeout))
 
 
 class RemoteRuntimeControl(RemoteResourceNamespace):

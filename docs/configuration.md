@@ -44,6 +44,14 @@ uv run luna-agent init --profile local --copy-env --fix-dirs
 uv run luna-agent init --check
 ```
 
+首次接入平台使用一站式初始化命令，它会生成对应的 `config.yaml`、`.env`，启用平台插件并执行配对：
+
+```bash
+uv run luna-agent setup --platform wechat
+```
+
+Telegram、飞书和 QQ 分别将平台凭据安全写入 `.env`；微信扫码凭据保存到 `data/wechat/creds.json`。初始化不会自动启动 Gateway，完成后运行 `uv run luna-agent serve`。
+
 ## .env
 
 LLM 基础字段：
@@ -487,3 +495,6 @@ uv run luna-agent doctor
 | `telegram` | 启用 `platforms/telegram`，`.env.example` 只列 Telegram 平台字段 |
 | `feishu` | 启用 `platforms/feishu`，`.env.example` 只列飞书平台字段 |
 | `wechat` | 启用 `platforms/wechat`，`.env.example` 只列微信平台字段 |
+| `qq` | 启用 `platforms/qq`，`.env.example` 只列 QQ/NapCat 平台字段 |
+
+`init` 是非交互配置生成命令；平台用户入口统一使用 `setup --platform`。

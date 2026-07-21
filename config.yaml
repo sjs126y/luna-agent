@@ -1,60 +1,49 @@
-# Luna Agent — behavioral configuration
-# API keys / base URLs / secrets → .env
-
 agent:
-  ui: "inline"                    # inline
+  ui: inline
   max_iterations: 50
   max_tool_calls_per_turn: 40
-
 execution:
-  mode: "ask-first"               # read-only | ask-first | local-auto | full-auto
-
+  mode: ask-first
 permissions:
-  grant_ttl_minutes: 60           # shared in-memory TTL for tool and resource grants
+  grant_ttl_minutes: 60
   confirm_timeout_seconds: 120
   tool_approval:
-    # Local/Full Auto 自动放行继承的 cached；Ask First 仍会询问。显式覆盖始终优先。
-    default_external: "cached"    # auto | cached | prompt | deny
+    default_external: cached
     tools:
-      process_kill: "prompt"
-      worktree_merge: "prompt"
-      worktree_cleanup: "prompt"
+      process_kill: prompt
+      worktree_merge: prompt
+      worktree_cleanup: prompt
     mcp_servers: {}
   approval_reviewer:
-    enabled: true               # model-backed review is opt-in
-    model: "gpt-5.6-terra"                    # empty = current provider/model
+    enabled: true
+    model: gpt-5.6-terra
     timeout_seconds: 12
-    fallback: "human"            # human | deny
-    allow_ttl_grant: false       # TTL grants remain user-only
-    max_risk: "medium"           # low | medium
-
+    fallback: human
+    allow_ttl_grant: false
+    max_risk: medium
 agents:
-  max_concurrent_runs: 4          # max active delegated sub-agents
-  max_tool_calls: 10              # max tool calls per delegated sub-agent
-  max_tokens: 4096                # max output tokens per delegated sub-agent
-  history_limit: 100              # recent sub-agent runs kept in memory
-
+  max_concurrent_runs: 4
+  max_tool_calls: 10
+  max_tokens: 4096
+  history_limit: 100
 storage:
-  data_dir: "./data"
-  log_level: "INFO"
-
+  data_dir: ./data
+  log_level: INFO
 artifacts:
-  max_file_bytes: 20971520       # 20 MiB per managed outbound artifact
+  max_file_bytes: 20971520
   max_per_turn: 10
   retention_hours: 24
-
 compression:
-  engine: "compressor"       # compressor (built-in) | lcm (future)
-  model: ""                  # empty = use main model; set = cheap model
+  engine: compressor
+  model: ''
   retained_user_tokens: 20000
   tail_token_budget: 20000
   threshold_ratio: 0.9
-
 toolsets:
-  enabled: ["all"]            # ["all"] | ["web","terminal","utility"] | etc.
-
+  enabled:
+  - all
 memory:
-  external_provider: "luna"      # luna | lumora | mem0 | fallback | none
+  external_provider: luna
   review:
     external_turn_interval: 10
     internal_turn_interval: 50
@@ -62,133 +51,125 @@ memory:
     snapshot_refresh_turn_interval: 20
     worker_concurrency: 2
   llm:
-    provider: "inherit"
-    model: ""
-    api_mode: "auto"
+    provider: inherit
+    model: ''
+    api_mode: auto
     max_tokens: 2048
   providers:
     luna:
       embedding:
-        provider: "openai_compatible"
-        base_url: "https://llm-emwc1qhbxb5bsk0u.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-        api_key_env: "DASHSCOPE_API_KEY"
-        model: "text-embedding-v4"
+        provider: openai_compatible
+        base_url: https://llm-emwc1qhbxb5bsk0u.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        api_key_env: DASHSCOPE_API_KEY
+        model: text-embedding-v4
         dimensions: 1024
         timeout_seconds: 30
         batch_size: 10
       vector:
-        provider: "qdrant"
-        path: "./data/memory/qdrant"
-        collection: "lumora_memories"  # 保留现有 collection，避免改名后丢失历史向量
+        provider: qdrant
+        path: ./data/memory/qdrant
+        collection: lumora_memories
       keyword:
-        provider: "sqlite_fts5"
-        tokenizer: "unicode61"
+        provider: sqlite_fts5
+        tokenizer: unicode61
       fusion:
-        provider: "weighted_rrf"
+        provider: weighted_rrf
         semantic_weight: 0.6
         keyword_weight: 0.4
         importance_weight: 0.1
         rrf_k: 60
       reranker:
-        provider: "none"
+        provider: none
       retrieval:
         semantic_timeout_seconds: 35
         keyword_timeout_seconds: 5
         reranker_timeout_seconds: 30
     mem0:
       options: {}
-
 multimodal:
-  enabled: true                    # true = 接收平台附件并进入统一处理链路
-  image_mode: "auto"               # 图片：auto | native | text | off
-  audio_mode: "auto"               # 音频：auto | text | off；当前无转写能力时会降级提示
-  video_mode: "off"                # 视频：auto | text | off；默认关闭，避免误下载大文件
-  file_mode: "auto"                # 文件：auto | text | off；当前无解析器时会降级提示
-  native_fallback: "notice"        # 原生多模态不可用时：notice（提示）| text（尝试文本化）
-  text_extract_max_chars: 12000     # 文本/PDF/docx 附件最多注入的字符数，超出会截断
-  text_extract_pdf_max_pages: 20    # PDF 附件最多抽取页数，避免大文件污染上下文
-  image_text_mode: "auto"           # 图片文本化：auto | vision | ocr | off；当前默认只预留链路
-  image_text_cache: true            # 是否缓存图片文本化结果，后续 vision/OCR 会复用
-  image_text_max_chars: 6000        # 图片文本化结果最多注入的字符数
-  image_text_provider: "openai"           # 可选视觉辅助 provider，例如 openai / anthropic；密钥用 .env 的 IMAGE_TEXT_API_KEY
-  image_text_api_mode: "responses"
-  image_text_model: "gpt-5.5"              # 可选视觉辅助模型，留空使用 provider 默认或主模型
-  image_text_prompt: ""             # 可选自定义提示词，留空使用内置“提取文字并描述图片”
-  ocr_endpoint: ""                  # 可选本地 OCR HTTP 服务，例如 http://127.0.0.1:7788
-  ocr_timeout_seconds: 20           # OCR 服务请求超时秒数
-  ocr_language: "auto"              # OCR 语言提示，具体支持取决于本地 OCR 服务
-
+  enabled: true
+  image_mode: auto
+  audio_mode: auto
+  video_mode: 'off'
+  file_mode: auto
+  native_fallback: notice
+  text_extract_max_chars: 12000
+  text_extract_pdf_max_pages: 20
+  image_text_mode: auto
+  image_text_cache: true
+  image_text_max_chars: 6000
+  image_text_provider: openai
+  image_text_api_mode: responses
+  image_text_model: gpt-5.5
+  image_text_prompt: ''
+  ocr_endpoint: ''
+  ocr_timeout_seconds: 20
+  ocr_language: auto
 cron:
   enabled: false
-
 session:
   expire_days: 30
-  override: {}               # {"wechat:o9cq80:o9cq80": "wechat:custom:o9cq80"}
-
+  override: {}
 sandbox:
-  roots:                           # writable directories for Local/Full Auto and bash
-    - "."
-    - "/mnt/c/Users/MR/Desktop/SJS-AGENT"
-    - "/mnt/c/Users/MR/Desktop/luna workspace"
-  read_roots:                      # native file tools may read, but never write or use via bash
-    - "/home/sujinsheng"
-  blocked:                         # never accessible — glob patterns, applies to all tools
-    - "**/.env"
-    - "**/.env.*"
-    - "**/.git/**"
-    - "**/.ssh/**"
-    - "**/id_rsa*"
-    - "**/.netrc"
-    - "**/data/auth/**"
-    - "**/node_modules/**"
-    - "**/__pycache__/**"
-    - "**/.venv/**"
-    - "**/.claude/**"
-    - "**/.codex/**"
-    - "**/.aws/**"
-    - "**/.kube/**"
-    - "**/.gnupg/**"
-    - "**/.docker/config.json"
-    - "**/.config/gh/**"
-    - "**/.config/gcloud/**"
-    - "**/.npmrc"
-    - "**/.pypirc"
-    - "**/.pgpass"
-    - "**/audit.log"
-    - "**/pyproject.toml"
-    - "**/config.yaml"
-  bash_work_dir: "./data"          # bash cwd (relative paths resolved from here)
-  bash_restrict_paths: true        # false = bash can access paths outside sandbox roots
-  bash_allow_network: false        # true = allow curl/pip/wget in bash tool
-  process_backend: "auto"         # auto | bwrap | legacy
-  file_max_write_bytes: 100000     # max file_write size
-  audit_enabled: true              # log to data/audit.log
-
+  roots:
+  - .
+  - /mnt/c/Users/MR/Desktop/SJS-AGENT
+  - /mnt/c/Users/MR/Desktop/luna workspace
+  read_roots:
+  - /home/sujinsheng
+  blocked:
+  - '**/.env'
+  - '**/.env.*'
+  - '**/.git/**'
+  - '**/.ssh/**'
+  - '**/id_rsa*'
+  - '**/.netrc'
+  - '**/data/auth/**'
+  - '**/node_modules/**'
+  - '**/__pycache__/**'
+  - '**/.venv/**'
+  - '**/.claude/**'
+  - '**/.codex/**'
+  - '**/.aws/**'
+  - '**/.kube/**'
+  - '**/.gnupg/**'
+  - '**/.docker/config.json'
+  - '**/.config/gh/**'
+  - '**/.config/gcloud/**'
+  - '**/.npmrc'
+  - '**/.pypirc'
+  - '**/.pgpass'
+  - '**/audit.log'
+  - '**/pyproject.toml'
+  - '**/config.yaml'
+  bash_work_dir: ./data
+  bash_restrict_paths: true
+  bash_allow_network: false
+  process_backend: auto
+  file_max_write_bytes: 100000
+  audit_enabled: true
 auth:
-  enabled: true               # owner-only external gateway access
-  owner_ids:                  # platform -> list of owner user IDs
+  enabled: true
+  owner_ids:
     wechat:
-      - "o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
-
+    - o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
 profiles:
-  # Map session_key → profile directory under data/system/
-  # The matching profile's .md files replace the default system prompt.
-  # Example: "wechat:<wx_id>:<wx_id>": "luna"
-  # Fill in your own session keys below.
-  "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat": "luna"
-
+  wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat: luna
 plugins:
-  dirs: ["./plugins", "./data/plugins"]
+  dirs:
+  - ./plugins
+  - ./data/plugins
   enabled:
-    - "integrations/codex-bridge"
-    - "integrations/github-assistant"
-    - "integrations/developer-docs"
-    - "integrations/browser-operator"
-    - "integrations/workspace-watch"
-    - "automation/reminder"
-    - "automation/feed-watch"
-    - "automation/inbox-watch"
-    - "automation/luna-companion"
+  - integrations/codex-bridge
+  - integrations/github-assistant
+  - integrations/developer-docs
+  - integrations/browser-operator
+  - integrations/workspace-watch
+  - automation/reminder
+  - automation/feed-watch
+  - automation/inbox-watch
+  - automation/luna-companion
+  - platforms/qq
   disabled: []
   runtime:
     isolate_external: true
@@ -196,21 +177,29 @@ plugins:
     allow_network: false
     startup_timeout_seconds: 45
     shutdown_timeout_seconds: 10
-    restart_backoff_seconds: [1, 2, 5, 10, 30]
+    restart_backoff_seconds:
+    - 1
+    - 2
+    - 5
+    - 10
+    - 30
     restart_failure_window_seconds: 300
     restart_failure_limit: 5
   config:
     integrations/workspace-watch:
       paths:
-        - "data/workspace-watch-test.txt"
-      session_key: "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+      - data/workspace-watch-test.txt
+      session_key: wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
       poll_interval_seconds: 2
       settle_seconds: 2
       active:
         enabled: true
         sessions:
-          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
-        restart_backoff_seconds: [1, 2, 5]
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
+        restart_backoff_seconds:
+        - 1
+        - 2
+        - 5
     automation/reminder:
       max_overdue_seconds: 604800
       retry_delay_seconds: 60
@@ -218,25 +207,35 @@ plugins:
       active:
         enabled: true
         sessions:
-          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
-        restart_backoff_seconds: [1, 2, 5, 10, 30]
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
+        restart_backoff_seconds:
+        - 1
+        - 2
+        - 5
+        - 10
+        - 30
     automation/feed-watch:
       feeds:
-        - name: "Codex Releases"
-          url: "https://github.com/openai/codex/releases.atom"
-          sessions:
-            - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+      - name: Codex Releases
+        url: https://github.com/openai/codex/releases.atom
+        sessions:
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
       poll_interval_seconds: 900
       max_items_per_feed: 30
-      # Watt Toolkit resolves this trusted public hostname to its local accelerator.
-      trusted_private_hosts: ["github.com"]
+      trusted_private_hosts:
+      - github.com
       active:
         enabled: true
         sessions:
-          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
-        restart_backoff_seconds: [1, 2, 5, 10, 30]
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
+        restart_backoff_seconds:
+        - 1
+        - 2
+        - 5
+        - 10
+        - 30
     automation/inbox-watch:
-      root: "data/inbox"
+      root: data/inbox
       poll_interval_seconds: 15
       settle_seconds: 5
       max_files_per_poll: 20
@@ -246,16 +245,27 @@ plugins:
       active:
         enabled: true
         sessions:
-          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
-        restart_backoff_seconds: [1, 2, 5, 10, 30]
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
+        restart_backoff_seconds:
+        - 1
+        - 2
+        - 5
+        - 10
+        - 30
     automation/luna-companion:
       active:
         enabled: true
         sessions:
-          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
-        restart_backoff_seconds: [1, 2, 5, 10, 30]
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
+        restart_backoff_seconds:
+        - 1
+        - 2
+        - 5
+        - 10
+        - 30
       quiet_hours:
-        - ["23:00", "08:00"]
+      - - '23:00'
+        - 08:00
       max_daily_messages: 3
       min_gap_seconds: 7200
       review_threshold: 0.75
@@ -267,29 +277,29 @@ plugins:
         enabled: true
         max_recent_messages: 3
     integrations/codex-bridge:
-      command: "codex"
-      source_codex_home: "/home/sujinsheng/.codex"
-      runtime_codex_home: "./data/codex-bridge"
-      development_root: "/home/sujinsheng/.local/share/luna-agent/plugin-workspaces"
-      cwd: "."
-      sandbox: "workspace-write"
-      approval_policy: "on-request"
-      approvals_reviewer: "user"
+      command: codex
+      source_codex_home: /home/sujinsheng/.codex
+      runtime_codex_home: ./data/codex-bridge
+      development_root: /home/sujinsheng/.local/share/luna-agent/plugin-workspaces
+      cwd: .
+      sandbox: workspace-write
+      approval_policy: on-request
+      approvals_reviewer: user
       event_retention: 1000
       active:
         enabled: true
         sessions:
-          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
       connect_timeout_seconds: 60
       call_timeout_seconds: 1800
     integrations/github-assistant:
       repositories:
-        - "openai/codex"
+      - openai/codex
       write_enabled: false
       active:
         enabled: true
         sessions:
-          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+        - wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat
       watch:
         pull_requests: true
         issues: true
@@ -298,14 +308,14 @@ plugins:
         poll_interval_seconds: 30
         per_page: 20
     integrations/developer-docs:
-      command: "npx"
-      package: "@upstash/context7-mcp"
+      command: npx
+      package: '@upstash/context7-mcp'
       connect_timeout_seconds: 60
       call_timeout_seconds: 120
     integrations/browser-operator:
-      command: "npx"
-      package: "@playwright/mcp@0.0.78"
-      browser: "chromium"
+      command: npx
+      package: '@playwright/mcp@0.0.78'
+      browser: chromium
       headless: true
       isolated: true
       allowed_domains: []
@@ -314,45 +324,51 @@ plugins:
       connect_timeout_seconds: 120
       call_timeout_seconds: 120
       max_artifact_bytes: 10485760
-
 mcp:
-  enabled: true               # enable MCP client subsystem
+  enabled: true
   servers:
-    - name: "filesystem"
-      transport: "stdio"
-      command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
-      allow_network: true
-      enabled: false  # native file tools already enforce sandbox/blocked paths
-
-    - name: "memory"
-      transport: "stdio"
-      command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-memory"]
-      env:
-        MEMORY_FILE_PATH: "./data/mcp/memory.jsonl"
-      allow_network: true
-      enabled: true
-
-    - name: "sequential-thinking"
-      transport: "stdio"
-      command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-      allow_network: true
-      enabled: true
-
-    - name: "time"
-      transport: "stdio"
-      command: "uvx"
-      args: ["mcp-server-time", "--local-timezone", "Asia/Shanghai"]
-      connect_timeout_seconds: 60
-      allow_network: true
-      enabled: true
-
-    - name: "fetch"
-      transport: "stdio"
-      command: "uvx"
-      args: ["mcp-server-fetch"]
-      connect_timeout_seconds: 60
-      allow_network: true
-      enabled: true
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args:
+    - -y
+    - '@modelcontextprotocol/server-filesystem'
+    - .
+    allow_network: true
+    enabled: false
+  - name: memory
+    transport: stdio
+    command: npx
+    args:
+    - -y
+    - '@modelcontextprotocol/server-memory'
+    env:
+      MEMORY_FILE_PATH: ./data/mcp/memory.jsonl
+    allow_network: true
+    enabled: true
+  - name: sequential-thinking
+    transport: stdio
+    command: npx
+    args:
+    - -y
+    - '@modelcontextprotocol/server-sequential-thinking'
+    allow_network: true
+    enabled: true
+  - name: time
+    transport: stdio
+    command: uvx
+    args:
+    - mcp-server-time
+    - --local-timezone
+    - Asia/Shanghai
+    connect_timeout_seconds: 60
+    allow_network: true
+    enabled: true
+  - name: fetch
+    transport: stdio
+    command: uvx
+    args:
+    - mcp-server-fetch
+    connect_timeout_seconds: 60
+    allow_network: true
+    enabled: true

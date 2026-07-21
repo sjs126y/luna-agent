@@ -7,6 +7,8 @@ from luna_agent.platforms.core import (
     PlatformCapabilities,
     PlatformEntry,
     PlatformRegistry,
+    PlatformSetupContext,
+    PlatformSetupResult,
     SendResult,
     platform_registry,
 )
@@ -18,6 +20,8 @@ __all__ = [
     "PlatformCapabilities",
     "PlatformEntry",
     "PlatformRegistry",
+    "PlatformSetupContext",
+    "PlatformSetupResult",
     "SendResult",
     "platform_registry",
 ]

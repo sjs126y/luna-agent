@@ -665,6 +665,11 @@ class PluginHostProcessService:
                 "args_prefix": ["app-server"],
                 "cwd_roots": [config.get("development_root") or ".", config.get("cwd") or "."],
                 "env": {"CODEX_HOME": str(config.get("runtime_codex_home") or "data/codex-bridge")},
+                # CodexAppServer passes its isolated home explicitly when it
+                # starts the host process. Keep this allowlist narrow so a
+                # plugin cannot smuggle arbitrary environment variables into
+                # a host-owned subprocess.
+                "env_allowlist": ["CODEX_HOME"],
                 "seed_from": config.get("source_codex_home") or "",
                 "seed_to": config.get("runtime_codex_home") or "",
                 "max_instances": 8,

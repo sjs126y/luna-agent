@@ -317,7 +317,13 @@ class PluginManager:
                 continue
             self.load_plugin(plugin.key)
 
-    def load_plugin(self, key: str, *, publish: bool = True) -> LoadedPlugin:
+    def load_plugin(
+        self,
+        key: str,
+        *,
+        publish: bool = True,
+        allow_missing_env: bool = False,
+    ) -> LoadedPlugin:
         if not self._plugins:
             self.discover()
         plugin = self._plugins[key]
@@ -351,7 +357,7 @@ class PluginManager:
                 return plugin
 
         missing_env = self._missing_env(plugin.manifest)
-        if missing_env:
+        if missing_env and not allow_missing_env:
             plugin.status = PluginStatus.ERROR
             plugin.error = f"Missing required env: {', '.join(missing_env)}"
             plugin.error_traceback = None

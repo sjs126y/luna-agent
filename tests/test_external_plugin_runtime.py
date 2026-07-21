@@ -367,6 +367,83 @@ async def test_host_process_port_is_allowlisted_and_bidirectional(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_codex_host_process_allows_only_declared_codex_home(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from luna_agent.plugins.runtime.external_service import PluginHostProcessService
+
+    codex_home = tmp_path / "codex-home"
+    settings = SimpleNamespace(
+        plugins_config={
+            "integrations/codex-bridge": {
+                "runtime_codex_home": str(codex_home),
+                "development_root": str(tmp_path),
+                "cwd": str(tmp_path),
+            }
+        }
+    )
+
+    class Manager:
+        def __init__(self):
+            self.settings = settings
+            self.external_runtime = SimpleNamespace(
+                normalized_config=lambda _plugin, config: dict(config),
+            )
+
+    class Registration:
+        class Resources:
+            processes = ("codex-app-server",)
+        resources = Resources()
+
+    class Plugin:
+        key = "integrations/codex-bridge"
+        runtime_instance_id = "codex-bridge:test"
+        active_registration = Registration()
+
+    class Process:
+        pid = 1234
+        returncode = None
+        stdin = None
+        stdout = None
+        stderr = None
+
+    monkeypatch.setattr("shutil.which", lambda _command: "/usr/bin/codex")
+    captured = {}
+
+    async def fake_create_process(*argv, **kwargs):
+        captured["argv"] = argv
+        captured["env"] = kwargs["env"]
+        return Process()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_process)
+    service = PluginHostProcessService(Manager())
+    result = await service.call(
+        Plugin(),
+        "start",
+        [],
+        {"name": "codex-app-server", "cwd": str(tmp_path), "env": {"CODEX_HOME": str(codex_home)}},
+    )
+
+    assert result["name"] == "codex-app-server"
+    assert captured["argv"] == ("/usr/bin/codex", "app-server")
+    assert captured["env"]["CODEX_HOME"] == str(codex_home)
+    assert "env_allowlist" in service._spec(Plugin(), "codex-app-server")
+
+    with pytest.raises(PermissionError, match="undeclared environment variables"):
+        await service.call(
+            Plugin(),
+            "start",
+            [],
+            {
+                "name": "codex-app-server",
+                "cwd": str(tmp_path),
+                "env": {"CODEX_HOME": str(codex_home), "SECRET": "nope"},
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_passive_worker_recovers_without_replacing_tool_proxy(tmp_path: Path) -> None:
     root = tmp_path / "plugins" / "recover"
     root.mkdir(parents=True)

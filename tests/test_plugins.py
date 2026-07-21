@@ -544,6 +544,38 @@ enabled_by_default: true
     assert "Missing required env" in (plugin.error or "")
 
 
+def test_missing_env_plugin_can_load_for_setup_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_SUCH_ENV_FOR_PLUGIN_SETUP_TEST", raising=False)
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = plugins_dir / "setup-only"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.yaml").write_text(
+        """
+key: user/setup-only
+name: Setup Only
+version: 1.0.0
+entrypoint: setup_plugin
+requires_env: [NO_SUCH_ENV_FOR_PLUGIN_SETUP_TEST]
+enabled_by_default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (plugin_dir / "setup_plugin.py").write_text("", encoding="utf-8")
+
+    manager = PluginManager(
+        _settings(tmp_path, plugins_dir),
+        plugin_dirs=[plugins_dir],
+        state_path=tmp_path / "state.json",
+    )
+    manager.discover()
+    plugin = manager.load_plugin("user/setup-only", allow_missing_env=True)
+
+    try:
+        assert plugin.status == PluginStatus.LOADED
+    finally:
+        manager.unload_plugin("user/setup-only")
+
+
 def test_plugin_doctor_reports_traceback_and_registered_items(tmp_path):
     plugins_dir = tmp_path / "plugins"
     plugin_dir = plugins_dir / "broken"
@@ -1093,7 +1125,9 @@ def test_memory_provider_doctor_reports_registered_provider(tmp_path):
     memory_provider_registry.clear()
 
 
-def test_wechat_plugin_registers_login_hook(tmp_path):
+def test_wechat_plugin_registers_platform_setup(tmp_path):
+    from luna_agent.platforms.core import platform_registry
+
     settings = _inprocess_settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
     manager = PluginManager(settings, plugin_dirs=[], state_path=tmp_path / "state.json")
     manager.discover()
@@ -1101,8 +1135,10 @@ def test_wechat_plugin_registers_login_hook(tmp_path):
     plugin = manager.load_plugin("platforms/wechat")
 
     assert plugin.status == PluginStatus.LOADED
-    assert "legacy:wechat_qr_login:10" in plugin.hooks_registered
-    assert "wechat_qr_login" in manager.hooks
+    entry = platform_registry.get("wechat")
+    assert entry is not None
+    assert entry.setup_fn is not None
+    manager.unload_plugin("platforms/wechat")
 
 
 @pytest.mark.asyncio

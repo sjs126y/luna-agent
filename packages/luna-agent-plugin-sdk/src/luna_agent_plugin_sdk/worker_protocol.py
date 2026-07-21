@@ -7,6 +7,7 @@ import json
 import struct
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import fields, is_dataclass
+from datetime import date, datetime, time
 from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -149,8 +150,13 @@ class FramedRPCPeer:
                 future.set_result(from_wire(message.get("payload")))
             else:
                 error = message.get("error") or {}
+                if not isinstance(error, dict):
+                    error = {"message": str(error)}
+                code = str(error.get("code") or "")
+                message_text = str(error.get("message") or "plugin RPC request failed")
+                detail = f"{code}: {message_text}" if code else message_text
                 future.set_exception(WorkerProtocolError(
-                    str(error.get("message") or "plugin RPC request failed")
+                    detail
                 ))
             return
         if message_type not in {"request", "notification"}:
@@ -170,12 +176,17 @@ class FramedRPCPeer:
                 await self._respond_error(message, type(exc).__name__, str(exc))
             return
         if message_type == "request":
+            try:
+                payload = to_wire(result)
+            except Exception as exc:
+                await self._respond_error(message, type(exc).__name__, str(exc))
+                return
             await self._send({
                 "protocol_version": PROTOCOL_VERSION,
                 "type": "response",
                 "id": str(message.get("id") or ""),
                 "ok": True,
-                "payload": to_wire(result),
+                "payload": payload,
             })
 
     async def _respond_error(self, message: dict[str, Any], code: str, text: str) -> None:
@@ -239,6 +250,12 @@ def to_wire(value: Any) -> Any:
         return {"__type__": "bytes", "data": base64.b64encode(value).decode("ascii")}
     if isinstance(value, Path):
         return {"__type__": "path", "value": str(value)}
+    if isinstance(value, datetime):
+        return {"__type__": "datetime", "value": value.isoformat()}
+    if isinstance(value, date):
+        return {"__type__": "date", "value": value.isoformat()}
+    if isinstance(value, time):
+        return {"__type__": "time", "value": value.isoformat()}
     if isinstance(value, Enum):
         return value.value
     if is_dataclass(value) and not isinstance(value, type):
@@ -267,6 +284,12 @@ def from_wire(value: Any) -> Any:
         return base64.b64decode(str(value.get("data") or ""), validate=True)
     if type_name == "path":
         return Path(str(value.get("value") or ""))
+    if type_name == "datetime":
+        return datetime.fromisoformat(str(value.get("value") or ""))
+    if type_name == "date":
+        return date.fromisoformat(str(value.get("value") or ""))
+    if type_name == "time":
+        return time.fromisoformat(str(value.get("value") or ""))
     if type_name:
         mapped = _wire_types().get(type_name)
         fields_value = value.get("fields") or {}

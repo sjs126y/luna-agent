@@ -16,6 +16,7 @@ from luna_agent.attachments.store import AttachmentStoreError
 from luna_agent.models.messages import AttachmentRef, MessageEvent, OutboundMessage, PlatformCapabilities
 from luna_agent.models.messages import SessionSource
 from luna_agent.platforms.hooks import AdapterHooks
+from luna_agent.platforms.setup import PlatformSetupContext, PlatformSetupResult
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class PlatformEntry:
     factory: Callable[..., "BasePlatformAdapter"]
     check_fn: Callable[[object], bool]  # config → bool
     capabilities: PlatformCapabilities = field(default_factory=PlatformCapabilities)
+    setup_fn: Callable[[PlatformSetupContext], Awaitable[PlatformSetupResult] | PlatformSetupResult] | None = None
 
 
 class PlatformRegistry:

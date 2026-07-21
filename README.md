@@ -144,6 +144,14 @@ uv run luna-agent chat
 uv run luna-agent serve
 ```
 
+首次接入微信、Telegram、飞书或 QQ 时，使用统一的平台初始化命令；它会生成配置并完成对应的凭据配对：
+
+```bash
+uv run luna-agent setup --platform wechat
+```
+
+平台初始化完成后，再运行 `uv run luna-agent serve` 启动 Gateway。
+
 模型、记忆、安全模式、MCP 和平台连接配置见[配置说明](docs/configuration.md)。
 
 ## 扩展 Luna Agent
