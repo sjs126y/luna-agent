@@ -690,12 +690,9 @@ class PluginHostProcessService:
                 continue
             if not target.exists():
                 shutil.copyfile(source_file, target)
-            try:
-                from luna_agent.tools.file_security import secure_file
+            from luna_agent.tools.file_security import secure_file
 
-                secure_file(target)
-            except OSError:
-                pass
+            secure_file(target)
 
     def _record(self, plugin, process_id: str) -> dict[str, Any]:
         record = self._processes.get(process_id)
