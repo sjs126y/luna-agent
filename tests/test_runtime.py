@@ -382,8 +382,11 @@ async def test_start_mcp_manager_merges_plugin_servers(tmp_path, monkeypatch):
 
     monkeypatch.setattr("luna_agent.mcp.manager.MCPManager", FakeMCPManager)
 
-    manager = await start_mcp_manager(settings, plugin_manager)
+    try:
+        manager = await start_mcp_manager(settings, plugin_manager)
 
-    assert manager.started
-    assert [item.name if hasattr(item, "name") else item["name"] for item in created["configs"]] == ["config", "demo"]
-    assert created["env_values"] == {"REMOTE_MCP_TOKEN": "resolved-secret"}
+        assert manager.started
+        assert [item.name if hasattr(item, "name") else item["name"] for item in created["configs"]] == ["config", "demo"]
+        assert created["env_values"] == {"REMOTE_MCP_TOKEN": "resolved-secret"}
+    finally:
+        await plugin_manager.aclose()
