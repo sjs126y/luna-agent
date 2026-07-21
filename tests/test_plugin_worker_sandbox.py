@@ -52,7 +52,7 @@ def test_appcontainer_profile_cleanup_is_generation_owned_and_idempotent(
 ) -> None:
     removed = []
     monkeypatch.setattr(
-        "luna_agent.plugins.runtime.windows_sandbox._remove_appcontainer_profile",
+        "luna_agent.security.windows_appcontainer.cleanup_appcontainer_profile",
         lambda name, roots: removed.append((name, roots)),
     )
     lease = _AppContainerProfileLease(profile_name="profile", roots=(tmp_path,))
