@@ -718,6 +718,10 @@ async def _setup_platform(
                 manager.unload_plugin(plugin_key)
             except Exception:
                 pass
+            try:
+                manager.close()
+            except Exception:
+                pass
         os.chdir(previous_dir)
 
 
@@ -843,7 +847,10 @@ def plugins_logs(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    items = manager.queries.events(key, limit=limit)
+    try:
+        items = manager.queries.events(key, limit=limit)
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
         return
@@ -860,7 +867,10 @@ def plugins_versions(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    items = manager.queries.versions(key)
+    try:
+        items = manager.queries.versions(key)
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
         return
@@ -877,7 +887,10 @@ def plugins_environments(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    report = manager.queries.environments()
+    try:
+        report = manager.queries.environments()
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
         return
@@ -900,6 +913,8 @@ def plugins_gc_environments(
         report = asyncio.run(manager.gc_plugin_environments(dry_run=not apply))
     except Exception as exc:
         _exit_error(f"插件环境清理失败: {exc}")
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False))
         return
@@ -919,7 +934,10 @@ def plugins_operations(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    items = manager.queries.operations(key=key, limit=limit)
+    try:
+        items = manager.queries.operations(key=key, limit=limit)
+    finally:
+        manager.close()
     if json_output:
         typer.echo(json.dumps(items, indent=2, ensure_ascii=False))
         return
@@ -939,7 +957,10 @@ def plugins_operation(
     json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
 ) -> None:
     manager = _plugin_manager()
-    item = manager.queries.operation(operation_id)
+    try:
+        item = manager.queries.operation(operation_id)
+    finally:
+        manager.close()
     if item is None:
         _exit_error(f"插件操作不存在: {operation_id}")
     if json_output:
@@ -1233,39 +1254,42 @@ def tokens_session(
     async def _run() -> None:
         settings = Settings()
         manager = _plugin_manager(settings)
-        manager.load_enabled()
+        try:
+            manager.load_enabled()
 
-        from luna_agent.llm.provider import _detect_context_window
-        from luna_agent.skills.registry import skill_registry
-        from luna_agent.tools.registry import tool_registry
+            from luna_agent.llm.provider import _detect_context_window
+            from luna_agent.skills.registry import skill_registry
+            from luna_agent.tools.registry import tool_registry
 
-        messages: list[dict] = []
-        if session_json is not None:
-            messages.extend(json.loads(session_json.read_text(encoding="utf-8")))
+            messages: list[dict] = []
+            if session_json is not None:
+                messages.extend(json.loads(session_json.read_text(encoding="utf-8")))
 
-        effective_model = model or settings.llm_model
-        configured_limit = int(getattr(settings, "llm_context_window", 0) or 0)
-        effective_limit = (
-            context_limit
-            or (configured_limit if not model else 0)
-            or _detect_context_window(effective_model)
-        )
-        budget = await build_context_budget(
-            messages=messages,
-            settings=settings,
-            model=effective_model,
-            context_limit=effective_limit,
-            tools=tool_registry.get_definitions(
-                enabled_toolsets=settings.enabled_toolsets,
-                quiet_mode=True,
-            ),
-            skills_summary=skill_registry.get_summaries(),
-        )
-        data = budget.as_dict()
-        if json_output:
-            typer.echo(json.dumps(data, indent=2, ensure_ascii=False))
-        else:
-            typer.echo(format_token_budget(data))
+            effective_model = model or settings.llm_model
+            configured_limit = int(getattr(settings, "llm_context_window", 0) or 0)
+            effective_limit = (
+                context_limit
+                or (configured_limit if not model else 0)
+                or _detect_context_window(effective_model)
+            )
+            budget = await build_context_budget(
+                messages=messages,
+                settings=settings,
+                model=effective_model,
+                context_limit=effective_limit,
+                tools=tool_registry.get_definitions(
+                    enabled_toolsets=settings.enabled_toolsets,
+                    quiet_mode=True,
+                ),
+                skills_summary=skill_registry.get_summaries(),
+            )
+            data = budget.as_dict()
+            if json_output:
+                typer.echo(json.dumps(data, indent=2, ensure_ascii=False))
+            else:
+                typer.echo(format_token_budget(data))
+        finally:
+            await manager.aclose()
 
     asyncio.run(_run())
 
@@ -1907,8 +1931,11 @@ def build_doctor_report(settings: Settings | None = None) -> dict[str, Any]:
     plugins = runtime_health.pop("_plugins", None)
     if plugins is None:
         manager = _plugin_manager(settings)
-        manager.load_enabled()
-        plugins = manager.queries.list_plugins()
+        try:
+            manager.load_enabled()
+            plugins = manager.queries.list_plugins()
+        finally:
+            manager.close()
 
     from luna_agent.llm.token_counter import tokenizer_status
     from luna_agent.tools.registry import tool_registry
