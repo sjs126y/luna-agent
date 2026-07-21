@@ -79,17 +79,14 @@ def test_cron_store_recovers_corrupt_jobs(tmp_path):
     assert list(tmp_path.glob("jobs.json.corrupt.*"))
 
 
-def test_auth_manager_recovers_corrupt_state(tmp_path):
-    auth_dir = tmp_path / "auth"
-    auth_dir.mkdir()
-    (auth_dir / "allowlist.json").write_text("{broken", encoding="utf-8")
-    (auth_dir / "pending.json").write_text("{broken", encoding="utf-8")
-
-    manager = AuthManager(SimpleNamespace(auth_enabled=True, auth_admins=[]), tmp_path)
+def test_auth_manager_uses_owner_policy_without_pairing_state(tmp_path):
+    manager = AuthManager(SimpleNamespace(
+        auth_enabled=True,
+        auth_owner_ids={"telegram": ["owner"]},
+    ), tmp_path)
 
     assert manager.check("user-1", "")[0] is False
-    assert list(auth_dir.glob("allowlist.json.corrupt.*"))
-    assert list(auth_dir.glob("pending.json.corrupt.*"))
+    assert manager.health_snapshot()["configured_owner_count"] == 1
 
 
 def test_plugin_manager_recovers_corrupt_state(tmp_path):

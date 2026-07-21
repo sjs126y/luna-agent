@@ -54,6 +54,16 @@ class ConversationQueryService:
     def turn_report_summary(self) -> dict[str, Any]:
         return self._service.turn_report_summary()
 
+    async def recent_persisted_turn_reports(
+        self, *, limit: int = 20, session_key: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._service.recent_persisted_turn_reports(
+            limit=limit, session_key=session_key, status=status
+        )
+
+    async def persisted_turn_report(self, report_id: int) -> dict[str, Any] | None:
+        return await self._service.get_persisted_turn_report(int(report_id))
+
     def recent_tool_truth(self, limit: int = 10) -> list[dict[str, Any]]:
         return self._service.recent_tool_truth(limit)
 
@@ -113,6 +123,9 @@ def _normalize_tool_run(item: dict[str, Any]) -> dict[str, Any]:
         "session_id": str(item.get("session_id") or ""),
         "session_key": str(item.get("session_key") or ""),
         "turn_id": str(item.get("turn_id") or ""),
+        "trace_id": str(item.get("trace_id") or ""),
+        "request_id": str(item.get("request_id") or ""),
+        "operation_id": str(item.get("operation_id") or ""),
         "tool_use_id": str(item.get("tool_use_id") or ""),
         "tool_name": str(item.get("tool_name") or ""),
         "status": str(item.get("status") or ""),

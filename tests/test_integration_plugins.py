@@ -133,6 +133,21 @@ class _MCP:
         return SimpleNamespace(status="success", content=self.payloads.pop(0), error="")
 
 
+class _WorkflowMCP:
+    def __init__(self):
+        self.calls = []
+
+    async def call(self, server, tool, arguments):
+        self.calls.append(tool)
+        if tool == "actions_list":
+            raise RuntimeError("WorkerProtocolError: 'active plugin tool is unavailable: mcp__github__actions_list'")
+        return SimpleNamespace(
+            status="success",
+            content={"workflow_runs": [{"id": 7, "name": "CI", "status": "completed"}]},
+            error="",
+        )
+
+
 class _Conversation:
     def __init__(self):
         self.requests = []
@@ -140,6 +155,27 @@ class _Conversation:
     async def submit(self, **kwargs):
         self.requests.append(kwargs)
         return "accepted"
+
+
+@pytest.mark.asyncio
+async def test_github_watch_falls_back_when_isolated_worker_wraps_unavailable_tool(tmp_path, monkeypatch):
+    key = "integrations/github-assistant"
+    manager = _manager(tmp_path, monkeypatch, key, {"repositories": ["openai/codex"]})
+    plugin = next(item for item in manager.list_plugins() if item.key == key)
+    mcp = _WorkflowMCP()
+    ctx = SimpleNamespace(resources=SimpleNamespace(
+        storage=_JsonStorage(),
+        mcp=mcp,
+        conversation=_Conversation(),
+    ))
+    config = plugin.module.GitHubAssistantConfig.model_validate({"repositories": ["openai/codex"]})
+    watcher = plugin.module.GitHubWatcher(ctx, config)
+
+    result = await watcher._workflows("openai", "codex")
+
+    assert mcp.calls == ["actions_list", "list_workflow_runs"]
+    assert result["7"]["title"] == "CI"
+    manager.unload_plugin(key)
 
 
 @pytest.mark.asyncio

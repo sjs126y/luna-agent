@@ -223,6 +223,124 @@ class MemoryArchive:
             ))
         return result
 
+    async def scope_keys(self) -> list[str]:
+        """Return all persisted memory scope keys for explicit migrations."""
+        rows = await self._fetchall(
+            """SELECT scope_key FROM observations
+               UNION SELECT scope_key FROM memories
+               UNION SELECT scope_key FROM review_checkpoints
+               UNION SELECT scope_key FROM review_batches
+               UNION SELECT scope_key FROM internal_buffer
+               UNION SELECT scope_key FROM provider_state
+               ORDER BY scope_key"""
+        )
+        return [str(row["scope_key"] or "") for row in rows if str(row["scope_key"] or "")]
+
+    async def migrate_scope_keys(
+        self,
+        source_scopes: list[str] | tuple[str, ...],
+        *,
+        target_user_id: str = "owner",
+        apply: bool = False,
+    ) -> dict[str, Any]:
+        """Plan or apply a conservative owner scope migration.
+
+        The migration is deliberately archive-local. External providers can
+        rebuild from this source of truth after the transaction commits.
+        """
+        sources = tuple(dict.fromkeys(str(item or "").strip() for item in source_scopes if str(item or "").strip()))
+        plan = {
+            "source_scopes": list(sources),
+            "target_user_id": str(target_user_id or "owner"),
+            "apply": bool(apply),
+            "moved": 0,
+            "merged": 0,
+            "conflicts": [],
+        }
+        if not sources:
+            plan["available_scopes"] = await self.scope_keys()
+            return plan
+        if not apply:
+            plan["targets"] = [_target_scope_key(item, plan["target_user_id"]) for item in sources]
+            return plan
+
+        async with self._write_lock:
+            await self._connection.execute("BEGIN")
+            try:
+                for source in sources:
+                    target = _target_scope_key(source, plan["target_user_id"])
+                    if target == source:
+                        continue
+                    plan["moved"] += await self._migrate_scope(source, target, plan)
+                await self._connection.commit()
+            except Exception:
+                await self._connection.rollback()
+                raise
+        return plan
+
+    async def _migrate_scope(self, source: str, target: str, plan: dict[str, Any]) -> int:
+        moved = 0
+        # Memory records are the only scope-bearing rows with a stable ID and
+        # external indexes. Merge duplicate content before changing scope.
+        source_rows = await self._fetchall(
+            "SELECT id, content_hash FROM memories WHERE scope_key = ?", (source,)
+        )
+        target_hashes = {
+            str(row["content_hash"]): str(row["id"])
+            for row in await self._fetchall(
+                "SELECT id, content_hash FROM memories WHERE scope_key = ?", (target,)
+            )
+        }
+        for row in source_rows:
+            memory_id = str(row["id"])
+            content_hash = str(row["content_hash"])
+            existing_id = target_hashes.get(content_hash)
+            if existing_id and existing_id != memory_id:
+                await self._connection.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
+                await self._connection.execute("DELETE FROM memory_index_state WHERE memory_id = ?", (memory_id,))
+                await self._connection.execute("UPDATE memory_history SET memory_id = ? WHERE memory_id = ?", (existing_id, memory_id))
+                await self._connection.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+                plan["merged"] += 1
+                plan["conflicts"].append({"source_id": memory_id, "target_id": existing_id, "kind": "duplicate_content"})
+            else:
+                target_hashes[content_hash] = memory_id
+                moved += 1
+
+        # Avoid the unique (scope_key, content_hash) constraint in the buffer.
+        await self._connection.execute(
+            """DELETE FROM internal_buffer WHERE scope_key = ? AND content_hash IN (
+                SELECT content_hash FROM internal_buffer WHERE scope_key = ?
+            )""",
+            (source, target),
+        )
+        await self._connection.execute("UPDATE observations SET scope_key = ? WHERE scope_key = ?", (target, source))
+        await self._connection.execute("UPDATE review_batches SET scope_key = ? WHERE scope_key = ?", (target, source))
+        await self._connection.execute("UPDATE memories SET scope_key = ?, index_status = 'pending' WHERE scope_key = ?", (target, source))
+        await self._connection.execute("UPDATE memories_fts SET scope_key = ? WHERE scope_key = ?", (target, source))
+        await self._connection.execute("UPDATE internal_buffer SET scope_key = ? WHERE scope_key = ?", (target, source))
+
+        checkpoint = await self._fetchone("SELECT * FROM review_checkpoints WHERE scope_key = ?", (source,))
+        if checkpoint:
+            target_checkpoint = await self._fetchone("SELECT * FROM review_checkpoints WHERE scope_key = ?", (target,))
+            if target_checkpoint:
+                reviewed = max(int(checkpoint["reviewed_turns"] or 0), int(target_checkpoint["reviewed_turns"] or 0))
+                chosen_turn = str(checkpoint["last_turn_id"] or target_checkpoint["last_turn_id"] or "")
+                await self._connection.execute(
+                    "UPDATE review_checkpoints SET last_turn_id = ?, reviewed_turns = ?, updated_at = ? WHERE scope_key = ?",
+                    (chosen_turn, reviewed, max(str(checkpoint["updated_at"] or ""), str(target_checkpoint["updated_at"] or "")), target),
+                )
+                await self._connection.execute("DELETE FROM review_checkpoints WHERE scope_key = ?", (source,))
+            else:
+                await self._connection.execute("UPDATE review_checkpoints SET scope_key = ? WHERE scope_key = ?", (target, source))
+        provider_state = await self._fetchone("SELECT * FROM provider_state WHERE scope_key = ?", (source,))
+        if provider_state:
+            target_state = await self._fetchone("SELECT * FROM provider_state WHERE scope_key = ?", (target,))
+            if target_state:
+                await self._connection.execute("DELETE FROM provider_state WHERE scope_key = ?", (source,))
+            else:
+                await self._connection.execute("UPDATE provider_state SET scope_key = ? WHERE scope_key = ?", (target, source))
+        return moved
+
     async def get_memory(self, memory_id: str, scope: MemoryScope) -> MemoryRecord | None:
         row = await self._fetchone(
             "SELECT * FROM memories WHERE id = ? AND scope_key = ?", (memory_id, _scope_key(scope))
@@ -592,6 +710,13 @@ class MemoryArchive:
 
 def _scope_key(scope: MemoryScope) -> str:
     return f"{scope.agent_id}:{scope.user_id}:{scope.profile}"
+
+
+def _target_scope_key(source: str, user_id: str) -> str:
+    parts = str(source or "").split(":", 2)
+    if len(parts) != 3:
+        raise ValueError(f"Invalid memory scope key: {source}")
+    return f"{parts[0]}:{str(user_id or 'owner').strip() or 'owner'}:{parts[2]}"
 
 
 def _content_hash(content: str) -> str:

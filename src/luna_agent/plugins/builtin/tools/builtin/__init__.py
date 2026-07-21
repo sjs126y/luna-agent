@@ -30,6 +30,10 @@ _TOOL_MODULES: list[tuple[str, tuple[str, ...]]] = [
     ("luna_agent.plugins.builtin.tools.builtin.plugin_tools", (
         "plugin_inspect", "plugin_build", "plugin_manage",
     )),
+    ("luna_agent.plugins.builtin.tools.builtin.observability_tools", (
+        "runtime_inspect", "conversation_inspect", "platform_inspect", "config_inspect",
+        "memory_inspect", "audit_inspect", "logs_query",
+    )),
     ("luna_agent.plugins.builtin.tools.builtin.process_tool", (
         "process_start",
         "process_list",

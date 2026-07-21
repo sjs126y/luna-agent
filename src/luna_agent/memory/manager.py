@@ -21,12 +21,14 @@ class MemoryManager:
         archive=None,
         internal_service=None,
         internal_turn_interval: int = 50,
+        canonical_user_id: str = "owner",
     ) -> None:
         self.internal = internal
         self.router = router
         self.archive = archive
         self.internal_service = internal_service
         self.internal_turn_interval = internal_turn_interval
+        self.canonical_user_id = str(canonical_user_id or "owner").strip() or "owner"
         self._legacy_builtin = builtin
         self._legacy_external = external
         self._last_errors: dict[str, str] = {}
@@ -42,7 +44,10 @@ class MemoryManager:
         return self._legacy_builtin.get_system_prompt_text() if self._legacy_builtin else ""
 
     def scope(self, *, session_key: str = "", user_id: str = "") -> MemoryScope:
-        resolved_user = user_id or _user_id_from_session(session_key)
+        # Long-term memory belongs to the configured personal owner.  The
+        # incoming platform user_id remains useful to the gateway and session
+        # store, but must not split one person's memory by transport.
+        resolved_user = self.canonical_user_id
         profile = self.internal.profile_for_session(session_key) if self.internal is not None else "default"
         return MemoryScope(user_id=resolved_user, session_key=session_key, profile=profile)
 
@@ -230,6 +235,7 @@ class MemoryManager:
             index_pending = sum(values.get("pending", 0) for values in index.values())
             index_global_pending = sum(values.get("pending", 0) for values in index_global.values())
             return {
+                "canonical_user_id": self.canonical_user_id,
                 "builtin_available": self.internal is not None,
                 "builtin_provider": "internal_markdown" if self.internal is not None else "",
                 "external_available": external["effective_provider"] != "none",
@@ -304,6 +310,7 @@ class MemoryManager:
         builtin = self._legacy_builtin.health_snapshot() if self._legacy_builtin else {"available": False}
         external = self._legacy_external.health_snapshot() if self._legacy_external else {"available": False}
         return {
+            "canonical_user_id": self.canonical_user_id,
             "builtin_available": bool(builtin.get("available", True)),
             "builtin_provider": builtin.get("provider", ""),
             "external_available": bool(external.get("available", False)),

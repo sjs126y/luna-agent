@@ -61,6 +61,7 @@ flowchart TD
 | 前端可消费事件、命令和字段 | [BACKEND_INTERFACE.md](../BACKEND_INTERFACE.md) |
 | 前端向后端提出的新需求 | [FRONTEND_INTERFACE_REQUIREMENTS.md](../FRONTEND_INTERFACE_REQUIREMENTS.md) |
 | 后端当前进度 | [BACKEND_PROGRESS.md](../BACKEND_PROGRESS.md) |
+| 小鹿运行时测试与验收 | [TESTING_GUIDE.md](../TESTING_GUIDE.md) |
 | 插件架构技术债与稳定化清单 | [PLUGIN_ARCHITECTURE_DEBT.md](../PLUGIN_ARCHITECTURE_DEBT.md) |
 | 前端当前进度 | [FRONTEND_PROGRESS.md](../FRONTEND_PROGRESS.md) |
 | 阶段性项目变化与代码规模 | [PROJECT_EVOLUTION.md](../PROJECT_EVOLUTION.md) |

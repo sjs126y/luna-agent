@@ -12,6 +12,7 @@ from luna_agent.config import Settings
 from luna_agent.db.database import Database
 from luna_agent.platforms.core import BasePlatformAdapter, ChatInfo, PlatformEntry, SendResult, platform_registry
 from luna_agent.gateway.gateway import Gateway
+from luna_agent.gateway.auth import AccessDecision
 from luna_agent.gateway.state import PlatformRuntime
 from luna_agent.memory.manager import MemoryManager
 from luna_agent.models.messages import (
@@ -79,7 +80,11 @@ class PluginManager:
 
 @pytest_asyncio.fixture
 async def gateway(tmp_path):
-    settings = Settings(agent_data_dir=tmp_path / "data", plugins_dirs=[])
+    settings = Settings(
+        agent_data_dir=tmp_path / "data",
+        plugins_dirs=[],
+        auth_owner_ids={"telegram": ["u1"]},
+    )
     db = Database(settings.agent_data_dir / "state.db")
     await db.initialize()
     gw = Gateway(
@@ -196,7 +201,6 @@ async def test_gateway_regular_message_uses_active_session_key(gateway, monkeypa
         )
 
     monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     result = await gateway._handle_message_inner(_event("hello"))
 
@@ -223,7 +227,6 @@ async def test_gateway_submits_normalized_request_when_coordinator_is_available(
             return Handle()
 
     gateway._conversation_coordinator = Coordinator()
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     result = await gateway._handle_message_inner(_event("hello", message_id="m1"))
 
@@ -235,7 +238,7 @@ async def test_gateway_submits_normalized_request_when_coordinator_is_available(
 
 
 @pytest.mark.asyncio
-async def test_coordinator_gateway_delivers_auth_response_as_protected_message(gateway, monkeypatch):
+async def test_gateway_rejects_unauthorized_message_without_delivery(gateway, monkeypatch):
     deliveries = []
 
     class Delivery:
@@ -245,13 +248,16 @@ async def test_coordinator_gateway_delivers_auth_response_as_protected_message(g
 
     gateway._conversation_coordinator = SimpleNamespace()
     gateway._delivery_service = Delivery()
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (False, "pair first"))
+    monkeypatch.setattr(
+        gateway._auth_manager,
+        "authorize",
+        lambda source, internal=False: AccessDecision(False, "user_not_owner"),
+    )
 
     result = await gateway._handle_message_inner(_event("hello"))
 
     assert result is None
-    assert deliveries[0].kind.value == "auth"
-    assert deliveries[0].message.render_text() == "pair first"
+    assert deliveries == []
 
 
 @pytest.mark.asyncio
@@ -291,8 +297,9 @@ async def test_gateway_message_hook_runs_after_auth_and_rewrites_input(gateway, 
     )
     monkeypatch.setattr(
         gateway._auth_manager,
-        "check",
-        lambda user_id, text: auth_calls.append((user_id, text)) or (True, None),
+        "authorize",
+        lambda source, internal=False: auth_calls.append((source.user_id, "hello"))
+        or AccessDecision(True, "owner_match"),
     )
     monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
@@ -322,7 +329,6 @@ async def test_gateway_message_hook_can_block_before_agent(gateway, monkeypatch)
         event=HookEvent.GATEWAY_MESSAGE_RECEIVED,
         callback=block,
     )
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
     monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     result = await gateway._handle_message_inner(_event("hello"))
@@ -355,7 +361,6 @@ async def test_gateway_prepares_inbound_attachments_after_auth(gateway, monkeypa
         )
 
     monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
     monkeypatch.setattr(gateway._conversation_service, "run_turn_input_events", run_turn_input_events)
 
     event = _event("hello")
@@ -377,7 +382,11 @@ async def test_gateway_does_not_prepare_attachments_when_auth_fails(gateway, mon
         return event
 
     monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (False, "denied"))
+    monkeypatch.setattr(
+        gateway._auth_manager,
+        "authorize",
+        lambda source, internal=False: AccessDecision(False, "user_not_owner"),
+    )
 
     event = _event("hello")
     event.attachments = [MessagePart(type="image", file_id="file-1", name="photo.png")]
@@ -397,7 +406,6 @@ async def test_gateway_does_not_prepare_attachments_for_consumed_command(gateway
         return event
 
     monkeypatch.setattr(adapter, "prepare_inbound_attachments", prepare_inbound_attachments)
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     result = await gateway._handle_message_inner(_event("/session list"))
 
@@ -572,7 +580,6 @@ async def test_gateway_lifecycle_hooks_observe_start_connect_disconnect_stop(gat
 @pytest.mark.asyncio
 async def test_gateway_async_confirmation_allows_once(gateway, monkeypatch):
     adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     answers = []
 
@@ -621,7 +628,6 @@ async def test_gateway_async_confirmation_allows_once(gateway, monkeypatch):
 @pytest.mark.asyncio
 async def test_gateway_async_confirmation_accepts_cached_choice(gateway, monkeypatch):
     adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     async def run_turn_input_events(session_key, user_input, *, confirm=None, **kwargs):
         answer = await confirm(SimpleNamespace(
@@ -656,7 +662,6 @@ async def test_gateway_async_confirmation_accepts_cached_choice(gateway, monkeyp
 async def test_platform_confirmation_reply_reaches_coordinator_control_lane(gateway, monkeypatch):
     adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
     adapter.set_message_handler(gateway._handle_message)
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     async def run_turn_input_events(session_key, user_input, *, confirm=None, **kwargs):
         answer = await confirm(SimpleNamespace(
@@ -716,7 +721,6 @@ async def test_gateway_steer_command_queues_current_turn(gateway):
 async def test_platform_steer_reply_reaches_coordinator_control_lane(gateway, monkeypatch):
     adapter = _attach_adapter(gateway, RecordingAdapter(gateway.config, gateway.db))
     adapter.set_message_handler(gateway._handle_message)
-    monkeypatch.setattr(gateway._auth_manager, "check", lambda user_id, text: (True, None))
 
     session_key = "telegram:c1:u1"
     gateway._conversation_coordinator.active_turns.begin_turn(session_key, "turn-1")

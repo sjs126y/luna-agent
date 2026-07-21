@@ -6,7 +6,7 @@ kind: platform
 entrypoint: luna_agent.plugins.builtin.platforms.feishu:register
 requires_env: [FEISHU_APP_ID, FEISHU_APP_SECRET]
 provides: [platforms]
-enabled_by_default: true
+enabled_by_default: false
 source: builtin
 deferred: true
 record_import_delta: false

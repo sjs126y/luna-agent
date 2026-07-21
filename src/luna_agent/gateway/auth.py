@@ -1,145 +1,102 @@
-"""Auth system — static allowlist + pairing challenge.
+"""Owner-only access policy for external gateway messages.
 
-Flow:
-  admin/superuser → always allowed
-  in allowlist   → allowed
-  in pending     → check if reply matches code:
-      match      → move to allowlist, greet
-      mismatch   → retry (max 3), then kick
-  unknown user   → generate code, store pending, send challenge
+Platform login (QR code, bot token, or app credentials) authenticates the
+bot account, not the person sending a message.  This module therefore keeps
+the second boundary explicit: only configured owner IDs in direct messages
+may enter the conversation runtime.
 """
 
 from __future__ import annotations
 
-import logging
-import random
-import string
-import time
-from pathlib import Path
-from typing import Any
-
-from luna_agent.persistence.json_store import read_json_object, write_json_atomic
-
-logger = logging.getLogger(__name__)
-
-CHALLENGE_EXPIRE = 300    # 5 minutes
-MAX_ATTEMPTS = 3
+from dataclasses import dataclass
+from typing import Any, Mapping
 
 
-class AuthManager:
-    def __init__(self, config: Any, data_dir: Path) -> None:
-        self._enabled: bool = getattr(config, "auth_enabled", False)
-        self._admins: set[str] = set(getattr(config, "auth_admins", []) or [])
-        self._allowlist: set[str] = set()
-        self._pending: dict[str, dict] = {}  # user_id → {code, expires_at, attempts}
+TRUSTED_INTERNAL_PLATFORMS = frozenset({"cli", "tui", "cron", "system", "plugin"})
 
-        self._allowlist_path = data_dir / "auth" / "allowlist.json"
-        self._pending_path = data_dir / "auth" / "pending.json"
 
-        if self._enabled:
-            self._load()
+@dataclass(frozen=True, slots=True)
+class AccessDecision:
+    allowed: bool
+    reason_code: str
 
-    def _load(self) -> None:
-        self._allowlist_path.parent.mkdir(parents=True, exist_ok=True)
-        if self._allowlist_path.exists():
-            data = read_json_object(self._allowlist_path, {"users": []})
-            self._allowlist = set(data.get("users", []))
-            logger.info("Auth: loaded %d allowed users", len(self._allowlist))
 
-        if self._pending_path.exists():
-            data = read_json_object(self._pending_path, {"pending": {}})
-            self._pending = data.get("pending", {})
-            # Clean expired
-            now = time.time()
-            self._pending = {k: v for k, v in self._pending.items()
-                             if v.get("expires_at", 0) > now}
-            logger.info("Auth: loaded %d pending challenges", len(self._pending))
+class OwnerAccessPolicy:
+    """Small, stateless authorization boundary for gateway sources."""
 
-    def _save_allowlist(self) -> None:
-        write_json_atomic(self._allowlist_path, {"users": sorted(self._allowlist)})
+    def __init__(self, config: Any, data_dir: Any | None = None) -> None:
+        # ``data_dir`` remains accepted for source compatibility; this policy
+        # is intentionally stateless.
+        del data_dir
+        self.enabled = bool(getattr(config, "auth_enabled", True))
+        raw = getattr(config, "auth_owner_ids", {}) or {}
+        self.owner_ids = _normalize_owner_ids(raw)
 
-    def _save_pending(self) -> None:
-        write_json_atomic(self._pending_path, {"pending": self._pending})
+    def authorize(self, source: Any, *, internal: bool = False) -> AccessDecision:
+        platform = str(getattr(source, "platform", "") or "").strip().lower()
+        user_id = str(getattr(source, "user_id", "") or "").strip()
+        chat_type = str(getattr(source, "chat_type", "dm") or "dm").strip().lower()
 
-    # ── main entry ────────────────────────────────────
+        if internal or platform in TRUSTED_INTERNAL_PLATFORMS:
+            return AccessDecision(True, "trusted_internal")
+        if not self.enabled:
+            return AccessDecision(True, "authentication_disabled")
+        if chat_type != "dm":
+            return AccessDecision(False, "group_message_denied")
+        if not platform or not user_id:
+            return AccessDecision(False, "invalid_source")
+        if user_id in self.owner_ids.get(platform, frozenset()):
+            return AccessDecision(True, "owner_match")
+        if platform not in self.owner_ids:
+            return AccessDecision(False, "platform_owner_not_configured")
+        return AccessDecision(False, "user_not_owner")
 
-    def check(self, user_id: str, message_text: str = "") -> tuple[bool, str | None]:
-        """Returns (allowed, response_if_not).
-        response_if_not is None if user is allowed.
+    def is_allowed(self, source: Any, *, internal: bool = False) -> bool:
+        return self.authorize(source, internal=internal).allowed
+
+    def check(self, user_id: str, text: str = "") -> tuple[bool, str | None]:
+        """Legacy compatibility shim for integrations that only have a user id.
+
+        Gateway authorization uses :meth:`authorize`, which includes platform
+        and chat type.  This method deliberately cannot grant external access.
         """
-        if not self._enabled:
+        del text
+        if not self.enabled:
             return True, None
+        normalized = str(user_id or "").strip()
+        allowed = any(normalized in values for values in self.owner_ids.values())
+        return (True, None) if allowed else (False, "owner_auth_required")
 
-        # Admin always passes
-        if user_id in self._admins:
-            return True, None
-
-        # Already in allowlist
-        if user_id in self._allowlist:
-            return True, None
-
-        # Clean expired pending entries
-        self._clean_expired()
-
-        # User has a pending challenge — check their reply
-        if user_id in self._pending:
-            return self._check_challenge(user_id, message_text.strip())
-
-        # Unknown user — issue challenge
-        return self._issue_challenge(user_id)
-
-    # ── challenge logic ───────────────────────────────
-
-    def _issue_challenge(self, user_id: str) -> tuple[bool, str | None]:
-        code = "".join(random.choices(string.digits, k=6))
-        self._pending[user_id] = {
-            "code": code,
-            "expires_at": time.time() + CHALLENGE_EXPIRE,
-            "attempts": 0,
+    def health_snapshot(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "configured_platforms": sorted(self.owner_ids),
+            "configured_owner_count": sum(len(values) for values in self.owner_ids.values()),
         }
-        self._save_pending()
-        logger.info("Auth: issued challenge to %s (code=%s)", user_id[:12], code)
-        return False, (
-            f"🔐 检测到新用户，请完成验证。\n\n"
-            f"请回复以下 6 位数字验证码完成配对：\n\n"
-            f"    {code}\n\n"
-            f"验证码 {CHALLENGE_EXPIRE // 60} 分钟内有效。"
+
+
+# Keep the old internal name importable for integrations. New code should use
+# OwnerAccessPolicy explicitly.
+AuthManager = OwnerAccessPolicy
+
+
+def _normalize_owner_ids(raw: Any) -> dict[str, frozenset[str]]:
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, frozenset[str]] = {}
+    for platform, values in raw.items():
+        key = str(platform or "").strip().lower()
+        if not key:
+            continue
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, (list, tuple, set, frozenset)):
+            continue
+        normalized = frozenset(
+            str(value or "").strip()
+            for value in values
+            if str(value or "").strip()
         )
-
-    def _check_challenge(self, user_id: str, reply: str) -> tuple[bool, str | None]:
-        pending = self._pending[user_id]
-        pending["attempts"] += 1
-
-        if reply == pending["code"]:
-            # Success! Return greeting instead of letting code through to Agent
-            del self._pending[user_id]
-            self._allowlist.add(user_id)
-            self._save_allowlist()
-            self._save_pending()
-            logger.info("Auth: user %s verified via pairing", user_id[:12])
-            return True, "✅ 验证通过！你好，我是个人助理。有什么可以帮你的？"
-
-        # Wrong code
-        remaining = MAX_ATTEMPTS - pending["attempts"]
-        if remaining <= 0:
-            del self._pending[user_id]
-            self._save_pending()
-            logger.warning("Auth: user %s exceeded max attempts", user_id[:12])
-            return False, "🚫 验证码错误次数过多，请联系管理员。"
-
-        self._save_pending()
-        return False, f"❌ 验证码错误，你还有 {remaining} 次机会。请回复正确的 6 位数字。"
-
-    def _clean_expired(self) -> None:
-        now = time.time()
-        stale = [k for k, v in self._pending.items() if v.get("expires_at", 0) < now]
-        if stale:
-            for k in stale:
-                del self._pending[k]
-            self._save_pending()
-
-    # ── management ─────────────────────────────────────
-
-    def add_user(self, user_id: str) -> None:
-        self._allowlist.add(user_id)
-        self._save_allowlist()
+        if normalized:
+            result[key] = normalized
+    return result

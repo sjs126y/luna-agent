@@ -49,6 +49,13 @@ class ConfigLoader:
         warnings: list[str] = []
         if config_error:
             errors.append(f"config.yaml 解析失败: {config_error}")
+        auth_config = raw_config.get("auth")
+        if isinstance(auth_config, dict):
+            for legacy in ("admins", "allowed_users"):
+                if legacy in auth_config:
+                    errors.append(
+                        f"auth.{legacy} 已移除，请改用按平台配置的 auth.owner_ids。"
+                    )
 
         for field in self.registry.fields:
             source, raw_value = self._resolve_raw_value(field, raw_config, environment, overrides)

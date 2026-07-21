@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from luna_agent.config import Settings
 from luna_agent.runtime import create_app_runtime, ensure_system_files
@@ -12,7 +15,7 @@ from luna_agent.runtime import create_app_runtime, ensure_system_files
 logger = logging.getLogger("luna_agent")
 
 
-def setup_logging(level: str = "INFO") -> None:
+def setup_logging(level: str = "INFO", *, log_path: Path | None = None) -> None:
     class ColorFormatter(logging.Formatter):
         """Colorize log level + highlight key events."""
 
@@ -58,6 +61,24 @@ def setup_logging(level: str = "INFO") -> None:
     handler.addFilter(TraceFilter())
     logging.root.handlers = []
     logging.root.addHandler(handler)
+    if log_path is not None:
+        class JsonFormatter(logging.Formatter):
+            def format(self, record):
+                from luna_agent.trace import current_context
+                from luna_agent.tools.redact import redact
+                context = current_context()
+                return json.dumps({
+                    "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "message": redact(record.getMessage()[:2000]),
+                    **{key: value for key, value in context.items() if value},
+                }, ensure_ascii=False)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(log_path, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8")
+        file_handler.setFormatter(JsonFormatter())
+        file_handler.addFilter(TraceFilter())
+        logging.root.addHandler(file_handler)
     logging.root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
 
@@ -67,7 +88,7 @@ _ensure_system_files = ensure_system_files
 async def boot() -> None:
     # ── 1. Config ─────────────────────────────────────
     settings = Settings()
-    setup_logging(settings.log_level)
+    setup_logging(settings.log_level, log_path=settings.agent_data_dir / "logs" / "agent.log")
     logger.info("Luna Agent starting...")
 
     runtime = await create_app_runtime(settings)

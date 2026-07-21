@@ -450,11 +450,17 @@ class ConversationCoordinator:
             }
             if capability_view is not None:
                 kwargs["capability_view"] = capability_view
-            result = await self.conversation_service.run_turn_input_events(
-                request.session_key,
-                request.input,
-                **kwargs,
-            )
+            from luna_agent.trace import context as trace_context
+            with trace_context(
+                session_key=request.session_key,
+                request_id=request.request_id,
+                turn_id=turn_id,
+            ):
+                result = await self.conversation_service.run_turn_input_events(
+                    request.session_key,
+                    request.input,
+                    **kwargs,
+                )
         except asyncio.CancelledError:
             return SubmissionOutcome(
                 request_id=request.request_id,

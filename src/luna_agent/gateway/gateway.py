@@ -52,7 +52,7 @@ class Gateway:
         self._memory_manager = memory_manager
         self._system_prompt_template = system_prompt_template
         from luna_agent.gateway.compression_chain import CompressionChain
-        from luna_agent.gateway.auth import AuthManager
+        from luna_agent.gateway.auth import OwnerAccessPolicy
         if conversation_service is None:
             compression_chain = CompressionChain(config.agent_data_dir / "compression_chain.json")
             session_store = SessionStore(db, config.agent_data_dir, chain=compression_chain)
@@ -75,7 +75,7 @@ class Gateway:
         self._conversation_coordinator = conversation_coordinator
         self._memory_review_service = memory_review_service or MemoryReviewService()
         self._compression_chain = conversation_service.compression_chain
-        self._auth_manager = AuthManager(config, config.agent_data_dir)
+        self._auth_manager = OwnerAccessPolicy(config)
         self._session_store = conversation_service.session_store
         self._adapters: list = []
         self._platforms: dict[str, PlatformRuntime] = {}
@@ -107,7 +107,10 @@ class Gateway:
         self._session_router.overrides.update(self.config.session_override)
         await self._session_store.initialize()
         await self._session_store.expire_sessions(self.config.session_expire_days)
-        restored_bindings = self._session_router.restore(self._session_store.entries())
+        restored_bindings = self._session_router.restore(
+            self._session_store.entries(),
+            predicate=lambda source: self._auth_manager.is_allowed(source),
+        )
         logger.info("Restored %d delivery binding(s) from session store", restored_bindings)
 
         if self.plugin_manager is not None:
@@ -245,6 +248,7 @@ class Gateway:
             "steer": steer_snapshot,
             "pending_steer_count": int(steer_snapshot.get("pending_steer_count") or 0),
             "active_steer_sessions": list(steer_snapshot.get("active_steer_sessions") or []),
+            "auth": self._auth_manager.health_snapshot(),
         }
         data.update(self._confirmations.snapshot() or {})
         data.update(run_health)
@@ -346,23 +350,22 @@ class Gateway:
             raise RuntimeError("Gateway conversation runtime is not configured")
         if getattr(event, "envelope", None) is None and hasattr(event, "to_envelope"):
             event.to_envelope()
+        # Authorization must happen before creating a session binding, running
+        # hooks, resolving attachments, or submitting any conversation work.
+        decision = self._auth_manager.authorize(
+            event.source,
+            internal=bool(getattr(event, "internal", False)),
+        )
+        if not decision.allowed:
+            logger.info(
+                "Gateway message ignored by owner policy: platform=%s reason=%s",
+                getattr(event.source, "platform", ""),
+                decision.reason_code,
+            )
+            return None
         session_key = self._session_router.active_key(event.source)
 
-        # 1. Authorization (skip internal/cron events)
-        if not event.internal and event.source.user_id != "cron":
-            allowed, response = self._auth_manager.check(
-                event.source.user_id, event.text
-            )
-            if not allowed:
-                text = response or "抱歉，你没有权限使用此服务。"
-                await self._deliver_gateway_text(session_key, text, DeliveryKind.AUTH)
-                return None
-            # Auth passed with a message (e.g. pairing success greeting)
-            if allowed and response is not None:
-                await self._deliver_gateway_text(session_key, response, DeliveryKind.AUTH)
-                return None
-
-        # 2. Formal inbound hooks run only after authorization.
+        # 1. Formal inbound hooks run only after authorization.
         event, blocked_response = await self._dispatch_gateway_message(event, session_key)
         if blocked_response is not None:
             await self._deliver_gateway_text(session_key, blocked_response, DeliveryKind.SYSTEM)

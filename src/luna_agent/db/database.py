@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS tool_runs (
     session_id          TEXT NOT NULL REFERENCES sessions(session_id),
     session_key         TEXT NOT NULL,
     turn_id             TEXT DEFAULT '',
+    trace_id            TEXT DEFAULT '',
+    request_id          TEXT DEFAULT '',
+    operation_id        TEXT DEFAULT '',
     tool_use_id         TEXT NOT NULL,
     tool_name           TEXT NOT NULL,
     status              TEXT NOT NULL,
@@ -111,6 +114,9 @@ CREATE TABLE IF NOT EXISTS turn_reports (
     session_id             TEXT NOT NULL REFERENCES sessions(session_id),
     session_key            TEXT NOT NULL,
     turn_id                TEXT DEFAULT '',
+    trace_id               TEXT DEFAULT '',
+    request_id             TEXT DEFAULT '',
+    operation_id           TEXT DEFAULT '',
     status                 TEXT NOT NULL,
     completed              INTEGER DEFAULT 0,
     duration               REAL DEFAULT 0,
@@ -256,6 +262,9 @@ class Database:
         rows = await self._conn.execute("PRAGMA table_info(tool_runs)")
         columns = {row["name"] async for row in rows}
         for name, ddl in {
+            "trace_id": "ALTER TABLE tool_runs ADD COLUMN trace_id TEXT DEFAULT ''",
+            "request_id": "ALTER TABLE tool_runs ADD COLUMN request_id TEXT DEFAULT ''",
+            "operation_id": "ALTER TABLE tool_runs ADD COLUMN operation_id TEXT DEFAULT ''",
             "grant_scope": "ALTER TABLE tool_runs ADD COLUMN grant_scope TEXT DEFAULT ''",
             "grant_expires_at": "ALTER TABLE tool_runs ADD COLUMN grant_expires_at REAL DEFAULT 0",
             "temporary_grant_ttl_seconds": "ALTER TABLE tool_runs ADD COLUMN temporary_grant_ttl_seconds INTEGER DEFAULT 0",
@@ -263,6 +272,15 @@ class Database:
             "result_metadata_json": "ALTER TABLE tool_runs ADD COLUMN result_metadata_json TEXT DEFAULT '{}'",
         }.items():
             if name not in columns:
+                await self._conn.execute(ddl)
+        rows = await self._conn.execute("PRAGMA table_info(turn_reports)")
+        report_columns = {row["name"] async for row in rows}
+        for name, ddl in {
+            "trace_id": "ALTER TABLE turn_reports ADD COLUMN trace_id TEXT DEFAULT ''",
+            "request_id": "ALTER TABLE turn_reports ADD COLUMN request_id TEXT DEFAULT ''",
+            "operation_id": "ALTER TABLE turn_reports ADD COLUMN operation_id TEXT DEFAULT ''",
+        }.items():
+            if name not in report_columns:
                 await self._conn.execute(ddl)
 
     async def _ensure_delivery_part_columns(self) -> None:
@@ -823,6 +841,9 @@ class Database:
                 str(run.get("session_id") or ""),
                 str(run.get("session_key") or ""),
                 str(run.get("turn_id") or ""),
+                str(run.get("trace_id") or ""),
+                str(run.get("request_id") or ""),
+                str(run.get("operation_id") or ""),
                 str(run.get("tool_use_id") or ""),
                 str(run.get("tool_name") or ""),
                 str(run.get("status") or ""),
@@ -852,14 +873,15 @@ class Database:
         async with self._write_lock:
             await self._conn.executemany(
                 """INSERT INTO tool_runs (
-                    session_id, session_key, turn_id, tool_use_id, tool_name,
+                    session_id, session_key, turn_id, trace_id, request_id, operation_id,
+                    tool_use_id, tool_name,
                     status, category, duration, input_summary, output_summary,
                     full_output, output_truncated, artifact_summary_json,
                     result_metadata_json, error, guard_stage, reason_code,
                     permission_category, permission_decision, required_allow,
                     execution_mode, grant_matched, grant_scope, grant_expires_at,
                     temporary_grant_ttl_seconds, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 rows,
             )
             await self._conn.commit()
@@ -956,6 +978,9 @@ class Database:
             str(envelope.get("session_id") or ""),
             str(envelope.get("session_key") or ""),
             str(report.get("turn_id") or envelope.get("turn_id") or ""),
+            str(envelope.get("trace_id") or report.get("trace_id") or ""),
+            str(envelope.get("request_id") or report.get("request_id") or ""),
+            str(envelope.get("operation_id") or report.get("operation_id") or ""),
             str(report.get("status") or envelope.get("status") or ""),
             1 if report.get("completed") else 0,
             _as_float(report.get("duration")),
@@ -975,12 +1000,13 @@ class Database:
         async with self._write_lock:
             cursor = await self._conn.execute(
                 """INSERT INTO turn_reports (
-                    session_id, session_key, turn_id, status, completed, duration,
+                    session_id, session_key, turn_id, trace_id, request_id, operation_id,
+                    status, completed, duration,
                     error, user_message_summary, final_response_summary, llm_calls,
                     tool_calls, cache_hit_tokens, cache_miss_tokens,
                     cache_write_tokens, cache_read_tokens, source_json, report_json,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 row,
             )
             await self._conn.commit()
@@ -1052,6 +1078,9 @@ def _tool_run_row(row) -> dict[str, Any]:
         "session_id": str(row["session_id"] or ""),
         "session_key": str(row["session_key"] or ""),
         "turn_id": str(row["turn_id"] or ""),
+        "trace_id": str(row["trace_id"] or ""),
+        "request_id": str(row["request_id"] or ""),
+        "operation_id": str(row["operation_id"] or ""),
         "tool_use_id": str(row["tool_use_id"] or ""),
         "tool_name": str(row["tool_name"] or ""),
         "status": str(row["status"] or ""),
@@ -1099,6 +1128,9 @@ def _turn_report_row(row) -> dict[str, Any]:
         "session_id": str(row["session_id"] or ""),
         "session_key": str(row["session_key"] or ""),
         "turn_id": str(row["turn_id"] or ""),
+        "trace_id": str(row["trace_id"] or ""),
+        "request_id": str(row["request_id"] or ""),
+        "operation_id": str(row["operation_id"] or ""),
         "status": str(row["status"] or ""),
         "completed": bool(row["completed"]),
         "duration": float(row["duration"] or 0.0),

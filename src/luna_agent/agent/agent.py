@@ -38,6 +38,7 @@ class Agent:
     _capability_fingerprint: str = ""
     _capability_view: Any = None
     _plugin_manager: Any = None
+    _inspection_port: Any = None
     _tool_bindings: dict[str, Any] = field(default_factory=dict)
 
     # ── system prompt ──
@@ -103,6 +104,7 @@ def init_agent(
     enabled_toolsets: list[str] | None = None,
     hook_manager=None,
     plugin_manager=None,
+    inspection_port=None,
     capability_view=None,
     approval_reviewer_config: dict[str, Any] | None = None,
 ) -> Agent:
@@ -121,6 +123,7 @@ def init_agent(
         _compressor=compressor,
         _hook_manager=hook_manager,
         _plugin_manager=plugin_manager,
+        _inspection_port=inspection_port,
         _capability_view=capability_view,
         _approval_reviewer_config=dict(approval_reviewer_config or {}),
         enabled_toolsets=enabled_toolsets,

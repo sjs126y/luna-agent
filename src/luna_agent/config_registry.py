@@ -591,9 +591,8 @@ def _plugin_fields() -> tuple[ConfigField, ...]:
 
 def _auth_fields() -> tuple[ConfigField, ...]:
     return (
-        _yaml_field("auth.enabled", "auth_enabled", False, "bool", "auth", "Enable auth."),
-        _yaml_field("auth.admins", "auth_admins", [], "list", "auth", "Admin users."),
-        _yaml_field("auth.allowed_users", "auth_allowed_users", [], "list", "auth", "Allowed users."),
+        _yaml_field("auth.enabled", "auth_enabled", True, "bool", "auth", "Enable owner authentication."),
+        _yaml_field("auth.owner_ids", "auth_owner_ids", {}, "dict", "auth", "Platform to owner user IDs."),
     )
 
 

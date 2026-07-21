@@ -21,10 +21,16 @@ from __future__ import annotations
 import contextvars
 import logging
 import time
+from contextlib import contextmanager
+from typing import Iterator
 
 trace_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "trace_id", default=""
 )
+session_key: contextvars.ContextVar[str] = contextvars.ContextVar("session_key", default="")
+request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
+turn_id: contextvars.ContextVar[str] = contextvars.ContextVar("turn_id", default="")
+operation_id: contextvars.ContextVar[str] = contextvars.ContextVar("operation_id", default="")
 
 
 def set_trace(prefix: str) -> contextvars.Token:
@@ -33,10 +39,41 @@ def set_trace(prefix: str) -> contextvars.Token:
     return trace_id.set(tid)
 
 
+def current_context() -> dict[str, str]:
+    return {
+        "trace_id": trace_id.get(),
+        "session_key": session_key.get(),
+        "request_id": request_id.get(),
+        "turn_id": turn_id.get(),
+        "operation_id": operation_id.get(),
+    }
+
+
+@contextmanager
+def context(**values: str) -> Iterator[None]:
+    vars_by_name = {
+        "trace_id": trace_id,
+        "session_key": session_key,
+        "request_id": request_id,
+        "turn_id": turn_id,
+        "operation_id": operation_id,
+    }
+    tokens = [vars_by_name[name].set(value) for name, value in values.items() if name in vars_by_name and value]
+    try:
+        yield
+    finally:
+        for var, token in zip((vars_by_name[name] for name, value in values.items() if name in vars_by_name and value), tokens):
+            var.reset(token)
+
+
 class TraceFilter(logging.Filter):
     """Inject trace_id into every log record automatically."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         tid = trace_id.get()
         record.trace_id = tid[:16] if tid else "-"  # keep it short
+        record.session_key = session_key.get() or "-"
+        record.request_id = request_id.get() or "-"
+        record.turn_id = turn_id.get() or "-"
+        record.operation_id = operation_id.get() or "-"
         return True

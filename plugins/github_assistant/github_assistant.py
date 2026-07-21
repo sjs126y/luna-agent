@@ -313,13 +313,17 @@ class GitHubWatcher:
                 "repo": repo,
                 "per_page": self.config.watch.per_page,
             }, key="id", list_keys=("workflow_runs", "runs"))
-        except (KeyError, PermissionError):
+        except Exception as exc:
+            # Remote worker calls wrap host-side unavailable-tool errors in
+            # WorkerProtocolError, so preserve the same compatibility fallback
+            # across in-process and isolated plugin runtimes.
+            if not _is_unavailable_mcp_tool(exc):
+                raise
             return await self._call_items("list_workflow_runs", {
                 "owner": owner,
                 "repo": repo,
                 "perPage": self.config.watch.per_page,
             }, key="id", list_keys=("workflow_runs", "runs"))
-
     async def _call_items(
         self,
         tool: str,
@@ -375,6 +379,10 @@ class GitHubWatcher:
             "watch-status.json",
             {"schema_version": 1, "state": state, "updated_at": datetime.now(UTC).isoformat(), **details},
         )
+
+
+def _is_unavailable_mcp_tool(exc: BaseException) -> bool:
+    return "active plugin tool is unavailable" in str(exc).lower()
 
 
 def _empty_watch_state() -> dict[str, Any]:

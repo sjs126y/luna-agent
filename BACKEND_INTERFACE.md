@@ -35,8 +35,17 @@
 | `/stop`、`/steer` | [Runtime Steer](#5-runtime-steer) |
 | Usage、Tool Runs、Activity | [Usage](#7-usage--context-summary) / [Tool Runs](#8-tool-runs--tool-truth) / [Activity](#11-activity-runtime-interface) |
 | Memory、Plugin、MCP、QQ 状态 | [Memory](#12-memory-runtime) / [Plugin](#13-plugin-diagnostics) / [MCP](#14-mcp-runtime-diagnostics) / [QQ](#15-qq-runtime-diagnostics) |
+| 运行时只读观察 | [Live Inspection](#16-live-inspection) |
 
 > 字段级定义只在本文件维护。Progress 和 Requirements 文档只记录消费状态与未完成需求，不复制完整 Schema。
+
+## 16. Live Inspection
+
+运行中的 Agent 通过领域归属的只读工具提供观察能力，不聚合成一个跨模块诊断对象。内置工具为 `runtime_inspect`、`conversation_inspect`、`platform_inspect`、`config_inspect`、`memory_inspect`、`audit_inspect` 和 `logs_query`。它们只在 live runtime 中可用；离线 `doctor` 继续消费 probe/snapshot，不调用这些工具。
+
+`runtime_inspect` 返回 `source=live`、`captured_at`、`status`、核心/MCP/插件/会话/投递/记忆摘要及各领域工具引用。`config_inspect` 只返回来源、有效性和脱敏字段，不能读取原始 secret。`audit_inspect` 与 `logs_query` 都限制时间/条数窗口并过滤 malformed 行。
+
+事件、Tool Run、Turn Report、Audit 和 structured log 可以使用共同的 `trace_id`、`session_key`、`turn_id`、`request_id`、`operation_id` 关联。事件协议版本仍为 `1`；新增事件元数据字段为可选字段，旧消费者只读取 `protocol_version/type/message/data` 即可。
 
 ## 0. 统一提交边界
 

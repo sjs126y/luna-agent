@@ -176,8 +176,7 @@ sandbox:
 
 auth:
   enabled: true
-  admins: []
-  allowed_users: []
+  owner_ids: {}
 
 profiles:
   # 将 session_key 映射到 data/system/ 下的 profile 目录。

@@ -45,7 +45,7 @@ KNOWN_TOP_LEVEL_KEYS = {
 KNOWN_SECTION_KEYS: dict[str, set[str] | None] = {
     "agent": {"max_iterations", "max_tool_calls_per_turn"},
     "agents": {"max_concurrent_runs", "max_tool_calls", "max_tokens", "history_limit"},
-    "auth": {"enabled", "admins", "allowed_users"},
+    "auth": {"enabled", "owner_ids"},
     "compression": {
         "engine",
         "model",
@@ -602,8 +602,21 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
 
     auth = sections["auth"]
     _bool_value(auth, "enabled", "auth.enabled", errors)
-    _string_list(auth, "admins", "auth.admins", errors)
-    _string_list(auth, "allowed_users", "auth.allowed_users", errors)
+    owner_ids = auth.get("owner_ids")
+    if owner_ids is not None and not isinstance(owner_ids, dict):
+        errors.append("auth.owner_ids 必须是 platform -> user ID 列表对象。")
+    elif isinstance(owner_ids, dict):
+        for platform, values in owner_ids.items():
+            if not str(platform or "").strip():
+                errors.append("auth.owner_ids 不能包含空平台名。")
+                continue
+            if not isinstance(values, list) or any(not str(item or "").strip() for item in values):
+                errors.append(f"auth.owner_ids.{platform} 必须是非空字符串列表。")
+    for legacy in ("admins", "allowed_users"):
+        if legacy in auth:
+            errors.append(
+                f"auth.{legacy} 已移除，请改用按平台配置的 auth.owner_ids。"
+            )
 
     return {
         "errors": _dedupe(errors),

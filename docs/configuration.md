@@ -220,9 +220,11 @@ sandbox:
   audit_enabled: true
 
 auth:
-  enabled: false
-  admins: []
+  enabled: true
+  owner_ids: {}
 ```
+
+`auth.owner_ids` 是按平台配置的私聊 owner ID，例如 `wechat: ["<user_id>"]`。外部 Gateway 只接受配置 owner 的 direct message；群聊、未配置平台和其他用户静默拒绝。CLI/TUI/cron 等受控内部来源不需要填写 owner ID。历史记忆 scope 使用 `luna-agent memory migrate-owner` 显式迁移，默认只预览，只有 `--apply` 才会在备份后修改数据库。
 
 `plugins.runtime.isolate_external` 只影响外置通用插件；内置插件仍在宿主进程中运行。Linux/WSL 的 `auto` 要求 Bubblewrap 可用，并将插件包和依赖环境设为只读、只开放当前 generation 的数据目录写入。原生 Windows 的 `auto` / `appcontainer` 使用 AppContainer、受控 stdio 句柄继承和 kill-on-close Job Object；任一步骤失败都会拒绝加载。`process-only` 可在 Windows 用于本地开发，但只提供生命周期隔离，不是生产安全边界。
 

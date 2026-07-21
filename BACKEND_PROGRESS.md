@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1282%20passed-2EA44F" alt="1282 tests passed">
+  <img src="https://img.shields.io/badge/tests-1286%20passed-2EA44F" alt="1286 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--21-555555" alt="Updated 2026-07-21">
 </p>
 
@@ -20,6 +20,14 @@
 </div>
 
 ---
+
+## 2026-07-21：个人 Agent 身份边界与领域观察端口
+
+- Gateway 采用无状态 owner-only 策略：外部平台仅允许配置的私聊 owner ID，群聊和未配置 owner 默认拒绝；CLI/TUI/cron/system/plugin 作为受控内部来源保留。认证发生在创建 session binding、执行 hook、解析附件和提交 conversation 之前。
+- `session_key` 仍是会话、事件和提交链路的主键；MemoryManager 在内部将历史 user id 规范化到 canonical owner scope，保留显式的 owner migration CLI（dry-run 默认、`--apply` 前备份、合并冲突和待重建索引提示）。
+- 新增领域归属的 live inspection tools：`runtime_inspect`、`conversation_inspect`、`platform_inspect`、`config_inspect`、`memory_inspect`、`audit_inspect`、`logs_query`。不新增大诊断聚合模块，Doctor 继续作为离线 probe/snapshot 体系。
+- 审计增加启停控制、有限查询和 trace context；结构化日志写入 `data/logs/agent.log` 并轮转。ConversationEvent、Tool Run、Turn Report 共享可选关联字段，旧事件协议 v1 保持兼容。
+- 新增 owner migration、live inspection、审计和日志回归；完整测试 `1286 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
 
 ## 2026-07-21：插件 generation 架构收口与原生 Windows 验证
 

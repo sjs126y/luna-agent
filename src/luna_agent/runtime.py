@@ -17,7 +17,7 @@ from luna_agent.memory.manager import MemoryManager
 from luna_agent.memory.review import MemoryReviewService
 from luna_agent.hooks import HookManager
 from luna_agent.plugins.core.manager import PluginManager
-from luna_agent.tools.audit import set_audit_path
+from luna_agent.tools.audit import set_audit_enabled, set_audit_path
 from luna_agent.tools.sandbox import init_sandbox
 from luna_agent.conversation import ConversationCoordinator, ConversationService, SessionDirectory
 from luna_agent.delivery import DeliveryOutbox, DeliveryService, DeliveryWorker, PlatformDirectory
@@ -191,6 +191,13 @@ class AppRuntime:
     gateway: Any | None = None
     gateway_started: bool = False
     closed: bool = False
+    inspection_port: Any = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from luna_agent.runtime_inspection import RuntimeInspectionPort
+
+        self.inspection_port = RuntimeInspectionPort(self)
+        self.conversation_service.inspection_port = self.inspection_port
 
     def create_gateway(self, system_prompt_template: str = ""):
         if self.gateway is not None:
@@ -327,6 +334,7 @@ async def create_app_runtime(settings: Settings | None = None) -> AppRuntime:
                 settings.sandbox_blocked,
                 read_roots=getattr(settings, "sandbox_read_roots", []),
             )
+        set_audit_enabled(bool(settings.audit_enabled))
         if settings.audit_enabled:
             with boot_report.step("audit", str(data_dir / "audit.log")):
                 set_audit_path(data_dir / "audit.log")
@@ -697,6 +705,7 @@ async def create_memory_manager(
         archive=archive,
         internal_service=internal_service,
         internal_turn_interval=context.review.internal_turn_interval,
+        canonical_user_id="owner",
     )
     from luna_agent.memory.tools import set_memory_manager
 

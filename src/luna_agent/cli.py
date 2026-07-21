@@ -133,8 +133,8 @@ session:
   override: {}
 
 auth:
-  enabled: false
-  admins: []
+  enabled: true
+  owner_ids: {}
 """
 
 _CONFIG_TEMPLATE_SERVER = """# Luna Agent server configuration
@@ -233,8 +233,8 @@ session:
   override: {}
 
 auth:
-  enabled: false
-  admins: []
+  enabled: true
+  owner_ids: {}
 """
 
 _CONFIG_TEMPLATE_BOT = """# Luna Agent bot configuration
@@ -334,8 +334,7 @@ session:
 
 auth:
   enabled: true
-  admins: []
-  allowed_users: []
+  owner_ids: {}
 """
 
 
@@ -1287,6 +1286,33 @@ def memory_reindex(
     asyncio.run(_run())
 
 
+@memory_app.command("migrate-owner")
+def memory_migrate_owner(
+    from_scope: list[str] = typer.Option([], "--from-scope", help="源 scope_key，可重复指定。"),
+    apply: bool = typer.Option(False, "--apply", help="执行迁移；默认只生成 dry-run 计划。"),
+    json_output: bool = typer.Option(False, "--json", help="输出 JSON。"),
+) -> None:
+    """Plan or apply an explicit migration of legacy memory scopes to owner."""
+    async def _run() -> None:
+        result = await _memory_owner_migrate(from_scopes=from_scope, apply=apply)
+        if json_output:
+            typer.echo(_json_dumps(result))
+            return
+        if result.get("available_scopes") and not from_scope:
+            typer.echo("可迁移 scope:")
+            for item in result["available_scopes"]:
+                typer.echo(f"  - {item}")
+            typer.echo("请使用 --from-scope 指定来源，再用 --apply 执行。")
+            return
+        action = "已执行" if apply else "dry-run"
+        typer.echo(
+            f"owner 记忆迁移 {action}: moved={result.get('moved', 0)} "
+            f"merged={result.get('merged', 0)} conflicts={len(result.get('conflicts', []))}"
+        )
+
+    asyncio.run(_run())
+
+
 def _plugin_manager(settings: Settings | None = None) -> PluginManager:
     settings = settings or Settings()
     manager = PluginManager(settings)
@@ -1374,6 +1400,27 @@ async def _memory_delete(identifier: str, *, target: str) -> bool:
 async def _memory_reindex(*, index_kind: str, limit: int) -> dict[str, Any]:
     async def _collect(runtime):
         return await runtime.memory_manager.reindex_external(index_kind=index_kind, limit=limit)
+
+    return await _with_app_runtime(_collect)
+
+
+async def _memory_owner_migrate(*, from_scopes: list[str], apply: bool) -> dict[str, Any]:
+    async def _collect(runtime):
+        archive = getattr(runtime.memory_manager, "archive", None)
+        if archive is None:
+            raise RuntimeError("memory archive is unavailable")
+        scopes = [str(item or "").strip() for item in from_scopes if str(item or "").strip()]
+        if not apply or not scopes:
+            return await archive.migrate_scope_keys(scopes, apply=False)
+        source_path = Path(archive.path)
+        backup_dir = source_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"memory-before-owner-{int(__import__('time').time())}.db"
+        shutil.copy2(source_path, backup_path)
+        result = await archive.migrate_scope_keys(scopes, apply=True)
+        result["backup_path"] = str(backup_path)
+        result["reindex_required"] = True
+        return result
 
     return await _with_app_runtime(_collect)
 

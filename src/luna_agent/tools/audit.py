@@ -11,12 +11,70 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _AUDIT_PATH: Path = Path("./data/audit.log")
+_AUDIT_ENABLED = True
 _AUDIT_LOCK = None  # lazy init
 
 
 def set_audit_path(path: Path) -> None:
     global _AUDIT_PATH
     _AUDIT_PATH = path
+
+
+def set_audit_enabled(enabled: bool) -> None:
+    global _AUDIT_ENABLED
+    _AUDIT_ENABLED = bool(enabled)
+
+
+def audit_path() -> Path:
+    return _AUDIT_PATH
+
+
+def rotate_audit(*, max_bytes: int = 10 * 1024 * 1024, backup_count: int = 3) -> None:
+    """Rotate the JSONL audit file conservatively before an append."""
+    try:
+        if not _AUDIT_PATH.exists() or _AUDIT_PATH.stat().st_size < max_bytes:
+            return
+        with _get_lock():
+            for index in range(backup_count, 0, -1):
+                source = _AUDIT_PATH.with_name(f"{_AUDIT_PATH.name}.{index}")
+                target = _AUDIT_PATH.with_name(f"{_AUDIT_PATH.name}.{index + 1}")
+                if source.exists():
+                    if index == backup_count:
+                        source.unlink(missing_ok=True)
+                    else:
+                        source.replace(target)
+            _AUDIT_PATH.replace(_AUDIT_PATH.with_name(f"{_AUDIT_PATH.name}.1"))
+    except OSError:
+        return
+
+
+def query_audit(*, event: str = "", tool: str = "", trace_id: str = "", session_key: str = "", turn_id: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    """Read a bounded, newest-first audit window without exposing raw file access."""
+    if not _AUDIT_PATH.exists():
+        return []
+    limit = max(1, min(int(limit), 200))
+    rows: list[dict[str, Any]] = []
+    try:
+        with _AUDIT_PATH.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    row = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if event and row.get("event", "") != event:
+                    continue
+                if tool and row.get("tool", "") != tool:
+                    continue
+                if trace_id and row.get("trace_id", "") != trace_id:
+                    continue
+                if session_key and row.get("session_key", "") != session_key:
+                    continue
+                if turn_id and row.get("turn_id", "") != turn_id:
+                    continue
+                rows.append(row)
+    except OSError:
+        return []
+    return rows[-limit:][::-1]
 
 
 def _get_lock():
@@ -28,8 +86,11 @@ def _get_lock():
 
 
 def _write_entry(entry: dict[str, Any]) -> None:
+    if not _AUDIT_ENABLED:
+        return
     line = json.dumps(entry, ensure_ascii=False) + "\n"
     _AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    rotate_audit()
     with _get_lock():
         with open(_AUDIT_PATH, "a", encoding="utf-8") as f:
             f.write(line)
@@ -49,6 +110,7 @@ def audit_log(tool: str, detail: str, result_snippet: str, success: bool) -> Non
             "result": redact(result_snippet[:200]),
             "success": success,
         }
+        entry.update({key: value for key, value in _context().items() if value})
         _write_entry(entry)
     except Exception:
         pass  # audit failure never blocks operations
@@ -76,6 +138,7 @@ def audit_tool_decision(decision) -> None:
             "grant_matched": str(data.get("grant_matched", "")),
             "message": redact(str(data.get("decision_message", data.get("message", "")))[:500]),
         }
+        entry.update({key: value for key, value in _context().items() if value})
         _write_entry(entry)
     except Exception:
         pass
@@ -111,6 +174,13 @@ def audit_tool_result(result, *, decision=None) -> None:
             "output_summary": redact(str(result_data.get("output_summary", ""))[:500]),
             "error": redact(str(result_data.get("error", ""))[:500]),
         }
+        entry.update({key: value for key, value in _context().items() if value})
         _write_entry(entry)
     except Exception:
         pass
+
+
+def _context() -> dict[str, str]:
+    from luna_agent.trace import current_context
+
+    return current_context()

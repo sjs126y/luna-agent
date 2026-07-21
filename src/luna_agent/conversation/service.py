@@ -94,6 +94,7 @@ class ConversationService:
         from luna_agent.conversation.query import ConversationQueryService
 
         self.queries = ConversationQueryService(self)
+        self.inspection_port = None
 
     async def run_turn(self, session_key: str, source, text: str) -> ConversationTurnResult:
         return await self.run_turn_events(session_key, source, text)
@@ -650,12 +651,14 @@ class ConversationService:
                 self.agent_cache.move_to_end(session_key)
                 self._apply_security_context(agent, session_key)
                 agent._artifact_store = self.artifact_store
+                agent._inspection_port = self.inspection_port
                 return agent
 
             if agent._tools_generation == tool_registry.generation:
                 self.agent_cache.move_to_end(session_key)
                 self._apply_security_context(agent, session_key)
                 agent._artifact_store = self.artifact_store
+                agent._inspection_port = self.inspection_port
                 return agent
             del self.agent_cache[session_key]
 
@@ -667,6 +670,11 @@ class ConversationService:
             "system_prompt_template": self.system_prompt_template,
             "session_key": session_key,
         }
+        if self.inspection_port is not None and _accepts_parameter(
+            create_agent_runtime,
+            "inspection_port",
+        ):
+            runtime_kwargs["inspection_port"] = self.inspection_port
         if capability_view is not None and _accepts_parameter(
             create_agent_runtime,
             "capability_view",
@@ -675,6 +683,7 @@ class ConversationService:
         runtime = await create_agent_runtime(self.settings, **runtime_kwargs)
         agent = runtime.agent
         agent._artifact_store = self.artifact_store
+        agent._inspection_port = self.inspection_port
         self._apply_security_context(agent, session_key)
         if self.agent_cache_max is not None:
             while len(self.agent_cache) >= self.agent_cache_max:
@@ -1088,6 +1097,8 @@ def _turn_report_envelope(
     source,
     report: dict[str, Any],
 ) -> dict[str, Any]:
+    from luna_agent.trace import current_context
+    trace = current_context()
     return {
         "session_id": session_id,
         "session_key": session_key,
@@ -1095,6 +1106,9 @@ def _turn_report_envelope(
         "created_at": time.time(),
         "status": str(report.get("status") or ""),
         "turn_id": str(report.get("turn_id") or ""),
+        "trace_id": str(report.get("trace_id") or trace["trace_id"]),
+        "request_id": str(report.get("request_id") or trace["request_id"]),
+        "operation_id": str(report.get("operation_id") or trace["operation_id"]),
         "report": dict(report),
     }
 
@@ -1204,6 +1218,9 @@ def _tool_runs_from_events(
             "session_id": session_id,
             "session_key": session_key,
             "turn_id": resolved_turn_id,
+            "trace_id": event.trace_id,
+            "request_id": event.request_id,
+            "operation_id": event.operation_id,
             "tool_use_id": str(data.get("tool_use_id") or data.get("tool_name") or "tool"),
             "tool_name": str(data.get("tool_name") or ""),
             "status": str(data.get("status") or ""),

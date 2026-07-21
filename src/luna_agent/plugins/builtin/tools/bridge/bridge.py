@@ -25,7 +25,7 @@ async def _tool_describe(name: str) -> str:
     return await dispatch_tool_describe(name)
 
 
-async def _tool_call(name: str, arguments: dict) -> object:
+async def _tool_call(name: str, arguments: dict | None = None, **flat_arguments) -> object:
     """Execute a deferrable tool through the shared executor pipeline."""
     from luna_agent.tools.registry import tool_registry as _tr
     from luna_agent.tools.executor import execute_tool_call_result, format_tool_result
@@ -35,6 +35,11 @@ async def _tool_call(name: str, arguments: dict) -> object:
         current_tool_event_sink,
     )
 
+    # Some providers flatten discovered-tool arguments beside ``name`` even
+    # though the bridge schema advertises an ``arguments`` object. Normalize
+    # both shapes before entering the shared executor pipeline.
+    normalized_arguments = dict(arguments or {})
+    normalized_arguments.update(flat_arguments)
     entry = _tr.get(name)
     if entry is None:
         return f"Error: unknown tool '{name}'"
@@ -48,7 +53,7 @@ async def _tool_call(name: str, arguments: dict) -> object:
         {
             "id": f"tool_call:{name}",
             "name": name,
-            "input": arguments or {},
+            "input": normalized_arguments,
         },
         agent=agent,
         confirm=confirm,
@@ -120,6 +125,7 @@ tool_registry.register(ToolEntry(
             "arguments": {"type": "object", "description": "Tool arguments as a JSON object"},
         },
         "required": ["name", "arguments"],
+        "additionalProperties": True,
     },
     handler=_tool_call,
     toolset="system",

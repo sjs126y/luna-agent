@@ -60,7 +60,7 @@ class SessionDirectory:
     def resolve(self, session_key: str) -> SessionBinding | None:
         return self._bindings.get(str(session_key or "").strip())
 
-    def restore(self, entries) -> int:
+    def restore(self, entries, *, predicate=None) -> int:
         """Restore reverse delivery routes from persisted session metadata."""
         restored = 0
         for entry in entries:
@@ -77,6 +77,8 @@ class SessionDirectory:
                 chat_id=chat_id,
                 chat_type=str(getattr(entry, "chat_type", "dm") or "dm"),
             )
+            if predicate is not None and not predicate(source):
+                continue
             self.bind(session_key, source)
             restored += 1
         return restored

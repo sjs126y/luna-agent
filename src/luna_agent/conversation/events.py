@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Literal
+import uuid
 
 EVENT_PROTOCOL_VERSION = 1
 
@@ -351,14 +353,33 @@ class ConversationEvent:
     type: ConversationEventType
     message: str = ""
     data: dict[str, Any] = field(default_factory=dict)
+    event_id: str = ""
+    created_at: str = ""
+    trace_id: str = ""
+    session_key: str = ""
+    turn_id: str = ""
+    request_id: str = ""
+    operation_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "protocol_version": EVENT_PROTOCOL_VERSION,
             "type": self.type,
             "message": self.message,
             "data": dict(self.data),
         }
+        metadata = {
+            "event_id": self.event_id,
+            "created_at": self.created_at,
+            "trace_id": self.trace_id,
+            "session_key": self.session_key,
+            "turn_id": self.turn_id,
+            "request_id": self.request_id,
+            "operation_id": self.operation_id,
+        }
+        if any(metadata.values()):
+            result.update(metadata)
+        return result
 
 
 class ConversationEventSink:
@@ -406,7 +427,20 @@ async def emit_event(
 ) -> None:
     if sink is None:
         return
-    await sink.emit(ConversationEvent(type=event_type, message=message, data=data))
+    from luna_agent.trace import current_context
+    context = current_context()
+    await sink.emit(ConversationEvent(
+        type=event_type,
+        message=message,
+        data=data,
+        event_id=f"evt_{uuid.uuid4().hex[:16]}",
+        created_at=datetime.now(UTC).isoformat(),
+        trace_id=context["trace_id"],
+        session_key=str(data.get("session_key", context["session_key"])),
+        turn_id=str(data.get("turn_id", context["turn_id"])),
+        request_id=context["request_id"],
+        operation_id=context["operation_id"],
+    ))
 
 
 async def emit_delta(
@@ -422,7 +456,20 @@ async def emit_delta(
         return
     if not getattr(sink, "wants_deltas", False):
         return
-    await sink.emit(ConversationEvent(type=event_type, message="", data={"chunk": chunk}))
+    from luna_agent.trace import current_context
+    context = current_context()
+    await sink.emit(ConversationEvent(
+        type=event_type,
+        message="",
+        data={"chunk": chunk},
+        event_id=f"evt_{uuid.uuid4().hex[:16]}",
+        created_at=datetime.now(UTC).isoformat(),
+        trace_id=context["trace_id"],
+        session_key=context["session_key"],
+        turn_id=context["turn_id"],
+        request_id=context["request_id"],
+        operation_id=context["operation_id"],
+    ))
 
 
 def event_protocol_schema() -> dict[str, Any]:

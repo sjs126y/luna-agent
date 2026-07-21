@@ -21,8 +21,8 @@ permissions:
       worktree_cleanup: "prompt"
     mcp_servers: {}
   approval_reviewer:
-    enabled: false               # model-backed review is opt-in
-    model: ""                    # empty = current provider/model
+    enabled: true               # model-backed review is opt-in
+    model: "gpt-5.6-terra"                    # empty = current provider/model
     timeout_seconds: 12
     fallback: "human"            # human | deny
     allow_ttl_grant: false       # TTL grants remain user-only
@@ -165,9 +165,10 @@ sandbox:
   audit_enabled: true              # log to data/audit.log
 
 auth:
-  enabled: true               # true = enable auth (static + pairing)
-  admins: []                  # admin user IDs (always pass, no challenge)
-  allowed_users: []           # pre-approved user IDs (skip pairing)
+  enabled: true               # owner-only external gateway access
+  owner_ids:                  # platform -> list of owner user IDs
+    wechat:
+      - "o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
 
 profiles:
   # Map session_key → profile directory under data/system/
@@ -187,7 +188,17 @@ plugins:
     - "automation/reminder"
     - "automation/feed-watch"
     - "automation/inbox-watch"
+    - "automation/luna-companion"
   disabled: []
+  runtime:
+    isolate_external: true
+    sandbox_backend: auto
+    allow_network: false
+    startup_timeout_seconds: 45
+    shutdown_timeout_seconds: 10
+    restart_backoff_seconds: [1, 2, 5, 10, 30]
+    restart_failure_window_seconds: 300
+    restart_failure_limit: 5
   config:
     integrations/workspace-watch:
       paths:
@@ -237,12 +248,38 @@ plugins:
         sessions:
           - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
         restart_backoff_seconds: [1, 2, 5, 10, 30]
+    automation/luna-companion:
+      active:
+        enabled: true
+        sessions:
+          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
+        restart_backoff_seconds: [1, 2, 5, 10, 30]
+      quiet_hours:
+        - ["23:00", "08:00"]
+      max_daily_messages: 3
+      min_gap_seconds: 7200
+      review_threshold: 0.75
+      expire_after_seconds: 86400
+      check_in:
+        enabled: true
+        min_silence_seconds: 28800
+      follow_up:
+        enabled: true
+        max_recent_messages: 3
     integrations/codex-bridge:
       command: "codex"
       source_codex_home: "/home/sujinsheng/.codex"
       runtime_codex_home: "./data/codex-bridge"
+      development_root: "/home/sujinsheng/.local/share/luna-agent/plugin-workspaces"
       cwd: "."
       sandbox: "workspace-write"
+      approval_policy: "on-request"
+      approvals_reviewer: "user"
+      event_retention: 1000
+      active:
+        enabled: true
+        sessions:
+          - "wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat:o9cq80x_RML2zCXPUgbSoL7vFZzU@im.wechat"
       connect_timeout_seconds: 60
       call_timeout_seconds: 1800
     integrations/github-assistant:
