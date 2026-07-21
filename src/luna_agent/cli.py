@@ -3044,11 +3044,6 @@ def format_token_budget(data: dict[str, Any]) -> str:
 
 def _doctor_issues(report: dict[str, Any]) -> list[str]:
     issues: list[str] = []
-    for error in (report.get("config") or {}).get("errors", []):
-        issues.append(f"配置错误: {error}")
-    for warning in (report.get("config") or {}).get("warnings", []):
-        issues.append(f"配置: {warning}")
-
     runtime = report.get("runtime", {})
     if runtime:
         if not runtime.get("initialized", False):
@@ -3058,6 +3053,11 @@ def _doctor_issues(report: dict[str, Any]) -> list[str]:
         boot = runtime.get("boot") or {}
         if boot and not boot.get("ok", False):
             issues.append(f"Runtime boot 失败: {boot.get('failed_step') or '未知阶段'}")
+
+    for error in (report.get("config") or {}).get("errors", []):
+        issues.append(f"配置错误: {error}")
+    for warning in (report.get("config") or {}).get("warnings", []):
+        issues.append(f"配置: {warning}")
 
     memory = report.get("memory", {})
     if memory and not memory.get("builtin_available", False):

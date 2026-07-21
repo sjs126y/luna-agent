@@ -112,7 +112,8 @@ async def test_router_falls_back_on_runtime_failure(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_router_recovers_before_foreground_migration(tmp_path) -> None:
+async def test_router_recovers_before_foreground_migration(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("luna_agent.memory.external.router.monotonic", lambda: 100.0)
     archive = MemoryArchive(tmp_path / "memory.db")
     await archive.initialize()
     fallback = FallbackMemoryProvider(archive, LLM())

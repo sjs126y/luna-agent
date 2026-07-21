@@ -493,6 +493,7 @@ def test_doctor_report_includes_runtime_failure(monkeypatch):
     monkeypatch.setattr("luna_agent.cli._runtime_health_report", failed_runtime)
 
     report = build_doctor_report()
+    report["config"]["errors"] = [f"config error {index}" for index in range(6)]
     text = format_doctor_report(report)
     verbose_text = format_doctor_report(report, verbose=True)
 

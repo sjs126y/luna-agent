@@ -213,7 +213,10 @@ class ExternalMemoryRouter:
         if state.effective_provider != self.fallback.name or self.requested_provider in {"none", "fallback"}:
             return False
         now = monotonic()
-        if now - state.last_recovery_attempt < cooldown_seconds:
+        if (
+            state.last_recovery_attempt > 0
+            and now - state.last_recovery_attempt < cooldown_seconds
+        ):
             return False
         state.last_recovery_attempt = now
         registration = self.registry.get(self.requested_provider)

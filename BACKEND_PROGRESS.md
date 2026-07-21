@@ -48,6 +48,7 @@
 - 自动化测试：118 个 `test_*.py` 文件，完整回归 `1297 passed, 1 warning`。
 - 当前分支：`main`；当前本地提交：`c287ef8`；尚未推送到远程。
 - 安装包归档：`data/plugins/migration-packages/` 集中保留 Document Converter、Markdown Structure Analyzer 和 Workspace Watch 的 `0.1.1` ZIP；卸载只清理 `data/plugins/packages/` 下的展开 generation，不删除这些源包。
+- CI 首次远程运行暴露 Ubuntu runner 默认缺少 `bubblewrap`；工作流现先安装并执行 bwrap smoke，再运行锁定依赖、compileall 和完整 pytest。
 - 运行残留：4 条历史 Memory migration 网络超时待维护重试；Feed Watch 的 Fetch MCP 偶发 GitHub robots 网络失败。两者都不是代码发布阻塞。
 
 ## 2026-07-21：个人 Agent 身份边界与领域观察端口
