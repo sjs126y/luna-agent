@@ -187,4 +187,3 @@ def command_network_target(command: str) -> str | None:
     if spec is None or not spec[1]:
         return None
     return f"command:{parts[0].lower()}"
-
