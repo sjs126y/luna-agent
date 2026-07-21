@@ -37,6 +37,17 @@ flowchart LR
 
 ## 新环境启动
 
+### 原生 Windows
+
+Windows 运行时要求 PowerShell 7（命令为 `pwsh.exe`）。启动前确认：
+
+```powershell
+pwsh --version
+uv run luna-agent doctor
+```
+
+Windows 内置 `bash` 和 `process_start` 工具会使用 PowerShell 7，并通过命令白名单、路径审批、审计和 Job Object 管理进程树。外置插件仍使用 AppContainer；`doctor --verbose` 中的 `tool security level: controlled-host` 表示内置工具不是 Linux Bubblewrap 级别的文件系统隔离。
+
 本地 CLI：
 
 ```bash

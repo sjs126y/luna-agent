@@ -363,11 +363,16 @@
 
 `doctor --json` 的 `sandbox.process` 新增：
 
-- `bash_effective_backend: "bwrap" | "legacy" | "unavailable"`
+- `effective_backend: "bwrap" | "legacy" | "windows-powershell" | "unavailable"`
+- `bash_effective_backend: "bwrap" | "legacy" | "windows-powershell" | "unavailable"`
 - `bash_filesystem_isolated: boolean`
 - `bash_fail_closed: boolean`
+- `security_level: "os-isolated" | "controlled-host" | "none"`
+- `process_tree_managed: boolean`
+- `powershell_path: string`、`powershell_available: boolean`
+- `job_object_available: boolean`
 
-这些字段用于区分 Bash 严格策略与 MCP stdio 的兼容后端；前端应按未知字段可忽略的方式消费。
+这些字段用于区分 Bash 严格策略与 MCP stdio 的兼容后端。Linux/WSL 的 `bwrap` 是 OS 文件系统隔离；原生 Windows 的 `windows-powershell` 是命令白名单、路径审批、审计和 Job Object 组成的 `controlled-host`，不等同于 Linux 文件系统沙箱。前端应按未知字段可忽略的方式消费。
 
 ### `tool_end`
 

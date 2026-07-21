@@ -6,8 +6,8 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1297%20passed-2EA44F" alt="1297 tests passed">
-  <img src="https://img.shields.io/badge/updated-2026--07--21-555555" alt="Updated 2026-07-21">
+  <img src="https://img.shields.io/badge/tests-1318%20passed-2EA44F" alt="1318 tests passed">
+  <img src="https://img.shields.io/badge/updated-2026--07--22-555555" alt="Updated 2026-07-22">
 </p>
 
 <p>
@@ -20,6 +20,14 @@
 </div>
 
 ---
+
+## 2026-07-22：原生 Windows 内置工具运行时
+
+- 新分支 `feat/windows-powershell-runtime` 为原生 Windows 的 `bash` 与 `process_start` 增加 PowerShell 7 (`pwsh.exe`) 后端；MCP stdio 继续使用配置中的原生命令和参数，不被 PowerShell 包装。
+- Windows 内置工具保持现有命令白名单、路径审批、审计和超时语义，并用 Job Object 管理进程树；诊断明确标记 `security_level=controlled-host`，不把它伪装成 Linux Bubblewrap 级别的文件系统隔离。外置插件继续使用既有 AppContainer/Job Object，WSL/Linux 继续使用 Bubblewrap。
+- 原生 Windows 默认运行数据切换到 `%LOCALAPPDATA%\\LunaAgent`；显式 `storage.data_dir`、`sandbox` 和构造覆盖保持优先。平台凭据、Codex 配置和临时凭据复制统一走 Windows `icacls` ACL，Linux 继续使用 `0600`。
+- Doctor、配置诊断、CI 和运行文档已补充 PowerShell、Job Object、控制宿主级别与数据目录说明；新增 Windows 运行时单测和原生 Windows CI 检查。
+- 验证：Windows 运行时聚焦测试与既有进程/安全/配置测试 `111 passed, 1 skipped`；完整回归 `1318 passed, 1 skipped, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。原生 Windows 实机执行需在 Windows runner 验证，当前 WSL 不模拟 Win32 API。
 
 ## 2026-07-21：Live 观察故障收尾与阶段性修复
 
@@ -37,16 +45,16 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/luna_agent/**/*.py` | 270 | 62,125 |
-| `tests/**/*.py` | 120 | 34,896 |
-| `plugins/**/*.py` | 15 | 4,230 |
-| `packages/**/*.py` | 20 | 2,008 |
+| `src/luna_agent/**/*.py` | 274 | 63,028 |
+| `tests/**/*.py` | 121 | 35,404 |
+| `plugins/**/*.py` | 15 | 4,234 |
+| `packages/**/*.py` | 20 | 2,042 |
 | `examples/**/*.py` | 5 | 399 |
 | `scripts/**/*.py` | 3 | 546 |
-| **Python 合计** | **442** | **104,214** |
+| **Python 合计** | **446** | **105,653** |
 
-- 自动化测试：118 个 `test_*.py` 文件，完整回归 `1297 passed, 1 warning`。
-- 当前分支：`main`；当前本地提交：`c287ef8`；尚未推送到远程。
+- 自动化测试：119 个 `test_*.py` 文件，完整回归 `1318 passed, 1 skipped, 1 warning`。
+- 当前分支：`feat/windows-powershell-runtime`；Windows 适配尚未合并到 `main`。
 - 安装包归档：`data/plugins/migration-packages/` 集中保留 Document Converter、Markdown Structure Analyzer 和 Workspace Watch 的 `0.1.1` ZIP；卸载只清理 `data/plugins/packages/` 下的展开 generation，不删除这些源包。
 - CI 首次远程运行暴露 Ubuntu runner 默认缺少 `bubblewrap`；工作流现先安装并执行 bwrap smoke，再运行锁定依赖、compileall 和完整 pytest。
 - 运行残留：4 条历史 Memory migration 网络超时待维护重试；Feed Watch 的 Fetch MCP 偶发 GitHub robots 网络失败。两者都不是代码发布阻塞。

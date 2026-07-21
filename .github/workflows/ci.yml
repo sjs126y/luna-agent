@@ -73,5 +73,12 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen
 
+      - name: Check PowerShell 7
+        shell: pwsh
+        run: pwsh --version
+
+      - name: Run Windows runtime tests
+        run: uv run --frozen pytest -q tests/test_windows_runtime.py
+
       - name: Run native AppContainer smoke gate
         run: uv run --frozen python scripts/windows_plugin_appcontainer_smoke.py
