@@ -171,6 +171,7 @@ sandbox:
   bash_work_dir: "./data"         # bash 工具默认工作目录
   bash_restrict_paths: true       # true = bash 路径限制在 sandbox.roots 内
   bash_allow_network: false       # true = 允许 bash 里的 curl/wget/pip 等网络命令
+  process_backend: auto           # Linux/WSL 使用 bwrap；原生 Windows 使用 AppContainer Shell Broker；legacy 仅为显式降级
   file_max_write_bytes: 100000    # file_write 单次最大写入字节数
   audit_enabled: true             # true = 记录工具审计日志到 data/audit.log
 

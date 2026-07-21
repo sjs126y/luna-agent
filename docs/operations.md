@@ -46,7 +46,7 @@ pwsh --version
 uv run luna-agent doctor
 ```
 
-Windows 内置 `bash` 和 `process_start` 工具会使用 PowerShell 7，并通过命令白名单、路径审批、审计和 Job Object 管理进程树。外置插件仍使用 AppContainer；`doctor --verbose` 中的 `tool security level: controlled-host` 表示内置工具不是 Linux Bubblewrap 级别的文件系统隔离。
+Windows 内置 `bash` 和 `process_start` 工具默认由一次性 Shell Broker 启动 PowerShell 7。PowerShell 及其子进程运行在 AppContainer 中，只有本轮已批准的读写目录和网络能力可用，Job Object 在 Broker 退出时回收整棵进程树。`doctor --verbose` 正常应显示 `process backend: windows-appcontainer`、`tool security level: os-isolated`、`Windows Shell Broker: 是`。显式配置 `process_backend: legacy` 才会使用旧的 `controlled-host` 模式。
 
 本地 CLI：
 
@@ -161,6 +161,8 @@ Streamable HTTP 的 `headers_env` 配置填写环境变量名。缺少变量时 
 `Bash / process_start`：
 
 - `bash-strict requires bwrap`：当前系统不能建立严格进程文件系统；安装 Bubblewrap，或明确接受风险后把 `sandbox.process_backend` 设为 `legacy`。
+- `Native Windows AppContainer support is unavailable`：Windows 无法建立内置工具的 OS 隔离；确认使用原生 Windows、PowerShell 7 可用，并通过 `doctor --verbose` 检查 AppContainer、Shell Broker 和 Job Object。默认不会静默回退；只有明确接受风险时才设置 `legacy`。
+- `Windows Shell Broker error`：Broker 在二次校验、创建 AppContainer、授予临时 ACL 或启动 PowerShell 时失败。错误会进入工具 stderr；下次启动会根据 lease marker 保守清理异常退出遗留的 profile/ACL。
 - `read access is not granted` / `Approval required for read ...`：把具体文件或目录放入 `read_paths`，不要依赖命令文本中的绝对路径。
 - `strict sandbox mount scan exceeded its safety budget`：`cwd` 过宽；切换到更小的工作目录并只声明任务需要的路径。
 - `doctor.sandbox.process.bash_effective_backend` 为 Bash 实际后端；`effective_backend` 保留通用/MCP 兼容后端含义。

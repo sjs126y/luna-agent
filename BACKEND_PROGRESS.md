@@ -21,7 +21,16 @@
 
 ---
 
-## 2026-07-22：原生 Windows 内置工具运行时
+## 2026-07-22：原生 Windows 内置工具 AppContainer v2
+
+- 分支 `feat/windows-shell-appcontainer` 将 Windows 内置 `bash` 与 `process_start` 从 v1 的受控宿主模式升级为 AppContainer OS 隔离；`auto` 默认走一次性 Shell Broker，`legacy` 仅保留为显式降级，不会在安全后端失败时自动回退。
+- AppContainer 的 profile/SID、目录 ACL、受控 stdio、网络 capability、进程上限和 kill-on-close Job Object 已从插件运行时抽到通用安全层。外置插件继续使用进程上限 1，Shell Broker 使用上限 64；插件架构、Tool registry、审批和审计链路未改变。
+- 宿主通过 stdin 发送有界 JSON 请求，命令与环境变量不会出现在 Broker 命令行。Broker 会再次校验 schema、命令策略、精确路径、脱敏环境和网络权限，再用固定 PowerShell 7 参数启动 AppContainer 子进程。
+- `bash` 与 `process_start` 继续共用同一个 `spawn_process` 后端，不在两个工具中复制 Windows 分支。命令白名单与危险模式已抽为独立策略模块，由宿主和 Broker 双重执行。
+- generation 使用 lease marker 记录 profile、ACL roots 和 owner PID；正常退出立即清理，Broker/宿主异常退出后由下一次启动保守回收孤儿 profile/ACL。Doctor 新增 AppContainer、Shell Broker 和 lease recovery 能力字段，并将正常 Windows `auto` 报告为 `windows-appcontainer` / `os-isolated`。
+- CI 的原生 Windows job 同时覆盖 Broker 协议、前台 `bash`、后台 `process_start`、lease marker 清理和既有插件 AppContainer smoke。当前 WSL 已通过聚焦回归；原生 Win32 执行由 Windows runner 完成。
+
+## 2026-07-22：原生 Windows 内置工具运行时 v1（已由 v2 替代）
 
 - 新分支 `feat/windows-powershell-runtime` 为原生 Windows 的 `bash` 与 `process_start` 增加 PowerShell 7 (`pwsh.exe`) 后端；MCP stdio 继续使用配置中的原生命令和参数，不被 PowerShell 包装。
 - Windows 内置工具保持现有命令白名单、路径审批、审计和超时语义，并用 Job Object 管理进程树；诊断明确标记 `security_level=controlled-host`，不把它伪装成 Linux Bubblewrap 级别的文件系统隔离。外置插件继续使用既有 AppContainer/Job Object，WSL/Linux 继续使用 Bubblewrap。
@@ -54,7 +63,7 @@
 | **Python 合计** | **446** | **105,653** |
 
 - 自动化测试：119 个 `test_*.py` 文件，完整回归 `1318 passed, 1 skipped, 1 warning`。
-- 当前分支：`feat/windows-powershell-runtime`；Windows 适配尚未合并到 `main`。
+- 当前分支：`feat/windows-shell-appcontainer`；Windows AppContainer v2 尚未合并到 `main`。
 - 安装包归档：`data/plugins/migration-packages/` 集中保留 Document Converter、Markdown Structure Analyzer 和 Workspace Watch 的 `0.1.1` ZIP；卸载只清理 `data/plugins/packages/` 下的展开 generation，不删除这些源包。
 - CI 首次远程运行暴露 Ubuntu runner 默认缺少 `bubblewrap`；工作流现先安装并执行 bwrap smoke，再运行锁定依赖、compileall 和完整 pytest。
 - 运行残留：4 条历史 Memory migration 网络超时待维护重试；Feed Watch 的 Fetch MCP 偶发 GitHub robots 网络失败。两者都不是代码发布阻塞。

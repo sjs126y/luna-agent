@@ -66,7 +66,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 | `grep` | 共用有界扫描、逐行读取、跳过二进制和大文件、50 匹配上限 |
 | `read` | `offset/limit` 分页、50k 字节窗口、二进制拒绝、线程 I/O |
 | `write/edit` | UTF-8 实际字节限制、同目录原子替换、超大文件编辑拒绝 |
-| `bash` | `cached` 工具审批、声明式 `cwd/read_paths/write_paths`、Linux Bubblewrap 或 Windows PowerShell 7、超时与中断、64 KiB 捕获上限 |
+| `bash` | `cached` 工具审批、声明式 `cwd/read_paths/write_paths`、Linux Bubblewrap 或 Windows AppContainer PowerShell 7、超时与中断、64 KiB 捕获上限 |
 | `mcp__fetch__fetch` | 由 Fetch MCP 动态提供；服务不可用时明确返回 MCP unavailable，不回退到本地抓取工具 |
 | `document_convert` | 只读精确路径、50 MiB 输入上限、30k 字符分页、格式规模上限与可选 LibreOffice 旧格式转换 |
 | 后台进程 | 异步读取，stdout/stderr 各自只保留 4k 字符尾部 |
@@ -80,7 +80,7 @@ Registry 继续保存全部能力，但模型每轮只接收稳定的核心 sche
 
 `bash` 与 `process_start` 不再把整个宿主文件系统只读挂入子进程。默认只提供命令运行所需的系统目录、`cwd` 和本次声明的 `read_paths` / `write_paths`；目录外文件必须先作为精确资源进入统一审批。命令字符串扫描只负责提前拦截明显错误，真正边界由 Bubblewrap mount plan 保证，因此 Python 拼接路径、引号差异或脚本内部打开文件都不能看到未声明的宿主路径。
 
-在 Linux/WSL 上，内置 shell 使用 Bubblewrap 文件系统隔离；在原生 Windows 上使用 PowerShell 7、命令白名单、路径审批和 Job Object。Windows 内置工具当前属于 `controlled-host`，并不伪装成 Linux 同等级的 OS 文件系统沙箱；外置插件仍由 AppContainer 隔离。
+在 Linux/WSL 上，内置 shell 使用 Bubblewrap 文件系统隔离；在原生 Windows 上，宿主通过一次性 Shell Broker 把 PowerShell 7 放入独立 AppContainer，并用 Job Object 管理整棵子进程树。两端都保留相同的命令白名单、精确路径审批、网络开关和审计语义，Doctor 均报告 `security_level=os-isolated`。只有显式设置 `process_backend: legacy` 时，Windows 才回到旧的 `controlled-host` 模式。
 
 ## 已知边界
 
