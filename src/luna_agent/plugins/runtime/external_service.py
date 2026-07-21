@@ -53,7 +53,47 @@ class ExternalPluginRuntimeService:
         environment: PluginEnvironment,
         config: dict[str, Any],
     ) -> None:
-        self.worker_supervisor.start(plugin, environment=environment, config=config)
+        self.worker_supervisor.start(
+            plugin,
+            environment=environment,
+            config=self.normalized_config(plugin, config),
+        )
+
+    def normalized_config(self, plugin, config: dict[str, Any]) -> dict[str, Any]:
+        """Normalize host-owned paths before an external Worker starts.
+
+        Isolated Workers run in a different cwd and cannot resolve host-relative
+        paths.  Codex Bridge is the only plugin whose registration passes a
+        host process home through MCP, so normalize and seed that home here.
+        """
+        normalized = dict(config or {})
+        if plugin.key != "integrations/codex-bridge":
+            return normalized
+
+        settings = self.manager.settings
+        runtime_value = normalized.get("runtime_codex_home")
+        runtime_home = Path(
+            runtime_value
+            or (getattr(settings, "agent_data_dir", Path("data")) / "codex-bridge")
+        ).expanduser()
+        if not runtime_home.is_absolute():
+            runtime_home = (Path.cwd() / runtime_home).resolve()
+        else:
+            runtime_home = runtime_home.resolve()
+
+        source_home = Path(
+            normalized.get("source_codex_home") or (Path.home() / ".codex")
+        ).expanduser()
+        if not source_home.is_absolute():
+            source_home = (Path.cwd() / source_home).resolve()
+        else:
+            source_home = source_home.resolve()
+
+        runtime_home.mkdir(parents=True, exist_ok=True)
+        PluginHostProcessService._seed_directory(source_home, runtime_home)
+        normalized["runtime_codex_home"] = str(runtime_home)
+        normalized["source_codex_home"] = str(source_home)
+        return normalized
 
     def _spawn_worker(
         self,
@@ -613,6 +653,8 @@ class PluginHostProcessService:
     def _spec(self, plugin, name: str) -> dict[str, Any]:
         all_config = getattr(self.manager.settings, "plugins_config", {}) or {}
         config = all_config.get(plugin.key, {}) if isinstance(all_config, dict) else {}
+        if isinstance(config, dict) and plugin.key == "integrations/codex-bridge":
+            config = self.manager.external_runtime.normalized_config(plugin, config)
         specs = config.get("host_processes", {}) if isinstance(config, dict) else {}
         spec = specs.get(name) if isinstance(specs, dict) else None
         # Explicit host_processes configuration wins over the Codex convenience
@@ -641,6 +683,10 @@ class PluginHostProcessService:
             target = destination / name
             if source_file.is_file() and not target.exists():
                 shutil.copyfile(source_file, target)
+                try:
+                    target.chmod(0o600)
+                except OSError:
+                    pass
 
     def _record(self, plugin, process_id: str) -> dict[str, Any]:
         record = self._processes.get(process_id)

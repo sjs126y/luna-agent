@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,36 @@ from luna_agent.plugins import PluginManager, PluginStatus
 from luna_agent.skills.registry import skill_registry
 from luna_agent.tools.registry import tool_registry
 from luna_agent.workflow.registry import workflow_registry
+
+
+def test_external_runtime_normalizes_codex_paths_on_host(tmp_path: Path, monkeypatch) -> None:
+    from luna_agent.plugins.runtime.external_service import ExternalPluginRuntimeService
+
+    settings = SimpleNamespace(
+        agent_data_dir=tmp_path / "data",
+        plugins_config={},
+    )
+    manager = SimpleNamespace(settings=settings)
+    service = ExternalPluginRuntimeService(manager, tmp_path / "plugin-state")
+    plugin = SimpleNamespace(key="integrations/codex-bridge")
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "source-codex"
+    source.mkdir()
+    (source / "auth.json").write_text("{}", encoding="utf-8")
+
+    normalized = service.normalized_config(plugin, {
+        "source_codex_home": str(source),
+        "runtime_codex_home": "./runtime-codex",
+    })
+    runtime_home = (Path.cwd() / "runtime-codex").resolve()
+    try:
+        assert normalized["runtime_codex_home"] == str(runtime_home)
+        assert normalized["source_codex_home"] == str(source.resolve())
+        assert (runtime_home / "auth.json").read_text(encoding="utf-8") == "{}"
+        assert (runtime_home / "auth.json").stat().st_mode & 0o777 == 0o600
+    finally:
+        (runtime_home / "auth.json").unlink(missing_ok=True)
+        runtime_home.rmdir()
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ class RuntimeInspectionPort:
         health = self._runtime.health_snapshot()
         memory = await self._runtime.memory_manager.health_snapshot()
         plugin_runtime = dict(health.get("plugin_runtime") or {})
+        runtime_counts = dict(plugin_runtime.get("runtime_counts") or {})
         gateway = dict(health.get("gateway") or {})
         mcp = dict(health.get("mcp") or {})
         coordinator = dict(health.get("coordinator") or {})
@@ -26,12 +27,15 @@ class RuntimeInspectionPort:
             warnings.append("boot_failed")
         if mcp.get("failed_count"):
             warnings.append("mcp_degraded")
-        if plugin_runtime.get("error_count"):
+        worker_supervisor = dict(plugin_runtime.get("worker_supervisor") or {})
+        if worker_supervisor.get("recovery_task_count"):
             warnings.append("plugins_degraded")
+        if plugin_runtime.get("degraded_mcp_count"):
+            warnings.append("plugin_mcp_degraded")
         status = "failed" if not health.get("core_ready") else "degraded" if warnings else "healthy"
         return {
             "ok": status != "failed",
-            "schema_version": 1,
+            "schema_version": 2,
             "captured_at": datetime.now(UTC).isoformat(),
             "source": "live",
             "status": status,
@@ -48,8 +52,17 @@ class RuntimeInspectionPort:
                 "plugins": {
                     "count": int(health.get("plugins") or 0),
                     "runtime": {
-                        "active_workers": int(plugin_runtime.get("active_workers") or 0),
-                        "unhealthy_workers": int(plugin_runtime.get("unhealthy_workers") or 0),
+                        "worker_count": int(worker_supervisor.get("worker_count") or 0),
+                        "running_count": int(worker_supervisor.get("running_count") or 0),
+                        "recovery_task_count": int(worker_supervisor.get("recovery_task_count") or 0),
+                        "environment_lease_count": int(worker_supervisor.get("environment_lease_count") or 0),
+                        # Compatibility aliases retained for existing TUI consumers.
+                        "active_workers": int(worker_supervisor.get("running_count") or 0),
+                        "unhealthy_workers": int(
+                            runtime_counts.get("failed", 0)
+                            + runtime_counts.get("circuit_open", 0)
+                        ),
+                        "degraded_mcp_plugins": list(plugin_runtime.get("degraded_mcp_plugins") or []),
                     },
                 },
                 "conversation": {

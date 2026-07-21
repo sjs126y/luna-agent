@@ -125,12 +125,31 @@ class PluginQueryService:
         for plugin in manager._runtime_records.values():
             state = plugin.runtime_state.value
             runtime_counts[state] = runtime_counts.get(state, 0) + 1
+        degraded_mcp_plugins: list[dict[str, Any]] = []
+        for plugin in manager._plugins.values():
+            if not plugin.enabled or not plugin.mcp_servers_registered:
+                continue
+            servers = self._mcp_health(plugin.mcp_servers_registered)
+            degraded = [
+                {
+                    "name": str(item.get("name") or ""),
+                    "state": str(item.get("state") or ""),
+                    "last_error": str(item.get("last_error") or "")[-500:],
+                }
+                for item in servers
+                if str(item.get("state") or "")
+                in {"degraded", "reconnecting", "failed", "circuit_open"}
+            ]
+            if degraded:
+                degraded_mcp_plugins.append({"plugin_key": plugin.key, "servers": degraded})
         data.update({
             "active_plugin_owners": sorted(
                 owner for owner in manager.capability_router.active_bindings if owner != "core"
             ),
             "payload_count": len(manager.capability_router.payloads),
             "runtime_counts": runtime_counts,
+            "degraded_mcp_plugins": degraded_mcp_plugins,
+            "degraded_mcp_count": len(degraded_mcp_plugins),
             "install_revision": manager.install_store.revision,
             "installed_packages": len(manager.install_store.packages()),
             "pending_removals": sorted(manager._pending_package_removals),
