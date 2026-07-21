@@ -29,6 +29,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+          # Ubuntu 24.04 enables AppArmor restrictions for unprivileged user
+          # namespaces. GitHub-hosted runners are disposable, so relax this
+          # host-only setting for the Bubblewrap integration checks.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns >/dev/null
+          fi
           bwrap --ro-bind / / --unshare-user-try -- /bin/true
 
       - name: Set up uv and Python
