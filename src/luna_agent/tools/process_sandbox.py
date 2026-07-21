@@ -181,7 +181,14 @@ def build_process_mount_plan(
 
 
 def _compatible_bwrap_argv(binary: str, plan: ProcessMountPlan) -> list[str]:
-    argv = [binary, "--die-with-parent", "--ro-bind", "/", "/"]
+    argv = [
+        binary,
+        "--die-with-parent",
+        "--ro-bind",
+        "/",
+        "/",
+        "--unshare-user-try",
+    ]
     if Path("/tmp").exists():
         argv.extend(["--tmpfs", "/tmp"])
     if Path("/dev").exists():
@@ -199,6 +206,7 @@ def _strict_bwrap_argv(binary: str, plan: ProcessMountPlan) -> list[str]:
     argv = [
         binary,
         "--die-with-parent",
+        "--unshare-user-try",
         "--new-session",
         "--unshare-pid",
         "--unshare-ipc",
@@ -368,6 +376,7 @@ def _probe_network_namespace(binary: str | None) -> bool:
                 "--ro-bind",
                 "/",
                 "/",
+                "--unshare-user-try",
                 "--unshare-net",
                 "--",
                 "/bin/true",
@@ -385,7 +394,15 @@ def _probe_network_namespace(binary: str | None) -> bool:
 def _probe_bwrap(binary: str) -> bool:
     try:
         completed = subprocess.run(
-            [binary, "--ro-bind", "/", "/", "--", "/bin/true"],
+            [
+                binary,
+                "--ro-bind",
+                "/",
+                "/",
+                "--unshare-user-try",
+                "--",
+                "/bin/true",
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=2,

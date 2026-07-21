@@ -31,6 +31,7 @@ def test_bwrap_launch_is_read_only_except_configured_roots(tmp_path, monkeypatch
     assert launch.backend == "bwrap"
     assert launch.filesystem_isolated is True
     assert launch.network_isolated is True
+    assert "--unshare-user-try" in launch.argv
     assert launch.argv[:5] == (
         "/usr/bin/bwrap",
         "--die-with-parent",
