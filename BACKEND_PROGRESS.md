@@ -6,7 +6,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/main-current-2EA44F" alt="Main current">
-  <img src="https://img.shields.io/badge/tests-1318%20passed-2EA44F" alt="1318 tests passed">
+  <img src="https://img.shields.io/badge/tests-1325%20passed-2EA44F" alt="1325 tests passed">
   <img src="https://img.shields.io/badge/updated-2026--07--22-555555" alt="Updated 2026-07-22">
 </p>
 
@@ -29,6 +29,7 @@
 - `bash` 与 `process_start` 继续共用同一个 `spawn_process` 后端，不在两个工具中复制 Windows 分支。命令白名单与危险模式已抽为独立策略模块，由宿主和 Broker 双重执行。
 - generation 使用 lease marker 记录 profile、ACL roots 和 owner PID；正常退出立即清理，Broker/宿主异常退出后由下一次启动保守回收孤儿 profile/ACL。Doctor 新增 AppContainer、Shell Broker 和 lease recovery 能力字段，并将正常 Windows `auto` 报告为 `windows-appcontainer` / `os-isolated`。
 - CI 的原生 Windows job 同时覆盖 Broker 协议、前台 `bash`、后台 `process_start`、lease marker 清理和既有插件 AppContainer smoke。当前 WSL 已通过聚焦回归；原生 Win32 执行由 Windows runner 完成。
+- 收尾修复了短命 CLI 命令未释放 `PluginManager` 的后台 Worker 问题；完整回归 `1325 passed, 2 skipped, 1 warning`，测试摘要后进程正常退出。唯一 warning 仍来自飞书 SDK 的既有弃用 API。
 
 ## 2026-07-22：原生 Windows 内置工具运行时 v1（已由 v2 替代）
 
@@ -54,15 +55,16 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/luna_agent/**/*.py` | 274 | 63,028 |
-| `tests/**/*.py` | 121 | 35,404 |
+| `src/luna_agent/**/*.py` | 277 | 63,903 |
+| `tests/**/*.py` | 122 | 35,604 |
 | `plugins/**/*.py` | 15 | 4,234 |
 | `packages/**/*.py` | 20 | 2,042 |
 | `examples/**/*.py` | 5 | 399 |
 | `scripts/**/*.py` | 3 | 546 |
-| **Python 合计** | **446** | **105,653** |
+| 兼容入口 `src/personal_agent/**/*.py` | 9 | 10 |
+| **Python 合计** | **451** | **106,738** |
 
-- 自动化测试：119 个 `test_*.py` 文件，完整回归 `1318 passed, 1 skipped, 1 warning`。
+- 自动化测试：120 个 `test_*.py` 文件，完整回归 `1325 passed, 2 skipped, 1 warning`。
 - 当前分支：`feat/windows-shell-appcontainer`；Windows AppContainer v2 尚未合并到 `main`。
 - 安装包归档：`data/plugins/migration-packages/` 集中保留 Document Converter、Markdown Structure Analyzer 和 Workspace Watch 的 `0.1.1` ZIP；卸载只清理 `data/plugins/packages/` 下的展开 generation，不删除这些源包。
 - CI 首次远程运行暴露 Ubuntu runner 默认缺少 `bubblewrap`；工作流现先安装并执行 bwrap smoke，再运行锁定依赖、compileall 和完整 pytest。

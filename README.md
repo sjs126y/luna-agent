@@ -12,7 +12,7 @@
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <a href="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml"><img src="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <img src="https://img.shields.io/badge/tests-1297%20passed-2EA44F?logo=pytest&logoColor=white" alt="1297 tests passed">
+  <img src="https://img.shields.io/badge/tests-1325%20passed-2EA44F?logo=pytest&logoColor=white" alt="1325 tests passed">
   <img src="https://img.shields.io/github/last-commit/sjs126y/luna-agent?label=last%20commit" alt="Last commit">
 </p>
 
@@ -173,7 +173,7 @@ uv run luna-agent doctor --verbose
 
 项目还提供运行时、会话、记忆、插件、审计和日志等观察入口，方便确认 Agent 当前是否正常工作。
 
-当前测试基线为 `1297 passed, 1 warning`。执行完整测试：
+当前测试基线为 `1325 passed, 2 skipped, 1 warning`。执行完整测试：
 
 ```bash
 uv run pytest -q
