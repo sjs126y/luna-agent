@@ -66,6 +66,7 @@ def set_process_backend(backend: str) -> None:
 # use the standalone policy implementation.
 WHITELIST = shell_policy.WHITELIST
 _WINDOWS_WHITELIST = shell_policy._WINDOWS_WHITELIST
+_glob_pattern_to_regex = shell_policy.glob_pattern_to_regex
 
 
 def _effective_whitelist() -> dict[str, tuple[str | list[str], bool]]:
