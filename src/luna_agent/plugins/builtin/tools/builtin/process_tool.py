@@ -88,6 +88,11 @@ async def _waiter(pid: int, proc: asyncio.subprocess.Process) -> None:
             tp.finished_at = time.time()
             if tp.status == "running":
                 tp.status = "done"
+        import os
+        if os.name == "nt":
+            from luna_agent.tools import windows_job
+
+            windows_job.release(proc.pid)
     except Exception as exc:
         logger.debug("Process %d waiter error: %s", pid, exc)
 

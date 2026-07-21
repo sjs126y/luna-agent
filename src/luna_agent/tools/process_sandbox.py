@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -15,6 +16,10 @@ from typing import Iterable, Literal
 PROCESS_SANDBOX_BACKENDS = {"auto", "bwrap", "legacy"}
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 @dataclass(frozen=True)
 class ProcessLaunchSpec:
     backend: str
@@ -23,6 +28,8 @@ class ProcessLaunchSpec:
     filesystem_isolated: bool
     network_isolated: bool
     warning: str = ""
+    process_tree_managed: bool = False
+    security_level: Literal["os-isolated", "controlled-host", "none"] = "none"
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,7 @@ def build_process_launch(
             filesystem_isolated=False,
             network_isolated=False,
             warning=f"{policy.name} requires bwrap, but bwrap is unavailable",
+            security_level="none",
         )
     if not use_bwrap:
         warning = ""
@@ -98,6 +106,7 @@ def build_process_launch(
             filesystem_isolated=False,
             network_isolated=False,
             warning=warning,
+            security_level="none",
         )
 
     plan = build_process_mount_plan(
@@ -128,6 +137,102 @@ def build_process_launch(
         filesystem_isolated=True,
         network_isolated=plan.network_isolated,
         warning=warning,
+        process_tree_managed=False,
+        security_level="os-isolated",
+    )
+
+
+def build_shell_process_launch(
+    command: str,
+    *,
+    cwd: Path,
+    writable_roots: Iterable[Path],
+    readable_roots: Iterable[Path] = (),
+    masked_paths: Iterable[Path] = (),
+    allow_network: bool,
+    requested_backend: str = "auto",
+    policy: ProcessSandboxPolicy = BASH_STRICT_POLICY,
+) -> ProcessLaunchSpec:
+    """Build the platform-specific launch used by the built-in shell tools.
+
+    MCP stdio keeps using :func:`build_process_launch` because its configured
+    command and argv must remain native executable arguments.  Only the
+    user-facing shell tools use PowerShell on Windows.
+    """
+    if _is_windows():
+        return _build_windows_powershell_launch(
+            command,
+            cwd=cwd,
+            requested_backend=requested_backend,
+            policy=policy,
+        )
+    return build_process_launch(
+        command,
+        cwd=cwd,
+        writable_roots=writable_roots,
+        readable_roots=readable_roots,
+        masked_paths=masked_paths,
+        allow_network=allow_network,
+        requested_backend=requested_backend,
+        policy=policy,
+    )
+
+
+def _build_windows_powershell_launch(
+    command: str,
+    *,
+    cwd: Path,
+    requested_backend: str,
+    policy: ProcessSandboxPolicy,
+) -> ProcessLaunchSpec:
+    work_dir = Path(cwd).resolve()
+    requested = normalize_process_backend(requested_backend)
+    powershell = str(process_sandbox_capabilities().get("powershell_path") or "")
+    if not powershell:
+        return ProcessLaunchSpec(
+            backend="unavailable",
+            argv=(),
+            cwd=work_dir,
+            filesystem_isolated=False,
+            network_isolated=False,
+            warning="PowerShell 7 (pwsh.exe) is required on native Windows",
+            security_level="none",
+        )
+    if requested == "bwrap":
+        return ProcessLaunchSpec(
+            backend="unavailable",
+            argv=(),
+            cwd=work_dir,
+            filesystem_isolated=False,
+            network_isolated=False,
+            warning="Bubblewrap is not a native Windows shell backend; use PowerShell 7",
+            security_level="none",
+        )
+    script = (
+        "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        "$global:PSNativeCommandEncoding = [System.Text.UTF8Encoding]::new($false); "
+        f"{command}"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    warning = ""
+    if policy.strict_filesystem or requested == "legacy":
+        warning = "Windows built-in shell uses controlled-host policy; filesystem isolation is unavailable"
+    return ProcessLaunchSpec(
+        backend="windows-powershell",
+        argv=(
+            powershell,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded,
+        ),
+        cwd=work_dir,
+        filesystem_isolated=False,
+        network_isolated=False,
+        warning=warning,
+        process_tree_managed=True,
+        security_level="controlled-host",
     )
 
 
@@ -315,10 +420,14 @@ def normalize_process_backend(value: object) -> str:
 def process_sandbox_capabilities() -> dict[str, object]:
     path = shutil.which("bwrap") if sys.platform.startswith("linux") else None
     available = bool(path and _probe_bwrap(path))
+    powershell_path = shutil.which("pwsh") if _is_windows() else None
     return {
         "platform": sys.platform,
         "bwrap_path": path or "",
         "bwrap_available": available,
+        "powershell_path": powershell_path or "",
+        "powershell_available": bool(powershell_path),
+        "job_object_available": _is_windows(),
         "network_namespace_available": (
             _probe_network_namespace(path) if available else False
         ),
@@ -328,26 +437,44 @@ def process_sandbox_capabilities() -> dict[str, object]:
 def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, object]:
     requested = normalize_process_backend(requested_backend)
     capabilities = process_sandbox_capabilities()
-    if capabilities["bwrap_available"] and requested in {"auto", "bwrap"}:
-        effective = "bwrap"
-    elif requested == "bwrap":
-        effective = "unavailable"
+    windows = _is_windows()
+    windows_shell = windows and bool(capabilities.get("powershell_available"))
+    if windows:
+        # Native Windows has no Bubblewrap path.  Keep an explicit bwrap
+        # request fail-closed instead of silently selecting PowerShell.
+        if requested == "bwrap" or not windows_shell:
+            effective = "unavailable"
+            bash_effective = "unavailable"
+        else:
+            effective = "windows-powershell"
+            bash_effective = "windows-powershell"
     else:
-        effective = "legacy"
-    if requested == "legacy":
-        bash_effective = "legacy"
-    elif capabilities["bwrap_available"]:
-        bash_effective = "bwrap"
-    else:
-        bash_effective = "unavailable"
+        if capabilities["bwrap_available"] and requested in {"auto", "bwrap"}:
+            effective = "bwrap"
+        elif requested == "bwrap":
+            effective = "unavailable"
+        else:
+            effective = "legacy"
+        if requested == "legacy":
+            bash_effective = "legacy"
+        elif capabilities["bwrap_available"]:
+            bash_effective = "bwrap"
+        else:
+            bash_effective = "unavailable"
     warnings: list[str] = []
     if requested == "bwrap" and effective == "unavailable":
         warnings.append("bwrap requested but unavailable")
-    if effective != "bwrap":
+    if windows and not capabilities.get("powershell_available"):
+        warnings.append("PowerShell 7 (pwsh.exe) is required for native Windows shell tools")
+    if effective == "windows-powershell":
+        warnings.append("Windows built-in shell uses controlled-host policy")
+    elif effective != "bwrap":
         warnings.append("process filesystem isolation is unavailable")
     elif not capabilities["network_namespace_available"]:
         warnings.append("bwrap network namespace is unavailable")
-    if bash_effective == "unavailable":
+    if bash_effective == "windows-powershell":
+        pass
+    elif bash_effective == "unavailable":
         warnings.append("strict Bash execution is unavailable without bwrap")
     elif bash_effective == "legacy":
         warnings.append("strict Bash filesystem isolation is explicitly disabled")
@@ -357,7 +484,20 @@ def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, ob
         "filesystem_isolated": effective == "bwrap",
         "bash_effective_backend": bash_effective,
         "bash_filesystem_isolated": bash_effective == "bwrap",
-        "bash_fail_closed": requested != "legacy",
+        "bash_fail_closed": (
+            bash_effective == "unavailable" if windows else requested != "legacy"
+        ),
+        "process_tree_managed": bool(
+            capabilities.get("job_object_available") and effective == "windows-powershell"
+        ),
+        "security_level": (
+            "controlled-host" if effective == "windows-powershell"
+            else "os-isolated" if effective == "bwrap"
+            else "none"
+        ),
+        "powershell_path": str(capabilities.get("powershell_path") or ""),
+        "powershell_available": bool(capabilities.get("powershell_available")),
+        "job_object_available": bool(capabilities.get("job_object_available")),
         "network_namespace_available": bool(
             capabilities["network_namespace_available"]
         ),
@@ -367,7 +507,7 @@ def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, ob
 
 
 def _probe_network_namespace(binary: str | None) -> bool:
-    if not binary or os.name == "nt":
+    if not binary or _is_windows():
         return False
     try:
         completed = subprocess.run(

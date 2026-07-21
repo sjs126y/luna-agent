@@ -37,6 +37,10 @@ _MAX_OUTPUT = 4000
 _MAX_CAPTURE_BYTES = 64_000
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 def set_work_dir(path: Path) -> None:
     global _work_dir
     _work_dir = path.resolve()
@@ -105,6 +109,24 @@ _WINDOWS_ALIASES: dict[str, str] = {
     "where": "where",
 }
 
+_WINDOWS_WHITELIST: dict[str, tuple[str | list[str], bool]] = {
+    "get-childitem": ("*", False),
+    "get-content": ("*", False),
+    "select-string": ("*", False),
+    "get-location": ([], False),
+    "get-date": ([], False),
+    "get-process": ("*", False),
+    "copy-item": ("*", False),
+    "move-item": ("*", False),
+    "new-item": ("*", False),
+    "remove-item": ("*", False),
+    "write-output": ("*", False),
+    "sort-object": ("*", False),
+    "compare-object": ("*", False),
+    "invoke-webrequest": ("*", True),
+    "invoke-restmethod": ("*", True),
+}
+
 # ── Hard blacklist — catastrophic commands, NEVER allowed ──
 # These are checked BEFORE the whitelist and cannot be overridden.
 # Tool approval never bypasses these hard checks.
@@ -143,7 +165,19 @@ _DANGEROUS_PATTERNS: list[str] = [
     r'\$\([^)]+\)',                               # command substitution
     r'\bsudo\b.*\brm\b',                         # sudo rm (any target)
     r'\bgit\s+push\s+--force',                   # force push (potentially destructive)
+    r'(?i)(?:^|[\s;])(?:invoke-expression|iex|start-process|new-object|add-type)\b',
+    r'(?i)(?:^|[\s;])(?:set-executionpolicy|set-location\s+registry:)\b',
+    r'(?i)\[system\.(?:io|reflection|management)\.',
+    r'(?i)(?:^|[\s])\.(?:\\|/)',                 # PowerShell dot-sourcing
+    r'(?i)(?:^|[\s])&(?:\s|$)',                   # PowerShell call operator
+    r'(?i)-encodedcommand\b',
 ]
+
+
+def _effective_whitelist() -> dict[str, tuple[str | list[str], bool]]:
+    if _is_windows():
+        return {**WHITELIST, **_WINDOWS_WHITELIST}
+    return WHITELIST
 
 
 def _check_command(
@@ -186,13 +220,14 @@ def _check_command(
     base = parts[0].lower().replace("\\", "/").split("/")[-1]  # strip path
 
     # ── 2. Whitelist check ──
-    if base not in WHITELIST:
+    whitelist = _effective_whitelist()
+    if base not in whitelist:
         return (
             f"Error: command '{base}' is not in the allowed list. "
-            f"Allowed commands: {', '.join(sorted(WHITELIST.keys()))}"
+            f"Allowed commands: {', '.join(sorted(whitelist.keys()))}"
         )
 
-    _, needs_network = WHITELIST[base]
+    _, needs_network = whitelist[base]
     if needs_network and not _allow_network:
         return (
             f"Error: network access not allowed (blocked '{base}'). "
@@ -298,7 +333,7 @@ def _check_path_sandbox(
 
 
 def _subprocess_group_kwargs() -> dict:
-    if os.name == "nt":
+    if _is_windows():
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
@@ -307,8 +342,11 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
     try:
-        if os.name == "nt":
-            proc.kill()
+        if _is_windows():
+            from luna_agent.tools import windows_job
+
+            if not windows_job.terminate(proc.pid):
+                proc.kill()
         else:
             os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -327,12 +365,12 @@ async def spawn_command(
     stderr,
 ) -> asyncio.subprocess.Process:
     from luna_agent.tools.env_filter import filter_env
-    from luna_agent.tools.process_sandbox import BASH_STRICT_POLICY, build_process_launch
+    from luna_agent.tools.process_sandbox import BASH_STRICT_POLICY, build_shell_process_launch
 
     readable = tuple(Path(path).resolve() for path in read_paths)
     writable = tuple(Path(path).resolve() for path in write_paths)
     masks = _collect_blocked_mounts((cwd, *readable, *writable))
-    launch = build_process_launch(
+    launch = build_shell_process_launch(
         command,
         cwd=cwd,
         readable_roots=readable,
@@ -350,13 +388,28 @@ async def spawn_command(
     }
     if launch.backend == "unavailable":
         raise RuntimeError(launch.warning)
-    if launch.backend == "bwrap":
-        return await asyncio.create_subprocess_exec(*launch.argv, **kwargs)
-    return await asyncio.create_subprocess_shell(
-        command,
-        cwd=str(launch.cwd),
-        **kwargs,
-    )
+    if launch.backend in {"bwrap", "windows-powershell"}:
+        proc = await asyncio.create_subprocess_exec(
+            *launch.argv,
+            cwd=str(launch.cwd),
+            **kwargs,
+        )
+    else:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=str(launch.cwd),
+            **kwargs,
+        )
+    if _is_windows():
+        from luna_agent.tools import windows_job
+
+        if not windows_job.attach(proc.pid):
+            try:
+                proc.kill()
+            finally:
+                await proc.wait()
+            raise RuntimeError("Windows Job Object is unavailable; refusing to start process")
+    return proc
 
 
 # ── handler ──────────────────────────────────────────
@@ -464,6 +517,11 @@ async def _bash(
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         return f"Error: {e}"
+    finally:
+        if proc is not None and _is_windows():
+            from luna_agent.tools import windows_job
+
+            windows_job.release(proc.pid)
 
 
 async def _drain_output(reader) -> tuple[bytes, int]:
@@ -572,7 +630,7 @@ def resource_requirements(input_: dict) -> list:
     if not parts:
         return requirements
     base = parts[0].lower().replace("\\", "/").split("/")[-1]
-    spec = WHITELIST.get(base)
+    spec = _effective_whitelist().get(base)
     if spec is None or not spec[1]:
         return requirements
     for value in parts[1:]:
