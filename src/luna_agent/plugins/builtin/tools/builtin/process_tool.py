@@ -90,9 +90,16 @@ async def _waiter(pid: int, proc: asyncio.subprocess.Process) -> None:
                 tp.status = "done"
         import os
         if os.name == "nt":
-            from luna_agent.tools import windows_job
+            if getattr(proc, "_luna_appcontainer_broker", False):
+                from luna_agent.tools.process_sandbox import cleanup_shell_broker_request
 
-            windows_job.release(proc.pid)
+                cleanup_shell_broker_request(
+                    getattr(proc, "_luna_broker_request", None)
+                )
+            else:
+                from luna_agent.tools import windows_job
+
+                windows_job.release(proc.pid)
     except Exception as exc:
         logger.debug("Process %d waiter error: %s", pid, exc)
 
@@ -249,6 +256,12 @@ async def _process_kill(pid: int) -> str:
 
         await bash_tool._kill_process_tree(tp.proc)
         await tp.proc.wait()
+        if getattr(tp.proc, "_luna_appcontainer_broker", False):
+            from luna_agent.tools.process_sandbox import cleanup_shell_broker_request
+
+            cleanup_shell_broker_request(
+                getattr(tp.proc, "_luna_broker_request", None)
+            )
         tp.status = "killed"
         tp.returncode = tp.proc.returncode if tp.proc.returncode is not None else -9
         tp.finished_at = time.time()

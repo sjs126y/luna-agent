@@ -587,7 +587,7 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         sandbox,
         "process_backend",
         "sandbox.process_backend",
-        {"auto", "bwrap", "legacy"},
+        {"auto", "bwrap", "appcontainer", "legacy"},
         errors,
     )
     _positive_int(sandbox, "file_max_write_bytes", "sandbox.file_max_write_bytes", errors)

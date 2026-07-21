@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import base64
 from dataclasses import dataclass
 from functools import lru_cache
+import logging
 from pathlib import Path
+import secrets
 import shutil
 import shlex
 import subprocess
 import sys
-from typing import Iterable, Literal
+from typing import Any, Iterable, Literal
 
-PROCESS_SANDBOX_BACKENDS = {"auto", "bwrap", "legacy"}
+logger = logging.getLogger(__name__)
+
+PROCESS_SANDBOX_BACKENDS = {"auto", "bwrap", "appcontainer", "legacy"}
 
 
 def _is_windows() -> bool:
@@ -30,6 +35,9 @@ class ProcessLaunchSpec:
     warning: str = ""
     process_tree_managed: bool = False
     security_level: Literal["os-isolated", "controlled-host", "none"] = "none"
+    # Native Windows shell launches use a one-shot broker.  The request is
+    # sent over broker stdin, never encoded into the command line.
+    broker_request: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,85 @@ class ProcessMountPlan:
     network_isolated: bool = False
 
 
+async def spawn_process(
+    launch: ProcessLaunchSpec,
+    *,
+    command: str,
+    environment: dict[str, str],
+    stdout,
+    stderr,
+    blocked_patterns: Iterable[str] = (),
+) -> asyncio.subprocess.Process:
+    """Start a process from a platform launch spec.
+
+    Keeping broker protocol, stdio setup, and host Job Object handling here
+    means ``bash`` and ``process_start`` share one backend implementation.
+    """
+    if launch.backend == "unavailable":
+        raise RuntimeError(launch.warning)
+    kwargs: dict[str, Any] = {
+        "stdout": stdout,
+        "stderr": stderr,
+        "env": environment,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    if launch.backend == "windows-appcontainer":
+        import json
+
+        request = dict(launch.broker_request or {})
+        request["environment"] = dict(environment)
+        request["blocked_patterns"] = list(blocked_patterns)
+        kwargs["stdin"] = asyncio.subprocess.PIPE
+        proc = await asyncio.create_subprocess_exec(
+            *launch.argv,
+            cwd=str(launch.cwd),
+            **kwargs,
+        )
+        # These private attributes are the cleanup contract consumed by the
+        # shell tool and process tracker; the underlying handle remains a
+        # normal asyncio subprocess process.
+        proc._luna_appcontainer_broker = True
+        proc._luna_broker_request = request
+        try:
+            payload = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+            proc.stdin.write(payload)
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except Exception:
+            proc.kill()
+            await proc.wait()
+            cleanup_shell_broker_request(request)
+            raise
+    elif launch.backend in {"bwrap", "windows-powershell"}:
+        proc = await asyncio.create_subprocess_exec(
+            *launch.argv,
+            cwd=str(launch.cwd),
+            **kwargs,
+        )
+    else:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=str(launch.cwd),
+            **kwargs,
+        )
+
+    if os.name == "nt" and launch.backend != "windows-appcontainer":
+        from luna_agent.tools import windows_job
+
+        if not windows_job.attach(proc.pid):
+            try:
+                proc.kill()
+            finally:
+                await proc.wait()
+            raise RuntimeError("Windows Job Object is unavailable; refusing to start process")
+    return proc
+
+
 MCP_COMPATIBLE_POLICY = ProcessSandboxPolicy("mcp-compatible")
 BASH_STRICT_POLICY = ProcessSandboxPolicy(
     "bash-strict",
@@ -81,6 +168,16 @@ def build_process_launch(
     work_dir = cwd.resolve()
     capabilities = process_sandbox_capabilities()
     requested = normalize_process_backend(requested_backend)
+    if requested == "appcontainer":
+        return ProcessLaunchSpec(
+            backend="unavailable",
+            argv=(),
+            cwd=work_dir,
+            filesystem_isolated=False,
+            network_isolated=False,
+            warning="AppContainer is a native Windows backend; it is unavailable on this platform",
+            security_level="none",
+        )
     use_bwrap = requested == "bwrap" or (
         requested == "auto" and capabilities["bwrap_available"]
     )
@@ -160,9 +257,13 @@ def build_shell_process_launch(
     user-facing shell tools use PowerShell on Windows.
     """
     if _is_windows():
-        return _build_windows_powershell_launch(
+        return _build_windows_shell_launch(
             command,
             cwd=cwd,
+            writable_roots=writable_roots,
+            readable_roots=readable_roots,
+            masked_paths=masked_paths,
+            allow_network=allow_network,
             requested_backend=requested_backend,
             policy=policy,
         )
@@ -176,6 +277,123 @@ def build_shell_process_launch(
         requested_backend=requested_backend,
         policy=policy,
     )
+
+
+def _build_windows_shell_launch(
+    command: str,
+    *,
+    cwd: Path,
+    writable_roots: Iterable[Path],
+    readable_roots: Iterable[Path],
+    masked_paths: Iterable[Path],
+    allow_network: bool,
+    requested_backend: str,
+    policy: ProcessSandboxPolicy,
+) -> ProcessLaunchSpec:
+    """Select native Windows AppContainer, or explicit legacy mode."""
+    work_dir = Path(cwd).resolve()
+    requested = normalize_process_backend(requested_backend)
+    capabilities = process_sandbox_capabilities()
+    powershell = str(capabilities.get("powershell_path") or "")
+    if not powershell:
+        return ProcessLaunchSpec(
+            backend="unavailable",
+            argv=(),
+            cwd=work_dir,
+            filesystem_isolated=False,
+            network_isolated=False,
+            warning="PowerShell 7 (pwsh.exe) is required on native Windows",
+            security_level="none",
+        )
+    if requested == "bwrap":
+        return ProcessLaunchSpec(
+            backend="unavailable",
+            argv=(),
+            cwd=work_dir,
+            filesystem_isolated=False,
+            network_isolated=False,
+            warning="Bubblewrap is not a native Windows shell backend; use appcontainer or legacy",
+            security_level="none",
+        )
+    if requested == "legacy":
+        return _build_windows_powershell_launch(
+            command,
+            cwd=work_dir,
+            requested_backend=requested,
+            policy=policy,
+        )
+    if not bool(capabilities.get("appcontainer_available", True)):
+        return ProcessLaunchSpec(
+            backend="unavailable",
+            argv=(),
+            cwd=work_dir,
+            filesystem_isolated=False,
+            network_isolated=False,
+            warning="Native Windows AppContainer support is unavailable",
+            security_level="none",
+        )
+
+    roots = tuple(Path(root).resolve() for root in writable_roots)
+    readable = tuple(Path(root).resolve() for root in readable_roots)
+    profile = _shell_profile_name(work_dir, command)
+    request: dict[str, Any] = {
+        "schema_version": 1,
+        "command": str(command),
+        "cwd": str(work_dir),
+        "sandbox_roots": [str(work_dir), *(str(root) for root in roots)],
+        "read_roots": [str(root) for root in readable],
+        "write_roots": [str(root) for root in roots if root != work_dir],
+        "masked_paths": [str(Path(path).resolve()) for path in masked_paths],
+        "allow_network": bool(allow_network),
+        "environment": {},
+        "profile_name": profile,
+        "lease_root": str(work_dir / ".luna-agent-leases"),
+        "acl_roots": [str(work_dir), *(str(root) for root in readable), *(str(root) for root in roots)],
+    }
+    broker = str(Path(sys.executable).resolve())
+    return ProcessLaunchSpec(
+        backend="windows-appcontainer",
+        argv=(broker, "-m", "luna_agent.tools.windows_shell_broker"),
+        cwd=work_dir,
+        filesystem_isolated=True,
+        network_isolated=not allow_network,
+        warning="",
+        process_tree_managed=True,
+        security_level="os-isolated",
+        broker_request=request,
+    )
+
+
+def _shell_profile_name(cwd: Path, command: str) -> str:
+    from luna_agent.security.windows_appcontainer import profile_name
+
+    identity = f"{cwd.resolve()}\0{secrets.token_hex(12)}\0{command[:128]}"
+    return profile_name("Shell", identity)
+
+
+def cleanup_shell_broker_request(request: dict[str, Any] | None) -> None:
+    """Best-effort cleanup for a broker killed before its finally block."""
+    if not request:
+        return
+    profile = request.get("profile_name")
+    roots = request.get("acl_roots") or ()
+    if not isinstance(profile, str):
+        return
+    try:
+        from luna_agent.security.windows_appcontainer import (
+            cleanup_appcontainer_profile,
+            sweep_orphan_leases,
+        )
+
+        lease_root = request.get("lease_root")
+        if isinstance(lease_root, str) and lease_root:
+            sweep_orphan_leases(Path(lease_root))
+        else:
+            cleanup_appcontainer_profile(profile, tuple(Path(root) for root in roots))
+    except Exception:
+        # Cleanup is retried by the broker/profile orphan sweep; never mask
+        # the original shell process result with an ACL cleanup error.
+        logger.debug("Shell broker cleanup failed for %s", profile, exc_info=True)
 
 
 def _build_windows_powershell_launch(
@@ -427,6 +645,9 @@ def process_sandbox_capabilities() -> dict[str, object]:
         "bwrap_available": available,
         "powershell_path": powershell_path or "",
         "powershell_available": bool(powershell_path),
+        "appcontainer_available": _is_windows(),
+        "shell_broker_available": _is_windows(),
+        "lease_recovery_available": _is_windows(),
         "job_object_available": _is_windows(),
         "network_namespace_available": (
             _probe_network_namespace(path) if available else False
@@ -439,17 +660,32 @@ def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, ob
     capabilities = process_sandbox_capabilities()
     windows = _is_windows()
     windows_shell = windows and bool(capabilities.get("powershell_available"))
+    windows_appcontainer = windows_shell and bool(
+        capabilities.get("appcontainer_available", False)
+    )
     if windows:
         # Native Windows has no Bubblewrap path.  Keep an explicit bwrap
-        # request fail-closed instead of silently selecting PowerShell.
-        if requested == "bwrap" or not windows_shell:
+        # request fail-closed instead of silently selecting another backend.
+        if requested in {"bwrap", "appcontainer"} and not windows_appcontainer:
             effective = "unavailable"
             bash_effective = "unavailable"
-        else:
+        elif requested == "bwrap" or not windows_shell:
+            effective = "unavailable"
+            bash_effective = "unavailable"
+        elif requested == "legacy":
             effective = "windows-powershell"
             bash_effective = "windows-powershell"
+        elif windows_appcontainer:
+            effective = "windows-appcontainer"
+            bash_effective = "windows-appcontainer"
+        else:
+            effective = "unavailable"
+            bash_effective = "unavailable"
     else:
-        if capabilities["bwrap_available"] and requested in {"auto", "bwrap"}:
+        if requested == "appcontainer":
+            effective = "unavailable"
+            bash_effective = "unavailable"
+        elif capabilities["bwrap_available"] and requested in {"auto", "bwrap"}:
             effective = "bwrap"
         elif requested == "bwrap":
             effective = "unavailable"
@@ -464,10 +700,16 @@ def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, ob
     warnings: list[str] = []
     if requested == "bwrap" and effective == "unavailable":
         warnings.append("bwrap requested but unavailable")
+    if requested == "appcontainer" and effective == "unavailable":
+        warnings.append("AppContainer is available only on native Windows")
     if windows and not capabilities.get("powershell_available"):
         warnings.append("PowerShell 7 (pwsh.exe) is required for native Windows shell tools")
+    if windows and requested == "appcontainer" and not windows_appcontainer:
+        warnings.append("Windows AppContainer shell backend is unavailable")
     if effective == "windows-powershell":
         warnings.append("Windows built-in shell uses controlled-host policy")
+    elif effective == "windows-appcontainer":
+        pass
     elif effective != "bwrap":
         warnings.append("process filesystem isolation is unavailable")
     elif not capabilities["network_namespace_available"]:
@@ -481,22 +723,28 @@ def process_sandbox_snapshot(requested_backend: object = "auto") -> dict[str, ob
     return {
         "requested_backend": requested,
         "effective_backend": effective,
-        "filesystem_isolated": effective == "bwrap",
+        "filesystem_isolated": effective in {"bwrap", "windows-appcontainer"},
         "bash_effective_backend": bash_effective,
-        "bash_filesystem_isolated": bash_effective == "bwrap",
+        "bash_filesystem_isolated": bash_effective in {"bwrap", "windows-appcontainer"},
         "bash_fail_closed": (
             bash_effective == "unavailable" if windows else requested != "legacy"
         ),
         "process_tree_managed": bool(
-            capabilities.get("job_object_available") and effective == "windows-powershell"
+            capabilities.get("job_object_available")
+            and effective in {"windows-powershell", "windows-appcontainer"}
         ),
         "security_level": (
             "controlled-host" if effective == "windows-powershell"
-            else "os-isolated" if effective == "bwrap"
+            else "os-isolated" if effective in {"bwrap", "windows-appcontainer"}
             else "none"
         ),
         "powershell_path": str(capabilities.get("powershell_path") or ""),
         "powershell_available": bool(capabilities.get("powershell_available")),
+        "appcontainer_available": bool(capabilities.get("appcontainer_available")),
+        "shell_broker_available": bool(capabilities.get("shell_broker_available")),
+        "lease_recovery_available": bool(
+            capabilities.get("lease_recovery_available")
+        ),
         "job_object_available": bool(capabilities.get("job_object_available")),
         "network_namespace_available": bool(
             capabilities["network_namespace_available"]

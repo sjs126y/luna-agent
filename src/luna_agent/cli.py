@@ -2490,6 +2490,19 @@ def format_doctor_report(report: dict[str, Any], *, section: str = "all", verbos
     )
     if process_sandbox.get("powershell_path"):
         lines.append(f"  PowerShell 7: {process_sandbox['powershell_path']}")
+    if process_sandbox.get("powershell_available"):
+        lines.append(
+            "  Windows AppContainer: "
+            f"{_yes(process_sandbox.get('appcontainer_available', False))}"
+        )
+        lines.append(
+            "  Windows Shell Broker: "
+            f"{_yes(process_sandbox.get('shell_broker_available', False))}"
+        )
+        lines.append(
+            "  AppContainer lease recovery: "
+            f"{_yes(process_sandbox.get('lease_recovery_available', False))}"
+        )
     lines.append(
         "  Windows Job Object: "
         f"{_yes(process_sandbox.get('job_object_available', False))}"

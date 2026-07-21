@@ -13,10 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import signal
 import shlex
-import subprocess
 import time
 from pathlib import Path
 from typing import Iterable
@@ -24,6 +22,7 @@ from urllib.parse import urlparse
 
 from luna_agent.tools.entry import ToolEntry
 from luna_agent.tools.registry import tool_registry
+from luna_agent.tools import shell_policy
 
 logger = logging.getLogger(__name__)
 
@@ -63,121 +62,14 @@ def set_process_backend(backend: str) -> None:
     _process_backend = normalize_process_backend(backend)
 
 
-# ── command whitelist ─────────────────────────────────
-# Format: command_name → (arg_patterns, needs_network)
-# arg_patterns: "*" = any args allowed; ["-n", "-l"] = only these flags
-
-WHITELIST: dict[str, tuple[str | list[str], bool]] = {
-    # File ops
-    "ls":     ("*", False),   "dir":    ("*", False),
-    "cat":    ("*", False),   "type":   ("*", False),
-    "head":   ("*", False),   "tail":   ("*", False),
-    "wc":     ("*", False),   "find":   ("*", False),
-    "grep":   ("*", False),   "cp":     ("*", False),
-    "mv":     ("*", False),   "mkdir":  ("*", False),
-    "rmdir":  ("*", False),   "touch":  ("*", False),
-    "rm":     ("*", False),   "tree":   ("*", False),
-    # Git
-    "git":    ("*", False),
-    # Python
-    "python": ("*", False),   "python3": ("*", False),
-    "pip":    ("*", True),    "uv":      ("*", True),
-    # Text processing
-    "echo":   ("*", False),   "sed":    ("*", False),
-    "awk":    ("*", False),   "sort":   ("*", False),
-    "uniq":   ("*", False),   "cut":    ("*", False),
-    "tr":     ("*", False),   "diff":   ("*", False),
-    # System info (no destructive args)
-    "whoami":  ([], False),   "pwd":    ([], False),
-    "date":    ([], False),   "env":    ([], False),
-    "uname":   ([], False),   "hostname": ([], False),
-    "df":     ("*", False),   "du":     ("*", False),
-    "ps":     ("*", False),   "which":  ("*", False),
-    "where":  ("*", False),
-    # Compilers / build
-    "gcc":    ("*", False),   "g++":   ("*", False),
-    "make":   ("*", False),   "cargo": ("*", True),
-    "go":     ("*", False),   "rustc": ("*", False),
-    # Network tools (only if _allow_network)
-    "curl":   ("*", True),    "wget":  ("*", True),
-    "npx":    ("*", True),    "npm":   ("*", True),
-}
-
-# Windows command aliases
-_WINDOWS_ALIASES: dict[str, str] = {
-    "dir": "dir", "type": "type", "findstr": "findstr",
-    "where": "where",
-}
-
-_WINDOWS_WHITELIST: dict[str, tuple[str | list[str], bool]] = {
-    "get-childitem": ("*", False),
-    "get-content": ("*", False),
-    "select-string": ("*", False),
-    "get-location": ([], False),
-    "get-date": ([], False),
-    "get-process": ("*", False),
-    "copy-item": ("*", False),
-    "move-item": ("*", False),
-    "new-item": ("*", False),
-    "remove-item": ("*", False),
-    "write-output": ("*", False),
-    "sort-object": ("*", False),
-    "compare-object": ("*", False),
-    "invoke-webrequest": ("*", True),
-    "invoke-restmethod": ("*", True),
-}
-
-# ── Hard blacklist — catastrophic commands, NEVER allowed ──
-# These are checked BEFORE the whitelist and cannot be overridden.
-# Tool approval never bypasses these hard checks.
-
-_HARD_BLACKLIST: list[str] = [
-    # Filesystem destruction (root paths)
-    r'\brm\s+-rf\s+/', r'\brm\s+-rf\s+/\*',
-    r'\brm\s+-rf\s+~', r'\brm\s+-rf\s+\$HOME',
-    r'\brm\s+-rf\s+/(etc|boot|bin|sbin|lib|lib64|sys|proc|dev)\b',
-    # Block device writes
-    r'\bdd\s+.*\bof=/dev/[sh]da', r'\bdd\s+.*\bof=\\\\.\\',
-    r'\bdd\s+.*\bof=/dev/(null|zero|random)',
-    # Format / mkfs
-    r'\bmkfs\.', r'\bmkfs\s', r'\bmke2fs\b',
-    # Raw disk writes
-    r'>\s*/dev/[sh]d[a-z]', r'>\s*\\\\.\\[A-Z]',
-    # Fork bomb
-    r':\(\)\s*\{', r'\)\(\)\s*\{',
-    # System shutdown (anchored to command start, not args)
-    r'(?:^|[\s;&|])(?:sudo\s+)?(?:shutdown|reboot|halt|poweroff|init\s+[06])\b',
-    # chmod 777 on system dirs
-    r'\bchmod\s+777\s+/',
-    # Write to system config
-    r'>\s*/etc/(passwd|shadow|sudoers|hosts)',
-    r'>\s*C:\\Windows\\(System32|SysWOW64)',
-    # Kernel module / sysctl tampering
-    r'\b(modprobe|sysctl|kldload)\b.*\b(-[a-z]*r\b|write\b)',
-]
-
-
-# Dangerous argument patterns — blocked regardless of whitelist
-_DANGEROUS_PATTERNS: list[str] = [
-    r'>\s*\\\\.\\',                              # write to raw devices (Windows)
-    r'>\s*/etc/', r'>\s*C:\\Windows',            # system config overwrite
-    r'\|.*sh\b', r'`[^`]+`',                    # pipe to shell / backtick injection
-    r'\$\([^)]+\)',                               # command substitution
-    r'\bsudo\b.*\brm\b',                         # sudo rm (any target)
-    r'\bgit\s+push\s+--force',                   # force push (potentially destructive)
-    r'(?i)(?:^|[\s;])(?:invoke-expression|iex|start-process|new-object|add-type)\b',
-    r'(?i)(?:^|[\s;])(?:set-executionpolicy|set-location\s+registry:)\b',
-    r'(?i)\[system\.(?:io|reflection|management)\.',
-    r'(?i)(?:^|[\s])\.(?:\\|/)',                 # PowerShell dot-sourcing
-    r'(?i)(?:^|[\s])&(?:\s|$)',                   # PowerShell call operator
-    r'(?i)-encodedcommand\b',
-]
+# Keep historical private names for callers/tests while both host and broker
+# use the standalone policy implementation.
+WHITELIST = shell_policy.WHITELIST
+_WINDOWS_WHITELIST = shell_policy._WINDOWS_WHITELIST
 
 
 def _effective_whitelist() -> dict[str, tuple[str | list[str], bool]]:
-    if _is_windows():
-        return {**WHITELIST, **_WINDOWS_WHITELIST}
-    return WHITELIST
+    return shell_policy.effective_whitelist(is_windows=_is_windows())
 
 
 def _check_command(
@@ -185,98 +77,13 @@ def _check_command(
     *,
     declared_paths: Iterable[Path] = (),
 ) -> str | None:
-    """Validate command against hard blacklist → whitelist → patterns.
-
-    Layer order:
-      0. Hard blacklist — catastrophic, unconditional, NEVER bypassed
-      1. Command chaining detection
-      2. Whitelist check
-      3. Network isolation
-      4. Dangerous pattern detection
-    """
-    cmd_stripped = cmd_line.strip()
-
-    # Extract base command (first word, handling quotes)
-    parts = cmd_stripped.split()
-    if not parts:
-        return "Error: empty command"
-
-    # ── 0. Hard blacklist (UNCONDITIONAL) ──
-    cmd_lower = cmd_stripped.lower()
-    for pattern in _HARD_BLACKLIST:
-        if re.search(pattern, cmd_lower, re.IGNORECASE):
-            return f"Error: catastrophic command blocked by hard blacklist — this cannot be overridden"
-
-    # ── 1. Block command chaining ──
-    _CHAIN_TOKENS = ("&&", "||", "|", ";")
-    if any(tok in cmd_stripped for tok in _CHAIN_TOKENS):
-        return "Error: command chaining (&& || | ;) is not allowed. Use one command per call."
-
-    # ── 1.5. Path sandbox — no absolute paths, no traversal ──
-    path_error = _check_path_sandbox(cmd_stripped, declared_paths=declared_paths)
-    if path_error:
-        return path_error
-
-    base = parts[0].lower().replace("\\", "/").split("/")[-1]  # strip path
-
-    # ── 2. Whitelist check ──
-    whitelist = _effective_whitelist()
-    if base not in whitelist:
-        return (
-            f"Error: command '{base}' is not in the allowed list. "
-            f"Allowed commands: {', '.join(sorted(whitelist.keys()))}"
-        )
-
-    _, needs_network = whitelist[base]
-    if needs_network and not _allow_network:
-        return (
-            f"Error: network access not allowed (blocked '{base}'). "
-            f"Set bash_allow_network: true in config.yaml to enable."
-        )
-
-    # Check dangerous patterns (case-insensitive matching)
-    cmd_normalized = cmd_stripped.lower()
-    for pattern in _DANGEROUS_PATTERNS:
-        if re.search(pattern, cmd_normalized, re.IGNORECASE):
-            return f"Error: dangerous pattern detected"
-
-    return None
-
-
-# ── path sandbox ─────────────────────────────────────
-
-# System-level escape patterns — paths that should never be accessible
-# These go beyond sandbox roots: /etc, C:\Windows, ~, .. are dangerous
-# regardless of configured roots.
-_PATH_ESCAPE_PATTERNS: list[str] = [
-    r'(?:^|\s)/(?:etc|var|tmp|home|root|proc|sys|dev|opt|usr|bin|sbin|boot)/',  # Unix system paths
-    r'(?:^|\s)[A-Za-z]:[\\\\/](?:Windows|Program|Users|WINDOWS)',  # Windows system paths
-    r'(?:^|\s)~(?:[/\s]|$)',     # ~/ home dir or bare ~
-    r'(?:^|\s)\.\.(?:\s|$|/|\\)',  # parent dir traversal
-]
-
-
-def _glob_pattern_to_regex(glob_pat: str) -> str:
-    """Convert a sandbox blocked glob (e.g. '**/.env') to a regex for command scanning.
-
-    Examples:
-      **/.env          -> \\.env
-      **/.env.*        -> \\.env\\.[^/\\s]*
-      **/.git/**       -> \\.git/
-      **/id_rsa*       -> id_rsa[^/\\s]*
-      **/data/auth/**  -> data/auth/
-    """
-    pat = glob_pat.strip()
-    # Strip leading **/
-    if pat.startswith("**/"):
-        pat = pat[3:]
-    # Strip trailing /**
-    if pat.endswith("/**"):
-        pat = pat[:-3] + "/"
-    # Split on * wildcard, escape literal parts, rejoin with wildcard
-    parts = pat.split("*")
-    escaped = [re.escape(p) for p in parts]
-    return "[^/\\\\\\s]*".join(escaped)
+    return shell_policy.check_command(
+        cmd_line,
+        declared_paths=declared_paths,
+        allow_network=_allow_network,
+        restrict_paths=_restrict_paths,
+        is_windows=_is_windows(),
+    )
 
 
 def _check_path_sandbox(
@@ -284,58 +91,11 @@ def _check_path_sandbox(
     *,
     declared_paths: Iterable[Path] = (),
 ) -> str | None:
-    """Block commands that access files outside the sandbox.
-
-    Uses the unified sandbox for blocked patterns and roots.
-    Additionally blocks system-level escape patterns when _restrict_paths is true.
-    """
-    from luna_agent.tools.sandbox import get_sandbox
-    sandbox = get_sandbox()
-
-    # ── 1. Blocked patterns (from sandbox) — NEVER allowed ──
-    for pattern in sandbox.blocked:
-        regex = _glob_pattern_to_regex(pattern)
-        if re.search(regex, cmd_line, re.IGNORECASE):
-            return (
-                f"Error: sandbox blocked — '{pattern}' matches "
-                f"protected files. Config and credential files are never readable via bash."
-            )
-
-    # ── 2. Restrict paths off? allow everything except blocked ──
-    if not _restrict_paths:
-        return None
-
-    # Explicit declarations are enforced by resource approval and bwrap mounts.
-    # The command scanner remains a useful early check, not the security boundary.
-    if tuple(declared_paths):
-        return None
-
-    # ── 3. Check if command references a path under a sandbox root ──
-    cmd_norm = cmd_line.replace("\\", "/")
-    for root in sandbox.roots:
-        rs = str(root).replace("\\", "/")
-        # Match as full path component — avoids Desktop matching DesktopProjects
-        escaped_root = re.escape(rs)
-        if re.search(rf'(?:^|\s){escaped_root}(?:/|$)', cmd_norm):
-            return None  # path is under a configured root, allow
-
-    # ── 4. Escape patterns — system paths that bypass root check ──
-    for pattern in _PATH_ESCAPE_PATTERNS:
-        if re.search(pattern, cmd_line, re.IGNORECASE):
-            return (
-                f"Error: path sandbox blocked — absolute system path or "
-                f"parent traversal detected. Use only relative paths within "
-                f"the working directory, or absolute paths under configured "
-                f"sandbox roots."
-            )
-
-    return None
-
-
-def _subprocess_group_kwargs() -> dict:
-    if _is_windows():
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    return {"start_new_session": True}
+    return shell_policy.check_path_sandbox(
+        cmd_line,
+        declared_paths=declared_paths,
+        restrict_paths=_restrict_paths,
+    )
 
 
 async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
@@ -343,10 +103,13 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
         return
     try:
         if _is_windows():
-            from luna_agent.tools import windows_job
-
-            if not windows_job.terminate(proc.pid):
+            if getattr(proc, "_luna_appcontainer_broker", False):
                 proc.kill()
+            else:
+                from luna_agent.tools import windows_job
+
+                if not windows_job.terminate(proc.pid):
+                    proc.kill()
         else:
             os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -365,7 +128,11 @@ async def spawn_command(
     stderr,
 ) -> asyncio.subprocess.Process:
     from luna_agent.tools.env_filter import filter_env
-    from luna_agent.tools.process_sandbox import BASH_STRICT_POLICY, build_shell_process_launch
+    from luna_agent.tools.process_sandbox import (
+        BASH_STRICT_POLICY,
+        build_shell_process_launch,
+        spawn_process,
+    )
 
     readable = tuple(Path(path).resolve() for path in read_paths)
     writable = tuple(Path(path).resolve() for path in write_paths)
@@ -380,36 +147,21 @@ async def spawn_command(
         requested_backend=_process_backend,
         policy=BASH_STRICT_POLICY,
     )
-    kwargs = {
-        "stdout": stdout,
-        "stderr": stderr,
-        "env": filter_env(),
-        **_subprocess_group_kwargs(),
-    }
-    if launch.backend == "unavailable":
-        raise RuntimeError(launch.warning)
-    if launch.backend in {"bwrap", "windows-powershell"}:
-        proc = await asyncio.create_subprocess_exec(
-            *launch.argv,
-            cwd=str(launch.cwd),
-            **kwargs,
-        )
-    else:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=str(launch.cwd),
-            **kwargs,
-        )
-    if _is_windows():
-        from luna_agent.tools import windows_job
+    environment = filter_env()
+    try:
+        from luna_agent.tools.sandbox import get_sandbox
 
-        if not windows_job.attach(proc.pid):
-            try:
-                proc.kill()
-            finally:
-                await proc.wait()
-            raise RuntimeError("Windows Job Object is unavailable; refusing to start process")
-    return proc
+        blocked_patterns = tuple(get_sandbox().blocked)
+    except Exception:
+        blocked_patterns = ()
+    return await spawn_process(
+        launch,
+        command=command,
+        environment=environment,
+        stdout=stdout,
+        stderr=stderr,
+        blocked_patterns=blocked_patterns,
+    )
 
 
 # ── handler ──────────────────────────────────────────
@@ -518,7 +270,11 @@ async def _bash(
             await asyncio.gather(*pending, return_exceptions=True)
         return f"Error: {e}"
     finally:
-        if proc is not None and _is_windows():
+        if proc is not None and getattr(proc, "_luna_appcontainer_broker", False):
+            from luna_agent.tools.process_sandbox import cleanup_shell_broker_request
+
+            cleanup_shell_broker_request(getattr(proc, "_luna_broker_request", None))
+        elif proc is not None and _is_windows():
             from luna_agent.tools import windows_job
 
             windows_job.release(proc.pid)

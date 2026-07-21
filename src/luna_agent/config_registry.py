@@ -510,7 +510,7 @@ def _sandbox_fields() -> tuple[ConfigField, ...]:
             "str",
             "sandbox",
             "Process sandbox backend.",
-            choices=("auto", "bwrap", "legacy"),
+            choices=("auto", "bwrap", "appcontainer", "legacy"),
         ),
         _yaml_field("sandbox.file_max_write_bytes", "file_max_write_bytes", 100000, "int", "sandbox", "Maximum file write size.", minimum=1),
         _yaml_field("sandbox.audit_enabled", "audit_enabled", True, "bool", "sandbox", "Enable tool audit logging."),
