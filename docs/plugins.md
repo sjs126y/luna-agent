@@ -641,6 +641,8 @@ data/plugins/
 
 普通卸载先发布不包含该插件的新快照，再等待旧 lease 排空并删除 package；插件数据默认保留，只有 `--purge-data` 才删除隔离数据目录。更新保留历史 package，可按 digest 回滚。
 
+运行时展开 package 与原始安装包是两类资产：卸载会清理 `data/plugins/packages/` 下不再引用的展开目录，但不会删除用户自行保管的源 ZIP/TAR。当前迁移插件的源包集中保存在 `data/plugins/migration-packages/`，可在需要时重新安装。
+
 第一版安装源支持本地目录、ZIP 与 TAR；不会执行 `install.sh`/post-install 脚本，也不会修改宿主 `.venv`。Git 和 Marketplace 后续只需增加 source resolver，不改变 Runtime。
 
 ## 记忆提供器

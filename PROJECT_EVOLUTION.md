@@ -6,8 +6,8 @@
 
 <p>
   <img src="https://img.shields.io/badge/phases-22-7C3AED" alt="22 phases">
-  <img src="https://img.shields.io/badge/Python%20LOC-102%2C796-0A84FF" alt="102796 Python LOC">
-  <img src="https://img.shields.io/badge/tests-1282%20passed-2EA44F" alt="1282 tests passed">
+  <img src="https://img.shields.io/badge/Python%20LOC-104%2C214-0A84FF" alt="104214 Python LOC">
+  <img src="https://img.shields.io/badge/tests-1297%20passed-2EA44F" alt="1297 tests passed">
 </p>
 
 <p>
@@ -61,8 +61,9 @@
 当前主分支状态：
 
 - 分支：`main`
-- 本次统计基准：v0.23 插件 Generation 架构收口与跨平台 CI
-- 最近全量验证：`uv run pytest -q`，结果 `1282 passed, 1 warning`
+- 当前收口提交：`c287ef8 fix: close live runtime test gaps`
+- 本次统计基准：v0.23 插件 Generation 架构收口、live observability 收尾与跨平台 CI
+- 最近全量验证：`uv run pytest -q`，结果 `1297 passed, 1 warning`
 
 ## v0.21 Bash 最小进程文件系统
 
@@ -560,12 +561,15 @@
 
 | 范围 | 文件数 | 物理行数 |
 | --- | ---: | ---: |
-| `src/luna_agent/**/*.py` | 253 | 53,482 |
-| `tests/**/*.py` | 117 | 34,489 |
-| Plugins / Packages / Examples / Scripts / 其他 | 67 | 14,825 |
-| Python 合计 | 437 | 102,796 |
+| `src/luna_agent/**/*.py` | 270 | 62,125 |
+| `tests/**/*.py` | 120 | 34,896 |
+| `plugins/**/*.py` | 15 | 4,230 |
+| `packages/**/*.py` | 20 | 2,008 |
+| `examples/**/*.py` | 5 | 399 |
+| `scripts/**/*.py` | 3 | 546 |
+| Python 合计 | 442 | 104,214 |
 
-项目规模更适合拆开理解：运行时与内置能力约 5.35 万行，测试约 3.45 万行，测试代码占 Python 总量约 33.6%。当前完整测试套件为 `1282 passed, 1 warning`。
+项目规模更适合拆开理解：运行时约 6.21 万行，测试约 3.49 万行，测试代码占 Python 总量约 33.5%。当前完整测试套件为 `1297 passed, 1 warning`；另有 4 条历史 Memory migration 网络超时和 Feed Watch 外部网络失败，均不属于代码回归。
 
 ### 2026-07-18 文档收敛
 

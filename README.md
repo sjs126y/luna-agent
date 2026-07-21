@@ -7,7 +7,7 @@
 <p>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <a href="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml"><img src="https://github.com/sjs126y/luna-agent/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <img src="https://img.shields.io/badge/tests-1282%20passed-2EA44F?logo=pytest&logoColor=white" alt="1282 tests passed">
+  <img src="https://img.shields.io/badge/tests-1297%20passed-2EA44F?logo=pytest&logoColor=white" alt="1297 tests passed">
   <img src="https://img.shields.io/badge/platforms-4-5865F2" alt="4 platforms">
   <img src="https://img.shields.io/badge/MCP-ready-7C3AED" alt="MCP ready">
   <img src="https://img.shields.io/badge/runtime-asyncio-0A84FF" alt="asyncio runtime">
@@ -174,15 +174,15 @@ uv run luna-agent serve
 ## 项目状态
 
 <p>
-  <img src="https://img.shields.io/badge/Python%20files-437-3776AB" alt="437 Python files">
-  <img src="https://img.shields.io/badge/Python%20LOC-102%2C796-555555" alt="102796 Python lines">
-  <img src="https://img.shields.io/badge/runtime%20LOC-53%2C482-0A84FF" alt="53482 runtime lines">
-  <img src="https://img.shields.io/badge/test%20LOC-34%2C489-2EA44F" alt="34489 test lines">
+  <img src="https://img.shields.io/badge/Python%20files-442-3776AB" alt="442 Python files">
+  <img src="https://img.shields.io/badge/Python%20LOC-104%2C214-555555" alt="104214 Python lines">
+  <img src="https://img.shields.io/badge/runtime%20LOC-62%2C125-0A84FF" alt="62125 runtime lines">
+  <img src="https://img.shields.io/badge/test%20LOC-34%2C896-2EA44F" alt="34896 test lines">
 </p>
 
 ```bash
 python -m compileall -q src/luna_agent
-uv run pytest -q  # 1282 passed, 1 warning
+uv run pytest -q  # 1297 passed, 1 warning
 ```
 
 项目保持轻量 Python Runtime，不依赖 LangChain、CrewAI 等重型编排框架。

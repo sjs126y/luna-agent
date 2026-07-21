@@ -34,7 +34,7 @@
 
 ## 2026-07-21：插件诊断契约与 CI 同步
 
-- 插件 generation 架构收口和外置 Worker 隔离已经合入 `main`；后端完整回归为 `1282 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
+- 插件 generation 架构收口、外置 Worker 隔离和 live observability 收尾已经合入 `main`（当前提交 `c287ef8`）；后端完整回归为 `1297 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
 - `plugins info/doctor` 已稳定提供 `runtime_backend`、Worker 状态、主动 runner 状态、boot scope，以及 generation/Worker/active supervisor 摘要；字段定义继续以 `BACKEND_INTERFACE.md` 为准。
 - 当前 inline TUI 尚未制作插件运行时专用面板，但没有阻塞性接口缺口；通用命令结果和 tool trace 仍可展示插件管理操作。
 - GitHub Actions 已配置 Ubuntu 全量测试和原生 Windows AppContainer smoke。工作流需随 `main` 推送后完成首次远端运行，前端暂无额外适配。

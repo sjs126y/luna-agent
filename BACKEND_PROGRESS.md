@@ -23,13 +23,32 @@
 
 ## 2026-07-21：Live 观察故障收尾与阶段性修复
 
-- 基线提交为 `44449f7`，修复分支为 `fix/live-observability-repairs`；基线包含个人 Agent 身份、领域 live inspection、审计/结构化日志和测试手册。
+- 基线提交为 `44449f7`，修复分支已以快进方式合并到 `main`，当前收口提交为 `c287ef8`；基线包含个人 Agent 身份、领域 live inspection、审计/结构化日志和测试手册。
 - `9b3724e` 修复隔离 Codex Bridge 的宿主相对路径：宿主统一解析并种子化 `CODEX_HOME`，Worker 和 MCP 使用同一绝对路径；Runtime inspection 改为读取真实 WorkerSupervisor 计数，并能将插件内部 MCP 重连标记为 `degraded`。
 - `3f2dce7` 稳定观察契约：`tool_call` 兼容扁平参数、未知插件返回 `plugin_not_found`、owner ID 只返回配置形状、installed/local provenance 不再产生伪边界 warning；Runtime live schema 升为 `2`。
 - `0450025` 为 Memory 增加只读维护积压计数，为 Feed Watch 增加 Fetch MCP/robots/network 错误分类和指数退避；不引入全局自动迁移，也不绕过 MCP 网络边界。
 - 本次 live 测试收尾：Runtime inspection 现在将 Memory maintenance 的失败项投影为 `memory_maintenance_failed` 并标记 `degraded`；Feed Watch 将 Fetch MCP 声明为 required dependency，主动 runner 在 MCP ready 前不会开始轮询。
-- 本次代码变更仍需在重启 Gateway 后做一次 WSL live smoke，重点确认 Memory failure warning 与 Feed Watch 的 MCP 就绪门控；Feed Watch 的 GitHub 网络可用性仍属于外部依赖，不将其误判为 Worker 崩溃。
+- 重启 Gateway 后的 WSL live smoke 已完成：Memory failure warning 正确显示为 `degraded`，Codex MCP 为 `ready`，Feed Watch Worker 未重启或熔断；GitHub `robots.txt` 连接失败仍属于外部网络问题。
 - 验证：受影响子系统 `7 passed`，`compileall` 与 `git diff --check` 通过；完整回归 `1297 passed, 1 warning`，唯一 warning 仍来自飞书 SDK 的既有弃用 API。
+
+## 当前代码规模与发布状态
+
+统计口径：Git 跟踪的 Python 文件物理行数，包含空行和注释；不包含 `data/`、虚拟环境、缓存和生成文件。
+
+| 范围 | 文件数 | 物理行数 |
+| --- | ---: | ---: |
+| `src/luna_agent/**/*.py` | 270 | 62,125 |
+| `tests/**/*.py` | 120 | 34,896 |
+| `plugins/**/*.py` | 15 | 4,230 |
+| `packages/**/*.py` | 20 | 2,008 |
+| `examples/**/*.py` | 5 | 399 |
+| `scripts/**/*.py` | 3 | 546 |
+| **Python 合计** | **442** | **104,214** |
+
+- 自动化测试：118 个 `test_*.py` 文件，完整回归 `1297 passed, 1 warning`。
+- 当前分支：`main`；当前本地提交：`c287ef8`；尚未推送到远程。
+- 安装包归档：`data/plugins/migration-packages/` 集中保留 Document Converter、Markdown Structure Analyzer 和 Workspace Watch 的 `0.1.1` ZIP；卸载只清理 `data/plugins/packages/` 下的展开 generation，不删除这些源包。
+- 运行残留：4 条历史 Memory migration 网络超时待维护重试；Feed Watch 的 Fetch MCP 偶发 GitHub robots 网络失败。两者都不是代码发布阻塞。
 
 ## 2026-07-21：个人 Agent 身份边界与领域观察端口
 
