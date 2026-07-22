@@ -243,7 +243,9 @@ async def test_native_windows_shell_executes_power_shell7(tmp_path):
     bash.set_allow_network(False)
     bash.set_restrict_paths(True)
 
-    result = await bash._bash("Write-Output 'windows-runtime-ok'", timeout=5)
+    # AppContainer profile creation and first-use ACL setup are noticeably
+    # slower on a cold Windows CI runner than subsequent broker launches.
+    result = await bash._bash("Write-Output 'windows-runtime-ok'", timeout=30)
 
     assert "Command finished" in result
     assert "windows-runtime-ok" in result

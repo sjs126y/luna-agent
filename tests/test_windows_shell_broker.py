@@ -62,7 +62,7 @@ def test_powershell_command_uses_utf16_encoded_script(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_spawn_process_sends_broker_request_over_stdin(tmp_path: Path, monkeypatch):
-    from luna_agent.tools import process_sandbox
+    from luna_agent.tools import process_sandbox, windows_job
 
     class Writer:
         def __init__(self):
@@ -99,6 +99,7 @@ async def test_spawn_process_sends_broker_request_over_stdin(tmp_path: Path, mon
         return process
 
     monkeypatch.setattr(process_sandbox.asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(windows_job, "attach", lambda pid: True)
     request = _request(tmp_path)
     launch = process_sandbox.ProcessLaunchSpec(
         backend="windows-appcontainer",
